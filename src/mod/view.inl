@@ -1,0 +1,357 @@
+// What the eye sees: hiding meshes (helmet, body wear, what blocks the third-person camera), the tile covers.
+// Part of first_person.cpp (one translation unit): included there, in order.
+// ---- First-person view features (render thread only; no C++ unwinding inside __try) ----
+// Ceilings: level tiles carry collision-only
+// "+Ceiling" slabs (built by 0x145C90 / 0x146A50 with flagsC (c&~0x30000)|0xC0000
+// and the "_black" material), which finalize (0x5F860) never sets up for drawing.
+// Changing them after the level is live faulted the sector lighting
+// pass every frame (no light records, "Scene manager: Validation error.") and
+// bypassed the per-material draw lists. So the slab is changed while it is
+// built: in the builder's face flip (0x68630, between the merge and the mesh
+// compile 0x67070/0x68730) it gets the room's wall material, planar UVs from the
+// floor's own mapper (0x145890) and floor-like flags (0x80000 and 0x40000 off:
+// 0x40000 keeps a mesh out of its sector's per-material draw lists, 0x55960). Finalize, sector light
+// registration (0x56B50 -> 0x55070) and draw lists then treat it as any floor.
+// Hiding: what decides whether a registered mesh is drawn is its
+// pass mask mesh+0xE0, which the per-sector update 0x58CD0 rebuilds every frame
+// (sector bit 0x10000000 from +0x3A0, | 0x1000001 when the bounds pass the view
+// tests 0x79E60 / 0x58AC0). The render passes (0x4E610, 0x4EB30, 0x4EE10,
+// 0x4EFE0, 0x4F0B0) and the screen pick 0x8F720 take a mesh only when their pass
+// mask & mesh+0xE0 is non-zero. flagsC 0x10000 is not read there, which is why the
+// - hiding (clearing it) left helmets and ceilings on screen
+// (live A/B, ceilings-preview flaw 1). A hidden mesh now gets, right after
+// 0x58CD0 returns for its sector, the value of a mesh outside the view
+// (fp::hiddenPassMask). Nothing is stored in the mesh: the next frame recomputes
+// it, so leaving the hide list, F6, F7 or a scene change show it again with no undo.
+static bool readable(uintptr_t address, size_t size) {
+    MEMORY_BASIC_INFORMATION m;
+    if (address < 0x10000 || VirtualQuery((void*)address, &m, sizeof(m)) != sizeof(m)) return false;
+    if (m.State != MEM_COMMIT || (m.Protect & (PAGE_NOACCESS | PAGE_GUARD))) return false;
+    return address + size <= (uintptr_t)m.BaseAddress + m.RegionSize;
+}
+static const char* nodeName(uintptr_t node) {
+    return readable(node, 0x2a0) ? (const char*)(node + field::sceneNode::name) : "";
+}
+// Hide list, sorted (binary search), published by the render thread, read by
+// 0x58CD0's thread. Meshes are compared, never dereferenced, unless the sector
+// being updated lists them this frame.
+static constexpr unsigned hideCapacity = 32768;
+static SRWLOCK hideLock = SRWLOCK_INIT;
+static uintptr_t hideMeshes[hideCapacity];
+static unsigned hideMeshCount = 0;
+static uintptr_t pendingHide[hideCapacity];
+static unsigned pendingHideCount = 0; // render thread only
+static std::atomic<unsigned> hiddenMeshes{0}, maskedDraws{0}, hideOverflow{0};
+// Tile covers:
+// the black blades and bands are not wall geometry. 0x144610 draws the level's per-tile
+// cover meshes (built from the wall sets' ceiling pieces at the wall line) in black with
+// the depth test off, fading each tile's alpha by state; 0x1444A0 first writes their
+// depth with colour writes masked. In the overhead view they darken what the character
+// has not seen; from the eye they are flat black shapes hanging at the wall line, over
+// the textured capitals behind them (trace: draw 86 textures the pixel, draw 164 from
+// 0x4FAFD -> 0x18240 -> 0x144610 paints it black). A "_black"-range skip at 0x26F230
+// changed no pixel (run skins1), so it was removed. In a live first-person frame both
+// cover passes are skipped; the overhead view draws them as stock.
+using CoverPass = uint64_t (*)(uintptr_t);
+using CoverDepth = void (*)(uintptr_t);
+static CoverPass originalCoverPass;   // RVA 0x144610 (returns 1: stays in its pass list)
+static CoverDepth originalCoverDepth; // RVA 0x1444A0
+static std::atomic<bool> skipCovers{false}, coversHiddenInFirstPerson{true};
+static std::atomic<unsigned> coverPassesSkipped{0};
+static uint64_t coverPass(uintptr_t level) {
+    if (skipCovers.load(std::memory_order_relaxed)) {
+        coverPassesSkipped.fetch_add(1, std::memory_order_relaxed);
+        return 1;
+    }
+    return originalCoverPass(level);
+}
+static void coverDepth(uintptr_t level) {
+    if (skipCovers.load(std::memory_order_relaxed)) return;
+    originalCoverDepth(level);
+}
+static uintptr_t hideScene = 0; // scene manager the list belongs to; another scene is never masked
+static volatile LONG sectorThread = 0;
+static std::atomic<int> viewFault{0};
+using SectorUpdate = uintptr_t (*)(uintptr_t);
+static SectorUpdate originalSectorUpdate; // RVA 0x58CD0
+static void hideAdd(uintptr_t mesh) {
+    if (pendingHideCount < hideCapacity)
+        pendingHide[pendingHideCount++] = mesh;
+    else
+        ++hideOverflow;
+}
+// Publishes pendingHide when it differs from the live list.
+static void hidePublish() {
+    const unsigned n = fp::sortUnique(pendingHide, pendingHideCount);
+    if (n != hideMeshCount || memcmp(pendingHide, hideMeshes, n * sizeof(uintptr_t))) {
+        AcquireSRWLockExclusive(&hideLock);
+        memcpy(hideMeshes, pendingHide, n * sizeof(uintptr_t));
+        hideMeshCount = n;
+        ReleaseSRWLockExclusive(&hideLock);
+    }
+    hideScene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
+    hiddenMeshes = n;
+    pendingHideCount = 0;
+}
+static void maskSector(uintptr_t sector) {
+    if (*(uintptr_t*)(gameAt(fp::sig::currentScene)) != hideScene) return;
+    const int last = *(int*)(sector + field::sector::lastMesh);
+    const uintptr_t list = *(uintptr_t*)(sector + field::sector::meshes);
+    for (int j = 0; j <= last; ++j) {
+        const uintptr_t m = *(uintptr_t*)(list + size_t(j) * 8);
+        if (fp::sortedContains(hideMeshes, hideMeshCount, m)) {
+            unsigned& e = *(unsigned*)(m + field::sceneNode::passMask);
+            e = fp::hiddenPassMask(e);
+            ++maskedDraws;
+        }
+    }
+}
+static uintptr_t sectorUpdate(uintptr_t sector) {
+    const uintptr_t result = originalSectorUpdate(sector);
+    InterlockedExchange(&sectorThread, LONG(GetCurrentThreadId()));
+    if (!hideMeshCount) return result;
+    AcquireSRWLockShared(&hideLock);
+    // The list is exactly what 0x58CD0 just walked for this sector.
+    __try {
+        maskSector(sector);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        viewFault = 1;
+        hideMeshCount = 0;
+    }
+    ReleaseSRWLockShared(&hideLock);
+    return result;
+}
+// Breadth-first scene walk into a flat list. Returns node count.
+static unsigned walkScene(uintptr_t scene, uintptr_t* nodes, unsigned* parents, unsigned capacity) {
+    if (!readable(scene, 0x2a0)) return 0;
+    thread_local fp::PointerSet seen; // the render thread and the game's pick thread both walk
+    seen.reset(capacity);
+    seen.insert(scene);
+    unsigned count = 0, next = 0;
+    nodes[count] = scene;
+    parents[count++] = ~0u;
+    while (next < count) {
+        uintptr_t node = nodes[next];
+        unsigned index = next++;
+        if (!readable(node, 0x2a0)) continue;
+        int last = *(int*)(node + field::sceneNode::lastChild);
+        uintptr_t list = *(uintptr_t*)(node + field::sceneNode::children);
+        if (last < 0 || last >= 6000 || !readable(list, (last + 1) * 8)) continue;
+        for (int i = 0; i <= last && count < capacity; ++i) {
+            uintptr_t child = *(uintptr_t*)(list + i * 8);
+            if (!child) continue;
+            if (seen.insert(child)) {
+                nodes[count] = child;
+                parents[count++] = index;
+            }
+        }
+    }
+    return count;
+}
+static uintptr_t nodes[8192];
+static unsigned parents[8192];
+// The level being played: the scene object's name (base+0x4F0BD0, +0x140).
+// Head wear: equipment is parented under
+// body-part nodes (a sword under 17RHand), so anything under the controlled
+// character's 10Head node (root+0x11E0 -> +0x18) is head wear. [View] Helmet=show
+// (default) draws it from the inside with the game's own lighting; Helmet=hide hides
+// it as before meant to. The head itself is never touched (it is part of
+// the shared skin and is not drawn from the eye). A worn mesh that covers the view
+// centre is hidden in either mode: rays from the eye along the view axis and four
+// directions fp::helmetConeDegrees around it, fp::helmetProbeLength long, through
+// the mesh's own ray routine (mesh+0x3B0 with context +0x3B8, as the screen pick
+// 0x8F720 calls it on meshes with flags8 & 0x89 == 0x89). A mesh that cannot be
+// tested is hidden and counted (helmet_unknown): the camera is never blocked.
+struct HeadWear {
+    uintptr_t node;
+    int verdict;
+    unsigned age;
+}; // verdict fp::HelmetVerdict
+static HeadWear headWear[64];
+static unsigned headWearCount = 0;
+static uintptr_t headScene = 0;
+static std::atomic<unsigned> hiddenHeadNodes{0}, headWearNodes{0}, helmetBlocking{0}, helmetUnknown{0},
+    helmetTests{0};
+static std::atomic<fp::HelmetMode> helmetMode{fp::HelmetMode::show}; // [View] Helmet; F8 settings page
+struct RayQuery {
+    float hit[3], distance, origin[3], pad0, direction[3], pad1;
+}; // 0x8F720 stack layout
+using MeshRay = int (*)(uintptr_t, RayQuery*);
+static int callMeshRay(uintptr_t ray, uintptr_t context, RayQuery* q) {
+    return ((MeshRay)ray)(context, q);
+}
+static int (*meshRay)(uintptr_t, uintptr_t, RayQuery*) = callMeshRay; // replaced by the owned-memory tests
+static fp::HelmetVerdict helmetVerdict(uintptr_t node, float length = fp::helmetProbeLength) {
+    if (!readable(node, 0x3c0) || (*(unsigned*)(node + 8) & 0x89) != 0x89) return fp::HelmetVerdict::unknown;
+    const uintptr_t ray = *(uintptr_t*)(node + field::sceneNode::rayRoutine),
+                    context = *(uintptr_t*)(node + field::sceneNode::rayContext);
+    // The ray routine is game code (a mesh-type method), never a data pointer.
+    if (!context || ray < base + layout.textBegin || ray >= base + layout.textEnd)
+        return fp::HelmetVerdict::unknown;
+    const uintptr_t owner = *(uintptr_t*)(node + field::sceneNode::sector);
+    if (!readable(owner, 0x70)) return fp::HelmetVerdict::unknown;
+    float eye[3];
+    for (int i = 0; i < 3; ++i)
+        eye[i] = lastCamera[9 + i] -
+                 *(float*)(owner + field::sector::origin + i * 4); // sector-local, as mesh+0x40
+    float directions[5][3];
+    fp::helmetProbeDirections(lastCamera, directions);
+    const float* m = (const float*)(node + field::sceneNode::transform);
+    for (const auto& d : directions) {
+        RayQuery q{};
+        q.distance = length;
+        fp::worldToLocalPoint(m, eye, q.origin);
+        fp::worldToLocalDirection(m, d, q.direction);
+        ++helmetTests;
+        if (meshRay(ray, context, &q) >= 0) return fp::HelmetVerdict::blocks;
+    }
+    return fp::HelmetVerdict::clear;
+}
+static void updateHeadWear(bool live) {
+    const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
+    const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
+    const uintptr_t head = readable(root, 0x1200) ? *(uintptr_t*)(root + field::character::headPart) : 0;
+    const uintptr_t headMesh = readable(head, 0x20) ? *(uintptr_t*)(head + field::bodyPart::meshNode) : 0;
+    if (!live || !readable(headMesh, 0x2a0) || !*(uintptr_t*)(headMesh + field::sceneNode::sector) ||
+        scene != headScene) {
+        headWearCount = 0;
+        headScene = scene;
+        hiddenHeadNodes = 0;
+        headWearNodes = 0;
+        helmetBlocking = 0;
+        helmetUnknown = 0;
+        if (!live || !readable(headMesh, 0x2a0) || !*(uintptr_t*)(headMesh + field::sceneNode::sector))
+            return;
+    }
+    const unsigned count = walkScene(headMesh, nodes, parents, 256);
+    HeadWear next[64];
+    unsigned n = 0;
+    for (unsigned j = 1; j < count && n < 64; ++j) {
+        HeadWear w{nodes[j], -2, 0};
+        for (unsigned k = 0; k < headWearCount; ++k)
+            if (headWear[k].node == w.node) {
+                w = headWear[k];
+                break;
+            }
+        next[n++] = w;
+    }
+    unsigned hidden = 0, blocking = 0, unknown = 0;
+    for (unsigned k = 0; k < n; ++k) {
+        HeadWear& w = next[k];
+        // Tested when it appears and every 30 frames (the head pose relative to the
+        // eye moves with animation); hide mode needs no test.
+        if (helmetMode == fp::HelmetMode::show && (w.verdict == -2 || ++w.age >= 30)) {
+            w.verdict = int(helmetVerdict(w.node));
+            w.age = 0;
+        }
+        const bool hide = fp::hideHeadWear(helmetMode, fp::HelmetVerdict(w.verdict));
+        if (hide) {
+            hideAdd(w.node);
+            ++hidden;
+        }
+        if (w.verdict == int(fp::HelmetVerdict::blocks)) ++blocking;
+        if (w.verdict == int(fp::HelmetVerdict::unknown)) ++unknown;
+    }
+    memcpy(headWear, next, sizeof(HeadWear) * n);
+    headWearCount = n;
+    headWearNodes = n;
+    hiddenHeadNodes = hidden;
+    helmetBlocking = blocking;
+    helmetUnknown = unknown;
+}
+// Body wear in view: gear under the torso, shoulders and upper arms that the
+// eye-ray test hits within fp::bodyProbeLength is hidden for that frame (looking down), re-tested every
+// 6 frames; gear that cannot be tested is left drawn (unlike the helmet: it is not in front of the eye
+// unless the test says so). The skin, the head (above), the hands, legs and feet are never touched.
+struct BodyWear {
+    uintptr_t node;
+    int verdict;
+    unsigned age;
+};
+static BodyWear bodyWear[96];
+static unsigned bodyWearCount = 0;
+static uintptr_t bodyScene = 0;
+static std::atomic<unsigned> bodyWearNodes{0}, hiddenBodyNodes{0};
+static std::atomic<int> bodyFault{0};
+static void updateBodyWear(bool live) {
+    if (live && lastCamera[7] < 0.34f)
+        live =
+            false; // only while looking down (view forward more than 20 degrees below level): no cost otherwise
+    const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
+    const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
+    const uintptr_t rootMesh = readable(root, 0x1200) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
+    if (!live || !readable(rootMesh, 0x2a0) || scene != bodyScene) {
+        bodyWearCount = 0;
+        bodyScene = scene;
+        bodyWearNodes = 0;
+        hiddenBodyNodes = 0;
+        if (!live || !readable(rootMesh, 0x2a0)) return;
+    }
+    const unsigned count = walkScene(rootMesh, nodes, parents, 512);
+    BodyWear next[96];
+    unsigned n = 0;
+    for (unsigned j = 1; j < count && n < 96; ++j) {
+        if (fp::bodyPartNumber(nodeName(nodes[j])) >= 0) continue; // a body part itself
+        int part = -1;
+        for (unsigned a = parents[j], guard = 0; a < count && guard < 64; a = parents[a], ++guard) {
+            const int p = fp::bodyPartNumber(nodeName(nodes[a]));
+            if (p >= 0) {
+                part = p;
+                break;
+            }
+        }
+        if (!fp::torsoPart(part)) continue;
+        BodyWear w{nodes[j], -2, 0};
+        for (unsigned k = 0; k < bodyWearCount; ++k)
+            if (bodyWear[k].node == w.node) {
+                w = bodyWear[k];
+                break;
+            }
+        next[n++] = w;
+    }
+    unsigned hidden = 0;
+    for (unsigned k = 0; k < n; ++k) {
+        BodyWear& w = next[k];
+        if (w.verdict == -2 || ++w.age >= 6) {
+            w.verdict = int(helmetVerdict(w.node, fp::bodyProbeLength));
+            w.age = 0;
+        }
+        if (w.verdict == int(fp::HelmetVerdict::blocks)) {
+            hideAdd(w.node);
+            ++hidden;
+        }
+    }
+    memcpy(bodyWear, next, sizeof(BodyWear) * n);
+    bodyWearCount = n;
+    bodyWearNodes = n;
+    hiddenBodyNodes = hidden;
+}
+// Called from swap under cameraLock. live: a first-person frame is published.
+static void tpHideAdd();
+static void viewFeatures(bool live) {
+    skipCovers =
+        live &&
+        coversHiddenInFirstPerson.load(); // first and third person both skip the tile covers (darkening)
+    const bool ownView =
+        live; // ceilings: either own view; helmet and body wear: first person only (third person shows the whole character)
+    live = live && viewMode.load() == 0;
+    // A ceiling fault stops conversions of later levels too, and keeps every slab
+    // it built hidden, so no view is left under a lid the mod no longer manages.
+    __try {
+        if (!viewFault.load()) updateHeadWear(live);
+        if (ownView && viewMode.load() != 0 && !viewFault.load())
+            tpHideAdd(); // also through the blend to overhead // what stands between the camera and the player
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        viewFault = 1;
+        headWearCount = 0;
+    }
+    // Body wear in its own scope: a fault there stops only body-wear hiding, never the helmet logic.
+    __try {
+        if (!bodyFault.load()) updateBodyWear(live);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        bodyFault = 1;
+        bodyWearCount = 0;
+    }
+    // After a view fault head wear is never hidden again (only built ceilings are).
+    hidePublish();
+}
