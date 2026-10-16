@@ -28,8 +28,6 @@ Grab the latest zip from [Releases](https://github.com/NecrosisDev/exanima-first
 2. Run **ExCamera.exe**. If Exanima isn't running, it starts it through Steam.
 3. Play. Press **F8** for Settings.
 
-Windows may warn you about an unsigned app. That's expected for a hobby mod. Click **More info**, then **Run anyway**.
-
 No game files are changed. Nothing is installed.
 
 ## Controls
