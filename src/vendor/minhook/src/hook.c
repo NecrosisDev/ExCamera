@@ -64,6 +64,10 @@ typedef struct _HOOK_ENTRY
     LPVOID pDetour;             // Address of the detour or relay function.
     LPVOID pTrampoline;         // Address of the trampoline function.
     UINT8  backup[8];           // Original prologue of the target function.
+    // ExCamera: the whole relocated prologue, so re-enabling a retained
+    // trampoline never silently skips code that changed while it was stopped.
+    UINT8  entryBackup[32];
+    UINT8  entrySize;
 
     UINT8  patchAbove  : 1;     // Uses the hot patch area.
     UINT8  isEnabled   : 1;     // Enabled.
@@ -325,6 +329,68 @@ static BOOL EnumerateThreads(PFROZEN_THREADS pThreads)
 }
 
 //-------------------------------------------------------------------------
+// ExCamera: validate ownership while the other threads are suspended, before
+// either their IPs or executable bytes change. The untouched tail matters too:
+// a relocated immediate can extend beyond the five bytes MinHook overwrites.
+static BOOL EntryMatches(PHOOK_ENTRY pHook)
+{
+    UINT8 current[32], expected[32];
+    SIZE_T got;
+    JMP_REL jump;
+    jump.opcode = 0xE9;
+    jump.operand = (UINT32)((LPBYTE)pHook->pDetour
+        - ((LPBYTE)pHook->pTarget + (pHook->patchAbove ? 0 : sizeof(JMP_REL))));
+    if (!ReadProcessMemory(GetCurrentProcess(), pHook->pTarget, current, pHook->entrySize, &got)
+        || got != pHook->entrySize)
+        return FALSE;
+    memcpy(expected, pHook->entryBackup, pHook->entrySize);
+    if (pHook->isEnabled)
+    {
+        if (pHook->patchAbove)
+        {
+            PJMP_REL_SHORT shortJump = (PJMP_REL_SHORT)expected;
+            shortJump->opcode = 0xEB;
+            shortJump->operand = (UINT8)(0 - (sizeof(JMP_REL_SHORT) + sizeof(JMP_REL)));
+        }
+        else
+            memcpy(expected, &jump, sizeof(jump));
+    }
+    if (memcmp(current, expected, pHook->entrySize) != 0)
+        return FALSE;
+    if (pHook->patchAbove)
+    {
+        if (!ReadProcessMemory(GetCurrentProcess(), (LPBYTE)pHook->pTarget - sizeof(JMP_REL),
+                current, sizeof(JMP_REL), &got) || got != sizeof(JMP_REL))
+            return FALSE;
+        if (memcmp(current, pHook->isEnabled ? (const void*)&jump : pHook->backup, sizeof(JMP_REL)) != 0)
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static MH_STATUS ValidateEntries(UINT pos, UINT action)
+{
+    UINT count;
+    if (pos == ALL_HOOKS_POS)
+    {
+        pos = 0;
+        count = g_hooks.size;
+    }
+    else
+        count = pos + 1;
+    for (; pos < count; ++pos)
+    {
+        PHOOK_ENTRY pHook = &g_hooks.pItems[pos];
+        BOOL enable = action == ACTION_DISABLE ? FALSE
+            : action == ACTION_ENABLE ? TRUE : pHook->queueEnable;
+        if (pHook->isEnabled != enable && !EntryMatches(pHook))
+            return MH_ERROR_CONFLICT;
+    }
+    return MH_OK;
+}
+
+static VOID Unfreeze(PFROZEN_THREADS pThreads);
+
 static MH_STATUS Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
 {
     MH_STATUS status = MH_OK;
@@ -349,7 +415,6 @@ static MH_STATUS Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
                 if (result != 0xFFFFFFFF)
                 {
                     suspended = TRUE;
-                    ProcessThreadIPs(hThread, pos, action);
                 }
                 CloseHandle(hThread);
             }
@@ -358,6 +423,34 @@ static MH_STATUS Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
             {
                 // Mark thread as not suspended, so it's not resumed later on.
                 pThreads->pItems[i] = 0;
+            }
+        }
+    }
+
+    if (status == MH_OK)
+    {
+        status = ValidateEntries(pos, action);
+        if (status != MH_OK)
+        {
+            Unfreeze(pThreads);
+            return status;
+        }
+        // Validation above covers the entire batch, including queued changes.
+        // A conflicting entry cannot redirect a suspended thread through stale
+        // instruction boundaries even when no byte patch would have followed.
+        {
+            UINT i;
+            for (i = 0; i < pThreads->size; ++i)
+            {
+                HANDLE hThread;
+                if (!pThreads->pItems[i])
+                    continue;
+                hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
+                if (hThread != NULL)
+                {
+                    ProcessThreadIPs(hThread, pos, action);
+                    CloseHandle(hThread);
+                }
             }
         }
     }
@@ -613,6 +706,10 @@ MH_STATUS WINAPI MH_CreateHook(LPVOID pTarget, LPVOID pDetour, LPVOID *ppOrigina
                             pHook->isEnabled   = FALSE;
                             pHook->queueEnable = FALSE;
                             pHook->nIP         = ct.nIP;
+                            pHook->entrySize   = ct.oldSize;
+                            if (pHook->entrySize < (ct.patchAbove ? sizeof(JMP_REL_SHORT) : sizeof(JMP_REL)))
+                                pHook->entrySize = ct.patchAbove ? sizeof(JMP_REL_SHORT) : sizeof(JMP_REL);
+                            memcpy(pHook->entryBackup, pTarget, pHook->entrySize);
                             memcpy(pHook->oldIPs, ct.oldIPs, ARRAYSIZE(ct.oldIPs));
                             memcpy(pHook->newIPs, ct.newIPs, ARRAYSIZE(ct.newIPs));
 
@@ -739,7 +836,7 @@ static MH_STATUS EnableHook(LPVOID pTarget, BOOL enable)
                 if (g_hooks.pItems[pos].isEnabled != enable)
                 {
                     FROZEN_THREADS threads;
-                    status = Freeze(&threads, pos, ACTION_ENABLE);
+                    status = Freeze(&threads, pos, enable ? ACTION_ENABLE : ACTION_DISABLE);
                     if (status == MH_OK)
                     {
                         status = EnableHookLL(pos, enable);
@@ -931,6 +1028,7 @@ const char *WINAPI MH_StatusToString(MH_STATUS status)
         MH_ST2STR(MH_ERROR_MEMORY_PROTECT)
         MH_ST2STR(MH_ERROR_MODULE_NOT_FOUND)
         MH_ST2STR(MH_ERROR_FUNCTION_NOT_FOUND)
+        MH_ST2STR(MH_ERROR_CONFLICT)
     }
 
 #undef MH_ST2STR

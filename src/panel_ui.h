@@ -11,9 +11,12 @@
 #include <map>
 #include <array>
 #include <cstdio>
+#include <climits>
 #include <locale.h>
 #include "input_policy.h"
 #include "ui_art.h"
+
+#include "held_object.h" // the rotate key's names and choices
 #include <mmsystem.h>
 #pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "user32.lib")
@@ -23,7 +26,7 @@ namespace panel {
 
 // the game's own menu sounds (Sound.rpk menuclick / menusel, RIFF WAV as shipped), read from the
 // game's archive (works without the service), played with PlaySound. The game's own sound path would
-// need a game call that is not reviewed; this plays beside it.
+// need a game call nobody has traced; this plays beside it.
 inline void playMenuSound(bool click) {
     static std::vector<uint8_t> clickWav, selectWav;
     static bool tried = false;
@@ -59,16 +62,63 @@ inline std::wstring wide(const std::string& s) {
     return w;
 }
 
-inline std::string narrowText(const std::wstring& w) {
-    if (w.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0, nullptr, nullptr);
-    std::string s(size_t(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), &s[0], n, nullptr, nullptr);
-    return s;
-}
-
 // The first-person mod's own settings: shown on the F8 panel's Settings page, applied
 // live and saved by the mod to first-person.ini.
+// The Settings rows. A row's number is its place here; rowInfo holds what is generic about it (label,
+// control, the value it edits, tooltip), ModSettings::step and value what is particular.
+namespace setting {
+enum : int {
+    fov,
+    sensitivity,
+    headSteady,
+    rawMouse,
+    hideHelmet,
+    grabRange,
+    swingCrosshair,
+    tpDistance,
+    tpShoulder,
+    tpHeight,
+    tpTight,
+    tpCombat,
+    tpFov,
+    tpLag,
+    tpBlockers,
+    tpDown,
+    attackCue,
+    cueSize,
+    cueOpacity,
+    cueThrust,
+    rmbMode,
+    idleCrosshair,
+    headRoll,
+    headPitch,
+    headYaw,
+    aimMarker,
+    flickCatchup,
+    headBob,
+    freezeWindows,
+    spineFollow,
+    crouchMode,
+    nearClip,
+    tpCombatAim,
+    eyeSetback,
+    rotateHeldKey,
+    leanKey,
+    holdHeading,
+    turnLead,
+    fpDeadzoneX,
+    fpDeadzoneY,
+    tpDeadzoneX,
+    tpDeadzoneY,
+    leanKeysMode,
+    leanLeftKey,
+    leanRightKey,
+    fpDefense,
+    tpDefense,
+    count
+};
+}
+
 struct ModSettings {
     int fov = 75, sensitivity = 100,
         headSteady = 70; // degrees, percent, percent (head stabilisation, 0 = the game's)
@@ -81,6 +131,8 @@ struct ModSettings {
     int tpFov = 0;
     bool attackCue = true, cueThrust = true;
     int cueSize = 100, cueOpacity = 100; // the attack wind-up arc
+    int fpDefense = 0, tpDefense = 0;    // automatic default, manual holds RMB
+    bool manualDefenseAvailable = false; // runtime capability, not a saved row
     int rmbMode = 1;                     // right mouse frees the cursor: 0 off, 1 hold, 2 toggle
     bool idleCrosshairAlways = false;    // out of combat the crosshair shows only with right mouse
     bool freezeWindows = true;           // the game's windows free the cursor and hold look and movement
@@ -93,23 +145,27 @@ struct ModSettings {
     int flickCatchup =
         50; // the crosshair while the head catches up; how much a flick's lead is eased // how much head wobble on each axis stiffens the neck (0 = not at all)
     int tpLag = 40;
-    bool
-        tpHide = true,
-        tpDown =
-            true; // camera lag, hide what is in the way, knockdown follow // closer and centred in combat; third person's own field of view (0 = as first person)
-    bool operator==(const ModSettings& o) const {
-        return fov == o.fov && sensitivity == o.sensitivity && headSteady == o.headSteady &&
-               rawMouse == o.rawMouse && hideHelmet == o.hideHelmet && grabRange == o.grabRange &&
-               hideSwingCrosshair == o.hideSwingCrosshair && tpDistance == o.tpDistance &&
-               tpShoulder == o.tpShoulder && tpHeight == o.tpHeight && tpTight == o.tpTight &&
-               tpCombat == o.tpCombat && tpFov == o.tpFov && tpLag == o.tpLag && tpHide == o.tpHide &&
-               tpDown == o.tpDown && attackCue == o.attackCue && cueThrust == o.cueThrust &&
-               cueSize == o.cueSize && cueOpacity == o.cueOpacity && rmbMode == o.rmbMode &&
-               idleCrosshairAlways == o.idleCrosshairAlways && headRoll == o.headRoll &&
-               headPitch == o.headPitch && headYaw == o.headYaw && headBob == o.headBob &&
-               freezeWindows == o.freezeWindows && spineFollow == o.spineFollow &&
-               crouchMode == o.crouchMode && nearClip == o.nearClip && aimMarker == o.aimMarker &&
-               flickCatchup == o.flickCatchup;
+    bool tpDown = true;
+    int tpBlockers =
+        fp::blockersSmart; // what is in the way: hide / push in / smart (people hidden, objects push in)
+    bool tpCombatAimFree = true;
+    int fpDeadzoneX = 15, fpDeadzoneY = 10, tpDeadzoneX = 20, tpDeadzoneY = 20;
+    bool leanKeysMode = false;
+    int leanLeftKey = 0, leanRightKey = 0;
+    int eyeSetback = 0; // cm the viewpoint sits behind the eyes (0: at the eyes)
+    bool holdHeading = true,
+         turnLead = false; // first person: the view faces the aim's heading; leads fast turns by a frame
+    int leanKey = 0x12;    // held, the mouse leans the upper body (virtual-key code; 0 unbound)
+    int rotateHeldKey =
+        0x02; // the key that turns a held object (virtual-key code; 0 unbound) // in combat the crosshair moves inside a box; the view turns at its edge // camera lag, hide what is in the way, knockdown follow // closer and centred in combat; third person's own field of view (0 = as first person)
+    bool operator==(const ModSettings& o) const; // every row's value
+    // The next (or previous) of fp::heldKeyChoices; a key set in the ini starts the cycle from the top.
+    static int nextKey(int key, int delta) {
+        constexpr int n = int(sizeof fp::heldKeyChoices / sizeof *fp::heldKeyChoices);
+        int at = -1;
+        for (int i = 0; i < n; ++i)
+            if (fp::heldKeyChoices[i] == key) at = i;
+        return fp::heldKeyChoices[((at < 0 ? 0 : at) + (delta < 0 ? n - 1 : 1)) % n];
     }
     // One click on a row's control: numbers step by delta (within range), switches flip.
     bool step(int row, int delta) {
@@ -118,100 +174,145 @@ struct ModSettings {
         };
         const ModSettings before = *this;
         switch (row) {
-        case 0:
+        case setting::fov:
             fov = fp::clampFov(fov + delta * 5);
             break;
-        case 1:
+        case setting::sensitivity:
             sensitivity = clamp(sensitivity + delta * 10, 10, 400);
             break;
-        case 2:
+        case setting::headSteady:
             headSteady = clamp(headSteady + delta * 10, 0, 100);
             break;
-        case 3:
+        case setting::rawMouse:
             rawMouse = !rawMouse;
             break;
-        case 4:
+        case setting::hideHelmet:
             hideHelmet = !hideHelmet;
             break;
-        case 5:
+        case setting::grabRange:
             grabRange = fp::clampGrabRange(grabRange + delta * 10);
             break;
-        case 6:
+        case setting::swingCrosshair:
             hideSwingCrosshair = !hideSwingCrosshair;
             break;
-        case 7:
+        case setting::tpDistance:
             tpDistance = clamp(tpDistance + delta * 25, fp::tpDistanceMin, fp::tpDistanceMax);
             break;
-        case 8:
+        case setting::tpShoulder:
             tpShoulder = clamp(tpShoulder + delta * 10, -fp::tpShoulderMax, fp::tpShoulderMax);
             break;
-        case 9:
+        case setting::tpHeight:
             tpHeight = clamp(tpHeight + delta * 10, fp::tpHeightMin, fp::tpHeightMax);
             break;
-        case 10:
+        case setting::tpTight:
             tpTight = !tpTight;
             break;
-        case 11:
+        case setting::tpCombat:
             tpCombat = !tpCombat;
             break;
-        case 13:
+        case setting::tpLag:
             tpLag = clamp(tpLag + delta * 10, 0, 100);
             break;
-        case 14:
-            tpHide = !tpHide;
+        case setting::tpBlockers:
+            tpBlockers = (tpBlockers + (delta < 0 ? 2 : 1)) % 3;
+            break; // hide -> push -> smart, or back
+        case setting::tpCombatAim:
+            tpCombatAimFree = !tpCombatAimFree;
             break;
-        case 15:
+        case setting::fpDeadzoneX:
+            fpDeadzoneX = fp::clampDeadzone(fpDeadzoneX + delta);
+            break;
+        case setting::fpDeadzoneY:
+            fpDeadzoneY = fp::clampDeadzone(fpDeadzoneY + delta);
+            break;
+        case setting::tpDeadzoneX:
+            tpDeadzoneX = fp::clampDeadzone(tpDeadzoneX + delta);
+            break;
+        case setting::tpDeadzoneY:
+            tpDeadzoneY = fp::clampDeadzone(tpDeadzoneY + delta);
+            break;
+        case setting::leanKeysMode:
+            leanKeysMode = !leanKeysMode;
+            break;
+        case setting::leanLeftKey:
+            leanLeftKey = nextKey(leanLeftKey, delta);
+            break;
+        case setting::leanRightKey:
+            leanRightKey = nextKey(leanRightKey, delta);
+            break;
+        case setting::eyeSetback:
+            eyeSetback = fp::clampEyeSetback(eyeSetback + delta * 2);
+            break;
+        case setting::rotateHeldKey:
+            rotateHeldKey = nextKey(rotateHeldKey, delta);
+            break;
+        case setting::leanKey:
+            leanKey = nextKey(leanKey, delta);
+            break;
+        case setting::holdHeading:
+            holdHeading = !holdHeading;
+            break;
+        case setting::turnLead:
+            turnLead = !turnLead;
+            break;
+        case setting::tpDown:
             tpDown = !tpDown;
             break;
-        case 16:
+        case setting::attackCue:
             attackCue = !attackCue;
             break;
-        case 17:
+        case setting::cueSize:
             cueSize = clamp(cueSize + delta * 10, 50, 200);
             break;
-        case 18:
+        case setting::cueOpacity:
             cueOpacity = clamp(cueOpacity + delta * 10, 20, 100);
             break;
-        case 19:
+        case setting::cueThrust:
             cueThrust = !cueThrust;
             break;
-        case 20:
+        case setting::fpDefense:
+            fpDefense = fpDefense == 1 ? 0 : 1;
+            break;
+        case setting::tpDefense:
+            tpDefense = tpDefense == 1 ? 0 : 1;
+            break;
+        case setting::rmbMode:
             rmbMode = (rmbMode + (delta < 0 ? 2 : 1)) % 3;
             break; // hold -> toggle -> off, or back
-        case 21:
+        case setting::idleCrosshair:
             idleCrosshairAlways = !idleCrosshairAlways;
             break;
-        case 22:
+        case setting::headRoll:
             headRoll = clamp(headRoll + delta * 10, 0, 100);
             break;
-        case 23:
+        case setting::headPitch:
             headPitch = clamp(headPitch + delta * 10, 0, 100);
             break;
-        case 24:
+        case setting::headYaw:
             headYaw = clamp(headYaw + delta * 10, 0, 100);
             break;
-        case 25:
+        case setting::aimMarker:
             aimMarker = !aimMarker;
             break;
-        case 26:
+        case setting::flickCatchup:
             flickCatchup = clamp(flickCatchup + delta * 10, 0, 100);
             break;
-        case 27:
+        case setting::headBob:
             headBob = clamp(headBob + delta * 10, 0, 100);
             break;
-        case 28:
+        case setting::freezeWindows:
             freezeWindows = !freezeWindows;
             break;
-        case 29:
+        case setting::spineFollow:
             spineFollow = clamp(spineFollow + delta * 10, 0, 100);
             break;
-        case 30:
+        case setting::crouchMode:
             crouchMode = crouchMode == 2 ? 1 : (crouchMode == 1 ? 0 : 2);
             break; // toggle -> hold -> off
-        case 31:
+        case setting::nearClip:
             nearClip = fp::clampNearClip(nearClip + delta);
             break;
-        case 12:
+        case setting::tpFov:
             tpFov = tpFov == 0 ? (delta > 0 ? 80 : 0)
                                : (tpFov + delta * 5 < fp::fovMin ? 0 : fp::clampFov(tpFov + delta * 5));
             break; // below the minimum: back to "as first person"
@@ -220,148 +321,439 @@ struct ModSettings {
         }
         return !(*this == before);
     }
-    static constexpr int rows = 32;
-    static const wchar_t* label(int row) {
-        static const wchar_t* names[rows] = {
-            L"Field of view",
-            L"Mouse sensitivity",
-            L"Head stabilisation",
-            L"Raw mouse input",
-            L"Helmet in view",
-            L"Grab range",
-            L"Crosshair during a swing",
-            L"Third person: distance",
-            L"Third person: shoulder",
-            L"Third person: height",
-            L"Third person: tight spaces",
-            L"Third person: combat framing",
-            L"Third person: field of view",
-            L"Third person: camera lag",
-            L"Third person: in the way",
-            L"Third person: knocked down",
-            L"Attack wind-up arc",
-            L"Wind-up arc: size",
-            L"Wind-up arc: opacity",
-            L"Wind-up arc: thrusts",
-            L"Right mouse frees the cursor",
-            L"Crosshair out of combat",
-            L"Head steadiness: roll",
-            L"Head steadiness: pitch",
-            L"Head steadiness: yaw",
-            L"Aim marker",
-            L"Flick catch-up",
-            L"Head bob steadiness",
-            L"Freeze while windows are open",
-            L"Spine follows aim",
-            L"Crouch",
-            L"Near clip",
-        };
-        return row >= 0 && row < rows ? names[row] : L"";
-    }
-    // The Settings sub-pages: every row belongs to exactly one (test_controls checks it). The last group has
-    // no rows: the save backup and restore.
+    static constexpr int rows = setting::count;
+    // The Settings pages: every row belongs to exactly one (test_controls checks it). A page may have no rows.
     struct Group {
         const char* name;
-        int rows[10];
+        int rows[12];
         int count;
     };
-    static constexpr int groupCount = 7, savesGroup = -1; // no save backup page
+    static constexpr int groupCount = 6, savesGroup = -1; // no save backup page
     static const Group& group(int g) {
         static const Group groups[groupCount] = {
-            {"Head", {2, 22, 23, 24, 27, 29}, 6},
-            {"View", {0, 4, 31}, 3},
-            {"Controls", {1, 3, 20, 28, 30}, 5},
-            {"Aim and crosshair", {6, 21, 25, 26}, 4},
-            {"Attack wind-up arc", {16, 17, 18, 19}, 4},
-            {"Grab", {5}, 1},
-            {"Third person", {7, 8, 9, 10, 11, 12, 13, 14, 15}, 9},
+            {"View",
+             {setting::fov, setting::nearClip, setting::eyeSetback, setting::hideHelmet, setting::holdHeading,
+              setting::turnLead, setting::fpDeadzoneX, setting::fpDeadzoneY},
+             8},
+            {"Head and body",
+             {setting::headSteady, setting::headRoll, setting::headPitch, setting::headYaw, setting::headBob,
+              setting::spineFollow},
+             6},
+            {"Mouse and keys",
+             {setting::sensitivity, setting::rawMouse, setting::rmbMode, setting::crouchMode,
+              setting::leanKey, setting::leanKeysMode, setting::leanLeftKey, setting::leanRightKey,
+              setting::freezeWindows},
+             9},
+            {"Crosshair and combat",
+             {setting::swingCrosshair, setting::idleCrosshair, setting::aimMarker, setting::flickCatchup,
+              setting::attackCue, setting::cueSize, setting::cueOpacity, setting::cueThrust,
+              setting::fpDefense, setting::tpDefense},
+             10},
+            {"Third person",
+             {setting::tpDistance, setting::tpShoulder, setting::tpHeight, setting::tpTight,
+              setting::tpCombat, setting::tpFov, setting::tpLag, setting::tpBlockers, setting::tpDown,
+              setting::tpCombatAim, setting::tpDeadzoneX, setting::tpDeadzoneY},
+             12},
+            {"Interaction", {setting::grabRange, setting::rotateHeldKey}, 2},
         };
         return groups[g < 0 || g >= groupCount ? 0 : g];
     }
     std::wstring value(int row) const {
         switch (row) {
-        case 0:
-            return std::to_wstring(fov) + L"\x00B0";
-        case 1:
+        case setting::fov:
+            return std::to_wstring(fov) + L"\x00B0 (" +
+                   std::to_wstring(int(std::lround(fp::horizontalFov(float(fov), 16.f / 9.f)))) +
+                   L"\x00B0 across at 16:9)"; // the setting is vertical: wider screens see more at the sides
+        case setting::sensitivity:
             return std::to_wstring(sensitivity) + L"%";
-        case 2:
+        case setting::headSteady:
             return headSteady ? std::to_wstring(headSteady) + L"%" : std::wstring(L"off (the game's)");
-        case 3:
+        case setting::rawMouse:
             return rawMouse ? L"on" : L"off";
-        case 4:
+        case setting::hideHelmet:
             return hideHelmet ? L"hidden" : L"shown";
-        case 5:
+        case setting::grabRange:
             return std::to_wstring(grabRange) + L" cm";
-        case 6:
+        case setting::swingCrosshair:
             return hideSwingCrosshair ? L"hidden" : L"shown";
-        case 7:
+        case setting::tpDistance:
             return std::to_wstring(tpDistance) + L" cm";
-        case 8:
+        case setting::tpShoulder:
             return tpShoulder == 0 ? std::wstring(L"centre")
                                    : std::to_wstring(tpShoulder < 0 ? -tpShoulder : tpShoulder) +
                                          (tpShoulder < 0 ? L" cm left" : L" cm right");
-        case 9:
+        case setting::tpHeight:
             return std::to_wstring(tpHeight) + L" cm above the eye";
-        case 10:
-            return tpTight ? L"swap shoulder, frame closer" : L"off";
-        case 11:
+        case setting::tpTight:
+            return tpTight ? L"swap shoulder" : L"off";
+        case setting::tpCombat:
             return tpCombat ? L"closer and centred" : L"off";
-        case 13:
+        case setting::tpLag:
             return tpLag == 0 ? std::wstring(L"off (as before)") : std::to_wstring(tpLag) + L"%";
-        case 14:
-            return tpHide ? L"hidden (walls still pull in)" : L"the camera pulls in";
-        case 15:
+        case setting::tpBlockers:
+            return tpBlockers == fp::blockersHide   ? L"hide blockers"
+                   : tpBlockers == fp::blockersPush ? L"pull camera in"
+                                                    : L"hide people; pull in";
+        case setting::tpCombatAim:
+            return tpCombatAimFree ? L"free aim" : L"held at the centre";
+        case setting::fpDeadzoneX:
+            return std::to_wstring(fpDeadzoneX * 2) + L"% of screen width";
+        case setting::fpDeadzoneY:
+            return std::to_wstring(fpDeadzoneY * 2) + L"% of screen height";
+        case setting::tpDeadzoneX:
+            return std::to_wstring(tpDeadzoneX * 2) + L"% of screen width";
+        case setting::tpDeadzoneY:
+            return std::to_wstring(tpDeadzoneY * 2) + L"% of screen height";
+        case setting::leanKeysMode:
+            return leanKeysMode ? L"left / right keys" : L"modifier + mouse";
+        case setting::leanLeftKey:
+            return fp::heldKeyName(leanLeftKey);
+        case setting::leanRightKey:
+            return fp::heldKeyName(leanRightKey);
+        case setting::eyeSetback:
+            return eyeSetback ? std::to_wstring(eyeSetback) + L" cm behind the eyes"
+                              : std::wstring(L"at the eyes");
+        case setting::rotateHeldKey:
+            return fp::heldKeyName(rotateHeldKey);
+        case setting::leanKey:
+            return fp::heldKeyName(leanKey);
+        case setting::holdHeading:
+            return holdHeading ? L"faces where you aim" : L"the head's (may slide sideways)";
+        case setting::turnLead:
+            return turnLead ? L"a frame ahead in fast turns" : L"off";
+        case setting::tpDown:
             return tpDown ? L"follow the body" : L"follow the head";
-        case 16:
+        case setting::attackCue:
             return attackCue ? L"shown while a swing winds up" : L"off";
-        case 17:
+        case setting::cueSize:
             return std::to_wstring(cueSize) + L"%";
-        case 18:
+        case setting::cueOpacity:
             return std::to_wstring(cueOpacity) + L"%";
-        case 19:
+        case setting::cueThrust:
             return cueThrust ? L"below the crosshair" : L"off";
-        case 20:
+        case setting::fpDefense:
+        case setting::tpDefense: {
+            const int mode = row == setting::fpDefense ? fpDefense : tpDefense;
+            return mode != 1                ? L"Automatic (native)"
+                   : manualDefenseAvailable ? L"Manual (hold RMB)"
+                                            : L"Auto (fallback)";
+        }
+        case setting::rmbMode:
             return rmbMode == 0 ? L"off"
                                 : (rmbMode == 2 ? L"toggle (click on, click off)" : L"hold (out of combat)");
-        case 21:
+        case setting::idleCrosshair:
             return idleCrosshairAlways ? L"always" : L"only with right mouse";
-        case 22:
+        case setting::headRoll:
             return headRoll ? std::to_wstring(headRoll) + L"%" : std::wstring(L"off");
-        case 23:
+        case setting::headPitch:
             return headPitch ? std::to_wstring(headPitch) + L"%" : std::wstring(L"off");
-        case 24:
+        case setting::headYaw:
             return headYaw ? std::to_wstring(headYaw) + L"%" : std::wstring(L"off");
-        case 25:
+        case setting::aimMarker:
             return aimMarker ? L"while the head catches up" : L"off";
-        case 26:
+        case setting::flickCatchup:
             return flickCatchup ? std::to_wstring(flickCatchup) + L"%" : std::wstring(L"off");
-        case 27:
+        case setting::headBob:
             return headBob ? std::to_wstring(headBob) + L"%" : std::wstring(L"off");
-        case 28:
+        case setting::freezeWindows:
             return freezeWindows ? L"on" : L"off";
-        case 29:
+        case setting::spineFollow:
             return spineFollow ? std::to_wstring(spineFollow) + L"%" : std::wstring(L"off");
-        case 31: {
+        case setting::nearClip: {
             wchar_t b[24];
             swprintf_s(b, L"%d.%d cm", nearClip / 10, nearClip % 10);
             return b;
         }
-        case 30:
+        case setting::crouchMode:
             return crouchMode == 2
                        ? L"toggle (the game's duck key)"
                        : (crouchMode == 1 ? L"hold (the game's duck key)" : L"off (the game's short duck)");
-        case 12:
+        case setting::tpFov:
             return tpFov == 0 ? std::wstring(L"as first person") : std::to_wstring(tpFov) + L"\x00B0";
         default:
             return L"";
         }
     }
-    static bool isNumber(int row) {
-        return (row >= 0 && row <= 2) || row == 5 || (row >= 7 && row <= 9) || row == 12 || row == 13 ||
-               row == 17 || row == 18 || (row >= 22 && row <= 24) || row == 26 || row == 27 || row == 29 ||
-               row == 31 || row == 34 || row == 35;
+    static const wchar_t* label(int row);
+    static bool
+    isNumber(int row); // a number (or a list to step through): - and +; otherwise one Switch button
+    static const wchar_t* tip(int row); // the tooltip, for rows whose effect is not plain from the label
+    // The page's "Reset page" button: its rows back to their defaults. True if anything changed.
+    static constexpr int resetControl = 99;
+    bool resetGroup(int g);
+    // Every value in its range (an ini can hold anything): numbers clamped as their - and + do, unknown choices
+    // back to the default.
+    void normalize();
+    // A click on a Settings control: a row's step, or the page reset.
+    bool click(int control, int delta, int g) {
+        return control == resetControl ? resetGroup(g) : step(control, delta);
     }
 };
+
+// The ini words of the rows that are not plain integers.
+inline constexpr int badText = INT_MIN;
+inline bool iniIs(const wchar_t* t, const wchar_t* w) {
+    while (*t == L' ') ++t;
+    for (; *w; ++t, ++w)
+        if ((*t | 0x20) != *w) return false;
+    while (*t == L' ') ++t;
+    return !*t;
+}
+inline int iniFov(const wchar_t* t) {
+    wchar_t* end = nullptr;
+    const long v = wcstol(t, &end, 10);
+    while (end && (*end == L' ' || *end == L'\t')) ++end;
+    return end == t || !end || *end ? badText : int(v);
+}
+inline int iniHelmet(const wchar_t* t) {
+    return fp::helmetModeFromText(t) == fp::HelmetMode::hide;
+}
+inline const wchar_t* iniHelmetText(int v) {
+    return v ? L"hide" : L"show";
+}
+inline int iniHidden(const wchar_t* t) {
+    return !iniIs(t, L"show");
+}
+inline const wchar_t* iniHiddenText(int v) {
+    return v ? L"hide" : L"show";
+}
+inline int iniAlways(const wchar_t* t) {
+    return iniIs(t, L"always");
+}
+inline const wchar_t* iniAlwaysText(int v) {
+    return v ? L"always" : L"rmb";
+}
+inline int iniFree(const wchar_t* t) {
+    return !iniIs(t, L"centre") && !iniIs(t, L"center");
+}
+inline const wchar_t* iniFreeText(int v) {
+    return v ? L"free" : L"centre";
+}
+struct RowInfo {
+    int row;
+    const wchar_t* label;
+    enum Kind {
+        number,
+        toggle,
+        choice,
+        keyList
+    } kind; // number and keyList: - and + (stepping through keys); others: Switch
+    int ModSettings::* value;
+    bool ModSettings::* flag; // what it edits (neither: a row kept in a nested struct)
+    // first-person.ini: [section] key. Without fromText the value is an integer (switches 1/0); fromText returns
+    // badText for a word it does not know (the default is used). Without toText it is written as an integer.
+    const wchar_t* section;
+    const wchar_t* key;
+    int (*fromText)(const wchar_t*);
+    const wchar_t* (*toText)(int);
+    const wchar_t* tip;
+};
+inline const RowInfo& rowInfo(int row) {
+    static const RowInfo table[setting::count] = {
+        {setting::fov, L"Field of view", RowInfo::number, &ModSettings::fov, nullptr, L"Camera", L"FOV",
+         iniFov, nullptr, nullptr},
+        {setting::sensitivity, L"Mouse sensitivity", RowInfo::number, &ModSettings::sensitivity, nullptr,
+         L"Input", L"SensitivityPercent", nullptr, nullptr, nullptr},
+        {setting::headSteady, L"Head stabilisation", RowInfo::number, &ModSettings::headSteady, nullptr,
+         L"Camera", L"HeadStabilisation", nullptr, nullptr,
+         L"How steadily the neck holds the head, and (out of combat) how much the chest and neck sway is "
+         L"calmed. The view is always exactly what your head sees."},
+        {setting::rawMouse, L"Raw mouse input", RowInfo::toggle, nullptr, &ModSettings::rawMouse, L"Input",
+         L"RawMouse", nullptr, nullptr, L"Reads the mouse directly, without Windows pointer acceleration."},
+        {setting::hideHelmet, L"Helmet in view", RowInfo::toggle, nullptr, &ModSettings::hideHelmet, L"View",
+         L"Helmet", iniHelmet, iniHelmetText, nullptr},
+        {setting::grabRange, L"Grab range", RowInfo::number, &ModSettings::grabRange, nullptr, L"Input",
+         L"GrabRange", nullptr, nullptr, nullptr},
+        {setting::swingCrosshair, L"Crosshair during a swing", RowInfo::toggle, nullptr,
+         &ModSettings::hideSwingCrosshair, L"View", L"SwingCrosshair", iniHidden, iniHiddenText, nullptr},
+        {setting::tpDistance, L"Third person: distance", RowInfo::number, &ModSettings::tpDistance, nullptr,
+         L"ThirdPerson", L"Distance", nullptr, nullptr, nullptr},
+        {setting::tpShoulder, L"Third person: shoulder", RowInfo::number, &ModSettings::tpShoulder, nullptr,
+         L"ThirdPerson", L"Shoulder", nullptr, nullptr, nullptr},
+        {setting::tpHeight, L"Third person: height", RowInfo::number, &ModSettings::tpHeight, nullptr,
+         L"ThirdPerson", L"Height", nullptr, nullptr, nullptr},
+        {setting::tpTight, L"Third person: tight spaces", RowInfo::toggle, nullptr, &ModSettings::tpTight,
+         L"ThirdPerson", L"TightSpaces", nullptr, nullptr, nullptr},
+        {setting::tpCombat, L"Third person: combat framing", RowInfo::toggle, nullptr, &ModSettings::tpCombat,
+         L"ThirdPerson", L"CombatFraming", nullptr, nullptr, nullptr},
+        {setting::tpFov, L"Third person: field of view", RowInfo::number, &ModSettings::tpFov, nullptr,
+         L"ThirdPerson", L"Fov", nullptr, nullptr, nullptr},
+        {setting::tpLag, L"Third person: camera lag", RowInfo::number, &ModSettings::tpLag, nullptr,
+         L"ThirdPerson", L"Lag", nullptr, nullptr,
+         L"How softly the third-person camera follows the character."},
+        {setting::tpBlockers, L"Third person: in the way", RowInfo::choice, &ModSettings::tpBlockers, nullptr,
+         L"ThirdPerson", L"Blockers", fp::blockersFromText, fp::blockersText,
+         L"What the camera does about props and people between it and you: hide them, pull in in front of "
+         L"them, or hide people and pull in for objects. Walls always pull it in."},
+        {setting::tpDown, L"Third person: knocked down", RowInfo::toggle, nullptr, &ModSettings::tpDown,
+         L"ThirdPerson", L"KnockdownFollow", nullptr, nullptr, nullptr},
+        {setting::attackCue, L"Attack wind-up arc", RowInfo::toggle, nullptr, &ModSettings::attackCue,
+         L"View", L"AttackCue", nullptr, nullptr, nullptr},
+        {setting::cueSize, L"Wind-up arc: size", RowInfo::number, &ModSettings::cueSize, nullptr, L"View",
+         L"CueSize", nullptr, nullptr, nullptr},
+        {setting::cueOpacity, L"Wind-up arc: opacity", RowInfo::number, &ModSettings::cueOpacity, nullptr,
+         L"View", L"CueOpacity", nullptr, nullptr, nullptr},
+        {setting::cueThrust, L"Wind-up arc: thrusts", RowInfo::toggle, nullptr, &ModSettings::cueThrust,
+         L"View", L"CueThrust", nullptr, nullptr, nullptr},
+        {setting::rmbMode, L"Right mouse frees the cursor", RowInfo::choice, &ModSettings::rmbMode, nullptr,
+         L"Input", L"RightMouseFree", fp::rmbModeFromText, fp::rmbModeText, nullptr},
+        {setting::idleCrosshair, L"Crosshair out of combat", RowInfo::toggle, nullptr,
+         &ModSettings::idleCrosshairAlways, L"View", L"IdleCrosshair", iniAlways, iniAlwaysText, nullptr},
+        {setting::headRoll, L"Head steadiness: roll", RowInfo::number, &ModSettings::headRoll, nullptr,
+         L"Camera", L"HeadRoll", nullptr, nullptr,
+         L"How much head wobble on this axis is held off. At 100% the head is held almost still while you "
+         L"walk. Mouse turns are never slowed."},
+        {setting::headPitch, L"Head steadiness: pitch", RowInfo::number, &ModSettings::headPitch, nullptr,
+         L"Camera", L"HeadPitch", nullptr, nullptr,
+         L"How much head wobble on this axis is held off. At 100% the head is held almost still while you "
+         L"walk. Mouse turns are never slowed."},
+        {setting::headYaw, L"Head steadiness: yaw", RowInfo::number, &ModSettings::headYaw, nullptr,
+         L"Camera", L"HeadYaw", nullptr, nullptr,
+         L"How much head wobble on this axis is held off. At 100% the head is held almost still while you "
+         L"walk. Mouse turns are never slowed."},
+        {setting::aimMarker, L"Aim marker", RowInfo::toggle, nullptr, &ModSettings::aimMarker, L"Input",
+         L"AimMarker", nullptr, nullptr,
+         L"Shows the crosshair where you aim while the head is still turning to it."},
+        {setting::flickCatchup, L"Flick catch-up", RowInfo::number, &ModSettings::flickCatchup, nullptr,
+         L"Input", L"FlickCatchup", nullptr, nullptr,
+         L"Eases a fast flick so the head can catch up and you can see where it will land."},
+        {setting::headBob, L"Head bob steadiness", RowInfo::number, &ModSettings::headBob, nullptr, L"Camera",
+         L"HeadBobSteady", nullptr, nullptr,
+         L"How much of the head's up-and-down bob while walking is held off."},
+        {setting::freezeWindows, L"Freeze while windows are open", RowInfo::toggle, nullptr,
+         &ModSettings::freezeWindows, L"View", L"FreezeForWindows", nullptr, nullptr,
+         L"While the inventory, an item's description, a container, a body's loot or the arena's "
+         L"end-of-match menu is open, the cursor shows and look and movement hold still."},
+        {setting::spineFollow, L"Spine follows aim", RowInfo::number, &ModSettings::spineFollow, nullptr,
+         L"Camera", L"SpineFollowsAim", nullptr, nullptr,
+         L"In first and third person, combat included, your spine bends forward when you look down and back "
+         L"when you look up, so swings go where you look. Your view still points where you aim."},
+        {setting::crouchMode, L"Crouch", RowInfo::choice, &ModSettings::crouchMode, nullptr, L"Input",
+         L"Crouch", fp::crouchModeFromText, fp::crouchModeText,
+         L"Out of combat, in first and third person, the game's duck key (X unless you changed it) crouches, "
+         L"also while you walk. Combat, a knockdown or talking ends it; you stay down while something is "
+         L"just above your head."},
+        {setting::nearClip, L"Near clip", RowInfo::number, &ModSettings::nearClip, nullptr, L"Camera",
+         L"NearClip", nullptr, nullptr,
+         L"How close to your eye the view starts. Lower lets you lean into walls without them cutting into "
+         L"view; far-away surfaces may then shimmer slightly where they meet. First and third person."},
+        {setting::tpCombatAim, L"Third person: free aim", RowInfo::toggle, nullptr,
+         &ModSettings::tpCombatAimFree, L"ThirdPerson", L"CombatAim", iniFree, iniFreeText,
+         L"In third person the crosshair moves inside a configurable box around the centre and your "
+         L"character "
+         L"turns toward what it is over; the view turns only when it reaches the box's edge. Off: the "
+         L"crosshair stays at the centre."},
+        {setting::eyeSetback, L"Eye position", RowInfo::number, &ModSettings::eyeSetback, nullptr, L"Camera",
+         L"EyeSetback", nullptr, nullptr,
+         L"Moves the first-person view back from your eyes toward the middle of your head, where your own "
+         L"arms, weapons and walls come close less often. Your head is not seen from inside, and anything "
+         L"worn on it that would block the view is hidden (its shadow stays)."},
+        {setting::rotateHeldKey, L"Rotate held object", RowInfo::keyList, &ModSettings::rotateHeldKey,
+         nullptr, L"Input", L"RotateHeldKey", fp::heldKeyFromText, nullptr,
+         L"Hold it while holding an object to turn the object with the mouse; the view stays still "
+         L"meanwhile. Nothing else gets this key while you hold something. Any key can be set in "
+         L"first-person.ini ([Input] RotateHeldKey)."},
+        {setting::leanKey, L"Lean", RowInfo::keyList, &ModSettings::leanKey, nullptr, L"Input", L"LeanKey",
+         fp::heldKeyFromText, nullptr,
+         L"Hold it and move the mouse to lean your upper body: left and right, forward and back. The view "
+         L"stays where it points and goes with your head. Let go to straighten up. Any key can be set in "
+         L"first-person.ini ([Input] LeanKey)."},
+        {setting::holdHeading, L"View heading", RowInfo::toggle, nullptr, &ModSettings::holdHeading,
+         L"Camera", L"HoldHeading", nullptr, nullptr,
+         L"Looking up or down, the game's head turns a few degrees off where you aim, so the view slid "
+         L"sideways. This corrects the physics head heading, and the view follows it. A bigger difference, "
+         L"the head still catching up "
+         L"with a fast turn, is left as it is."},
+        {setting::turnLead, L"Turn lead", RowInfo::toggle, nullptr, &ModSettings::turnLead, L"Camera",
+         L"TurnLead", nullptr, nullptr,
+         L"The view follows your head, which the game turns a frame behind your mouse. In fast turns this "
+         L"turns the view about a frame ahead (at most 3 degrees). Off unless turning feels late."},
+        {setting::fpDeadzoneX, L"First person: aim box width", RowInfo::number, &ModSettings::fpDeadzoneX,
+         nullptr, L"FirstPerson", L"DeadzoneWidth", nullptr, nullptr,
+         L"Half-width in percent of the screen (0-40). Cursor movement inside the box aims your weapon; only "
+         L"movement past its edge turns the head/view. Zero disables this axis."},
+        {setting::fpDeadzoneY, L"First person: aim box height", RowInfo::number, &ModSettings::fpDeadzoneY,
+         nullptr, L"FirstPerson", L"DeadzoneHeight", nullptr, nullptr,
+         L"Half-height in percent of the screen (0-40). Independent of the third-person box. Zero disables "
+         L"this axis."},
+        {setting::tpDeadzoneX, L"Third person: aim box width", RowInfo::number, &ModSettings::tpDeadzoneX,
+         nullptr, L"ThirdPerson", L"DeadzoneWidth", nullptr, nullptr,
+         L"Half-width in percent of the screen (0-40). Zero means direct turning on this axis."},
+        {setting::tpDeadzoneY, L"Third person: aim box height", RowInfo::number, &ModSettings::tpDeadzoneY,
+         nullptr, L"ThirdPerson", L"DeadzoneHeight", nullptr, nullptr,
+         L"Half-height in percent of the screen (0-40). Zero means direct turning on this axis."},
+        {setting::leanKeysMode, L"Lean controls", RowInfo::toggle, nullptr, &ModSettings::leanKeysMode,
+         L"Input", L"LeanKeysMode", nullptr, nullptr,
+         L"Switch between holding the lean modifier with mouse movement and separate lean-left/right keys. "
+         L"Release to straighten. New keys start unbound."},
+        {setting::leanLeftKey, L"Lean left key", RowInfo::keyList, &ModSettings::leanLeftKey, nullptr,
+         L"Input", L"LeanLeftKey", fp::heldKeyFromText, nullptr,
+         L"Used only with left/right lean controls. Hold to lean left, release to straighten; both keys "
+         L"together straighten. Starts unbound."},
+        {setting::leanRightKey, L"Lean right key", RowInfo::keyList, &ModSettings::leanRightKey, nullptr,
+         L"Input", L"LeanRightKey", fp::heldKeyFromText, nullptr,
+         L"Used only with left/right lean controls. Hold to lean right, release to straighten; both keys "
+         L"together straighten. Starts unbound."},
+        {setting::fpDefense, L"First person: defense", RowInfo::choice, &ModSettings::fpDefense, nullptr,
+         L"FirstPerson", L"Defense", fp::defenseModeFromText, fp::defenseModeText,
+         L"Automatic keeps native defense. In ordinary combat, Manual permits native defensive assistance "
+         L"while right mouse is held. "
+         L"Guard takes priority over a new attack; release left mouse before attacking again. Movement "
+         L"and aim remain available. Native reach, equipment and recovery still decide success. "
+         L"If Manual is unavailable, Automatic stays effective and the requested setting is retained."},
+        {setting::tpDefense, L"Third person: defense", RowInfo::choice, &ModSettings::tpDefense, nullptr,
+         L"ThirdPerson", L"Defense", fp::defenseModeFromText, fp::defenseModeText,
+         L"Choose independently for third person. In ordinary combat, hold right mouse to permit native "
+         L"defensive assistance; "
+         L"it does not guarantee a block or add a timing bonus. Right mouse no longer cursor-walks in "
+         L"ordinary close-view combat. Interaction and held objects keep their native controls. "
+         L"Manual uses right mouse in place of an overlapping lean binding during ordinary combat."},
+    };
+    static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
+                              nullptr, nullptr, nullptr,         nullptr, nullptr};
+    return row >= 0 && row < setting::count ? table[row] : none;
+}
+inline const wchar_t* ModSettings::label(int row) {
+    return rowInfo(row).label;
+}
+inline bool ModSettings::isNumber(int row) {
+    const RowInfo::Kind k = rowInfo(row).kind;
+    return k == RowInfo::number || k == RowInfo::keyList;
+}
+inline const wchar_t* ModSettings::tip(int row) {
+    return rowInfo(row).tip;
+}
+inline bool sameRow(int row, const ModSettings& a, const ModSettings& b) {
+    const RowInfo& i = rowInfo(row);
+    return !(i.value && a.*i.value != b.*i.value) && !(i.flag && a.*i.flag != b.*i.flag);
+}
+inline void ModSettings::normalize() {
+    if (fpDefense != 1) fpDefense = 0;
+    if (tpDefense != 1) tpDefense = 0;
+    const ModSettings defaults;
+    for (int r = 0; r < setting::count; ++r) {
+        const RowInfo& i = rowInfo(r);
+        if (i.kind == RowInfo::number)
+            step(r, 0);
+        else if (i.kind == RowInfo::choice && (this->*i.value < 0 || this->*i.value > 2))
+            this->*i.value = defaults.*i.value;
+    }
+}
+inline bool ModSettings::operator==(const ModSettings& o) const {
+    for (int r = 0; r < setting::count; ++r)
+        if (!sameRow(r, *this, o)) return false;
+    return true;
+}
+inline bool ModSettings::resetGroup(int g) {
+    const ModSettings defaults, before = *this;
+    const Group& page = group(g);
+    for (int k = 0; k < page.count; ++k) {
+        const RowInfo& i = rowInfo(page.rows[k]);
+        if (i.value) this->*i.value = defaults.*i.value;
+        if (i.flag) this->*i.flag = defaults.*i.flag;
+    }
+    return !(*this == before);
+}
 
 struct NavNode {
     std::string label, right, request; // request: service path that opens this row ("" = folder only)
@@ -448,7 +840,7 @@ public:
     void setGuiScale(int s) {
         art();
         guiScale = s;
-    }                      // offline checks
+    } // offline checks
     ModSettings settings;  // as the mod has them (refreshed when the page opens)
     int settingsGroup = 0; // the Settings sub-page last opened (ModSettings::group)
     struct SettingControl {
@@ -614,9 +1006,9 @@ private:
     }
     // The GDI font sizes the layout was made for, as pixel sizes for the game font (GUISize scales them).
     int fontSize(HFONT f) const {
-        const int base = f == fonts.title ? 32 : f == fonts.body ? 19 : f == fonts.heading ? 17 : 16;
-        return (base * guiScale + 50) / 100;
-    }                   // +25 %
+        const int unscaled = f == fonts.title ? 32 : f == fonts.body ? 19 : f == fonts.heading ? 17 : 16;
+        return (unscaled * guiScale + 50) / 100;
+    } // +25 %
     int guiScale = 100; // percent; from Exanima.ini "GUISize" when the game has one
     // The game registers GUISize (0x9C820, default 2) and saves settings to %APPDATA%\Exanima\Exanima.ini
     // as "Key = value" lines; with no GUISize line the game's default is in use.
@@ -782,52 +1174,19 @@ private:
                 button({x0 + 480, y, x0 + 568, y + ch}, L"Switch", 0);
             fill(dc, {x0, y + ch + 4, x1, y + ch + 5}, RGB(44, 47, 51));
         }
+        if (g.count) { // this page's rows back to their defaults
+            const RECT b{r.left + 480, y + 4, r.left + 568, y + 4 + ch};
+            fill(dc, b, theme.button);
+            frame(dc, b, theme.line);
+            text(dc, fonts.body, theme.text, b, L"Reset page", DT_CENTER);
+            settingControls.push_back({b, ModSettings::resetControl, 0});
+            y += pitch;
+        }
         if (!page.status.empty())
             text(dc, fonts.note, theme.dim, {r.left, y + 8, r.right, y + 60}, wide(page.status).c_str(),
                  DT_LEFT | DT_WORDBREAK);
     }
     // What a settings row's tooltip says (the rows whose effect is not plain from the label).
-    static const wchar_t* settingTip(int row) {
-        switch (row) {
-        case 22:
-        case 23:
-        case 24:
-            return L"How much head wobble on this axis is held off. At 100% the head is held almost still "
-                   L"while you walk. Mouse turns are never slowed.";
-        case 27:
-            return L"How much of the head's up-and-down bob while walking is held off.";
-        case 31:
-            return L"How close to your eye the view starts. Lower lets you lean into walls without them "
-                   L"cutting into view; far-away surfaces may then shimmer slightly where they meet. First "
-                   L"and third person.";
-        case 30:
-            return L"Out of combat, in first and third person, the game's duck key (X unless you changed it) "
-                   L"crouches, also while you walk. Combat, a knockdown or talking ends it; you stay down "
-                   L"while something is just above your head.";
-        case 29:
-            return L"In first and third person, combat included, your spine bends forward when you look down "
-                   L"and back when you look up, so swings go where you look. Your view still points where "
-                   L"you aim.";
-        case 28:
-            return L"While the inventory, an item's description, a container, a body's loot or the arena's "
-                   L"end-of-match menu is open, the cursor shows and look and movement hold still.";
-        case 2:
-            return L"How steadily the neck holds the head, and (out of combat) how much the chest and neck "
-                   L"sway is calmed. The view is always exactly what your head sees.";
-        case 3:
-            return L"Reads the mouse directly, without Windows pointer acceleration.";
-        case 25:
-            return L"Shows the crosshair where you aim while the head is still turning to it.";
-        case 26:
-            return L"Eases a fast flick so the head can catch up and you can see where it will land.";
-        case 13:
-            return L"How softly the third-person camera follows the character.";
-        case 14:
-            return L"Hides what stands between the camera and you; walls still pull the camera in.";
-        }
-        return nullptr;
-    }
-
 public:
     const wchar_t* settingTipAt(POINT p) const {
         if (!page.settingsPage) return nullptr;
@@ -835,7 +1194,7 @@ public:
         if (p.x < r.left || p.x > r.left + 470 || p.y < r.top + 34) return nullptr;
         const ModSettings::Group& g = ModSettings::group(settingsGroup);
         const int i = (p.y - r.top - 34) / 38;
-        return i >= 0 && i < g.count ? settingTip(g.rows[i]) : nullptr;
+        return i >= 0 && i < g.count ? ModSettings::tip(g.rows[i]) : nullptr;
     }
 };
 

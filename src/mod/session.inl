@@ -1,10 +1,17 @@
 // The session: installing the hooks, the game build and other mods' hooks, F7/F6, the status file, the worker loop, the DLL's exports.
 // Part of first_person.cpp (one translation unit): included there, in order.
+static void loadSettings(const wchar_t* path); // mod/settings.inl: every F8 setting from first-person.ini
+#include "../raw_registration.h"
 static void rawReconcile();
 static bool arm(const char*& reason, const char*& hooks) {
-    if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK) {
-        const bool rollback = MH_DisableHook(MH_ALL_HOOKS) == MH_OK;
-        reason = rollback ? "hook_enable_failed" : "hook_rollback_failed";
+    const MH_STATUS enabled = MH_EnableHook(MH_ALL_HOOKS);
+    if (enabled != MH_OK) {
+        const bool rollback = disableNativeHooks() == MH_OK;
+        reason = enabled == MH_ERROR_CONFLICT ? "hook_entry_changed"
+                                             : rollback ? "hook_enable_failed" : "hook_rollback_failed";
+        if (enabled == MH_ERROR_CONFLICT)
+            snprintf(faultDetail, sizeof faultDetail,
+                     "native code changed after hook creation; retained trampolines cannot be re-used; restart required");
         hooks = rollback ? "removed" : "unknown";
         return false;
     }
@@ -12,7 +19,7 @@ static bool arm(const char*& reason, const char*& hooks) {
     bool installedBehavior = replace(gameAt(fp::sig::behaviorSlot), (void*)originalBehavior, (void*)behavior);
     bool installedPoint =
         installedBehavior && replace(gameAt(fp::sig::pointSlot), (void*)originalPoint, (void*)point);
-    bool installedNav = installedPoint && replace(slot, (void*)original, (void*)nav);
+    bool installedNav = installedPoint && replace(slot, (void*)originalNav, (void*)nav);
     if (!installedNav || InterlockedCompareExchange(&protectionFailure, 0, 0)) {
         const bool rollback = rollbackDispatch(installedNav, installedPoint, installedBehavior);
         reason = rollback ? "dispatch_install_failed" : "dispatch_rollback_failed";
@@ -28,6 +35,7 @@ static bool arm(const char*& reason, const char*& hooks) {
     if (hookedWindow) {
         const auto current = (WNDPROC)GetWindowLongPtrW(hookedWindow, GWLP_WNDPROC);
         if (current && current != windowProc) {
+            resetBindingWindowOwnership();
             originalWindowProc =
                 current; // in place before the switch: a message arriving at once is forwarded
             SetLastError(0);
@@ -43,46 +51,65 @@ static bool arm(const char*& reason, const char*& hooks) {
         hooks = rollback ? "removed" : "unknown";
         return false;
     }
-    rawWanted = rawMouse;
+    {
+        SettingsGuard guard;
+        rawWanted = rawMouse;
+    }
     rawReconcile();
     return true;
 }
-// Raw mouse input follows [Input] RawMouse / the F8 setting and the game window. left
-// it registered to a window the game had destroyed: no more
-// WM_INPUT, and look froze with raw on. Never replaces another registration of this process (an
-// overlay); when it cannot register, look uses cursor deltas as before.
+static fp::RawRegistration rawRegistration() {
+    UINT count = 0;
+    SetLastError(ERROR_SUCCESS);
+    const UINT sized = GetRegisteredRawInputDevices(nullptr, &count, sizeof(RAWINPUTDEVICE));
+    if ((sized == UINT(-1) && GetLastError() != ERROR_INSUFFICIENT_BUFFER) || count > 256) return {};
+    fp::RawRegistration result;
+    result.known = true;
+    if (!count) return result;
+    std::vector<RAWINPUTDEVICE> devices(count);
+    const UINT found = GetRegisteredRawInputDevices(devices.data(), &count, sizeof(RAWINPUTDEVICE));
+    if (found == UINT(-1) || found > devices.size()) return {};
+    for (UINT i = 0; i < found; ++i) {
+        const RAWINPUTDEVICE& device = devices[i];
+        if (device.usUsagePage != 1 || device.usUsage != 2) continue;
+        if (result.present) return {}; // An inconsistent snapshot cannot establish ownership.
+        result.present = true;
+        result.target = uintptr_t(device.hwndTarget);
+        result.flags = device.dwFlags;
+    }
+    return result;
+}
+static bool rawReconcileTarget(HWND desired) {
+    uintptr_t target = uintptr_t(rawTarget);
+    const bool ok = fp::reconcileRawRegistration(
+        uintptr_t(desired), target, rawRegistration,
+        [](uintptr_t window) {
+            RAWINPUTDEVICE device{1, 2, 0, HWND(window)};
+            return RegisterRawInputDevices(&device, 1, sizeof device) != FALSE;
+        },
+        [] {
+            RAWINPUTDEVICE device{1, 2, RIDEV_REMOVE, nullptr};
+            return RegisterRawInputDevices(&device, 1, sizeof device) != FALSE;
+        },
+        [](bool registered) {
+            AcquireSRWLockExclusive(&rawLock);
+            const bool previous = InterlockedExchange(&rawRegistered, registered ? 1 : 0) != 0;
+            if (!registered || previous != registered) rawLook = fp::RawLook{};
+            ReleaseSRWLockExclusive(&rawLock);
+        });
+    rawTarget = HWND(target);
+    return ok;
+}
+// Recheck even while active: another component's later registration replaces ours.
+// Loss clears the relative-device latch so cursor deltas resume on the next sample.
 static void rawReconcile() {
     const bool want = rawWanted.load() && hookedWindow && IsWindow(hookedWindow);
-    const bool have = InterlockedCompareExchange(&rawRegistered, 0, 0) != 0;
-    if (have && (!want || rawTarget != hookedWindow)) {
-        RAWINPUTDEVICE rid{1, 2, RIDEV_REMOVE, nullptr};
-        RegisterRawInputDevices(&rid, 1, sizeof(rid));
-        InterlockedExchange(&rawRegistered, 0);
-        rawTarget = nullptr;
-        AcquireSRWLockExclusive(&rawLock);
-        rawLook = fp::RawLook{};
-        ReleaseSRWLockExclusive(&rawLock);
+    if (!rawReconcileTarget(want ? hookedWindow : nullptr) && want) {
+        SettingsGuard guard;
+        rawWanted = false; // The settings page reports the effective fallback immediately.
     }
-    if (!want || InterlockedCompareExchange(&rawRegistered, 0, 0)) return;
-    UINT count = 0;
-    bool mouseTaken = false;
-    if (GetRegisteredRawInputDevices(nullptr, &count, sizeof(RAWINPUTDEVICE)) == 0 && count) {
-        RAWINPUTDEVICE existing[16];
-        UINT n = count < 16 ? count : 16;
-        if (count > 16 || GetRegisteredRawInputDevices(existing, &n, sizeof(RAWINPUTDEVICE)) == UINT(-1))
-            mouseTaken = true;
-        else
-            for (UINT i = 0; i < n; ++i)
-                if (existing[i].usUsagePage == 1 && existing[i].usUsage == 2) mouseTaken = true;
-    }
-    RAWINPUTDEVICE rid{1, 2, 0, hookedWindow};
-    if (!mouseTaken && RegisterRawInputDevices(&rid, 1, sizeof(rid))) {
-        rawTarget = hookedWindow;
-        InterlockedExchange(&rawRegistered, 1);
-    } else
-        rawWanted = false; // not possible here: cursor deltas, and the settings page shows it off
 }
-// Risk audit item 4: if Exanima destroys its window (display mode
+// If Exanima destroys its window (display mode
 // or resolution change) and makes a new one, the new one is subclassed so F6-F11,
 // F8 and focus release keep working. A window that still exists is never touched.
 static std::atomic<unsigned> windowRehooks{0};
@@ -94,6 +121,7 @@ static void rehookWindow() {
     if (!w) return;
     const auto current = (WNDPROC)GetWindowLongPtrW(w, GWLP_WNDPROC);
     if (current && current != windowProc) {
+        resetBindingWindowOwnership();
         originalWindowProc = current; // the new window's chain (the old one is gone)
         if (SetWindowLongPtrW(w, GWLP_WNDPROC, (LONG_PTR)windowProc)) {
             hookedWindow = w;
@@ -178,6 +206,8 @@ static bool readGameFile(const wchar_t* path, std::vector<uint8_t>& mapped, fp::
     return ok && fp::mapPeFile(file.data(), file.size(), mapped, view);
 }
 static wchar_t unsupportedNotice[160]{};
+// Targets found although some of their signatures no longer match (status: worth regenerating before an update).
+static char degradedTargets[400]{};
 // Resolves the layout from the game's file. On failure the unresolved targets go to the status file.
 static bool resolveGame(const wchar_t* executable) {
     std::vector<uint8_t> mapped;
@@ -187,7 +217,27 @@ static bool resolveGame(const wchar_t* executable) {
         snprintf(faultDetail, sizeof faultDetail, "Exanima.exe could not be read");
         return false;
     }
-    if (fp::resolveLayout(file, layout, report)) return true;
+    fp::Layout candidate;
+    if (fp::resolveLayout(file, candidate, report)) {
+        if (!fp::validateNativeContracts(file, candidate, nativeContracts)) {
+            snprintf(faultDetail, sizeof faultDetail, "native field contract failed: %s (%s)",
+                     nativeContracts.firstRequired ? nativeContracts.firstRequired : "unknown",
+                     fp::contractFailureText(nativeContracts.firstRequiredReason));
+            swprintf_s(unsupportedNotice,
+                       FP_SHOWN_NAME L": this Exanima native layout is not supported (%hs).",
+                       nativeContracts.firstRequired ? nativeContracts.firstRequired : "field contract");
+            return false;
+        }
+        layout = candidate;
+        manualDefenseFieldMismatch = nativeContracts.optionalFailures != 0;
+        int at = 0;
+        degradedTargets[0] = 0;
+        for (unsigned t = 0; t < fp::sig::targetCount && at >= 0 && at < int(sizeof degradedTargets); ++t)
+            if (report.degraded[t])
+                at += snprintf(degradedTargets + at, sizeof degradedTargets - at, "%s%s", at ? "," : "",
+                               fp::sig::targetNames[t]);
+        return true;
+    }
     int at = snprintf(faultDetail, sizeof faultDetail, "%u of %u game targets unresolved:", report.failures,
                       unsigned(fp::sig::targetCount));
     for (unsigned t = 0; t < fp::sig::targetCount && at > 0 && at < int(sizeof faultDetail); ++t)
@@ -210,9 +260,9 @@ static wchar_t otherHooksNotice[240]{};
 static char otherHooksNames[160]{}; // status: which targets were already hooked
 // The launcher's prompt: the player said yes for this game process (allowOtherHooks, called before enable).
 static volatile LONG playerApproved = 0;
-static bool slotTaken(fp::sig::Target slot, fp::sig::Target holds) {
-    return *(uintptr_t*)gameAt(slot) != gameAt(holds);
-}
+static bool slotTaken(fp::sig::Target slot, fp::sig::Target original) {
+    return *(uintptr_t*)gameAt(slot) != gameAt(original);
+} // no longer the game's own function
 // True to go on: nothing else hooked, or chaining is allowed. The function entries are compared with the
 // game's file; the slots with the game's own functions.
 static bool otherHooksCheck(const wchar_t* executable) {
@@ -220,6 +270,10 @@ static bool otherHooksCheck(const wchar_t* executable) {
     fp::ImageView file;
     if (!readGameFile(executable, mapped, file)) {
         snprintf(faultDetail, sizeof faultDetail, "Exanima.exe could not be read");
+        return false;
+    }
+    if (!admitManualDefenseEntries(file)) {
+        otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
         return false;
     }
     fp::sig::Target found[8];
@@ -271,7 +325,7 @@ static bool adoptDispatch() {
     if (!own && !chained) return false;
     if (!n || !b || !p || n == (uintptr_t)&nav || b == (uintptr_t)&behavior || p == (uintptr_t)&point)
         return false;
-    original = (Nav)n;
+    originalNav = (Nav)n;
     originalBehavior = (Behavior)b;
     originalPoint = (Point)p;
     return true;
@@ -303,6 +357,7 @@ static void hookHealthTick() {
     }
 }
 static bool rearm(const wchar_t* executable) {
+    setActivationPhase(fp::ActivationPhase::starting);
     viewMode = 0;                 // a fresh session starts in first person
     rearmedAt = GetTickCount64(); // before the window procedure returns (a queued F6 must not toggle)
     if (!otherHooksCheck(executable)) {
@@ -328,6 +383,10 @@ static bool rearm(const wchar_t* executable) {
     }
     stopPress = 0;
     stopRelease = 0;
+    // A re-arm is a fresh installation, including newly adopted dispatch-slot
+    // owners. A previous session's passed verdict cannot verify these hooks.
+    hookHealth = fp::HookHealth{};
+    InterlockedExchange(&hookFault, 0);
     const char* reason = "";
     const char* hooks = "";
     if (!arm(reason, hooks)) {
@@ -360,14 +419,11 @@ static bool waitForGame() {
         Sleep(100);
     }
 }
-// first-person-status.json while running (the worker, every second). The launcher reads pid, revision,
-// build and installed from it.
+// The worker's running snapshot includes the shared activation acknowledgement.
 static void writeRunningStatus(FILE* f, const Aim& a) {
     fp::JsonOut j(f);
-    j.unum("pid", GetCurrentProcessId());
+    writeActivationStatus(j);
     j.boolean("installed", true);
-    j.num("revision", FP_REVISION);
-    j.str("build", FP_BUILD);
     j.num("nav_thread", InterlockedCompareExchange(&navThread, 0, 0));
     j.num("swap_thread", InterlockedCompareExchange(&swapThread, 0, 0));
     j.num("active", InterlockedCompareExchange(&active, 0, 0));
@@ -383,6 +439,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.reals("target", a.point, 3);
     j.unum("walk_targets", walkTargets.load());
     j.unum("combat_steps", combatSteps.load());
+    j.str("manual_defense_capability", manualDefenseReasonText());
+    j.str("fp_defense_requested", fpManualGuard.load() ? "manual" : "automatic");
+    j.str("tp_defense_requested", tpManualGuard.load() ? "manual" : "automatic");
+    j.str("fp_defense_effective", manualDefenseReady.load() && fpManualGuard.load() ? "manual" : "automatic");
+    j.str("tp_defense_effective", manualDefenseReady.load() && tpManualGuard.load() ? "manual" : "automatic");
+    j.unum("guard_denied", guardDenied.load());
+    j.unum("guard_withdrawals", guardWithdrawals.load());
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
     j.num("fov", selectedFov.load());
     j.boolean("settings_saved", persistedFov == selectedFov.load());
@@ -467,12 +530,6 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("hidden_body", hiddenBodyNodes.load());
     j.str("view", viewMode.load() == 1 ? "third" : viewMode.load() == 2 ? "to-overhead" : "first");
     j.unum("tp_prop_pulls", tpPropPulls.load());
-    j.object("terrain_live")
-        .unum("tiles", terrainTilesApplied.load())
-        .unum("wakes", terrainWakes.load())
-        .unum("light_marks", terrainLightMarks.load())
-        .unum("slow_paint", terrainSlowPaint.load())
-        .end();
     j.str("game_build", verifiedBuild ? "verified" : "compatible");
     j.str("hook_health", hookHealthText());
     {
@@ -480,6 +537,51 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         snprintf(hooks, sizeof hooks, "%s%s", chained ? "chained:" : "none", chained ? otherHooksNames : "");
         j.str("other_hooks", hooks);
     }
+    j.str("signatures_degraded", degradedTargets);
+    j.unum("native_fields_checked", nativeContracts.checked);
+    j.unum("native_fields_withheld", nativeContracts.optionalFailures);
+    j.str("native_field_issue", nativeContracts.firstOptional ? nativeContracts.firstOptional : "none");
+    j.object("held")
+        .real("distance", holdApplied.load(), 4)
+        .real("target", holdTarget.load(), 4)
+        .boolean("rotating", heldRotating.load())
+        .unum("turns", heldTurns.load())
+        .unum("flings", flings.load())
+        .real("physics_step", physicsStep.load(), 4)
+        .end();
+    j.unum("helmet_turn_retests", helmetTurnRetests.load());
+    j.unum("prop_near_hits", propNearHits.load());
+    j.real("heading_turn", double(headingTurn.load()) * 57.29578, 2);
+    j.unum("overhead_inputs_held", overheadInputsHeld.load());
+    j.object("lean")
+        .boolean("held", leaning.load())
+        .real("side", leanSideNow.load(), 3)
+        .real("forward", leanForwardNow.load(), 3)
+        .end();
+    j.object("head")
+        .num("eye_setback", eyeSetback.load())
+        .real("mid_up", headMid2.load(), 4)
+        .real("mid_forward", headMid3.load(), 4)
+        .real("reach", headReach.load(), 4)
+        .real("eye_up", fp::eyeAlongAxis2, 4)
+        .real("eye_forward", fp::eyeAlongAxis3, 4)
+        .end();
+    j.object("third_person")
+        .real("drop", tpDrop.load(), 4)
+        .boolean("down", tpDownNow.load())
+        .real("ceiling_room", tpCeilingRoom.load(), 4)
+        .real("lost_height", tpLostHeight.load(), 4)
+        .real("pivot_pulled", tpPivotPulled.load(), 4)
+        .real("allowed", tpAllowed.load(), 4)
+        .str("blockers", tpBlockers.load() == fp::blockersHide   ? "hide"
+                         : tpBlockers.load() == fp::blockersPush ? "push"
+                                                                 : "smart")
+        .boolean("combat_aim_free", tpAimFree.load())
+        .array("aim_box")
+        .real(nullptr, tpAimX.load(), 4)
+        .real(nullptr, tpAimY.load(), 4)
+        .end()
+        .end();
     j.finish();
 }
 static DWORD runSession() {
@@ -520,106 +622,14 @@ static DWORD runSession() {
                 userSettingsFile(settingsPath, n && n < MAX_PATH ? userSettingsDir(profile) : std::wstring());
             if (user.size() < MAX_PATH) wcscpy_s(settingsPath, user.c_str());
         }
-        wchar_t value[64], *end = nullptr;
-        GetPrivateProfileStringW(L"Camera", L"FOV", L"75", value, 64, settingsPath);
-        long parsed = wcstol(value, &end, 10);
-        const bool hasDigits = end != value;
-        while (end && (*end == L' ' || *end == L'\t')) ++end;
-        persistedFov = (!hasDigits || !end || *end) ? 75 : fp::clampFov(int(parsed));
-        selectedFov.store(persistedFov);
-        const int sensitivityPercent =
-            GetPrivateProfileIntW(L"Input", L"SensitivityPercent", 100, settingsPath);
-        sensitivity =
-            0.0025f *
-            float(sensitivityPercent < 10 ? 10 : (sensitivityPercent > 400 ? 400 : sensitivityPercent)) /
-            100.f;
+        loadSettings(settingsPath);
+        persistedFov = selectedFov.load();
         invertY = GetPrivateProfileIntW(L"Input", L"InvertY", 0, settingsPath) != 0;
-        rawMouse = GetPrivateProfileIntW(L"Input", L"RawMouse", 0, settingsPath) != 0;
         attackSideKey = GetPrivateProfileIntW(L"Input", L"AttackSideKey", 0, settingsPath);
-        grabRange = fp::clampGrabRange(
-            GetPrivateProfileIntW(L"Input", L"GrabRange", fp::grabRangeDefault, settingsPath));
-        {
-            wchar_t rm[16];
-            GetPrivateProfileStringW(L"Input", L"RightMouseFree", L"hold", rm, 16, settingsPath);
-            rmbMode = fp::rmbModeFromText(rm);
-        }
-        {
-            wchar_t cm[16];
-            GetPrivateProfileStringW(L"Input", L"Crouch", L"toggle", cm, 16, settingsPath);
-            crouchMode = fp::crouchModeFromText(cm);
-        }
-        {
-            auto clampI = [](int v, int lo, int hi) {
-                return v < lo ? lo : (v > hi ? hi : v);
-            };
-            tpDistance = clampI(GetPrivateProfileIntW(L"ThirdPerson", L"Distance", 250, settingsPath),
-                                fp::tpDistanceMin, fp::tpDistanceMax);
-            tpShoulder = clampI(GetPrivateProfileIntW(L"ThirdPerson", L"Shoulder", 40, settingsPath),
-                                -fp::tpShoulderMax, fp::tpShoulderMax);
-            tpHeight = clampI(GetPrivateProfileIntW(L"ThirdPerson", L"Height", 15, settingsPath),
-                              fp::tpHeightMin, fp::tpHeightMax);
-            tpTight = GetPrivateProfileIntW(L"ThirdPerson", L"TightSpaces", 1, settingsPath) != 0;
-            tpCombat = GetPrivateProfileIntW(L"ThirdPerson", L"CombatFraming", 1, settingsPath) != 0;
-            tpLag = clampI(GetPrivateProfileIntW(L"ThirdPerson", L"Lag", 40, settingsPath), 0, 100);
-            tpHide = GetPrivateProfileIntW(L"ThirdPerson", L"HideBlockers", 1, settingsPath) != 0;
-            tpDown = GetPrivateProfileIntW(L"ThirdPerson", L"KnockdownFollow", 1, settingsPath) != 0;
-            {
-                const int f = GetPrivateProfileIntW(L"ThirdPerson", L"Fov", 0, settingsPath);
-                tpFov = f <= 0 ? 0 : fp::clampFov(f);
-            }
-        }
-        {
-            auto axis = [&](const wchar_t* key, int fallback) {
-                const int v = GetPrivateProfileIntW(L"Camera", key, fallback, settingsPath);
-                return v < 0 ? 0 : (v > 100 ? 100 : v);
-            };
-            headSteadyRoll = axis(L"HeadRoll", 80);
-            headSteadyPitch = axis(L"HeadPitch", 70);
-            headSteadyYaw = axis(L"HeadYaw", 50);
-            headBob = axis(L"HeadBobSteady", 30);
-            spineFollow = axis(L"SpineFollowsAim", 60);
-        }
-        nearClip = fp::clampNearClip(
-            GetPrivateProfileIntW(L"Camera", L"NearClip", fp::nearClipDefaultTenths, settingsPath));
-        {
-            const int s = GetPrivateProfileIntW(L"Camera", L"HeadStabilisation", 70, settingsPath);
-            headSteady = s < 0 ? 0 : (s > 100 ? 100 : s);
-        }
-        {
-            wchar_t sc[16];
-            GetPrivateProfileStringW(L"View", L"SwingCrosshair", L"show", sc, 16, settingsPath);
-            hideSwingCrosshair = _wcsicmp(sc, L"show") != 0;
-        }
-        {
-            wchar_t ic[16];
-            GetPrivateProfileStringW(L"View", L"IdleCrosshair", L"rmb", ic, 16, settingsPath);
-            idleCrosshairAlways = _wcsicmp(ic, L"always") == 0;
-        }
-        windowsFreeze = GetPrivateProfileIntW(L"View", L"FreezeForWindows", 1, settingsPath) != 0;
-        aimMarker = GetPrivateProfileIntW(L"Input", L"AimMarker", 1, settingsPath) != 0;
-        {
-            const int f = GetPrivateProfileIntW(L"Input", L"FlickCatchup", 50, settingsPath);
-            flickCatchup = f < 0 ? 0 : (f > 100 ? 100 : f);
-        }
-        probeKey = GetPrivateProfileIntW(L"Input", L"ProbeKey", 0, settingsPath);
         {
             wchar_t oh[16];
             GetPrivateProfileStringW(L"Compat", L"OtherHooks", L"ask", oh, 16, settingsPath);
             otherHooks = fp::otherHooksFromText(oh);
-        }
-        if (probeKey < 0 || probeKey > 254) probeKey = 0;
-        {
-            wchar_t helmet[16];
-            GetPrivateProfileStringW(L"View", L"Helmet", L"show", helmet, 16, settingsPath);
-            helmetMode = fp::helmetModeFromText(helmet);
-        } // HideHelmet is no longer read
-        attackCue = GetPrivateProfileIntW(L"View", L"AttackCue", 1, settingsPath) != 0;
-        {
-            const int z = GetPrivateProfileIntW(L"View", L"CueSize", 100, settingsPath),
-                      o = GetPrivateProfileIntW(L"View", L"CueOpacity", 100, settingsPath);
-            cueSize = z < 50 ? 50 : (z > 200 ? 200 : z);
-            cueOpacity = o < 20 ? 20 : (o > 100 ? 100 : o);
-            cueThrust = GetPrivateProfileIntW(L"View", L"CueThrust", 1, settingsPath) != 0;
         }
         if (!fp::attackSideKeyValid(attackSideKey)) attackSideKey = 0; // never a mouse button
     } else
@@ -629,7 +639,7 @@ static DWORD runSession() {
         return 2;
     }
     base = (uintptr_t)GetModuleHandleW(nullptr);
-    original = (Nav)(gameAt(fp::sig::navSampler));
+    originalNav = (Nav)(gameAt(fp::sig::navSampler));
     if (!otherHooksCheck(executable)) {
         reportFault("native_code_conflict", "not_installed", "not_required",
                     otherHooksNotice[0] ? otherHooksNotice : nullptr);
@@ -647,7 +657,14 @@ static DWORD runSession() {
         reportFault("hook_initialization_failed", "not_installed", "not_required");
         return 2;
     }
-    if (MH_CreateHook((void*)(gameAt(fp::sig::cursorAim)), (void*)cursorAim, (void**)&originalCursor) !=
+    copyCameraSnapshots = (void (*)())gameAt(fp::sig::copyCameraSnapshots);
+    if (MH_CreateHook((void*)gameAt(fp::sig::cameraOrbit), (void*)cameraOrbit,
+                      (void**)&originalCameraOrbit) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::cameraZoom), (void*)cameraZoom, (void**)&originalCameraZoom) !=
+            MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::cameraMouse), (void*)cameraMouse,
+                      (void**)&originalCameraMouse) != MH_OK ||
+        MH_CreateHook((void*)(gameAt(fp::sig::cursorAim)), (void*)cursorAim, (void**)&originalCursor) !=
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::explore)), (void*)explore, (void**)&originalExplore) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::combatStep)), (void*)step, (void**)&originalStep) != MH_OK ||
@@ -683,10 +700,19 @@ static DWORD runSession() {
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::hingeHandler)), (void*)hingeHandler,
                       (void**)&originalHingeHandler) != MH_OK ||
+        MH_CreateHook((void*)GetProcAddress(GetModuleHandleW(L"opengl32.dll"), "wglMakeCurrent"),
+                      (void*)cueMakeCurrent, (void**)&originalCueMakeCurrent) != MH_OK ||
+        MH_CreateHook((void*)GetProcAddress(GetModuleHandleW(L"opengl32.dll"), "wglDeleteContext"),
+                      (void*)cueDeleteContext, (void**)&originalCueDeleteContext) != MH_OK ||
         MH_CreateHook((void*)GetProcAddress(GetModuleHandleW(L"opengl32.dll"), "wglSwapBuffers"), (void*)swap,
                       (void**)&originalSwap) != MH_OK) {
         MH_Uninitialize();
         reportFault("hook_creation_failed", "not_installed", "not_required");
+        return 3;
+    }
+    if (!createManualDefenseHooks()) {
+        MH_Uninitialize();
+        reportFault("manual_hook_rollback_failed", "not_installed", "not_required");
         return 3;
     }
     {
@@ -706,7 +732,7 @@ static DWORD runSession() {
     bool viewFaultNoticed = false;
     for (;;) {
         InterlockedExchange(&active, 1);
-        runtimeState = "running";
+        setActivationPhase(fp::ActivationPhase::running);
         for (int i = 0; !InterlockedCompareExchange(&stopping, 0, 0); i++) {
             Sleep(100);
             saveFov();
@@ -717,20 +743,15 @@ static DWORD runSession() {
             }
             stopKeyTick();
             hookHealthTick();
+            if (i % 10 == 0) {
+                static unsigned stepsBefore = 0;
+                const unsigned steps = playerSteps.load(); // the player's pose builds a second
+                physicsStep = steps - stepsBefore >= 10 ? 1.f / float(steps - stepsBefore) : 0.f;
+                stepsBefore = steps;
+            }
             pumpNotice();
             { // F8's window: in play, and at the title (no player character for 2 s).
                 const bool title = atTitle();
-                atTitleNow = title;
-                titleSettled = title && noPlayerSince && GetTickCount64() - noPlayerSince >= 10000;
-                {
-                    char pending[17]{};
-                    memcpy(pending, (const void*)(gameAt(fp::sig::pendingLevelName)),
-                           16); // a load in flight changes it (restore waits 10 s after the last change)
-                    if (memcmp(pending, pendingLevel, 16)) {
-                        memcpy(pendingLevel, pending, 17);
-                        pendingLevelSince = GetTickCount64();
-                    }
-                }
                 if (viewMode.load() == 2 && GetTickCount64() - tpBlendStart.load() > 600) {
                     viewMode = 0;
                     InterlockedExchange(&active, 0);
@@ -738,10 +759,6 @@ static DWORD runSession() {
                     aim.valid = false;
                     ReleaseSRWLockExclusive(&aimLock);
                 } // no nav frame ended the blend (parked, loading): end it as F6 did
-                if (!title && f8OpenedAtTitle) {
-                    f8OpenedAtTitle = false;
-                    InterlockedExchange(&cursorFree, 0);
-                } // opened at the title: closed when play starts
                 f8WindowTick(InterlockedCompareExchange(&cursorFree, 0, 0) && gameWindow() != nullptr &&
                                  (InterlockedCompareExchange(&active, 0, 0) || title),
                              title);
@@ -769,15 +786,10 @@ static DWORD runSession() {
             }
         }
         InterlockedExchange(&stopping, 1);
-        atTitleNow = false;
-        titleSettled = false; // no stale "main menu" after a stop
+        setActivationPhase(fp::ActivationPhase::stopping);
         saveFov();
         releaseInput();
-        if (InterlockedExchange(&rawRegistered, 0)) {
-            RAWINPUTDEVICE rid{1, 2, RIDEV_REMOVE, nullptr};
-            RegisterRawInputDevices(&rid, 1, sizeof(rid));
-            rawTarget = nullptr;
-        }
+        const bool rawRetired = rawReconcileTarget(nullptr);
         // Missing/minimized/teardown callbacks cannot make shutdown wait forever.
         // A timed-out module stays mapped with pass-through adapters and restoration
         // callbacks intact. Never free a trampoline another thread can still reach.
@@ -785,6 +797,14 @@ static DWORD runSession() {
             const bool unknown = InterlockedCompareExchange(&restorationUnknown, 0, 0) != 0;
             reportFault(unknown ? "camera_owner_changed" : "restore_timeout", "retained",
                         unknown ? "unknown" : "pending");
+            return 7;
+        }
+        if (!rawRetired && rawTarget) {
+            reportFault("raw_retirement_pending", "retained", "restored");
+            return 7;
+        }
+        if (!awaitCueRetirement()) {
+            reportFault("cue_retirement_pending", "retained", "restored");
             return 7;
         }
         bool ok = rollbackDispatch(true, true, true);
@@ -807,18 +827,14 @@ static DWORD runSession() {
             reportFault("stop_rollback_failed", "unknown", "restored");
             return 8;
         }
-        if (InterlockedCompareExchange(&cameraFault, 0, 0)) {
-            reportFault("camera_source_lost", "removed", "restored");
-            return 9;
-        }
         if (InterlockedCompareExchange(&hookFault, 0, 0)) {
             reportFault("hook_not_firing", "removed", "restored",
                         FP_SHOWN_NAME L" stopped: this Exanima version does not run one of its hooks. "
                                       L"Overhead restored.");
             return 11;
         }
-        const bool rearmable = fp::rearmAllowed(ok, ok, InterlockedCompareExchange(&cameraFault, 0, 0) != 0,
-                                                InterlockedCompareExchange(&restorationUnknown, 0, 0) != 0);
+        const bool rearmable =
+            fp::rearmAllowed(ok, ok, InterlockedCompareExchange(&restorationUnknown, 0, 0) != 0);
         {
             CameraGuard finalGuard;
             wchar_t path[MAX_PATH];
@@ -842,14 +858,13 @@ static DWORD runSession() {
                 }
             }
         }
+        setActivationPhase(fp::ActivationPhase::stopped);
         if (slash) {
             FILE* f = openStatus();
             if (f) {
                 fp::JsonOut j(f);
-                j.unum("pid", GetCurrentProcessId())
-                    .num("revision", FP_REVISION)
-                    .str("build", FP_BUILD)
-                    .boolean("installed", false)
+                writeActivationStatus(j);
+                j.boolean("installed", false)
                     .str("state", "stopped")
                     .boolean("restored", ok);
                 if (rearmable)
@@ -885,13 +900,30 @@ extern "C" __declspec(dllexport) bool enable() {
         if (InterlockedExchange(&emtkOff, 0)) InterlockedExchange(&rearmRequested, 1);
         return true;
     }
+    setActivationPhase(fp::ActivationPhase::starting);
     HANDLE t = CreateThread(nullptr, 0, sessionEntry, nullptr, 0, nullptr);
     if (!t) {
         InterlockedExchange(&sessionStarted, 0);
+        setActivationPhase(fp::ActivationPhase::idle);
         return false;
     }
     CloseHandle(t);
     return true;
+}
+// A launcher request has its own identity even when the DLL is already running.
+// Clean F7 stops can re-arm; faults retain the worker's refusal and require restart.
+extern "C" __declspec(dllexport) DWORD WINAPI enableWithStatus(void* request) {
+    const uint64_t id = uint64_t(uintptr_t(request));
+    if (!id) return 0;
+    AcquireSRWLockExclusive(&activationLock);
+    const fp::ActivationPhase phase = fp::effectiveActivationPhase(
+        activationPhase, InterlockedCompareExchange(&stopping, 0, 0) != 0);
+    const bool allowed = phase != fp::ActivationPhase::failed;
+    if (allowed) activationRequest = id;
+    ReleaseSRWLockExclusive(&activationLock);
+    if (!allowed || !enable()) return 0;
+    if (fp::activationNeedsRearm(phase)) InterlockedExchange(&rearmRequested, 1);
+    return 1;
 }
 // EMTK's switch-off: the same stop as holding F7 (hooks back, cursor and keys released; the session
 // thread then waits for enable or F6). The code stays mapped until the process ends: a game thread can be

@@ -254,16 +254,86 @@ static void headStabiliserTests() {
         {
             const float pose[12] = {0, 0, 1, 0, 1, 0, -1, 0, 0, 0, 0, 0};
             float q[4];
-            assert(!fp::spineBendQuat(pose, pose, down60, 0.3f, q));
-        } // X along the heading: not bent
+            assert(fp::spineBendQuat(pose, pose, down60, 0.3f, q) && std::fabs(q[2]) > 0.1f);
+        } // a rotated parent expresses the world side axis in its local Z, not only X
         {
             const float pose[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0},
                         twisted[12] = {0, 1, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0};
             float q[4];
-            assert(!fp::spineBendQuat(pose, twisted, down60, 0.3f, q));
-        } // its parent's X disagrees: which X the game uses is unsure, so not bent
+            assert(fp::spineBendQuat(pose, twisted, down60, 0.3f, q) && std::fabs(q[1]) > 0.1f);
+        } // the resolved parent frame handles disagreement without dropping the bend
         puts("PASS: spine follows aim: forward looking down, back looking up, a share of the pitch, clamped, "
              "about the side axis only");
+    }
+    { // lean: the mouse bends the upper body; right is the view's right (yaw 0: -x), forward is the heading
+        auto topAfter = [](const float* pose, const float* q,
+                           float* top) { // the part's local Y turned by q, in the world
+            const float v[3] = {0, 1, 0}, u[3] = {q[0], q[1], q[2]}, w = q[3];
+            float t[3] = {2 * (u[1] * v[2] - u[2] * v[1]), 2 * (u[2] * v[0] - u[0] * v[2]),
+                          2 * (u[0] * v[1] - u[1] * v[0])};
+            const float r[3] = {v[0] + w * t[0] + (u[1] * t[2] - u[2] * t[1]),
+                                v[1] + w * t[1] + (u[2] * t[0] - u[0] * t[2]),
+                                v[2] + w * t[2] + (u[0] * t[1] - u[1] * t[0])};
+            for (int j = 0; j < 3; ++j) top[j] = pose[j] * r[0] + pose[3 + j] * r[1] + pose[6 + j] * r[2];
+        };
+        const float ahead[3] = {0, 0, 1};
+        float q[4], top[3];
+        for (float s : {1.f, -1.f}) {
+            const float pose[12] = {s, 0, 0, 0, 1, 0, 0, 0, s, 0, 0, 0}; // either way round, as the bend
+            assert(fp::spineLeanQuat(pose, pose, ahead, 0, 0.3f, q));
+            topAfter(pose, q, top);
+            assert(top[0] < -0.2f && std::fabs(top[2]) < 1e-4f); // right
+            assert(fp::spineLeanQuat(pose, pose, ahead, 0, -0.3f, q));
+            topAfter(pose, q, top);
+            assert(top[0] > 0.2f); // left
+            assert(fp::spineLeanQuat(pose, pose, ahead, 0.3f, 0, q));
+            topAfter(pose, q, top);
+            assert(top[2] > 0.2f && std::fabs(top[0]) < 1e-4f); // forward, as spineBendQuat
+            float qb[4];
+            assert(fp::spineBendQuat(pose, pose, ahead, 0.3f, qb));
+            for (int k = 0; k < 4; ++k) assert(std::fabs(q[k] - qb[k]) < 1e-5f);
+        }
+        {
+            const float pose[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0},
+                        twisted[12] = {0, 1, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0};
+            assert(fp::spineLeanQuat(pose, twisted, ahead, 0, 0.3f, q));
+            float reference[4];
+            assert(fp::spineLeanQuat(pose, pose, ahead, 0.25f, 0.3f, reference));
+            // An achieved torso already rolled 30 degrees used to reject a valid lean (cos(30)<0.9).
+            const float rolled[12] = {0.8660254f, 0.5f, 0, -0.5f, 0.8660254f, 0, 0, 0, 1, 0, 0, 0};
+            assert(fp::spineLeanQuat(rolled, pose, ahead, 0.25f, 0.3f, q));
+            for (int i = 0; i < 4; ++i) assert(std::fabs(q[i] - reference[i]) < 1e-6f);
+        }
+        fp::Lean l;
+        l.step(50, -20, true, 1.f / 60);
+        assert(std::fabs(l.side - 50 * fp::leanRadiansPerPixel) < 1e-6f && l.forward > 0);
+        for (int i = 0; i < 100; ++i) l.step(100, -100, true, 1.f / 60);
+        assert(l.side == fp::leanSideMax && l.forward == fp::leanForwardMax); // held: clamped
+        l.step(0, 0, false, 0.15f);
+        assert(l.side < fp::leanSideMax * 0.4f && l.side > 0); // let go: eases back
+        for (int i = 0; i < 120; ++i) l.step(500, 500, false, 1.f / 60);
+        assert(!l.active()); // upright again; the mouse no longer leans
+        for (int i = 0; i < 60; ++i) l.keys(-1, 1.f / 60.f);
+        assert(l.side < -0.49f);
+        for (int i = 0; i < 120; ++i) l.keys(0, 1.f / 60.f);
+        assert(!l.active());
+        for (int i = 0; i < 60; ++i) l.keys(1, 1.f / 60.f);
+        assert(l.side > 0.49f);
+        l = {};
+        const panel::ModSettings leanDefaults;
+        assert(!leanDefaults.leanKeysMode && leanDefaults.leanLeftKey == 0 && leanDefaults.leanRightKey == 0);
+        l.step(NAN, 0, true, 1.f / 60);
+        assert(!l.active());
+        assert(panel::ModSettings().value(panel::setting::fov) ==
+               L"75\x00B0 (108\x00B0 across at 16:9)"); // FOV is vertical; the 16:9 width beside it
+        {
+            const float never[3]{}, front[3] = {0, 0, 1}, seven[3] = {0, std::sin(0.12f), std::cos(0.12f)},
+                                    nine[3] = {std::sin(0.16f), 0, std::cos(0.16f)};
+            assert(fp::helmetRetestDue(never, front) && !fp::helmetRetestDue(front, front) &&
+                   !fp::helmetRetestDue(front, seven) && fp::helmetRetestDue(front, nine));
+        } // head wear: re-tested after 8 degrees
+        puts("PASS: lean: the mouse bends the upper body right, left, forward (the same rotation as the "
+             "bend), clamped, eased back upright");
     }
 }
 int main() {
@@ -272,6 +342,35 @@ int main() {
     std::vector<unsigned char> storage(0x600000);
     base = (uintptr_t)storage.data();
     headStabiliserTests();
+    assert(!fp::crosshairDrawn(false, false, false, false, true, true));
+    assert(!fp::crosshairDrawn(false, false, false, true, true, true));
+    assert(fp::crosshairDrawn(true, false, false, false, false, true));
+    {
+        const float coeffs[16] = {-.1f, .1f, 0, 0, -.1f, 0, .1f, 0, -.1f, 0, 0, .1f, 1, 0, 0, 0};
+        for (float pitch : {-1.15f, 0.f, 1.15f}) {
+            const float axes[9] = {
+                1, 0, 0, 0, std::cos(pitch), -std::sin(pitch), 0, std::sin(pitch), std::cos(pitch)};
+            float pts[4][3] = {{0, 160, 0}, {10, 160, 0}, {0, 170, 0}, {0, 160, 10}};
+            for (int k = 0; k < 4; ++k) {
+                float out[3]{};
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        out[i] += axes[j * 3 + i] * (pts[k][j] - (j == 1 ? 160.f : 0.f));
+                for (int i = 0; i < 3; ++i) pts[k][i] = out[i] + (i == 1 ? 160.f : 0.f);
+            }
+            const float gaze[3] = {std::sin(.12f) * std::cos(pitch), std::sin(pitch),
+                                   std::cos(.12f) * std::cos(pitch)};
+            float before[12];
+            fp::tetraPose(pts, coeffs, before);
+            assert(fp::steadyHeading(pts, coeffs, gaze, 0) == 0.f);
+            float turn = fp::steadyHeading(pts, coeffs, gaze, 100), after[12];
+            fp::tetraPose(pts, coeffs, after);
+            assert(turn > 0.f && turn <= fp::steadyTurnClamp && std::atan2(after[6], after[8]) > 0.f);
+            assert(std::fabs(after[7] - before[7]) < 1e-5f); // yaw correction leaves pitch unchanged
+        }
+        puts("PASS: heading bias is corrected on head points at steep pitch, bounded per tick and disabled "
+             "at zero");
+    }
     { // starting: loading starts nothing; enable starts the session once (our launcher, or EMTK with the mod on);
         // disable stops as F7 does and a later enable re-arms; the game is waited for until its slots are filled
         static volatile LONG starts = 0;
@@ -372,64 +471,8 @@ int main() {
         partSettle(head);
         partSettle(neck);
         assert(memcmp(before, (void*)(neck + 0xf0), 48) != 0); // out of combat the neck is steadied too
-        { // the hook: the chest and the part below it get the game's extra rotation, first and third person, combat
-            // included; identity when knocked down, in the overhead view or switched off
-            const uintptr_t lower = base + 0x5ce000;
-            *(uintptr_t*)(root + 0xd48) = chest;
-            *(uintptr_t*)(chest + 0x428) = lower;
-            *(uintptr_t*)(lower + 0x420) = rootPart;
-            const float rows[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
-            memcpy((void*)(chest + 0x2a0), rows, 48);
-            memcpy((void*)(lower + 0x2a0), rows, 48);
-            memcpy((void*)(rootPart + 0x2a0), rows, 48);
-            *(uintptr_t*)(lower + 0x428) = rootPart;
-            *(uintptr_t*)(chest + 0x580) = root;
-            *(uintptr_t*)(lower + 0x580) = root;
-            *(float*)(root + 0xcb4) = -0.7f;
-            *(float*)(root + 0xcb8) = 0.714f;
-            spineFollow = 60;
-            auto q = [](uintptr_t p) {
-                return (const float*)(p + 0x5ec);
-            };
-            spineBendStep(root);
-            assert((*(unsigned*)(chest + 0xc) & 0x4000) && q(chest)[0] > 0 && q(lower)[0] > 0 &&
-                   q(lower)[0] < q(chest)[0] && q(chest)[3] < 1.f);
-            *(unsigned char*)(root + 0x12fe) = 1;
-            viewMode = 1;
-            spineBendStep(root);
-            assert(q(chest)[0] > 0);
-            *(unsigned char*)(root + 0x12fe) = 0;
-            viewMode = 0; // combat, third person: bent
-            *(unsigned*)(root + 0xdf4) = 0x200;
-            spineBendStep(root);
-            assert(q(chest)[0] == 0 && q(chest)[3] == 1 && q(lower)[3] == 1);
-            *(unsigned*)(root + 0xdf4) = 0; // knocked down: the game's pose
-            spineBendStep(root);
-            viewMode = 2;
-            spineBendStep(root);
-            assert(q(chest)[3] == 1);
-            viewMode = 0;
-            spineBendStep(root);
-            spineFollow = 0;
-            spineBendStep(root);
-            assert(q(chest)[3] == 1);
-            spineFollow = 60;
-            spineBendStep(root);
-            assert(q(chest)[3] < 1.f);
-            spineBendRelease();
-            assert(q(chest)[3] == 1 && q(lower)[3] == 1); // the stop path: the game's pose again
-            spineBendStep(root);
-            *(uintptr_t*)(base + 0x4f0830) = base + 0x5cf000;
-            spineBendRelease();
-            assert(q(chest)[3] < 1.f);
-            *(uintptr_t*)(base + 0x4f0830) = root; // another character now: the old parts are never written
-            spineBendStep(base + 0x5cf000);
-            spineBendStep(root); // a body change drops the cache without writing
-            *(float*)(root + 0xcb4) = 0;
-            *(float*)(root + 0xcb8) = 1;
-            memset((void*)lower, 0, 0x1000);
-            *(uintptr_t*)(root + 0xd48) = 0;
-        }
+        // The actual poseBuilder's scoped extra-rotation ownership, exception
+        // restoration and stop race are exercised by test_pose_ownership.cpp.
         *(unsigned*)(root + 0xdf4) = 0x200;
         tilt(head);
         memcpy(before, (void*)(head + 0xf0), 48);
@@ -619,24 +662,38 @@ int main() {
         windowFreeStep();
         assert(InterlockedCompareExchange(&windowFree, 0, 0) && cursorFreeNow()); // inventory open
         { // movement held even with the pointer over the window (the game's view is then not the hovered one)
-            const uintptr_t keptPlayer = *(uintptr_t*)(base + 0x4f0830), r = base + 0x5c0000,
-                            b = base + 0x5cc000;
+            const uintptr_t keptPlayer = *(uintptr_t*)gameAt(fp::sig::playerRoot), r = base + 0x5c0000,
+                            b = base + 0x5cc000,
+                            keptBehavior = *(uintptr_t*)(r + field::character::behaviour),
+                            keptCharacter = *(uintptr_t*)(b + field::behaviour::character);
+            const LONG keptReady = cameraReady, keptStopping = stopping;
+            const int keptMode = viewMode.load();
+            const unsigned keptKeys = nativeKeys, keptButtons = nativeButtons;
             auto keptIn = originalInput;
-            *(uintptr_t*)(base + 0x4f0830) = r;
-            *(uintptr_t*)(r + 0xd40) = b;
+            *(uintptr_t*)gameAt(fp::sig::playerRoot) = r;
+            *(uintptr_t*)(r + field::character::behaviour) = b;
+            *(uintptr_t*)(b + field::behaviour::character) = r;
+            cameraReady = 1;
+            stopping = 0;
             originalInput = poll;
             nativeKeys = 1;
             nativeButtons = 1;
             input();
             assert((*(unsigned*)(base + 0x49cdc0) & 15) == 0 && *(unsigned*)(base + 0x49cdd0) == 0);
             InterlockedExchange(&windowFree, 0);
+            viewMode = 2; // explicitly handed to native overhead: its unfiltered keys pass
             input();
             assert((*(unsigned*)(base + 0x49cdc0) & 15) == 1);
-            InterlockedExchange(&windowFree, 1); // nothing open: the game's keys pass
-            nativeKeys = nativeButtons = 0;
+            InterlockedExchange(&windowFree, 1); // restore the outer fixture's open window
+            viewMode = keptMode;
+            cameraReady = keptReady;
+            stopping = keptStopping;
+            nativeKeys = keptKeys;
+            nativeButtons = keptButtons;
             originalInput = keptIn;
-            *(uintptr_t*)(base + 0x4f0830) = keptPlayer;
-            *(uintptr_t*)(r + 0xd40) = 0;
+            *(uintptr_t*)gameAt(fp::sig::playerRoot) = keptPlayer;
+            *(uintptr_t*)(r + field::character::behaviour) = keptBehavior;
+            *(uintptr_t*)(b + field::behaviour::character) = keptCharacter;
         }
         *(unsigned char*)(inv + 0x11b) = 1;
         windowFreeStep();
@@ -742,9 +799,108 @@ int main() {
            keyMask('L') == 8);
     static bool down[256]{};
     keyState = [](int vk) -> SHORT {
-        return vk >= 0 && vk < 256 && down[vk] ? SHORT(0x8000) : SHORT(0);
+        return vk >= 0 && vk < 256 && down[vk] ? SHORT(-0x8000) : SHORT(0);
     };
-    down['I'] = true; // the keyboard: forward held
+    { // Mode ownership is independent of a stale inputEnabled during F6's blend.
+        const int keptMode = viewMode.load();
+        const LONG keptFree = cursorFree;
+        static int nativeCameraCalls = 0, cacheCalls = 0;
+        static int orbitCalls = 0, zoomCalls = 0;
+        originalCameraOrbit = [](uintptr_t self, float x, float y, int flags) {
+            assert(self == 123 && x == 2.f && y == -3.f && flags == 0);
+            ++orbitCalls;
+        };
+        originalCameraZoom = [](uintptr_t self, int amount) -> int {
+            assert(self == 123 && amount == 10);
+            ++zoomCalls;
+            return amount;
+        };
+        originalCameraMouse = []() -> char {
+            ++nativeCameraCalls;
+            return 7;
+        };
+        copyCameraSnapshots = []() {
+            ++cacheCalls;
+        };
+        for (int mode : {0, 1}) {
+            viewMode = mode;
+            cursorFree = 0;
+            assert(controls(bh));
+            *(unsigned char*)gameAt(fp::sig::cameraMouseActive) = 1;
+            *(unsigned char*)gameAt(fp::sig::cameraMouseTurn) = 1;
+            *(unsigned*)gameAt(fp::sig::keyWord) = 0x321;
+            assert(cameraMouse() == 1 && nativeCameraCalls == 0);
+            const int beforeOrbit = orbitCalls, beforeZoom = zoomCalls;
+            cameraOrbit(123, 2.f, -3.f, 0);
+            assert(cameraZoom(123, 10) == 10 && orbitCalls == beforeOrbit && zoomCalls == beforeZoom);
+            assert(!*(unsigned char*)gameAt(fp::sig::cameraMouseActive) &&
+                   !*(unsigned char*)gameAt(fp::sig::cameraMouseTurn) &&
+                   *(unsigned*)gameAt(fp::sig::keyWord) == 0x21);
+            cursorFree = 1; // Native camera is still hidden with a free pointer.
+            assert(!controls(bh) && cameraMouse() == 1 && nativeCameraCalls == 0);
+            rmbFree = 1;
+            inputEnabled = 0;
+            forwarded = 0;
+            assert(windowProc(nullptr, WM_MOUSEWHEEL, MAKEWPARAM(0, 120), 0) == 0 && !forwarded);
+            rmbFree = 0;
+            assert(windowProc(nullptr, WM_MOUSEWHEEL, MAKEWPARAM(0, 120), 0) == 0 && !forwarded);
+            inputEnabled = 1;
+            viewMode = 2; // active/cameraReady can still be true during the blend.
+            assert(!controls(bh) && !gameplayOwnsPointer());
+            nativeKeys = 0x25;
+            nativeButtons = 3;
+            input(); // Free-cursor freezing must not erase overhead input either.
+            assert(*(unsigned*)gameAt(fp::sig::keyWord) == nativeKeys &&
+                   *(unsigned*)gameAt(fp::sig::buttonWord) == nativeButtons);
+            const int previousCalls = nativeCameraCalls;
+            assert(cameraMouse() == 7 && nativeCameraCalls == previousCalls + 1);
+            cameraOrbit(123, 2.f, -3.f, 0);
+            assert(cameraZoom(123, 10) == 10 && orbitCalls == beforeOrbit + 1 && zoomCalls == beforeZoom + 1);
+            nativeCameraCalls = 0;
+            forwarded = 0;
+            assert(windowProc(nullptr, WM_MOUSEWHEEL, MAKEWPARAM(0, 120), 0) == 42 && forwarded == 1);
+            assert(windowProc(nullptr, WM_MBUTTONDOWN, 0, 0) == 42 && forwarded == 2);
+            const int fov = selectedFov.load();
+            assert(windowProc(nullptr, WM_KEYDOWN, VK_F9, 1) == 42 && selectedFov.load() == fov);
+        }
+        assert(cacheCalls == 4);
+        viewMode = 0;
+        cursorFree = 0;
+        *(int*)gameAt(fp::sig::uiOpenCount) = 1;
+        assert(cameraMouse() == 7); // UI keeps its own native handler.
+        *(int*)gameAt(fp::sig::uiOpenCount) = 0;
+        // Lean bound to the native crouch/run/alternate key consumes that action.
+        const int keptLean = leanKey.load();
+        const bool keptLeanMode = leanKeysMode.load();
+        leanKeysMode = false;
+        const unsigned semantic[3] = {0x10, 0x20, 0x80};
+        for (unsigned i = 0; i < 3; ++i) {
+            const uintptr_t slot = gameAt(fp::sig::movementKeys) + (i + 4) * 16;
+            const unsigned oldBinding = *(unsigned*)slot;
+            *(unsigned*)slot = 'U';
+            leanKey = 'U';
+            input(); // admit the new binding while neutral, before a fresh press
+            down['U'] = true;
+            nativeKeys = semantic[i];
+            nativeButtons = 0;
+            input();
+            assert(leaning && !(*(unsigned*)gameAt(fp::sig::keyWord) & semantic[i]));
+            if (i == 0) assert(!duckKey);
+            down['U'] = false;
+            input();
+            assert(!leaning && (*(unsigned*)gameAt(fp::sig::keyWord) & semantic[i]));
+            *(unsigned*)slot = oldBinding;
+        }
+        leanKey = keptLean;
+        leanKeysMode = keptLeanMode;
+        viewMode = keptMode;
+        cursorFree = keptFree;
+        nativeKeys = nativeButtons = 0;
+        inputOwner.releaseGameplay();
+        puts("PASS: overhead polling/gestures remain native; FP/TP block native camera and consume lean "
+             "actions");
+    }
+    down['I'] = true; // the keyboard (high bit: down): forward held
     { // a stuck walk: a held key whose release never arrived walks only while it is really down
         const unsigned keptNative = nativeKeys;
         const LONG keptFree = cursorFree;
@@ -754,15 +910,15 @@ int main() {
         down['J'] = true;
         input();
         assert((*(unsigned*)(base + 0x49cdc0) & 2) == 2); // held: walks
-        tappedKeys = 0;
+        inputOwner.discardMovementTaps();
         down['J'] = false;
         input();
         assert((*(unsigned*)(base + 0x49cdc0) & 2) == 0 &&
-               !(heldKeys & 2)); // let go with no WM_KEYUP (an overlay ate it): stops
+               !(inputOwner.heldMovement() & 2)); // let go with no WM_KEYUP (an overlay ate it): stops
         windowProc(nullptr, WM_KEYDOWN, 'J', 1);
-        tappedKeys = 0;
+        inputOwner.discardMovementTaps();
         windowProc(nullptr, WM_SYSKEYUP, 'J', 0);
-        assert(!(heldKeys & 2)); // released with Alt held: WM_SYSKEYUP clears it too
+        assert(!(inputOwner.heldMovement() & 2)); // released with Alt held: WM_SYSKEYUP clears it too
         nativeKeys = 4;
         input();
         assert((*(unsigned*)(base + 0x49cdc0) & 4) ==
@@ -774,11 +930,18 @@ int main() {
         assert((*(unsigned*)(base + 0x49cdc0) & 8) == 8); // a tap within the frame still steps
         input();
         assert((*(unsigned*)(base + 0x49cdc0) & 8) == 0);
+        { // the wheel would zoom the overhead view the player is not looking at (and returns to)
+            const unsigned held = overheadInputsHeld;
+            forwarded = 0;
+            assert(windowProc(nullptr, WM_MOUSEWHEEL, MAKEWPARAM(0, 120), 0) == 0 &&
+                   overheadInputsHeld == held + 1 && forwarded == 0);
+            puts("PASS: in first and third person the wheel does not zoom the hidden overhead view");
+        }
         { // combat (a lunge or a swing mid-walk), and a state that takes control away (behaviour +0x58) while the key goes up unseen
             *(unsigned char*)(root + 0x12fe) = 1;
             windowProc(nullptr, WM_KEYDOWN, 'J', 1);
             down['J'] = true;
-            tappedKeys = 0;
+            inputOwner.discardMovementTaps();
             input();
             assert((*(unsigned*)(base + 0x49cdc0) & 2) == 2);
             *(unsigned char*)(bh + 0x58) = 1;
@@ -789,20 +952,20 @@ int main() {
             nativeKeys = 2;
             input();
             assert((*(unsigned*)(base + 0x49cdc0) & 2) == 0 &&
-                   !(heldKeys & 2)); // ours again: neither our bit nor the game's own walks on
+                   !(inputOwner.heldMovement() & 2)); // ours again: neither our bit nor the game's own walks on
             nativeKeys = 0;
             *(unsigned char*)(root + 0x12fe) = 0;
         }
         for (int vk : {'J', 'K', 'L'}) down[vk] = false;
         nativeKeys = keptNative;
         cursorFree = keptFree;
-        heldKeys = 0;
-        tappedKeys = 0;
+        inputOwner.movementUp(~0u);
+        inputOwner.discardMovementTaps();
         puts("PASS: movement only while its key is physically down: a lost release (overlay, Alt) never "
              "leaves the character walking");
     }
     windowProc(nullptr, WM_KEYDOWN, 'I', 1);
-    assert(heldKeys == 1 && tappedKeys == 1);
+    assert(inputOwner.heldMovement() == 1 && inputOwner.pendingMovement() == 1);
     {
         const LONG keptActive = active, keptInput = inputEnabled, keptCaptured = mouseCaptured;
         const int keptMode = viewMode.load();
@@ -826,8 +989,8 @@ int main() {
         puts("PASS: F6 cycles first person -> third person -> overhead -> first person");
     }
     windowProc(nullptr, WM_KEYUP, 'I', 0);
-    assert(!heldKeys);
-    tappedKeys = 0;
+    assert(!inputOwner.heldMovement());
+    inputOwner.discardMovementTaps();
     forwarded = 0;
     windowProc(nullptr, WM_MBUTTONDOWN, 0, 0);
     assert(forwarded == 0);
@@ -835,7 +998,7 @@ int main() {
     assert(forwarded == 1);
     releaseInput();
     windowProc(nullptr, WM_MBUTTONDOWN, 0, 0);
-    assert(forwarded == 2);
+    assert(forwarded == 1); // a free pointer still must not rotate the hidden overhead camera
     inputEnabled = 1;
     nativeButtons = 0;
     input();
@@ -880,7 +1043,7 @@ int main() {
     input();
     cursorFree = 0;
     nativeButtons = 0;
-    tappedButtons = 1;
+    inputOwner.buttonDown(1);
     input();
     assert(*(unsigned*)(base + 0x49cdd0) == 0); // Short UI click cannot transfer either.
     stopping = 1;
@@ -969,7 +1132,7 @@ int main() {
     memcpy((void*)(camera + 0x40), initial, 48);
     *(float*)(camera + 0x1c8) = 37;
     *(float*)(camera + 0x1cc) = 100;
-    original = stationaryNav;
+    originalNav = stationaryNav;
     rebuildProjection = projection;
     rebuildInverse = inverse;
     stopping = 0;
@@ -991,17 +1154,68 @@ int main() {
     assert(pendingRestore == 1);
     pendingRestore = 0;
     assert(awaitRestore(50));
+    {
+        const Aim keptAim = aim;
+        const auto keptStep = originalStep;
+        const LONG keptActive = active, keptReady = cameraReady, keptStopping = stopping;
+        const int keptMode = viewMode.load();
+        aim = {};
+        aim.root = root;
+        aim.head = head;
+        aim.valid = true;
+        active = 1;
+        stopping = 0;
+        cameraReady = 1;
+        viewMode = 1;
+        cursorFree = rmbFree = windowFree = 0;
+        static unsigned observedPending = 0;
+        originalStep = [](uintptr_t at) {
+            observedPending = *(unsigned*)(at + field::behaviour::pendingMove);
+        };
+        *(unsigned*)gameAt(fp::sig::keyWord) = 0; // the game has polled the released backward key
+        *(unsigned*)(bh + field::behaviour::pendingMove) = 4;
+        step(bh);
+        assert(observedPending == 0); // no second step from the old digital direction
+        *(unsigned*)gameAt(fp::sig::keyWord) = 4;
+        *(unsigned*)(bh + field::behaviour::pendingMove) = 4;
+        step(bh);
+        assert(observedPending == 4); // held input stays native
+        *(unsigned*)gameAt(fp::sig::keyWord) = 0;
+        *(unsigned*)(bh + field::behaviour::pendingMove) = 0x8000;
+        step(bh);
+        assert(observedPending == 0x8000); // controller buffer stays native
+        *(unsigned*)(bh + field::behaviour::pendingMove) = 0;
+        *(float*)gameAt(fp::sig::analogStick) = 0.7f;
+        *(unsigned*)(bh + field::behaviour::pendingMove) = 4;
+        step(bh);
+        assert(observedPending == 4); // active stick keeps its native request too
+        *(float*)gameAt(fp::sig::analogStick) = 0;
+        *(unsigned*)(bh + field::behaviour::pendingMove) = 0;
+        leaning = heldRotating = true;
+        leanMouseX = heldTurnX = 30.f;
+        leanKeySide = 1;
+        releaseInput();
+        assert(!leaning && !heldRotating && leanKeySide == 0 && leanMouseX == 0 && heldTurnX == 0);
+        aim = keptAim;
+        originalStep = keptStep;
+        active = keptActive;
+        cameraReady = keptReady;
+        stopping = keptStopping;
+        viewMode = keptMode;
+        puts("PASS: combat digital buffer cancels on release, held and analog input stay native; input "
+             "handoff clears lean/rotation state");
+    }
     puts("PASS: stationary native camera restoration, FOV/near restoration, missing-callback timeout retains "
          "pending restore");
     wchar_t exe[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     assert(!fp::supportedExecutable(exe));
-    assert(!fp::supportedExecutable(L"Z:\\missing-exanimate-test.exe"));
+    assert(!fp::supportedExecutable(L"Z:\\missing-exanima-test.exe"));
     auto slot = (void**)(base + 0x3040a0);
-    *slot = (void*)original;
-    assert(!replace((uintptr_t)slot, (void*)42, (void*)nav) && *slot == (void*)original);
-    assert(replace((uintptr_t)slot, (void*)original, (void*)nav) && *slot == (void*)nav);
-    assert(replace((uintptr_t)slot, (void*)nav, (void*)original));
+    *slot = (void*)originalNav;
+    assert(!replace((uintptr_t)slot, (void*)42, (void*)nav) && *slot == (void*)originalNav);
+    assert(replace((uintptr_t)slot, (void*)originalNav, (void*)nav) && *slot == (void*)nav);
+    assert(replace((uintptr_t)slot, (void*)nav, (void*)originalNav));
     puts("PASS: unsupported executable rejection and compare-exchange hook ownership/rollback");
     {
         const float d = 0.0174532925f;
@@ -1009,11 +1223,11 @@ int main() {
             for (int b = -180; b <= 180; b += 15) {
                 const float body = b * d;
                 for (int r = -60; r <= 60; r += 1) {
-                    const float aim = fp::wrapHeading(body + r * d);
-                    const bool natural = fp::oppositeSide(aim, body, wide != 0);
+                    const float heading = fp::wrapHeading(body + r * d);
+                    const bool natural = fp::oppositeSide(heading, body, wide != 0);
                     assert(natural == (r > (wide ? 20 : 15)) || r == (wide ? 20 : 15));
-                    assert(fp::oppositeSide(fp::flippedSideHeading(aim, body, wide != 0), body, wide != 0) !=
-                           natural);
+                    assert(fp::oppositeSide(fp::flippedSideHeading(heading, body, wide != 0), body,
+                                            wide != 0) != natural);
                 }
             }
         puts("PASS: held attack-side binding inverts the native 15/20 degree classifier, including the yaw "
@@ -1042,28 +1256,6 @@ int main() {
                fp::hideHeadWear(fp::HelmetMode::show, fp::HelmetVerdict::unknown));
         assert(fp::rearmF6Accepted(1000, 0) && !fp::rearmF6Accepted(1100, 1000) &&
                fp::rearmF6Accepted(1250, 1000));
-        // Market vault: distances from the open area's edge, flat at the edge, apex clear of trees.
-        {
-            const int w = 7, h = 5;
-            uint32_t f[w * h]{};
-            for (int y = 0; y < h; ++y)
-                for (int x = 0; x < w; ++x) f[y * w + x] = 0x80000u; // all present, no walls
-            f[2 * w + 1] |= 0x8u;                                    // a wall on cell (1,2)
-            float d[w * h];
-            assert(fp::tileDistances(f, w, h, d));
-            assert(d[0] == 0 && d[1 * w + 1] == 1 && d[2 * w + 1] == 0 && d[2 * w + 2] == 1 &&
-                   d[2 * w + 3] == 2 && d[2 * w + 5] == 1 &&
-                   d[1 * w + 3] == 1); // grid edge and the walled cell are 0
-            assert(fp::sampleDistance(d, w, h, 2.5f, 2.f) == 1.5f &&
-                   fp::sampleDistance(d, w, h, -4, 9) == d[(h - 1) * w]);
-            assert(fp::vaultRise(0) == 0 && fp::vaultRise(-5) == 0 &&
-                   fp::vaultRise(fp::vaultSpan) == fp::vaultHeight && fp::vaultRise(1e9f) == fp::vaultHeight);
-            assert(450 + fp::vaultHeight > 995 + 300); // apex above the tallest Market tree (995)
-            assert(fp::rockJitter(10, 20) == fp::rockJitter(10.4f, 20.6f) &&
-                   fabsf(fp::rockJitter(123, -456)) <= 1);
-            assert(fp::vaultedLevel("exanima67") && !fp::vaultedLevel("exanima04") &&
-                   !fp::tileDistances(f, 2, 2, d));
-        }
         // Drag kinds by the manager's flags; doors and lids held in place.
         {
             {
@@ -1071,8 +1263,8 @@ int main() {
                 float q[3];
                 assert(fp::heldPointOnPlane(o, fwd, 200, flat, q) && q[0] == 0 && q[1] == 50 &&
                        q[2] == 200); // on the grab height, the grab's distance from the eye
-                const float down[3] = {0, -1, 1};
-                assert(fp::heldPointOnPlane(o, down, 100, flat, q) && std::fabs(q[2] - 100) < 1e-4f &&
+                const float steep[3] = {0, -1, 1};
+                assert(fp::heldPointOnPlane(o, steep, 100, flat, q) && std::fabs(q[2] - 100) < 1e-4f &&
                        q[1] == 50); // looking down: not pulled in
                 const float level[3] = {1, 0, 0};
                 assert(fp::heldPointOnPlane(o, level, 80, flat, q) && q[0] == 80 &&
@@ -1258,6 +1450,7 @@ int main() {
             puts("PASS: F8's Settings window is made only when F8 frees the cursor");
         }
         // the F8 settings page: each control's range, live values, the ini, raw input bookkeeping
+        namespace R = panel::setting;
         {
             int seen
                 [panel::ModSettings::
@@ -1270,46 +1463,104 @@ int main() {
                 }
             }
             for (int row = 0; row < panel::ModSettings::rows; ++row)
-                assert(seen[row] == 1 && *panel::ModSettings::label(row));
-            assert(!strcmp(panel::ModSettings::group(0).name, "Head") && panel::ModSettings::rows == 32 &&
-                   panel::ModSettings::groupCount == 7 && panel::ModSettings::savesGroup < 0);
-            puts("PASS: every F8 setting is on exactly one Settings sub-page");
+                assert(seen[row] == 1 && *panel::ModSettings::label(row) &&
+                       panel::rowInfo(row).row == row); // the table is in row order
+            assert(!strcmp(panel::ModSettings::group(0).name, "View") && panel::ModSettings::rows == 47 &&
+                   panel::ModSettings::groupCount == 6 && panel::ModSettings::savesGroup < 0);
+            puts("PASS: every F8 setting is on exactly one Settings page, and the row table is in row order");
+        }
+        { // Every row's change is seen by == (so it is applied and saved) and undone by its page's Reset page; resetting
+            // one page leaves the others alone.
+            const panel::ModSettings defaults;
+            for (int row = 0; row < panel::ModSettings::rows; ++row) {
+                panel::ModSettings t;
+                assert(t.step(row, 1) || t.step(row, -1));
+                assert(!(t == defaults));
+                int page = -1;
+                for (int g = 0; g < panel::ModSettings::groupCount; ++g) {
+                    const auto& grp = panel::ModSettings::group(g);
+                    for (int i = 0; i < grp.count; ++i)
+                        if (grp.rows[i] == row) page = g;
+                }
+                assert(page >= 0 &&
+                       !t.click(panel::ModSettings::resetControl, 0,
+                                (page + 1) % panel::ModSettings::groupCount) &&
+                       !(t == defaults)); // another page: untouched
+                assert(t.click(panel::ModSettings::resetControl, 0, page) && t == defaults &&
+                       !t.click(panel::ModSettings::resetControl, 0, page));
+            }
+            puts("PASS: every row's change counts as a change, and Reset page restores exactly that page's "
+                 "defaults");
         }
         {
             panel::ModSettings s;
-            assert(!s.step(0, -100) || s.fov == 30);
+            assert(!s.step(R::fov, -100) || s.fov == 30);
             s = panel::ModSettings();
-            for (int i = 0; i < 20; i++) s.step(0, 1);
+            for (int i = 0; i < 20; i++) s.step(R::fov, 1);
             assert(s.fov == 130);
-            for (int i = 0; i < 40; i++) s.step(1, -1);
+            for (int i = 0; i < 40; i++) s.step(R::sensitivity, -1);
             assert(s.sensitivity == 10);
-            assert(s.step(3, 0) && s.rawMouse && s.value(3) == L"on" && s.step(10, 0) && !s.tpTight &&
-                   s.step(10, 0) && s.tpTight && s.step(6, 0) && s.hideSwingCrosshair && s.step(6, 0) &&
-                   !s.hideSwingCrosshair && !s.step(36, 1) && s.nearClip == fp::nearClipDefaultTenths &&
-                   s.step(31, 9) && s.nearClip == fp::nearClipMaxTenths && s.value(31) == L"1.0 cm" &&
-                   s.crouchMode == 2 && s.step(30, 0) && s.crouchMode == 1 && s.step(30, 0) &&
-                   s.crouchMode == 0 && s.step(30, 0) && s.crouchMode == 2 && s.spineFollow == 60 &&
-                   s.step(29, 1) && s.spineFollow == 70 && s.freezeWindows && s.step(28, 0) &&
-                   !s.freezeWindows && s.value(28) == L"off" && s.step(12, 1) && s.tpFov == 80 &&
-                   s.step(12, -1) && s.tpFov == 75 && s.step(13, -10) && s.tpLag == 0 && s.step(14, 0) &&
-                   !s.tpHide && s.step(15, 0) && !s.tpDown && panel::ModSettings().headSteady == 70);
-            assert(s.attackCue && s.step(16, 0) && !s.attackCue && s.value(16) == L"off" && s.step(17, 1) &&
-                   s.cueSize == 110 && s.step(17, 100) && s.cueSize == 200 && s.step(18, -100) &&
-                   s.cueOpacity == 20 && s.step(19, 0) && !s.cueThrust && panel::ModSettings::isNumber(17) &&
-                   panel::ModSettings::isNumber(18) && !panel::ModSettings::isNumber(19) && s.rmbMode == 1 &&
-                   s.step(20, 0) && s.rmbMode == 2 && s.step(20, 0) && s.rmbMode == 0 &&
-                   s.value(20) == L"off" && s.step(20, 0) && s.rmbMode == 1 && !s.idleCrosshairAlways &&
-                   s.value(21) == L"only with right mouse" && s.step(21, 0) && s.idleCrosshairAlways &&
-                   s.headRoll == 80 && s.step(22, -1) && s.headRoll == 70 && s.headBob == 30 &&
-                   s.step(27, 1) && s.headBob == 40 && s.value(27) == L"40%" && s.step(24, -10) &&
-                   s.headYaw == 0 && s.value(24) == L"off" && panel::ModSettings::isNumber(23) &&
-                   s.aimMarker && s.step(25, 0) && !s.aimMarker && s.flickCatchup == 50 && s.step(26, 1) &&
-                   s.flickCatchup == 60 && panel::ModSettings::isNumber(26) && s.grabRange == 220 &&
-                   s.step(5, 1) && s.grabRange == 230 && s.value(5) == L"230 cm" && s.step(5, 100) &&
-                   s.grabRange == 300 &&
-                   panel::ModSettings::isNumber(5)); // wind-up arc rows, right mouse, crosshair out of combat
+            assert(s.step(R::rawMouse, 0) && s.rawMouse && s.value(R::rawMouse) == L"on" &&
+                   s.step(R::tpTight, 0) && !s.tpTight && s.step(R::tpTight, 0) && s.tpTight &&
+                   s.step(R::swingCrosshair, 0) && s.hideSwingCrosshair && s.step(R::swingCrosshair, 0) &&
+                   !s.hideSwingCrosshair && !s.step(60, 1) && s.nearClip == fp::nearClipDefaultTenths &&
+                   s.step(R::nearClip, 9) && s.nearClip == fp::nearClipMaxTenths &&
+                   s.value(R::nearClip) == L"1.0 cm" && s.crouchMode == 2 && s.step(R::crouchMode, 0) &&
+                   s.crouchMode == 1 && s.step(R::crouchMode, 0) && s.crouchMode == 0 &&
+                   s.step(R::crouchMode, 0) && s.crouchMode == 2 && s.spineFollow == 60 &&
+                   s.step(R::spineFollow, 1) && s.spineFollow == 70 && s.freezeWindows &&
+                   s.step(R::freezeWindows, 0) && !s.freezeWindows && s.value(R::freezeWindows) == L"off" &&
+                   s.step(R::tpFov, 1) && s.tpFov == 80 && s.step(R::tpFov, -1) && s.tpFov == 75 &&
+                   s.step(R::tpLag, -10) && s.tpLag == 0 && s.step(R::tpBlockers, 0) &&
+                   s.tpBlockers == fp::blockersHide && s.step(R::tpDown, 0) && !s.tpDown &&
+                   panel::ModSettings().headSteady == 70);
+            {
+                panel::ModSettings t;
+                assert(t.tpBlockers == fp::blockersSmart && t.tpCombatAimFree &&
+                       t.value(R::tpBlockers) == L"hide people; pull in");
+                assert(t.step(R::tpBlockers, 1) && t.tpBlockers == fp::blockersHide &&
+                       t.step(R::tpBlockers, 1) && t.tpBlockers == fp::blockersPush &&
+                       t.step(R::tpBlockers, -1) && t.tpBlockers == fp::blockersHide);
+                assert(t.step(R::tpCombatAim, 0) && !t.tpCombatAimFree &&
+                       t.value(R::tpCombatAim) == L"held at the centre" &&
+                       *panel::ModSettings::label(R::tpCombatAim));
+                assert(t.eyeSetback == 0 && t.value(R::eyeSetback) == L"at the eyes" &&
+                       t.step(R::eyeSetback, 3) && t.eyeSetback == 6 &&
+                       t.value(R::eyeSetback) == L"6 cm behind the eyes" && t.step(R::eyeSetback, 100) &&
+                       t.eyeSetback == fp::eyeSetbackMax && t.step(R::eyeSetback, -100) && t.eyeSetback == 0);
+                assert(t.rotateHeldKey == VK_RBUTTON && t.value(R::rotateHeldKey) == L"right mouse" &&
+                       t.step(R::rotateHeldKey, 1) && t.rotateHeldKey == VK_MBUTTON &&
+                       t.step(R::rotateHeldKey, -1) && t.rotateHeldKey == VK_RBUTTON &&
+                       t.step(R::rotateHeldKey, -1) && t.rotateHeldKey == 0 &&
+                       t.value(R::rotateHeldKey) == L"unbound");
+            }
+            assert(s.attackCue && s.step(R::attackCue, 0) && !s.attackCue &&
+                   s.value(R::attackCue) == L"off" && s.step(R::cueSize, 1) && s.cueSize == 110 &&
+                   s.step(R::cueSize, 100) && s.cueSize == 200 && s.step(R::cueOpacity, -100) &&
+                   s.cueOpacity == 20 && s.step(R::cueThrust, 0) && !s.cueThrust &&
+                   panel::ModSettings::isNumber(R::cueSize) && panel::ModSettings::isNumber(R::cueOpacity) &&
+                   !panel::ModSettings::isNumber(R::cueThrust) && s.rmbMode == 1 && s.step(R::rmbMode, 0) &&
+                   s.rmbMode == 2 && s.step(R::rmbMode, 0) && s.rmbMode == 0 &&
+                   s.value(R::rmbMode) == L"off" && s.step(R::rmbMode, 0) && s.rmbMode == 1 &&
+                   !s.idleCrosshairAlways && s.value(R::idleCrosshair) == L"only with right mouse" &&
+                   s.step(R::idleCrosshair, 0) && s.idleCrosshairAlways && s.headRoll == 80 &&
+                   s.step(R::headRoll, -1) && s.headRoll == 70 && s.headBob == 30 && s.step(R::headBob, 1) &&
+                   s.headBob == 40 && s.value(R::headBob) == L"40%" && s.step(R::headYaw, -10) &&
+                   s.headYaw == 0 && s.value(R::headYaw) == L"off" &&
+                   panel::ModSettings::isNumber(R::headPitch) && s.aimMarker && s.step(R::aimMarker, 0) &&
+                   !s.aimMarker && s.flickCatchup == 50 && s.step(R::flickCatchup, 1) &&
+                   s.flickCatchup == 60 && panel::ModSettings::isNumber(R::flickCatchup) &&
+                   s.grabRange == 220 && s.step(R::grabRange, 1) && s.grabRange == 230 &&
+                   s.value(R::grabRange) == L"230 cm" && s.step(R::grabRange, 100) && s.grabRange == 300 &&
+                   panel::ModSettings::isNumber(
+                       R::grabRange)); // wind-up arc rows, right mouse, crosshair out of combat
             { // Heading follows the mouse yaw at any pitch, even when the aim point lies behind the body (third
                 // person looking steeply down from behind the shoulder).
+                const int savedMode = viewMode.load();
+                const bool savedFree = tpAimFree.load(), savedSet = tpAimSet;
+                viewMode = 1;
+                tpAimFree = true;
+                tpAimSet = true;
                 const uintptr_t body = base + 0x570000;
                 float* pivot = (float*)(body + 0xab4);
                 pivot[0] = 100;
@@ -1317,44 +1568,49 @@ int main() {
                 pivot[2] = 200;
                 for (float yaw : {0.f, 1.f, -2.5f})
                     for (float pitch = 0; pitch >= -1.15f; pitch -= 0.05f) {
-                        Aim a{};
-                        a.root = body;
-                        a.yaw = yaw;
-                        a.pitch = pitch;
-                        for (int i = 0; i < 3; ++i) a.point[i] = pivot[i];
-                        a.point[0] -= 40 * std::sin(yaw);
-                        a.point[2] -= 40 * std::cos(yaw);
-                        a.point[1] = 0; // behind the body
+                        Aim probe{};
+                        probe.root = body;
+                        probe.yaw = yaw;
+                        probe.pitch = pitch;
+                        for (int i = 0; i < 3; ++i) probe.point[i] = pivot[i];
+                        probe.point[0] -= 40 * std::sin(yaw);
+                        probe.point[2] -= 40 * std::cos(yaw);
+                        probe.point[1] = 0; // behind the body
                         float d[3];
-                        headingToPoint(a, d);
+                        headingToPoint(probe, d);
                         assert(std::fabs(d[0] - std::sin(yaw)) < 1e-5f && d[1] == 0 &&
                                std::fabs(d[2] - std::cos(yaw)) < 1e-5f);
                     }
+                viewMode = savedMode;
+                tpAimFree = savedFree;
+                tpAimSet = savedSet;
                 puts("PASS: body heading follows the mouse yaw through the whole pitch range, aim point "
                      "behind the body included");
             }
             { // Head wobble: the head turning with its gaze (the mouse) is not wobble, at any speed; the head
                 // turning on its own stiffens the neck on the axes asked for, never on an axis set to 0.
                 fp::HeadWobble w;
-                fp::HeadAngles h, g;
-                assert(fp::wobbleSlackScale(w, h, g, 60, 50, 30) == 1.f); // first tick: nothing to compare
+                fp::HeadAngles headNow, gaze;
+                assert(fp::wobbleSlackScale(w, headNow, gaze, 60, 50, 30) ==
+                       1.f); // first tick: nothing to compare
                 for (int i = 1; i <= 30; ++i) {
-                    h.yaw = g.yaw = float(i) * 12.f;
-                    h.pitch = g.pitch = float(i) * -2.f;
-                    assert(fp::wobbleSlackScale(w, h, g, 100, 100, 100) == 1.f);
+                    headNow.yaw = gaze.yaw = float(i) * 12.f;
+                    headNow.pitch = gaze.pitch = float(i) * -2.f;
+                    assert(fp::wobbleSlackScale(w, headNow, gaze, 100, 100, 100) == 1.f);
                 } // a fast mouse turn passes untouched
-                h.yaw += 1.5f;
-                const float yawOnly = fp::wobbleSlackScale(w, h, g, 0, 0, 100);
+                headNow.yaw += 1.5f;
+                const float yawOnly = fp::wobbleSlackScale(w, headNow, gaze, 0, 0, 100);
                 assert(yawOnly < 0.2f); // 1.5 degrees of head-only yaw in a tick: stiff
-                h.yaw += 1.5f;
-                assert(fp::wobbleSlackScale(w, h, g, 100, 100, 0) ==
+                headNow.yaw += 1.5f;
+                assert(fp::wobbleSlackScale(w, headNow, gaze, 100, 100, 0) ==
                        1.f); // the same with yaw set to 0: as before
-                h.pitch += 0.05f;
-                assert(fp::wobbleSlackScale(w, h, g, 100, 100, 100) == 1.f); // below the threshold: as before
-                h.roll += 0.8f;
-                const float rollHalf = fp::wobbleSlackScale(w, h, g, 50, 0, 0);
-                h.roll += 0.8f;
-                const float rollFull = fp::wobbleSlackScale(w, h, g, 100, 0, 0);
+                headNow.pitch += 0.05f;
+                assert(fp::wobbleSlackScale(w, headNow, gaze, 100, 100, 100) ==
+                       1.f); // below the threshold: as before
+                headNow.roll += 0.8f;
+                const float rollHalf = fp::wobbleSlackScale(w, headNow, gaze, 50, 0, 0);
+                headNow.roll += 0.8f;
+                const float rollFull = fp::wobbleSlackScale(w, headNow, gaze, 100, 0, 0);
                 assert(rollHalf < 1.f && rollFull < rollHalf);                  // stronger setting, stiffer
                 assert(std::fabs(fp::angleDelta(-179.f, 179.f) - 2.f) < 1e-4f); // across the wrap
                 float m[12]{1, 0, 0, 0, 1, 0, 0, 0, 1};
@@ -1373,16 +1629,16 @@ int main() {
                        std::fabs(fp::flickGain(80 * deg, 0.01f, 100) - fp::flickMinGain) < 1e-5f &&
                        fp::flickGain(80 * deg, 0.01f, 50) > fp::flickMinGain);
                 for (int strength : {0, 50, 100}) {
-                    float target = 0, head = 0, maxHead = 0;
+                    float target = 0, headYaw = 0, maxHeadYaw = 0;
                     for (int t = 0; t < 200; ++t) {
                         if (t < 6) {
                             const float step = 25 * deg;
-                            target += step * fp::flickGain(target - head, step, strength);
+                            target += step * fp::flickGain(target - headYaw, step, strength);
                         } // a 150-degree flick over six ticks
-                        head += std::clamp(target - head, -1.8f * deg, 1.8f * deg);
-                        maxHead = (std::max)(maxHead, head);
+                        headYaw += std::clamp(target - headYaw, -1.8f * deg, 1.8f * deg);
+                        maxHeadYaw = (std::max)(maxHeadYaw, headYaw);
                     } // the game turns the head at 1.8 degrees a tick
-                    assert(std::fabs(head - target) < 1e-4f && maxHead <= target + 1e-5f);
+                    assert(std::fabs(headYaw - target) < 1e-4f && maxHeadYaw <= target + 1e-5f);
                 } // lands on the aim, never past it
                 {
                     float slow = 0;
@@ -1415,22 +1671,22 @@ int main() {
                 !fp::crosshairDrawn(
                     true, true, true,
                     true)); // exploring: hidden unless always; combat: shown, swings per setting // no Head bob row
-            assert(s.step(7, 1) && s.tpDistance == 275 && s.step(8, -10) && s.tpShoulder == -60 &&
-                   s.value(8) == L"60 cm left" && s.step(9, 1) && s.tpHeight == 25 &&
-                   panel::ModSettings::isNumber(8));
+            assert(s.step(R::tpDistance, 1) && s.tpDistance == 275 && s.step(R::tpShoulder, -10) &&
+                   s.tpShoulder == -60 && s.value(R::tpShoulder) == L"60 cm left" && s.step(R::tpHeight, 1) &&
+                   s.tpHeight == 25 && panel::ModSettings::isNumber(R::tpShoulder));
             {
                 panel::ModSettings w;
-                w.step(7, 100);
-                w.step(8, -100);
-                w.step(9, 100);
+                w.step(R::tpDistance, 100);
+                w.step(R::tpShoulder, -100);
+                w.step(R::tpHeight, 100);
                 assert(w.tpDistance == 1200 && w.tpShoulder == -160 && w.tpHeight == 300);
-                w.step(7, -100);
-                w.step(9, -100);
+                w.step(R::tpDistance, -100);
+                w.step(R::tpHeight, -100);
                 assert(w.tpDistance == 50 && w.tpHeight == -100);
             } // the wider third-person ranges // third person rows
-            for (int i = 0; i < 20; i++) s.step(2, -1);
-            assert(s.headSteady == 0 && s.value(2) == L"off (the game's)");
-            for (int i = 0; i < 20; i++) s.step(2, 1);
+            for (int i = 0; i < 20; i++) s.step(R::headSteady, -1);
+            assert(s.headSteady == 0 && s.value(R::headSteady) == L"off (the game's)");
+            for (int i = 0; i < 20; i++) s.step(R::headSteady, 1);
             assert(s.headSteady == 100);
             wchar_t keptPath[MAX_PATH];
             wcscpy_s(keptPath, settingsPath);
@@ -1451,7 +1707,8 @@ int main() {
             assert(got.sensitivity == 150 && std::fabs(sensitivity.load() - 0.00375f) < 1e-7f &&
                    helmetMode.load() == fp::HelmetMode::hide && grabRange.load() == 150 &&
                    selectedFov.load() == 90);
-            assert(!hideSwingCrosshair.load() && GetPrivateProfileIntW(L"Camera", L"HeadBob", -1, tmp) == -1);
+            assert(!hideSwingCrosshair.load() &&
+                   int(GetPrivateProfileIntW(L"Camera", L"HeadBob", -1, tmp)) == -1);
             assert(GetPrivateProfileIntW(L"Input", L"SensitivityPercent", 0, tmp) == 150 &&
                    GetPrivateProfileIntW(L"Input", L"GrabRange", -1, tmp) == 150);
             {
@@ -1459,15 +1716,40 @@ int main() {
                 GetPrivateProfileStringW(L"View", L"Helmet", L"", v, 16, tmp);
                 assert(!wcscmp(v, L"hide"));
             }
+            { // The ini through the row table: every row written by applySettings reads back the same; a missing key,
+                // an unknown word or an out-of-range number gives the default or the clamp; the old HideBlockers key is read.
+                panel::ModSettings all;
+                for (int row = 0; row < panel::ModSettings::rows; ++row)
+                    if (!all.step(row, 1)) all.step(row, -1);
+                assert(applySettings(all) == all);
+                panel::ModSettings back = readSettings(tmp);
+                assert(back == all);
+                WritePrivateProfileStringW(L"ThirdPerson", L"Distance", L"99999", tmp);
+                WritePrivateProfileStringW(L"View", L"Helmet", L"sideways", tmp);
+                WritePrivateProfileStringW(L"Input", L"Crouch", L"7", tmp);
+                WritePrivateProfileStringW(L"Camera", L"FOV", L"wide", tmp);
+                WritePrivateProfileStringW(L"ThirdPerson", L"Blockers", nullptr, tmp);
+                WritePrivateProfileStringW(L"ThirdPerson", L"HideBlockers", L"0", tmp);
+                WritePrivateProfileStringW(L"ThirdPerson", L"CombatAim", L"center", tmp);
+                const panel::ModSettings odd = readSettings(tmp), defaults;
+                assert(odd.tpDistance == fp::tpDistanceMax && !odd.hideHelmet && odd.fov == defaults.fov &&
+                       odd.tpBlockers == fp::blockersPush && !odd.tpCombatAimFree);
+                assert(odd.crouchMode == fp::crouchModeFromText(L"7")); // the row's own words decide
+                WritePrivateProfileStringW(L"ThirdPerson", nullptr, nullptr, tmp);
+                assert(readSettings(tmp).tpDistance == defaults.tpDistance);
+                applySettings(want);
+            }
+            puts("PASS: first-person.ini goes through the row table: every row reads back as written; bad "
+                 "values fall back or clamp");
             { // settings outlive release folders: the user file starts from the release ini edited last, and keeps changes
                 wchar_t t2[MAX_PATH];
                 GetTempPathW(MAX_PATH, t2);
-                const std::wstring root =
+                const std::wstring folder =
                     std::wstring(t2) + L"fp-userini-" + std::to_wstring(GetCurrentProcessId());
-                const std::wstring rel = root + L"\\release", user = root + L"\\Documents\\ExaniMate";
-                CreateDirectoryW(root.c_str(), nullptr);
+                const std::wstring rel = folder + L"\\release", user = folder + L"\\Documents\\ExCamera";
+                CreateDirectoryW(folder.c_str(), nullptr);
                 CreateDirectoryW(rel.c_str(), nullptr);
-                CreateDirectoryW((root + L"\\Documents").c_str(), nullptr);
+                CreateDirectoryW((folder + L"\\Documents").c_str(), nullptr);
                 auto touch = [](const std::wstring& f, const char* s, int ageSeconds) {
                     FILE* h = nullptr;
                     _wfopen_s(&h, f.c_str(), L"wb");
@@ -1486,19 +1768,19 @@ int main() {
                     SetFileTime(fh, nullptr, nullptr, &ft);
                     CloseHandle(fh);
                 };
-                for (const wchar_t* r : {L"\\ExanimaFirstPerson-r9-old", L"\\ExanimaFirstPerson-r9-edited",
-                                         L"\\ExanimaFirstPerson-r9-new"})
+                for (const wchar_t* r : {L"\\ExanimaFirstPerson-old", L"\\ExanimaFirstPerson-edited",
+                                         L"\\ExanimaFirstPerson-new"})
                     CreateDirectoryW((rel + r).c_str(), nullptr);
-                touch(rel + L"\\ExanimaFirstPerson-r9-old\\ExanimaFirstPerson.dll", "x", 3000);
-                touch(rel + L"\\ExanimaFirstPerson-r9-old\\first-person.ini", "[Camera]\r\nFOV=75\r\n",
+                touch(rel + L"\\ExanimaFirstPerson-old\\ExanimaFirstPerson.dll", "x", 3000);
+                touch(rel + L"\\ExanimaFirstPerson-old\\first-person.ini", "[Camera]\r\nFOV=75\r\n",
                       3000); // never edited
-                touch(rel + L"\\ExanimaFirstPerson-r9-edited\\ExanimaFirstPerson.dll", "x", 2000);
-                touch(rel + L"\\ExanimaFirstPerson-r9-edited\\first-person.ini", "[Camera]\r\nFOV=105\r\n",
+                touch(rel + L"\\ExanimaFirstPerson-edited\\ExanimaFirstPerson.dll", "x", 2000);
+                touch(rel + L"\\ExanimaFirstPerson-edited\\first-person.ini", "[Camera]\r\nFOV=105\r\n",
                       600); // edited after its build
-                touch(rel + L"\\ExanimaFirstPerson-r9-new\\ExanimaFirstPerson.dll", "x", 5);
-                touch(rel + L"\\ExanimaFirstPerson-r9-new\\first-person.ini", "[Camera]\r\nFOV=75\r\n",
+                touch(rel + L"\\ExanimaFirstPerson-new\\ExanimaFirstPerson.dll", "x", 5);
+                touch(rel + L"\\ExanimaFirstPerson-new\\first-person.ini", "[Camera]\r\nFOV=75\r\n",
                       5); // this build, fresh
-                const std::wstring moduleIni = rel + L"\\ExanimaFirstPerson-r9-new\\first-person.ini";
+                const std::wstring moduleIni = rel + L"\\ExanimaFirstPerson-new\\first-person.ini";
                 const std::wstring path = userSettingsFile(moduleIni, user);
                 assert(path == user + L"\\first-person.ini" &&
                        GetPrivateProfileIntW(L"Camera", L"FOV", 0, path.c_str()) ==
@@ -1513,17 +1795,17 @@ int main() {
                 WritePrivateProfileStringW(
                     nullptr, nullptr, nullptr,
                     path.c_str()); // flush the profile cache before removing the folder
-                for (const wchar_t* f : {L"\\ExanimaFirstPerson-r9-old", L"\\ExanimaFirstPerson-r9-edited",
-                                         L"\\ExanimaFirstPerson-r9-new"}) {
+                for (const wchar_t* f : {L"\\ExanimaFirstPerson-old", L"\\ExanimaFirstPerson-edited",
+                                         L"\\ExanimaFirstPerson-new"}) {
                     DeleteFileW((rel + f + L"\\ExanimaFirstPerson.dll").c_str());
                     DeleteFileW((rel + f + L"\\first-person.ini").c_str());
                     RemoveDirectoryW((rel + f).c_str());
                 }
                 DeleteFileW(path.c_str());
                 RemoveDirectoryW(user.c_str());
-                RemoveDirectoryW((root + L"\\Documents").c_str());
+                RemoveDirectoryW((folder + L"\\Documents").c_str());
                 RemoveDirectoryW(rel.c_str());
-                RemoveDirectoryW(root.c_str());
+                RemoveDirectoryW(folder.c_str());
                 puts("PASS: settings live in one user file: carried over from the last edited release, kept "
                      "across restarts");
             }
@@ -1681,6 +1963,7 @@ int main() {
             float* feet = (float*)(player + 0xab4);
             feet[0] = feet[1] = feet[2] = 0;
             holdApplied = 100;
+            for (auto& e : eyeGlobal) e = 0.f; // the eye at the rays' origin (first person)
             auto ray = [](unsigned char* out, float dist) {
                 memset(out, 0, 0x38);
                 ((float*)(out + 0x14))[2] = 1;
@@ -1709,7 +1992,7 @@ int main() {
             dropSpot(1, (uintptr_t)o1);
             assert(fabsf(((float*)(o1 + 8))[2] - 60) < 1e-3f);
             feet[2] = 0; // reach sphere
-            // firstPersonHold: exactly an 0x2000 drag of the remembered object, first person owning the pointer.
+            // heldDropWanted: exactly an 0x2000 drag of the remembered object, the mod owning the pointer.
             const uintptr_t drag = base + 0x5b0000, object = base + 0x5b1000;
             *(uintptr_t*)(base + 0x4efdd0) = drag;
             *(unsigned*)(drag + 8) = 0x2000;
@@ -1719,21 +2002,21 @@ int main() {
             InterlockedExchange(&stopping, 0);
             InterlockedExchange(&inputEnabled, 1);
             InterlockedExchange(&cursorFree, 0);
-            assert(firstPersonHold());
+            assert(heldDropWanted());
             *(unsigned*)(drag + 8) = 0x4000;
-            assert(!firstPersonHold());
+            assert(!heldDropWanted());
             *(unsigned*)(drag + 8) = 0x2000; // doors: no
             InterlockedExchange(&cursorFree, 1);
-            assert(!firstPersonHold());
+            assert(!heldDropWanted());
             InterlockedExchange(&cursorFree, 0); // F8: no
             *(int*)(base + 0x499860) = 1;
-            assert(!firstPersonHold());
+            assert(!heldDropWanted());
             *(int*)(base + 0x499860) = 0; // a window: no
             holdObject = base + 0x5b1100;
-            assert(!firstPersonHold());
+            assert(!heldDropWanted());
             holdObject = object; // another object: no
             InterlockedExchange(&active, 0);
-            assert(!firstPersonHold());
+            assert(!heldDropWanted());
             InterlockedExchange(&active, 1);
             // grab start forgets the hold; 17c gate unchanged.
             ray(o1, 900);
@@ -1743,13 +2026,22 @@ int main() {
             ray(o1, 900);
             assert(grabPickResult(base + 0x11e76c, 1, (uintptr_t)o1) == 0 &&
                    grabPickResult(base + 0x11e76c + 1, 1, (uintptr_t)o1) == 1);
-            // third person: reach is measured from the eye (the pick ray starts at the camera behind it); the hold is first person only
+            assert(hoverOutOfRange.load());
+            ray(o1, 100);
+            assert(grabPickResult(base + 0x11e76c, 1, (uintptr_t)o1) == 1 && !hoverOutOfRange.load());
+            ray(o1, 900);
+            grabPickResult(base + 0x11e76c, 1, (uintptr_t)o1);
+            assert(hoverOutOfRange.load());
+            grabPickResult(base + 0x11e76c, 0, (uintptr_t)o1);
+            assert(!hoverOutOfRange.load());
+            // third person: reach is measured from the eye (the pick ray starts at the camera behind it), and so is the hold
             {
                 float keptEye[3];
                 memcpy(keptEye, lastHeadGlobal, 12);
                 lastHeadGlobal[0] = 0;
                 lastHeadGlobal[1] = 0;
                 lastHeadGlobal[2] = 300;
+                publishReachHead(lastHeadGlobal);
                 viewMode = 1;
                 ray(o1, 350);
                 assert(grabPickResult(base + 0x11a79e, 1, (uintptr_t)o1) ==
@@ -1757,8 +2049,8 @@ int main() {
                 ray(o1, 600);
                 assert(grabPickResult(base + 0x11a79e, 1, (uintptr_t)o1) == 0); // 300 from the eye: too far
                 holdObject = object;
-                assert(!firstPersonHold());
-                holdObject = 0; // third person: the game's own drop spot
+                assert(heldDropWanted());
+                holdObject = 0; // third person: held too (from the eye)
                 InterlockedExchange(&stopping, 1);
                 viewMode = 0;
                 windowProc(nullptr, WM_KEYDOWN, VK_F6, 1);
@@ -1767,6 +2059,7 @@ int main() {
                 InterlockedExchange(&active, 1);
                 viewMode = 0;
                 memcpy(lastHeadGlobal, keptEye, 12);
+                publishReachHead(lastHeadGlobal);
             }
             InterlockedExchange(&active, 0);
             ray(o1, 900);
@@ -1806,6 +2099,7 @@ int main() {
             offset[0] = offset[1] = offset[2] = 0;
             float* feet = (float*)(player + 0xab4);
             feet[0] = feet[1] = feet[2] = 0;
+            for (auto& e : eyeGlobal) e = 0.f;
             static float pickDist = 150;
             static char pickHit = 1;
             static float placedZ = 0;
@@ -1826,9 +2120,10 @@ int main() {
             InterlockedExchange(&stopping, 0);
             holdObject = 0;
             const unsigned placed0 = holdPlacements.load();
+            grabStartDistance = 150; // the grab's own pick met the object 150 from the eye
             dragPlace(object, 0, -100000);
             assert(placedZ == 150 && holdTarget.load() == 150 &&
-                   holdPlacements == placed0); // new object: native distance, untouched
+                   holdPlacements == placed0); // new object: the grab's distance (the game's point there)
             holdTarget = 100;
             holdApplied = 100;
             dragPlace(object, 0, -100000);
@@ -1870,6 +2165,170 @@ int main() {
                 placingThread = 0;
             } // pointer off view: no placement, cleared ray
             offView = false;
+            // third person: the ray starts at the camera 300 behind the eye; the object sits 100 from the eye, not the camera
+            eyeGlobal[2] = 300.f;
+            feet[2] = 300.f;
+            pickDist = 1e5f;
+            pickHit = 0;
+            holdTarget = 100;
+            holdApplied = 100;
+            dragPlace(object, 0, -100000);
+            assert(fabsf(placedZ - 400.f) < 1e-3f);
+            feet[2] = 0.f; // the character (feet under the eye) in reach
+            {
+                alignas(8) unsigned char g[0x40]{};
+                ((float*)(g + 0x14))[2] = 1;
+                *(float*)(g + 0x2c) = 350;
+                grabPickResult(base + 0x11a79e, 1, (uintptr_t)g);
+                assert(fabsf(grabStartDistance.load() - 50.f) < 1e-3f);
+            } // grabbed 350 from the camera: 50 from the eye
+            eyeGlobal[2] = 0.f;
+            pickDist = 150;
+            pickHit = 1;
+            grabStartDistance = 150;
+            // Rotating: the rotate key's mouse turns go to the drag's target points (the object's pose as the game drags
+            // it), about their centre, after the game's placement; without turns nothing is written, and the body never is.
+            {
+                float(*pts)[3] = (float(*)[3])(drag + 0x40);
+                const float start[4][3] = {{110, 170, 0}, {100, 180, 0}, {100, 170, 10}, {95, 165, -5}};
+                memcpy(pts, start, 48);
+                const uintptr_t body = base + 0x5b6000;
+                *(uintptr_t*)(object + 0x160) = body;
+                memset((void*)body, 0x5a, 0x300);
+                viewYaw = 0.f;
+                viewPitch = 0.f;
+                dragPlace(object, 0, -100000);
+                assert(!memcmp(pts, start, 48)); // never turned: untouched
+                heldTurnX = 100.f;
+                dragPlace(object, 0, -100000);
+                assert(heldTurnX.load() == 0.f && heldTurns.load() > 0);
+                float c[3]{};
+                for (auto& v : start)
+                    for (int k = 0; k < 3; ++k) c[k] += 0.25f * v[k];
+                float axes[12];
+                fp::basis(0, 0, axes);
+                for (int p = 0; p < 4; ++p) {
+                    float want[9] = {
+                        start[p][0] - c[0], start[p][1] - c[1], start[p][2] - c[2], 0, 0, 0, 0, 0, 0};
+                    fp::rotateAxes(want, axes + 3, -100 * fp::heldRotateRadiansPerPixel);
+                    for (int k = 0; k < 3; ++k) assert(fabsf(pts[p][k] - (c[k] + want[k])) < 1e-3f);
+                }
+                float after[4][3];
+                memcpy(after, pts, 48);
+                for (int f = 0; f < 100; ++f) dragPlace(object, 0, -100000);
+                for (int p = 0; p < 4; ++p)
+                    for (int k = 0; k < 3; ++k)
+                        assert(fabsf(after[p][k] - pts[p][k]) <
+                               1e-3f); // 100 more frames: not turned again (rounding only)
+                for (int k = 0; k < 0x300; ++k)
+                    assert(((unsigned char*)body)[k] == 0x5a); // the physics body: never written
+                *(uintptr_t*)(object + 0x160) = 0;
+            }
+            // Flinging: let go while the wheel pushes and the game's release (copies the target points into the body and
+            // makes its history equal: no velocity) is followed by a history for the push's speed. Not without a push.
+            {
+                const uintptr_t body = base + 0x5b6000;
+                *(uintptr_t*)(object + 0x160) = body;
+                holdObject = object;
+                static uintptr_t releasedDrag = 0;
+                originalDragDrop = [](uintptr_t d) {
+                    const uintptr_t o = *(uintptr_t*)(d + 0x10);
+                    const uintptr_t b = *(uintptr_t*)(o + 0x160);
+                    memcpy((void*)(b + 0xf0), (void*)(d + 0x40), 48);
+                    memcpy((void*)(b + 0x120), (void*)(b + 0xf0), 48);
+                    memcpy((void*)(b + 0x150), (void*)(b + 0x120), 48);
+                    *(uintptr_t*)(d + 0x10) = 0;
+                    releasedDrag = d;
+                };
+                auto releaseWith = [&](float speed) {
+                    *(uintptr_t*)(drag + 0x10) = object;
+                    *(unsigned*)(drag + 8) = 0x2000;
+                    pushSpeed = speed;
+                    pushAt = GetTickCount64();
+                    pushDir[0] = 0.f;
+                    pushDir[1] = 0.f;
+                    pushDir[2] = 1.f;
+                    physicsStep = 1.f / 60;
+                    dragDrop(drag);
+                };
+                const unsigned flung = flings.load();
+                releaseWith(0.f);
+                assert(releasedDrag == drag && !memcmp((void*)(body + 0x120), (void*)(body + 0xf0), 48) &&
+                       flings.load() == flung); // no push: stops
+                releaseWith(300.f);
+                const float* now = (const float*)(body + 0xf0);
+                const float* prev = (const float*)(body + 0x120);
+                const float* prev2 = (const float*)(body + 0x150);
+                for (int k = 0; k < 4; ++k) {
+                    assert(fabsf(prev[k * 3 + 2] - (now[k * 3 + 2] - 5.f)) < 1e-3f &&
+                           fabsf(prev2[k * 3 + 2] - (now[k * 3 + 2] - 10.f)) < 1e-3f &&
+                           prev[k * 3] == now[k * 3]);
+                }
+                assert(flings.load() == flung + 1);
+                pushAt = GetTickCount64() - 1000;
+                *(uintptr_t*)(drag + 0x10) = object;
+                *(unsigned*)(drag + 8) = 0x2000;
+                dragDrop(drag); // a push that ended a second ago: stops
+                assert(!memcmp((void*)(body + 0x120), (void*)(body + 0xf0), 48) &&
+                       flings.load() == flung + 1);
+                *(uintptr_t*)(drag + 0x10) = object;
+                *(unsigned*)(drag + 8) = 0x2000;
+                pushAt = GetTickCount64();
+                holdObject = base + 0x5b1100;
+                dragDrop(drag); // not the mod's hold: the game's
+                assert(!memcmp((void*)(body + 0x120), (void*)(body + 0xf0), 48));
+                holdObject = object;
+                *(uintptr_t*)(drag + 0x10) = object;
+                *(unsigned*)(drag + 8) = 0x2000;
+                *(uintptr_t*)(object + 0x160) = 0;
+                physicsStep = 0.f;
+                pushSpeed = 0.f;
+                puts("PASS: letting go during a push flings at its speed (one physics step of history); "
+                     "otherwise the game's release stops it");
+            }
+            // The rotate key (right mouse by default) is the held item's while one is held: the game and the right-mouse
+            // cursor never see it; with nothing held, combat retains native right mouse.
+            {
+                alignas(8) unsigned char playerBehavior[0xa00]{};
+                const uintptr_t behavior = (uintptr_t)playerBehavior,
+                                keptBehavior = *(uintptr_t*)(player + field::character::behaviour),
+                                keptUiView = *(uintptr_t*)gameAt(fp::sig::uiView);
+                const unsigned char keptCombat = *(unsigned char*)(player + field::character::combatStance);
+                const LONG keptReady = cameraReady, keptInput = inputEnabled;
+                // The surrounding placement fixture only needed mesh/feet. Its
+                // window messages also need a live controlled behavior and view.
+                *(uintptr_t*)(player + field::character::behaviour) = behavior;
+                *(uintptr_t*)(behavior + field::behaviour::character) = player;
+                *(uintptr_t*)(behavior + field::behaviour::view) = view;
+                *(uintptr_t*)gameAt(fp::sig::uiView) = view;
+                *(unsigned char*)(player + field::character::combatStance) = 1;
+                cameraReady = 1;
+                InterlockedExchange(&inputEnabled, 1);
+                rotateHeldKey = VK_RBUTTON;
+                rmbMode = 1;
+                InterlockedExchange(&rmbFree, 0);
+                assert(windowProc(nullptr, WM_RBUTTONDOWN, MK_RBUTTON, 0) == 0 &&
+                       !InterlockedCompareExchange(&rmbFree, 0, 0) &&
+                       !(inputOwner.pendingButtons() & 2));
+                *(unsigned*)(drag + 8) =
+                    0; // let go of the item while the key is down: its release is still the item's
+                assert(windowProc(nullptr, WM_RBUTTONUP, 0, 0) == 0);
+                *(unsigned*)(drag + 8) = 0x2000;
+                *(unsigned*)(drag + 8) = 0;
+                inputOwner.discardButtons(); // nothing held: right mouse goes where it went before
+                windowProc(nullptr, WM_RBUTTONDOWN, MK_RBUTTON, 0);
+                assert(inputOwner.pendingButtons() & 2);
+                windowProc(nullptr, WM_RBUTTONUP, 0, 0);
+                inputOwner.discardButtons();
+                *(unsigned*)(drag + 8) = 0x2000;
+                puts("PASS: holding an item: the rotate key turns it once per turn (not compounding), and "
+                     "right mouse is consumed; with nothing held it is as before");
+                InterlockedExchange(&inputEnabled, keptInput);
+                cameraReady = keptReady;
+                *(unsigned char*)(player + field::character::combatStance) = keptCombat;
+                *(uintptr_t*)gameAt(fp::sig::uiView) = keptUiView;
+                *(uintptr_t*)(player + field::character::behaviour) = keptBehavior;
+            }
             holdTarget = 200;
             holdApplied = 200;
             *(unsigned*)(drag + 8) = 0;
@@ -1918,41 +2377,7 @@ int main() {
             assert(depths == 1);
             skipCovers = false;
         }
-        // orientation: the cap's winding wins; an opposite non-vertical face is turned in every map.
-        {
-            const float P[] = {-300, 400, -300, 300, 400, -300, -300, 400, 300,
-                               -300, 264, -300, 300, 264, -300, -300, 264, -240};
-            int m0[] = {0, 1, 2, 3, 5, 4}, m1[] = {7, 8, 9, 10, 11, 12};
-            int* maps[] = {m0, m1};
-            assert(fp::orientDown(P, 6, maps, 2, 2) == 1 && m0[3] == 4 && m0[5] == 3 && m1[3] == 12 &&
-                   m1[5] == 10 && m0[0] == 0);
-            assert(fp::orientDown(P, 6, maps, 2, 2) == 0);
-        } // already consistent
-        // Ceiling material: trims and other details never vote; carved levels.
-        {
-            fp::CeilingCandidate cata[] = {
-                {"uwb03_wall1", 100, true}, {"ubcatrimsa", 900, true}, {"+uwb03_floor1a", 50, true}};
-            assert(fp::pickCeilingMaterial(cata, 3, "+uwb03_floor1a") == 0);
-            fp::CeilingCandidate ub[] = {{"ub6ta01", 1225, true},
-                                         {"ub6wl01", 700, true},
-                                         {"ub6ci01", 900, true},
-                                         {"trim stnb a01", 2000, true}};
-            assert(fp::pickCeilingMaterial(ub, 4, nullptr) ==
-                   1); // a wall surface beats a non-wall piece with more faces
-            fp::CeilingCandidate onlyTrim[] = {{"ubcatrimsa", 900, true}};
-            assert(fp::pickCeilingMaterial(onlyTrim, 1, nullptr) == 0);
-            assert(fp::detailMaterial("ub7ta01") && fp::detailMaterial("gothaarch01") &&
-                   fp::detailMaterial("uw01wlint01") && !fp::detailMaterial("uswbw01") &&
-                   !fp::detailMaterial("walllmsg01"));
-            assert(fp::wallSurfaceMaterial("uswbw01") && fp::wallSurfaceMaterial("ubmatwl00") &&
-                   !fp::wallSurfaceMaterial("ub6ci01"));
-            assert(fp::rockMaterial("rocks_ala01") && fp::rockMaterial("trn_rocka01") &&
-                   !fp::rockMaterial("uwb03_wall1"));
-            assert(fp::carvedLevel("exanima67") && fp::carvedLevel("exanima04") &&
-                   !fp::carvedLevel("exanima67_c1") && !fp::carvedLevel("exanima01") &&
-                   !fp::carvedLevel(nullptr));
-        }
-        // risk-audit helpers.
+        // A controller stick is left alone; mouse buttons are no attack-side key; a starved swap hook is reported once.
         {
             const float none[3]{}, stick[3] = {0.3f, 0, 0.1f}, tiny[3] = {0.1f, 0, 0.1f},
                                    bad[3] = {NAN, 0, 0};
@@ -2015,20 +2440,6 @@ int main() {
             const float d[3] = {0, 1, 0};
             fp::worldToLocalDirection(m, d, o);
             assert(o[0] == 1 && o[1] == 0 && o[2] == 0);
-        }
-        {
-            fp::SlabBounds a{{1, 2, 3}, 4, {5, 6, 7}}, b = a;
-            assert(fp::sameSlabBounds(a, b));
-            b.c[1] += 0.9f;
-            assert(fp::sameSlabBounds(a, b));
-            b.c[1] += 0.2f;
-            assert(!fp::sameSlabBounds(a, b));
-            b = a;
-            b.e[2] = 9;
-            assert(!fp::sameSlabBounds(a, b));
-            b = a;
-            b.r = 6;
-            assert(!fp::sameSlabBounds(a, b));
         }
         const uintptr_t manager = base + 0x560000, sectors = base + 0x561000, q1 = base + 0x562000,
                         q1List = base + 0x563000, children = base + 0x564000, helmet = base + 0x565000,
@@ -2166,7 +2577,7 @@ int main() {
             pendingHideCount = 0;
             bodyWearCount = 0;
             updateBodyWear(true);
-            assert(bodyWearNodes == 1 && hiddenBodyNodes == 1 && pendingHideCount == 1 &&
+            assert(bodyRays > 0 && bodyWearNodes == 1 && hiddenBodyNodes == 1 && pendingHideCount == 1 &&
                    pendingHide[0] == pauldron); // the boot, skin and sword are never candidates
             meshRay = [](uintptr_t, uintptr_t, RayQuery*) -> int {
                 return -1;
@@ -2269,8 +2680,8 @@ int main() {
         c.owned = false;
         c.motion = 6;
         assert(fp::originCue(c) == fp::OriginCue::neutral);
-        assert(fp::cueSide(fp::CueSide::right, 0) == fp::CueSide::right &&
-               fp::cueSide(fp::CueSide::left, 0.2f) == fp::CueSide::left);
+        assert(fp::cueSide(fp::CueSide::right, 0) == fp::CueSide::left &&
+               fp::cueSide(fp::CueSide::left, 0.2f) == fp::CueSide::right);
         assert(fp::cueSide(fp::CueSide::top, -0.4f) == fp::CueSide::top &&
                fp::cueSide(fp::CueSide::none, 0) == fp::CueSide::none);
         assert(fp::cueSide(fp::CueSide::right, 0.6f) == fp::CueSide::none &&
@@ -2279,48 +2690,48 @@ int main() {
         {
             using fp::CueSide;
             using fp::OriginCue;
-            fp::SwingHands h;
+            fp::SwingHands hands;
             const auto side = [&](OriginCue c) {
-                return fp::originSide(c, h);
+                return fp::originSide(c, hands);
             };
             assert(side(OriginCue::overhead) == CueSide::top &&
                    side(OriginCue::neutral) == CueSide::none);     // Overhead needs no hand.
             assert(side(OriginCue::defaultSide) == CueSide::none); // Hand unknown: no opinion.
-            h.slot = 0;
-            h.hand = 0;
-            h.expectedHand = 0;
-            h.handSide = 2; // Right-handed one-hander.
+            hands.slot = 0;
+            hands.hand = 0;
+            hands.expectedHand = 0;
+            hands.handSide = 2; // Right-handed one-hander.
             assert(side(OriginCue::defaultSide) == CueSide::right &&
                    side(OriginCue::oppositeSide) == CueSide::left); // Forehand / backhand.
-            h.hand = 1;
-            h.expectedHand = 1;
-            h.handSide = 1; // Left lead (two-handed class 0x30, entry 3).
+            hands.hand = 1;
+            hands.expectedHand = 1;
+            hands.handSide = 1; // Left lead (two-handed class 0x30, entry 3).
             assert(side(OriginCue::defaultSide) == CueSide::left &&
                    side(OriginCue::oppositeSide) == CueSide::right);
-            h.expectedHand = 0; // Weapon in the left hand, native grip entry expects the right: disagree.
+            hands.expectedHand = 0; // Weapon in the left hand, native grip entry expects the right: disagree.
             assert(side(OriginCue::defaultSide) == CueSide::none &&
                    side(OriginCue::oppositeSide) == CueSide::none);
-            h.slot = 0;
-            h.hand = 0;
-            h.expectedHand = 0;
-            h.handSide = 2;
-            h.alternate = true; // Dual wield / fists: slot 0 forehand.
+            hands.slot = 0;
+            hands.hand = 0;
+            hands.expectedHand = 0;
+            hands.handSide = 2;
+            hands.alternate = true; // Dual wield / fists: slot 0 forehand.
             assert(side(OriginCue::defaultSide) == CueSide::right);
             assert(side(OriginCue::oppositeSide) ==
                    CueSide::none); // Opposite with alternate swings slot 1, never slot 0.
-            h.slot = 1;
-            h.hand = 1;
-            h.expectedHand = 1;
-            h.handSide = 1;
+            hands.slot = 1;
+            hands.hand = 1;
+            hands.expectedHand = 1;
+            hands.handSide = 1;
             assert(side(OriginCue::oppositeSide) == CueSide::left); // Offhand forehand.
             assert(side(OriginCue::defaultSide) ==
                    CueSide::none); // Default family never swings slot 1 by prediction.
-            h.alternate = false;
+            hands.alternate = false;
             assert(side(OriginCue::oppositeSide) == CueSide::none);
-            h.slot = 0;
-            h.hand = 0;
-            h.expectedHand = 0;
-            h.handSide = 0;
+            hands.slot = 0;
+            hands.hand = 0;
+            hands.expectedHand = 0;
+            hands.handSide = 0;
             assert(side(OriginCue::defaultSide) == CueSide::none); // Unnamed hand.
             assert(fp::swingSlot(false, true) == 0 && fp::swingSlot(true, true) == 1 &&
                    fp::swingSlot(true, false) == 0);
@@ -2343,21 +2754,21 @@ int main() {
         }
         { // The wind-up arc's geometry (x, y, alpha strips) and its state from the native swing.
             float v[3 * 3 * 68];
-            int c[3];
+            int counts[3];
             const int cap = int(sizeof v / sizeof(float));
-            assert(!fp::cueArc(fp::CueSide::none, 500, 300, 24, 100, 0.5f, v, cap, c) &&
-                   !fp::cueArc(fp::CueSide::left, 500, 300, 0, 100, 0.5f, v, cap, c));
-            assert(fp::cueArc(fp::CueSide::left, 500, 300, 24, 100, 0, v, cap, c) && c[0] == 66 &&
-                   c[1] == 0 && c[2] == 0); // track only at fill 0
-            for (int i = 0; i < c[0]; ++i)
+            assert(!fp::cueArc(fp::CueSide::none, 500, 300, 24, 100, 0.5f, v, cap, counts) &&
+                   !fp::cueArc(fp::CueSide::left, 500, 300, 0, 100, 0.5f, v, cap, counts));
+            assert(fp::cueArc(fp::CueSide::left, 500, 300, 24, 100, 0, v, cap, counts) && counts[0] == 66 &&
+                   counts[1] == 0 && counts[2] == 0); // track only at fill 0
+            for (int i = 0; i < counts[0]; ++i)
                 assert(v[i * 3] <= 500.01f &&
                        fabsf(v[i * 3 + 2] - 0.3f) < 1e-5f); // all on the left half, a faint outline
-            assert(fp::cueArc(fp::CueSide::left, 500, 300, 24, 100, 0.5f, v, cap, c) && c[1] > 0 &&
-                   c[2] == c[1]);
+            assert(fp::cueArc(fp::CueSide::left, 500, 300, 24, 100, 0.5f, v, cap, counts) && counts[1] > 0 &&
+                   counts[2] == counts[1]);
             {
-                const float* s = v + (c[0] + c[1]) * 3;
+                const float* s = v + (counts[0] + counts[1]) * 3;
                 float minA = 1, maxA = 0, maxDy = 0;
-                for (int i = 0; i < c[2]; ++i) {
+                for (int i = 0; i < counts[2]; ++i) {
                     minA = fminf(minA, s[i * 3 + 2]);
                     maxA = fmaxf(maxA, s[i * 3 + 2]);
                     maxDy = fmaxf(maxDy, fabsf(s[i * 3 + 1] - 300));
@@ -2366,22 +2777,22 @@ int main() {
                        maxDy < 13.34f * 0.7072f + 0.5f);
             } // half fill: +-45 degrees about the middle, brightest there
             {
-                const float* g = v + c[0] * 3;
-                for (int i = 0; i < c[1]; i += 2)
+                const float* g = v + counts[0] * 3;
+                for (int i = 0; i < counts[1]; i += 2)
                     assert(g[i * 3 + 2] == 0.f && g[i * 3 + 5] > 0.24f &&
                            fabsf(g[i * 3] - 500) < fabsf(g[i * 3 + 3] - 500));
             } // the glow fades toward the crosshair (inner edge 0)
-            assert(fp::cueArc(fp::CueSide::right, 500, 300, 24, 100, 1, v, cap, c) &&
+            assert(fp::cueArc(fp::CueSide::right, 500, 300, 24, 100, 1, v, cap, counts) &&
                    fabsf(v[32 * 3] - (500 + 12.84f - 0.5f)) < 0.05f &&
                    fabsf(v[33 * 3] - (500 + 12.84f + 0.5f)) <
                        0.05f); // the track's middle (angle 0), inner edge, right of the crosshair
-            assert(fp::cueArc(fp::CueSide::top, 500, 300, 24, 100, 1, v, cap, c));
-            for (int i = 0; i < c[0]; ++i) assert(v[i * 3 + 1] <= 300.01f);
-            assert(fp::cueArc(fp::CueSide::bottom, 500, 300, 24, 100, 1, v, cap, c));
-            for (int i = 0; i < c[0]; ++i) assert(v[i * 3 + 1] >= 299.99f);
-            assert(fp::cueArc(fp::CueSide::right, 0, 0, 24, 50, 1, v, cap, c) &&
+            assert(fp::cueArc(fp::CueSide::top, 500, 300, 24, 100, 1, v, cap, counts));
+            for (int i = 0; i < counts[0]; ++i) assert(v[i * 3 + 1] <= 300.01f);
+            assert(fp::cueArc(fp::CueSide::bottom, 500, 300, 24, 100, 1, v, cap, counts));
+            for (int i = 0; i < counts[0]; ++i) assert(v[i * 3 + 1] >= 299.99f);
+            assert(fp::cueArc(fp::CueSide::right, 0, 0, 24, 50, 1, v, cap, counts) &&
                    fabsf(v[33 * 3] - (9.84f + 1 + 0.5f)) < 0.05f); // 50%: never inside the ring (ring + 1 px)
-            assert(fp::cueArc(fp::CueSide::right, 0, 0, 24, 200, 1, v, cap, c) &&
+            assert(fp::cueArc(fp::CueSide::right, 0, 0, 24, 200, 1, v, cap, counts) &&
                    fabsf(v[33 * 3] - (25.68f + 0.744f)) < 0.05f); // 200%: radius and line scale
             fp::Windup w;
             unsigned long long now = 1000;
@@ -2450,10 +2861,10 @@ int main() {
                         meshL = base + 0x564000;
         *(uintptr_t*)(partR + 0x18) = meshR;
         *(uintptr_t*)(meshR + 0x160) = partR;
-        strcpy((char*)(meshR + 0x140), "17RHand");
+        strcpy_s((char*)(meshR + 0x140), 16, "17RHand");
         *(uintptr_t*)(partL + 0x18) = meshL;
         *(uintptr_t*)(meshL + 0x160) = partL;
-        strcpy((char*)(meshL + 0x140), "18LHand");
+        strcpy_s((char*)(meshL + 0x140), 16, "18LHand");
         *(uintptr_t*)(root + 0xe78) = partR;
         *(uintptr_t*)(root + 0xe80) = partL;
         const auto arm = [&](int count, uintptr_t w0, uintptr_t w1, uintptr_t h0, uintptr_t h1, unsigned grip,
@@ -2534,10 +2945,10 @@ int main() {
         publishCue(bh);
         assert(origin() == fp::CueSide::none); // Not a table entry.
         arm(1, weapon, 0, weapon, 0, 0, 1);
-        strcpy((char*)(meshR + 0x140), "17Rhnd");
+        strcpy_s((char*)(meshR + 0x140), 16, "17Rhnd");
         publishCue(bh);
         assert(origin() == fp::CueSide::none); // Unknown hand name.
-        strcpy((char*)(meshR + 0x140), "17RHand");
+        strcpy_s((char*)(meshR + 0x140), 16, "17RHand");
         *(uintptr_t*)(meshR + 0x160) = 0;
         publishCue(bh);
         assert(origin() == fp::CueSide::none); // Mesh not that part's.
@@ -2862,15 +3273,16 @@ int main() {
     }
     {
         // Bad head frames: hold up to headHoldFrames, then park.
-        fp::HeadHold h;
+        fp::HeadHold hold;
         for (unsigned f = 1; f <= fp::headHoldFrames; ++f)
-            assert(fp::holdStep(h) == fp::HoldStep::hold && h.run == f);
-        assert(h.holds == 1 && h.heldFrames == fp::headHoldFrames && h.maxHold == fp::headHoldFrames);
-        assert(fp::holdStep(h) == fp::HoldStep::park && h.parks == 1 && h.run == 0);
-        assert(fp::holdStep(h) == fp::HoldStep::hold && h.holds == 2);
-        fp::holdEnd(h); // A good frame ends the run.
-        assert(fp::holdStep(h) == fp::HoldStep::hold && h.holds == 3 && h.run == 1 &&
-               h.maxHold == fp::headHoldFrames && h.parks == 1);
+            assert(fp::holdStep(hold) == fp::HoldStep::hold && hold.run == f);
+        assert(hold.holds == 1 && hold.heldFrames == fp::headHoldFrames &&
+               hold.maxHold == fp::headHoldFrames);
+        assert(fp::holdStep(hold) == fp::HoldStep::park && hold.parks == 1 && hold.run == 0);
+        assert(fp::holdStep(hold) == fp::HoldStep::hold && hold.holds == 2);
+        fp::holdEnd(hold); // A good frame ends the run.
+        assert(fp::holdStep(hold) == fp::HoldStep::hold && hold.holds == 3 && hold.run == 1 &&
+               hold.maxHold == fp::headHoldFrames && hold.parks == 1);
         puts("PASS: bad head frames hold the last view for a bounded run, then park");
     }
     {
@@ -2886,9 +3298,9 @@ int main() {
         assert(fp::stopKeyStep(5000, 1300, 5200, true) == StopKey::holding); // Older release, new press.
         assert(fp::stopKeyStep(1000, 0, 1500, false) == StopKey::cancel &&
                fp::stopKeyStep(1000, 0, 3000, false) == StopKey::cancel);
-        assert(fp::rearmAllowed(true, true, false, false));
-        assert(!fp::rearmAllowed(false, true, false, false) && !fp::rearmAllowed(true, false, false, false));
-        assert(!fp::rearmAllowed(true, true, true, false) && !fp::rearmAllowed(true, true, false, true));
+        assert(fp::rearmAllowed(true, true, false));
+        assert(!fp::rearmAllowed(false, true, false) && !fp::rearmAllowed(true, false, false) &&
+               !fp::rearmAllowed(true, true, true));
         puts("PASS: F7 stops only after a one-second hold; taps ignored, focus loss cancels; F6 re-arm only "
              "after a clean stop");
     }
@@ -2947,8 +3359,12 @@ int main() {
                                  wc.hInstance, nullptr);
         if (w) ShowWindow(w, SW_SHOWNOACTIVATE); // Pixel ownership needs a visible window.
         HDC dc = w ? GetDC(w) : nullptr;
-        PIXELFORMATDESCRIPTOR pfd{sizeof(pfd), 1, PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
-                                  PFD_TYPE_RGBA, 32};
+        PIXELFORMATDESCRIPTOR pfd{};
+        pfd.nSize = sizeof pfd;
+        pfd.nVersion = 1;
+        pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+        pfd.iPixelType = PFD_TYPE_RGBA;
+        pfd.cColorBits = 32;
         const int format = dc ? ChoosePixelFormat(dc, &pfd) : 0;
         HGLRC rc = (format && SetPixelFormat(dc, format, &pfd)) ? wglCreateContext(dc) : nullptr;
         if (!rc || !wglMakeCurrent(dc, rc)) {
@@ -2968,6 +3384,7 @@ int main() {
             glColorMask(1, 0, 1, 0);
             *(uint32_t*)gameAt(fp::sig::combatCursorColour) =
                 0xb44c4cffu; // the game's default combat colour (ff 4c 4c b4)
+            const LONG beforeCueStop = InterlockedExchange(&stopping, 0);
             const bool drew = drawCue(fp::CueSide::left, 64, 64, 1.f, 1.f, 128,
                                       128); // the default 24 px cursor: radius 12.84
             if (!drew)
@@ -2979,11 +3396,12 @@ int main() {
                 glGetBooleanv(GL_COLOR_WRITEMASK, m);
                 GLint program = -1, vao = -1, buffer = -1;
                 glGetIntegerv(0x8B8D, &program);
+                glGetIntegerv(0x85B5, &vao);
                 glGetIntegerv(0x8894, &buffer);
                 assert(vp[0] == 1 && vp[1] == 2 && vp[2] == 3 && vp[3] == 4 && m[0] && !m[1] && m[2] &&
                        !m[3]);
                 assert(glIsEnabled(GL_SCISSOR_TEST) && !glIsEnabled(GL_BLEND) && glIsEnabled(GL_DEPTH_TEST) &&
-                       program == 0 && buffer == 0);
+                       program == 0 && vao == 0 && buffer == 0);
                 glDisable(GL_SCISSOR_TEST);
                 glColorMask(1, 1, 1, 1);
                 unsigned char strip[10 * 4]{};
@@ -3000,11 +3418,12 @@ int main() {
                 assert(px[0] > 150);
                 assert(cueDraws >= 1 && glGetError() == GL_NO_ERROR);
                 puts("PASS: attack-origin cue draws on the default framebuffer and restores viewport, "
-                     "scissor, blend, depth, color mask, program and buffer");
+                     "scissor, blend, depth, color mask, program, vertex array and buffer");
             }
+            assert(retireCurrentCue());
+            InterlockedExchange(&stopping, beforeCueStop);
             wglMakeCurrent(nullptr, nullptr);
             wglDeleteContext(rc);
-            cueContext = nullptr;
         }
         if (dc) ReleaseDC(w, dc);
         if (w) DestroyWindow(w);
@@ -3012,13 +3431,13 @@ int main() {
     {
         // walkScene keeps the old quadratic walk's exact output (order and parents) with a hash set: random
         // graphs with shared children, cycles, null entries and the root reached again, at many capacities.
-        auto reference = [](uintptr_t scene, uintptr_t* nodes, unsigned* parents, unsigned capacity) {
+        auto reference = [](uintptr_t scene, uintptr_t* out, unsigned* outParents, unsigned capacity) {
             if (!readable(scene, 0x2a0)) return 0u;
             unsigned count = 0, next = 0;
-            nodes[count] = scene;
-            parents[count++] = ~0u;
+            out[count] = scene;
+            outParents[count++] = ~0u;
             while (next < count) {
-                uintptr_t node = nodes[next];
+                uintptr_t node = out[next];
                 unsigned index = next++;
                 if (!readable(node, 0x2a0)) continue;
                 int last = *(int*)(node + field::sceneNode::lastChild);
@@ -3029,13 +3448,13 @@ int main() {
                     if (!child) continue;
                     bool seen = false;
                     for (unsigned j = 0; j < count; ++j)
-                        if (nodes[j] == child) {
+                        if (out[j] == child) {
                             seen = true;
                             break;
                         }
                     if (!seen) {
-                        nodes[count] = child;
-                        parents[count++] = index;
+                        out[count] = child;
+                        outParents[count++] = index;
                     }
                 }
             }
@@ -3056,20 +3475,20 @@ int main() {
                     kids[k].empty() ? 0 : (uintptr_t)kids[k].data();
             }
             for (unsigned capacity : {1u, 2u, 7u, 64u, 256u, 1024u}) {
-                std::vector<uintptr_t> a(capacity), b(capacity);
+                std::vector<uintptr_t> got(capacity), want(capacity);
                 std::vector<unsigned> pa(capacity), pb(capacity);
-                const unsigned ca = walkScene((uintptr_t)mem[0].data(), a.data(), pa.data(), capacity);
-                const unsigned cb = reference((uintptr_t)mem[0].data(), b.data(), pb.data(), capacity);
+                const unsigned ca = walkScene((uintptr_t)mem[0].data(), got.data(), pa.data(), capacity);
+                const unsigned cb = reference((uintptr_t)mem[0].data(), want.data(), pb.data(), capacity);
                 assert(ca == cb && ca <= capacity);
-                for (unsigned k = 0; k < ca; ++k) assert(a[k] == b[k] && pa[k] == pb[k]);
+                for (unsigned k = 0; k < ca; ++k) assert(got[k] == want[k] && pa[k] == pb[k]);
             }
         }
         puts("PASS: walkScene: same nodes, order and parents as the quadratic walk on 60 random graphs x 6 "
              "capacities");
     }
     {
-        // The settings folder (player build: Documents\ExCamera): an ini kept under the old ExaniMate name is copied
-        // over once, never over a newer one, and the old file stays (the editor uses that folder).
+        // The settings folder, Documents\ExCamera: an ini kept under the old ExaniMate name is copied
+        // over once, never over a newer one, and the old file stays (the ExaniMate editor uses that folder).
         wchar_t tmp[MAX_PATH]{};
         GetTempPathW(MAX_PATH, tmp);
         const std::wstring profile =
@@ -3114,14 +3533,14 @@ int main() {
                wcsstr(unsupportedNotice, L"Nothing was changed"));
         assert(!layout.resolved && !memcmp(layout.rva, known.rva, sizeof known.rva));
         faultDetail[0] = 0;
-        assert(!resolveGame(L"Z:\\missing-exanimate-test.exe") && strstr(faultDetail, "could not be read"));
+        assert(!resolveGame(L"Z:\\missing-exanima-test.exe") && strstr(faultDetail, "could not be read"));
         puts("PASS: a file without the game's code: refused, unresolved targets listed, layout untouched");
-        wchar_t exe[MAX_PATH]{};
-        if (GetEnvironmentVariableW(L"EXANIMA_EXE", exe, MAX_PATH)) {
-            assert(resolveGame(exe) && layout.resolved && !layout.moved);
+        wchar_t gameExe[MAX_PATH]{};
+        if (GetEnvironmentVariableW(L"EXANIMA_EXE", gameExe, MAX_PATH)) {
+            assert(resolveGame(gameExe) && layout.resolved && !layout.moved);
             std::vector<uint8_t> image;
-            fp::ImageView view;
-            assert(readGameFile(exe, image, view));
+            fp::ImageView fileView;
+            assert(readGameFile(gameExe, image, fileView));
             base = (uintptr_t)image.data();
             // As loaded: the slots hold the game's functions at this base (the file has them at its preferred base).
             const fp::sig::Target slotPairs[3][2] = {{fp::sig::navSlot, fp::sig::navSampler},
@@ -3131,8 +3550,8 @@ int main() {
             otherHooks = fp::OtherHooks::ask;
             chained = false;
             InterlockedExchange(&playerApproved, 0);
-            assert(otherHooksCheck(exe) && !chained && adoptDispatch() &&
-                   (uintptr_t)original == gameAt(fp::sig::navSampler));
+            assert(otherHooksCheck(gameExe) && !chained && adoptDispatch() &&
+                   (uintptr_t)originalNav == gameAt(fp::sig::navSampler));
             puts("PASS: the real game resolves; its own code and slots are accepted as they are");
             // Another mod: a detour on a hooked entry and its own function in the camera slot.
             static unsigned char otherModCode[16];
@@ -3140,26 +3559,26 @@ int main() {
             *(uintptr_t*)gameAt(fp::sig::navSlot) = (uintptr_t)otherModCode;
             faultDetail[0] = 0;
             otherHooksNotice[0] = 0;
-            assert(!otherHooksCheck(exe) && !chained && strstr(faultDetail, "cursorAim") &&
+            assert(!otherHooksCheck(gameExe) && !chained && strstr(faultDetail, "cursorAim") &&
                    strstr(faultDetail, "navSlot"));
             assert(wcsstr(otherHooksNotice, L"run ExCamera.exe to choose") &&
                    wcsstr(otherHooksNotice, L"cursorAim"));
             assert(!adoptDispatch()); // not chained: a taken slot is still a conflict
             otherHooks = fp::OtherHooks::refuse;
             InterlockedExchange(&playerApproved, 1);
-            assert(!otherHooksCheck(exe) && !chained && wcsstr(otherHooksNotice, L"OtherHooks=refuse"));
+            assert(!otherHooksCheck(gameExe) && !chained && wcsstr(otherHooksNotice, L"OtherHooks=refuse"));
             otherHooks = fp::OtherHooks::ask;
-            assert(otherHooksCheck(exe) && chained && wcsstr(otherHooksNotice, L"running on top") &&
+            assert(otherHooksCheck(gameExe) && chained && wcsstr(otherHooksNotice, L"running on top") &&
                    strstr(otherHooksNames, "cursorAim,navSlot"));
-            assert(adoptDispatch() && (uintptr_t)original == (uintptr_t)otherModCode &&
+            assert(adoptDispatch() && (uintptr_t)originalNav == (uintptr_t)otherModCode &&
                    (uintptr_t)originalBehavior == gameAt(fp::sig::playerBehavior));
             InterlockedExchange(&playerApproved, 0);
-            assert(otherHooksCheck(exe)); // chosen once: F6 re-arms stay chained
+            assert(otherHooksCheck(gameExe)); // chosen once: F6 re-arms stay chained
             *(uintptr_t*)gameAt(fp::sig::navSlot) = (uintptr_t)&nav;
             assert(!adoptDispatch()); // never its own replacement
             chained = false;
             otherHooks = fp::OtherHooks::allow;
-            assert(otherHooksCheck(exe) && chained);
+            assert(otherHooksCheck(gameExe) && chained);
             puts("PASS: another mod's hooks: ask refuses without the player's yes and chains with it; refuse "
                  "wins; allow chains; slots call through to it");
             chained = false;
@@ -3169,11 +3588,9 @@ int main() {
             otherHooksNames[0] = 0;
             base = savedBase;
             layout = known;
-            fp::Layout reset;
-            original = nullptr;
+            originalNav = nullptr;
             originalBehavior = nullptr;
             originalPoint = nullptr;
-            (void)reset;
         } else
             puts(
                 "SKIP: set EXANIMA_EXE to an Exanima.exe for the activation check against a real game build");

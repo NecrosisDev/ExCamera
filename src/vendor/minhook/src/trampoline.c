@@ -116,6 +116,7 @@ BOOL CreateTrampolineFunction(PTRAMPOLINE ct)
 
     ct->patchAbove = FALSE;
     ct->nIP        = 0;
+    ct->oldSize    = 0;
 
     do
     {
@@ -128,6 +129,11 @@ BOOL CreateTrampolineFunction(PTRAMPOLINE ct)
         copySize = HDE_DISASM((LPVOID)pOldInst, &hs);
         if (hs.flags & F_ERROR)
             return FALSE;
+
+        // ExCamera retains trampolines across stop/re-arm. Remember every byte
+        // decoded into this one, including immediates beyond the five-byte JMP.
+        if (oldPos < sizeof(JMP_REL))
+            ct->oldSize = (UINT8)(oldPos + hs.len);
 
         pCopySrc = (LPVOID)pOldInst;
         if (oldPos >= sizeof(JMP_REL))

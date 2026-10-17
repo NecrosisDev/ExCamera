@@ -97,17 +97,41 @@ static bool replace(uintptr_t address, void* expected, void* value) {
     if (!VirtualProtect((void*)address, 8, old, &tmp)) InterlockedExchange(&protectionFailure, 1);
     return ok;
 }
+// MinHook rejects a changed entry before changing bytes or suspended-thread IPs.
+// If one target was taken over, remove the still-owned hooks individually and
+// retain all trampolines; the caller reports an incomplete removal honestly.
+static MH_STATUS disableNativeHooks() {
+    const MH_STATUS status = MH_DisableHook(MH_ALL_HOOKS);
+    if (status != MH_ERROR_CONFLICT) return status;
+    bool seen[fp::sig::targetCount]{};
+    const char* changed = "unknown";
+    for (const auto& s : fp::sig::signatures) {
+        if (!s.hook || seen[s.target] || !layout.rva[s.target]) continue;
+        seen[s.target] = true;
+        if (MH_DisableHook((void*)gameAt(s.target)) == MH_ERROR_CONFLICT)
+            changed = fp::sig::targetNames[s.target];
+    }
+    for (const char* name : {"wglSwapBuffers", "wglMakeCurrent", "wglDeleteContext"}) {
+        const auto entry = GetProcAddress(GetModuleHandleW(L"opengl32.dll"), name);
+        if (entry && MH_DisableHook((void*)entry) == MH_ERROR_CONFLICT) changed = name;
+    }
+    snprintf(faultDetail, sizeof faultDetail,
+             "native hook entry changed (%s); replacement code and retained trampolines kept; restart required",
+             changed);
+    return status;
+}
 static bool rollbackDispatch(bool installedNav, bool installedPoint, bool installedBehavior) {
     bool ok = true;
-    if (installedNav) ok = replace(gameAt(fp::sig::navSlot), (void*)nav, (void*)original) && ok;
+    if (installedNav) ok = replace(gameAt(fp::sig::navSlot), (void*)nav, (void*)originalNav) && ok;
     if (installedPoint) ok = replace(gameAt(fp::sig::pointSlot), (void*)point, (void*)originalPoint) && ok;
     if (installedBehavior)
         ok = replace(gameAt(fp::sig::behaviorSlot), (void*)behavior, (void*)originalBehavior) && ok;
-    const bool unhooked = MH_DisableHook(MH_ALL_HOOKS) == MH_OK;
-    if (unhooked) __try {
-            spineBendRelease();
-        } __except (EXCEPTION_EXECUTE_HANDLER) {} // nothing writes the bend any more: the game's pose again
-    return unhooked && ok && !InterlockedCompareExchange(&protectionFailure, 0, 0);
+    const bool unhooked = disableNativeHooks() == MH_OK;
+    // Hook removal does not drain already-entered pose callbacks. They restore
+    // their own scoped borrows; the worker never writes physics part fields.
+    const bool posesReturned = awaitPoseBuilders();
+    const bool cuesReturned = awaitCueRetirement();
+    return unhooked && posesReturned && cuesReturned && ok && !InterlockedCompareExchange(&protectionFailure, 0, 0);
 }
 static void normalize(float* v) {
     float n = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
@@ -135,8 +159,9 @@ static unsigned tpHideTopCount = 0; // published to the render thread
 // tiles and wall pieces are walls (pull in); loose items (0x4000) are ignored (neither); nothing on the
 // player's own tree. The list belongs to one scene and is dropped when the scene changes.
 static uintptr_t tpHideScene = 0;
-static int tpHideHit(uintptr_t hitNode,
-                     uintptr_t root) { // 1 hidden, 2 ignored (small loose item), 0 a wall: pull in
+// 1 hidden, 2 ignored (small loose item), 0 pull the camera in front of it. hideObjects false ([ThirdPerson]
+// Blockers=smart): only people are hidden; a placed object (a door, a cart, a pillar) pulls the camera in like a wall.
+static int tpHideHit(uintptr_t hitNode, uintptr_t root, bool hideObjects) {
     if (!readable(hitNode, 0x2a0)) return 0;
     const uintptr_t W = *(uintptr_t*)(gameAt(fp::sig::world));
     const uintptr_t playerMesh = readable(root, 0x20) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
@@ -172,8 +197,9 @@ static int tpHideHit(uintptr_t hitNode,
             const unsigned f = *(unsigned*)(anc[k] + 8);
             if ((f & 0x7000) == 0x4000) return 2; // a loose item: too small to matter
             if ((f & 0x2000) && (f & 0xfff) != 0x11) target = anc[k];
-        }
-    } // the highest placed object
+        } // the highest placed object
+        if (target && !hideObjects) return 0;
+    }
     if (!target) return 0;
     const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
     if (scene != tpHideScene) {
@@ -195,17 +221,27 @@ static int tpHideHit(uintptr_t hitNode,
 // camera-to-pivot line (an object's origin can sit off the line it blocks), drop it 0.7 s after; a new
 // scene drops them all. Published for the render thread with the scene they belong to.
 static uintptr_t tpHidePublishedScene = 0;
+static bool sceneNodeWorldOrigin(uintptr_t node, float* point) {
+    if (!readable(node, field::sceneNode::sector + sizeof(uintptr_t))) return false;
+    const uintptr_t sector = *(uintptr_t*)(node + field::sceneNode::sector);
+    if (!readable(sector, field::sector::origin + 3 * sizeof(float))) return false;
+    for (unsigned k = 0; k < 3; ++k) {
+        point[k] = *(float*)(node + field::sceneNode::transformOrigin + k * sizeof(float)) +
+                   *(float*)(sector + field::sector::origin + k * sizeof(float));
+        if (!std::isfinite(point[k])) return false;
+    }
+    return true;
+}
 static void tpHideKeep(const float* camera, const float* pivot, uintptr_t scene) {
     const ULONGLONG now = GetTickCount64();
     unsigned n = 0;
-    if (*(uintptr_t*)(gameAt(fp::sig::currentScene)) != tpHideScene) tpHiddenCount = 0;
+    if (scene != tpHideScene || *(uintptr_t*)(gameAt(fp::sig::currentScene)) != scene)
+        tpHiddenCount = 0;
     for (unsigned i = 0; i < tpHiddenCount; ++i) {
         TpHidden h = tpHiddenTops[i];
-        if (readable(h.top, 0x2d0)) {
-            float p[3];
-            for (int k = 0; k < 3; ++k)
-                p[k] = *(float*)(h.top + field::sceneNode::poseOrigin + k * 4) +
-                       *(float*)(scene + field::sector::origin + k * 4);
+        float p[3];
+        if (!sceneNodeWorldOrigin(h.top, p)) continue;
+        {
             float d[3], s = 0, l2 = 0;
             for (int k = 0; k < 3; ++k) {
                 d[k] = pivot[k] - camera[k];
@@ -220,7 +256,7 @@ static void tpHideKeep(const float* camera, const float* pivot, uintptr_t scene)
             }
             if (std::isfinite(e) && e < 120.f * 120.f) h.until = now + 700;
         }
-        if (now < h.until && readable(h.top, 0x2a0)) tpHiddenTops[n++] = h;
+        if (now < h.until) tpHiddenTops[n++] = h;
     }
     tpHiddenCount = n;
     AcquireSRWLockExclusive(&tpHideLock);
@@ -257,41 +293,73 @@ static void tpHideAdd() {
 // the point under the third-person crosshair (the screen centre): the game's own pick ray from the
 // camera just committed, else the level grid, else 1000 units out; the character's own body (within 70
 // of the eye) does not count. Published in the aim's (scene-local) frame for the input step.
-static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye, uintptr_t scene) {
-    const float fwd[3] = {-pose[6], -pose[7], -pose[8]};
-    float t = 1000.f;
+static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye, uintptr_t scene,
+                           const TpAimRequest& request) {
     RECT client{};
-    if (originalPickRay && hookedWindow && GetClientRect(hookedWindow, &client) && client.right > 40 &&
-        client.bottom > 40) {
+    if (!request.valid || request.sector != scene || !hookedWindow || !GetClientRect(hookedWindow, &client) ||
+        client.right != request.width || client.bottom != request.height ||
+        *(float*)(camera + field::camera::fov) != request.fov)
+        return;
+    AcquireSRWLockShared(&aimLock);
+    const bool current = tpAimRequestCurrent(request);
+    ReleaseSRWLockShared(&aimLock);
+    if (!current) return;
+    // The pose and box come from the same camera-owner snapshot. Never pair an
+    // older pose with box atomics published by a newer input sample.
+    float fwd[3], from[3] = {pose[9], pose[10], pose[11]};
+    fp::cursorRay(pose, request.x, request.y, float(request.height), request.fov, fwd);
+    float t = 1000.f;
+    if (originalPickRay) {
+        const bool free = request.free;
+        const float x = float(request.width) * 0.5f + request.x, y = float(request.height) * 0.5f + request.y;
         alignas(8) unsigned char hit[0x40]{};
         bool got = false;
         __try {
-            got = originalPickRay(camera, float(client.right) * 0.5f, float(client.bottom) * 0.5f,
-                                  (uintptr_t)hit) != 0;
+            got = originalPickRay(camera, x, y, (uintptr_t)hit) != 0;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             got = false;
+        }
+        if (free) {
+            const float* d = (const float*)(hit + field::pick::direction);
+            const float* o = (const float*)(hit + field::pick::origin);
+            const float l = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            if (std::isfinite(l) && std::fabs(l - 1.f) < 0.01f && std::isfinite(o[0] + o[1] + o[2])) {
+                memcpy(fwd, d, 12);
+                memcpy(from, o, 12);
+            }
         }
         const float h = *(float*)(hit + field::pick::distance);
         if (got && std::isfinite(h) && h > 0.f && h < t) {
             float s = 0;
             for (int i = 0; i < 3; ++i) {
-                const float p = pose[9 + i] + fwd[i] * h - eye[i];
+                const float p = from[i] + fwd[i] * h - eye[i];
                 s += p * p;
             }
             if (std::sqrt(s) > 70.f) t = h;
         }
     }
     if (const uintptr_t level = levelGrid(); level && levelRay && levelRay2)
-        t = std::fmin(t, levelClear(level, pose + 9, fwd, t) + 8.f);
+        t = std::fmin(t, levelClear(level, from, fwd, t) + 8.f);
+    const float cameraForward[3] = {-pose[6], -pose[7], -pose[8]};
+    float along = 0.f, rayForward = 0.f;
+    for (int i = 0; i < 3; ++i) {
+        along += (eye[i] - from[i]) * cameraForward[i];
+        rayForward += fwd[i] * cameraForward[i];
+    }
+    if (rayForward > 0.01f) t = std::fmax(t, (along + 20.f) / rayForward);
     float local[3];
     for (int i = 0; i < 3; ++i)
-        local[i] = pose[9 + i] + fwd[i] * t - *(float*)(scene + field::sector::origin + i * 4);
+        local[i] = from[i] + fwd[i] * t - *(float*)(scene + field::sector::origin + i * 4);
     bool ok = true;
     for (float v : local)
         if (!std::isfinite(v)) ok = false;
+    RECT after{};
+    ok = ok && GetClientRect(hookedWindow, &after) && after.right == request.width &&
+         after.bottom == request.height && *(float*)(camera + field::camera::fov) == request.fov;
     AcquireSRWLockExclusive(&aimLock);
-    if (ok) {
+    if (ok && tpAimRequestCurrent(request)) {
         memcpy(tpAimLocal, local, 12);
+        tpAimSample = request;
         tpAimSet = true;
     }
     ReleaseSRWLockExclusive(&aimLock);

@@ -1,5 +1,6 @@
 // Shared state: the resolved game layout, settings, the status file, notices, faults, input release, drag queries.
 // Part of first_person.cpp (one translation unit): included there, in order.
+#include "../input_ownership.h"
 // Threads. Each hook runs on whichever game thread calls the function it replaces. By role (several roles
 // may share one OS thread; the status file's nav_thread, swap_thread and sector_thread say which):
 // - render thread: swap (once a frame), cursorPosition, the picks, sectorUpdate, the view features;
@@ -13,7 +14,12 @@
 // rest is used by one thread (most of it says which in its comment).
 // Locks (SRW, never recursive). Nested only in this order (every function that takes one was read for it):
 // cameraLock -> aimLock -> rawLock
-// cameraLock -> reticleLock, hideLock, tpHideLock
+// cameraLock -> reticleLock, hideLock, tpHideLock, reachHeadLock, crouchLock
+// reachHeadLock, crouchLock and guardLock only copy publications; no other lock or native call is entered under them.
+// settingsLock serializes UI actions, FOV keys and INI writes. It is not nested
+// with these locks, and is released before waiting for the worker's raw registration.
+// cueLock owns overlay resources and retirement; it never nests game-state locks.
+// Native WGL context switches/deletion run after releasing it.
 // cameraLock (CameraGuard) guards the camera publication: what nav writes into the game's camera, the saved
 // stock values and their restoration. Nothing waits while holding it: awaitRestore polls with
 // TryAcquire and sleeps without it, so a stop can never deadlock against a frame in progress.
@@ -21,6 +27,9 @@ static uintptr_t base;
 // Where each game target is in this game build (game_layout.h). Until activation resolves it, the
 // source build's addresses, which the offline suites' fake memory is laid out by.
 static fp::Layout layout;
+// File-image admission finishes before hooks are created. This report is immutable during a session.
+static fp::ContractReport nativeContracts;
+static bool manualDefenseFieldMismatch = false;
 static uintptr_t gameAt(fp::sig::Target t) {
     return base + layout.rva[t];
 }
@@ -31,7 +40,7 @@ static void healthHit(fp::HealthHook h) {
 }
 static HMODULE module;
 using Nav = uintptr_t (*)(void*, float);
-static Nav original;
+static Nav originalNav;
 static uintptr_t nav(void*, float);
 static volatile LONG stopping = 0, restored = 0;
 static volatile LONG pendingRestore = 0;
@@ -86,20 +95,36 @@ static std::atomic<ULONGLONG> rearmedAt{0}; // tick of the last F6 re-arm (fp::r
 static std::atomic<int> parkKind{0};        // fp::OwnerChange of the last park, 0 none.
 static volatile LONG parkedNow = 0;
 // Restoration uncertainty is sticky: pointer equality later is not lifetime proof.
-static volatile LONG restorationUnknown = 0, cameraFault = 0, cameraReady = 0;
-enum CameraFault : LONG { NoCameraFault = 0, SourceLost = 1, OwnerChanged = 2 };
+static volatile LONG restorationUnknown = 0, cameraReady = 0;
 static void releaseInput();
+static bool gameplayOwnsPointer();
 static float stockNear = 100;
 static std::atomic<unsigned> samples{0};
 static float lastHead[12]{}, lastCamera[12]{};
 // Head origin in the camera's (global) frame, paired with lastCamera: the
 // start of the native line of sight (0x246610 uses the head part).
 static float lastHeadGlobal[3]{};
+// Grab reach uses the head origin (not the eye setback). Picking may run apart from nav and cannot
+// recursively take cameraLock, so publish a coherent copy with a separate short-lived lock.
+static SRWLOCK reachHeadLock = SRWLOCK_INIT;
+static float reachHeadGlobal[3]{};
+static void publishReachHead(const float* head) {
+    AcquireSRWLockExclusive(&reachHeadLock);
+    memcpy(reachHeadGlobal, head, sizeof reachHeadGlobal);
+    ReleaseSRWLockExclusive(&reachHeadLock);
+}
+static void readReachHead(float* head) {
+    AcquireSRWLockShared(&reachHeadLock);
+    memcpy(head, reachHeadGlobal, sizeof reachHeadGlobal);
+    ReleaseSRWLockShared(&reachHeadLock);
+}
 static SRWLOCK aimLock = SRWLOCK_INIT;
 struct Aim {
     uintptr_t root = 0, head = 0;
     float point[3]{}, origin[3]{}, anchor[3]{}, travel[3]{}, yaw = 0, pitch = 0, targetYaw = 0,
                                                              targetPitch = 0;
+    float rayYaw = 0;
+    bool rayValid = false;
     unsigned revision = 0;
     bool valid = false, travelValid = false;
 };
@@ -116,28 +141,54 @@ static std::atomic<int> rmbMode{1};
 // does ([View] FreezeForWindows, F8 Controls). Set once a frame on the game's thread (windowFreeStep).
 static volatile LONG windowFree = 0;
 static std::atomic<bool> windowsFreeze{true};
-// Crouch (poseBuilder): the game's duck key as polled (input), the mode ([Input] Crouch: 0 off, 1 hold, 2 toggle)
-// and whether the duck is being held up this frame (crouchStep on the game's thread).
-static std::atomic<int> crouchMode{2};
-static std::atomic<bool> duckKey{false}, crouchHeld{false};
+// Crouch: the input thread polls the native duck key, the render thread publishes
+// a request, and poseBuilder admits it only for the same eligible character.
+static std::atomic<int> crouchMode{2};                      // 0 off, 1 hold, 2 toggle
+static std::atomic<bool> duckKey{false}, crouchHeld{false}; // held is a status mirror
 static std::atomic<unsigned> crouchTicks{0};
 static constexpr unsigned duckKeyBit = 0x10;
+struct CrouchRequest {
+    uintptr_t root = 0, head = 0, scene = 0;
+    int mode = 0;
+    bool held = false;
+};
+static SRWLOCK crouchLock = SRWLOCK_INIT;
+static CrouchRequest crouchRequest;
+static bool crouchAppliesTo(uintptr_t root);
 static bool cursorFreeNow() {
     return InterlockedCompareExchange(&cursorFree, 0, 0) || InterlockedCompareExchange(&rmbFree, 0, 0) ||
            InterlockedCompareExchange(&windowFree, 0, 0);
 }
-static volatile LONG heldKeys = 0, tappedKeys = 0, inputEnabled = 0;
-static volatile LONG tappedButtons = 0;
+static volatile LONG inputEnabled = 0;
 static constexpr unsigned movementBits = 15u; // forward, left, back, right in the game's key word (0x49CDC0)
+static unsigned nativeBinding(size_t index) {
+    if (!base || index >= field::bindings::count) return 0;
+    const size_t offset = index * field::bindings::stride;
+    const uintptr_t entry = gameAt(fp::sig::movementKeys) + offset;
+    // Native interaction reads a WORD; the other reviewed slots read DWORDs.
+    return offset == field::bindings::interact ? *(const uint16_t*)entry : *(const uint32_t*)entry;
+}
 static void movementKeys(unsigned* keys) {
     const unsigned fallback[4] = {'W', 'A', 'S', 'D'};
     for (unsigned i = 0; i < 4; ++i)
-        keys[i] = base ? *(unsigned*)(gameAt(fp::sig::movementKeys) + i * 16) : fallback[i];
+        keys[i] = base ? nativeBinding(i) : fallback[i];
 }
 static unsigned keyMask(WPARAM key) {
     unsigned keys[4];
     movementKeys(keys);
     return fp::movementKey(unsigned(key), keys);
+}
+// All actions polled by 0xAA080, including crouch/run/alternate attack.
+// A mod-owned lean/rotate binding must not also trigger its native action.
+static unsigned actionMask(WPARAM key) {
+    if (!base) return keyMask(key);
+    const unsigned bits[7] = {1, 2, 4, 8, 0x10, 0x20, 0x80};
+    unsigned mask = 0;
+    for (unsigned i = 0; i < 7; ++i) {
+        const unsigned bound = nativeBinding(i);
+        if (bound && key == bound) mask |= bits[i];
+    }
+    return mask;
 }
 // The movement keys physically held now (the tests replace the keyboard).
 static SHORT(WINAPI* keyState)(int) = GetAsyncKeyState;
@@ -149,9 +200,8 @@ static unsigned physicalMovement() {
         if (k > 0 && k < 256 && (keyState(int(k)) & 0x8000)) held |= fp::movementKey(k, keys);
     return held;
 }
-static fp::ButtonHandoff buttonHandoff; // Only native input thread accesses this.
-static volatile LONG inputGeneration = 0;
-static LONG sampledInputGeneration = -1;
+using InputOwner = fp::InputOwnership<field::bindings::count>;
+static InputOwner inputOwner;
 static std::atomic<float> sensitivity{
     0.0025f}; // [Input] SensitivityPercent; the F8 settings page changes it live
 // [View] SwingCrosshair=hide|show (the crosshair during an accepted swing). [Camera] HeadBob
@@ -165,26 +215,79 @@ static std::atomic<int> flickCatchup{50};
 // which view F6 shows while the mod owns the camera: 0 first person, 1 third person (F6 cycles
 // first -> third -> the game's overhead). [ThirdPerson] Distance / Shoulder / Height in first-person.ini.
 static std::atomic<int> viewMode{0}, tpDistance{250}, tpShoulder{40}, tpHeight{15};
+// Requested modes persist independently. The complete optional hook group must
+// be admitted before either can become effective.
+static std::atomic<int> fpManualGuard{0}, tpManualGuard{0};
+static std::atomic<bool> manualDefenseReady{false};
+struct GuardRequest {
+    fp::InputStamp stamp;
+    bool held = false;
+};
+// Native input publishes; native actor callbacks read. No native call under this lock.
+static SRWLOCK guardLock = SRWLOCK_INIT;
+static GuardRequest guardRequest;
+static std::atomic<unsigned> guardDenied{0}, guardWithdrawals{0};
+static bool ordinaryCombat(uintptr_t root, uintptr_t bh);
+static bool manualCombat(uintptr_t root, uintptr_t bh);
+static void combatInput(uintptr_t root, uintptr_t bh, bool owned, const InputOwner::Sample& sample);
 static std::atomic<bool> tpTight{true};
-// combat framing (item 4: closer and centred while in combat mode), the third-person FOV (item 8: 0 = as first
-// person) and the third -> overhead blend (item 7; viewMode 2 = blending out, ends in the game's view).
+// Combat framing (closer and centred while in combat mode), the third-person FOV (0 = as first person) and
+// the third -> overhead blend (viewMode 2 = blending out, ends in the game's view).
 static std::atomic<bool> tpCombat{true};
 static std::atomic<int> tpFov{0};
 // camera lag 0..100, hiding what stands between the
 // camera and the player instead of pulling in (walls still pull in), and the knockdown follow.
 static std::atomic<int> tpLag{40};
-static std::atomic<bool> tpHide{true}, tpDown{true};
+static std::atomic<bool> tpDown{true};
 static std::atomic<unsigned> tpHidden{0};
 static std::atomic<ULONGLONG> tpBlendStart{0};
 static float tpCombatK = 0.f; // swap shoulder / closer framing in tight spaces
-static std::atomic<unsigned> terrainTilesApplied{0}, terrainWakes{0}, terrainLightMarks{0},
-    terrainSlowPaint{0}; // terrain live (status)
-// in third person the aim point is what the crosshair (the camera's centre ray) is over, so the
-// character swings at it; written by the camera hook, read by the input step (aimLock).
+// A TP hit belongs to the exact input geometry that the camera sampled. The
+// input tick revision advances even without mouse motion, so it cannot serve
+// as this cache key. sequence advances only when geometry or ownership changes.
+// All request/sample members and the cached point are protected by aimLock.
+struct TpAimRequest {
+    uintptr_t root = 0, head = 0, sector = 0, worldScene = 0;
+    uint32_t generation = 0;
+    unsigned policy = 0;
+    uint64_t sequence = 0;
+    float yaw = 0, pitch = 0, x = 0, y = 0, fov = 0;
+    int width = 0, height = 0;
+    bool free = false, valid = false;
+};
+static bool sameTpAimGeometry(const TpAimRequest& a, const TpAimRequest& b) {
+    return a.valid && b.valid && a.root == b.root && a.head == b.head && a.sector == b.sector &&
+           a.worldScene == b.worldScene && a.generation == b.generation && a.policy == b.policy &&
+           a.yaw == b.yaw && a.pitch == b.pitch && a.x == b.x && a.y == b.y && a.fov == b.fov &&
+           a.width == b.width && a.height == b.height && a.free == b.free;
+}
+static bool sameTpAimRequest(const TpAimRequest& a, const TpAimRequest& b) {
+    return a.sequence == b.sequence && sameTpAimGeometry(a, b);
+}
+static TpAimRequest tpAimRequest, tpAimSample;
 static float tpAimLocal[3]{};
 static bool tpAimSet = false;
 static fp::ThirdPerson thirdPerson;          // cameraLock
 static std::atomic<unsigned> tpPropPulls{0}; // frames a prop pulled the third-person camera in
+// [ThirdPerson] Blockers (fp::blockersHide / Push / Smart): what the camera does about props and people between it
+// and the player. [ThirdPerson] CombatAim=free: in combat the crosshair moves inside a box, the view turns at its edge.
+static std::atomic<int> tpBlockers{fp::blockersSmart};
+static std::atomic<bool> tpCombatAimFree{true};
+// Third-person diagnostics for the status file: the eye's height above the character's reference position, and
+// what the camera decided last frame (fp::ThirdPerson).
+// [Camera] EyeSetback (fp::eyePoint): cm the viewpoint and the aim's origin sit behind the eyes. 0: the eye mount.
+static std::atomic<int> eyeSetback{0};
+// The physics head's points in its own frame (status: where its middle is and how far its points reach), cm.
+static std::atomic<float> headMid2{0}, headMid3{0}, headReach{0};
+static std::atomic<float> tpDrop{0}, tpCeilingRoom{-1}, tpLostHeight{0}, tpPivotPulled{0}, tpAllowed{0};
+static std::atomic<bool> tpDownNow{false};
+// The free combat crosshair: its offset from the window centre (px; aim thread writes, render thread reads) and
+// whether it is in use.
+static fp::AimBox tpAimBox; // aim thread
+static std::atomic<float> tpAimX{0}, tpAimY{0};
+static std::atomic<int> fpDeadzoneX{15}, fpDeadzoneY{10}, tpDeadzoneX{20}, tpDeadzoneY{20};
+static void releaseInteractionInput();
+static std::atomic<bool> tpAimFree{false};
 static std::atomic<int> headSteadyRoll{80}, headSteadyPitch{70},
     headSteadyYaw{
         50}; // [Camera] HeadRoll/HeadPitch/HeadYaw 0..100: per-axis neck stiffening (fp::wobbleSlackScale) and the stabiliser's damping (fp::steadyHead)
@@ -205,10 +308,6 @@ static bool rawMouse = false;
 // [Input] AttackSideKey=<virtual-key code>. Optional held binding that switches
 // the ordinary attack side for presses made while it is held. 0 = unassigned.
 static int attackSideKey = 0;
-// [Input] ProbeKey (default 0 = unbound). Diagnostic: writes a scene/head
-// inventory JSON beside the DLL. It changes nothing in the game.
-static int probeKey = 0;
-static volatile LONG probeRequest = 0;
 static std::atomic<unsigned> sideFlips{0};
 // [View] AttackCue=1: the wind-up arc around the combat crosshair. CueSize/CueOpacity are percentages;
 // CueThrust=1 draws thrusts below the crosshair.
@@ -250,6 +349,19 @@ static WNDPROC originalWindowProc;
 static HWND hookedWindow;
 static float stockPose[12]{}, stockFov = 30;
 static std::atomic<int> selectedFov{75};
+// UI actions, FOV keys, and INI persistence share one settings owner. This lock
+// is never nested with camera/input locks or held while waiting for raw input.
+static SRWLOCK settingsLock = SRWLOCK_INIT;
+struct SettingsGuard {
+    SettingsGuard() { AcquireSRWLockExclusive(&settingsLock); }
+    ~SettingsGuard() { ReleaseSRWLockExclusive(&settingsLock); }
+    SettingsGuard(const SettingsGuard&) = delete;
+    SettingsGuard& operator=(const SettingsGuard&) = delete;
+};
+static void adjustFov(int delta, bool reset = false) {
+    SettingsGuard guard;
+    selectedFov = reset ? 75 : fp::clampFov(selectedFov.load() + delta);
+}
 static std::atomic<int> nearClip{
     fp::nearClipDefaultTenths};  // [Camera] NearClip: the dynamic near plane's floor, tenths of a cm
 static float renderedFov = 75;   // Protected by cameraLock, paired with lastCamera.
@@ -259,10 +371,11 @@ static float renderedNear = 1.f; // the near plane first person wrote (cameraLoc
 static std::atomic<uintptr_t> viewRoot{0};
 static std::atomic<float> viewYaw{0}, viewPitch{0};
 static wchar_t settingsPath[MAX_PATH]{};
-// Settings live in one per-user file that outlives release folders (Documents\ExaniMate\first-person.ini);
+// Settings live in one per-user file that outlives release folders (userSettingsDir: Documents\ExCamera);
 // the release's own first-person.ini holds the defaults and is never written. When the user file does not
-// exist yet it starts as a copy of the most recently edited release ini (one written after its folder's DLL,
-// so a fresh build's defaults never win over the player's), else of this release's. moduleIni: the ini
+// exist yet it starts as a copy of the most recently edited release ini (the releases before the per-user
+// file sit in sibling ExanimaFirstPerson-* folders; edited = written after its folder's DLL, so a fresh
+// build's defaults never win over the player's), else of this release's. moduleIni: the ini
 // beside this DLL; userDir: empty keeps the settings beside the DLL.
 static std::wstring userSettingsFile(const std::wstring& moduleIni, const std::wstring& userDir) {
     if (userDir.empty()) return moduleIni;
@@ -310,8 +423,8 @@ static std::wstring userSettingsFile(const std::wstring& moduleIni, const std::w
                : moduleIni;
 }
 // The per-user settings folder: Documents\ExCamera. Releases before the ExCamera name kept settings in
-// Documents\ExaniMate; the file is copied over once (copied, not moved: the editor still uses that folder).
-// The dev build keeps the editor's folder.
+// Documents\ExaniMate; the file is copied over once (copied, not moved: the ExaniMate editor still uses that
+// folder).
 static std::wstring userSettingsDir(const std::wstring& profile) {
     const std::wstring dir = profile + L"\\Documents\\ExCamera", file = dir + L"\\first-person.ini",
                        old = profile + L"\\Documents\\ExaniMate\\first-person.ini";
@@ -322,17 +435,17 @@ static std::wstring userSettingsDir(const std::wstring& profile) {
     }
     return dir;
 }
-static int persistedFov = 75;
+static std::atomic<int> persistedFov{75}; // status reads without taking the settings lock
 static void saveFov() {
+    SettingsGuard guard;
     const int value = selectedFov.load();
-    if (!settingsPath[0] || value == persistedFov) return;
+    if (!settingsPath[0] || value == persistedFov.load()) return;
     wchar_t text[16];
     swprintf_s(text, L"%d", value);
     if (WritePrivateProfileStringW(L"Camera", L"FOV", text, settingsPath)) persistedFov = value;
 }
 static unsigned inputClock = ~0u;
 static wchar_t statusPath[MAX_PATH]{}, statusTempPath[MAX_PATH]{};
-static const char* runtimeState = "starting"; // Worker thread owns diagnostic strings.
 static FILE* openStatus() {
     FILE* f = nullptr;
     if (statusTempPath[0]) _wfopen_s(&f, statusTempPath, L"w");
@@ -452,20 +565,21 @@ static bool pumpNotice() {
 }
 // The fault's specifics (which target, which hook) for first-person-status.json; empty when there are none.
 static char faultDetail[512]{};
+#include "activation.inl"
 // notice: shown instead of the generic fault text; must outlive the notice (a literal or a static buffer).
 static void reportFault(const char* reason, const char* hooks = "unknown",
                         const char* restoration = "unknown", const wchar_t* notice = nullptr) {
-    runtimeState = reason;
     viewMode = 0;
     InterlockedExchange(&cameraReady, 0);
     InterlockedExchange(&stopping, 1);
     InterlockedExchange(&active, 0);
     releaseInput();
+    setActivationPhase(fp::ActivationPhase::failed);
     const bool verified = strcmp(restoration, "restored") == 0;
     const bool removed = strcmp(hooks, "removed") == 0 || strcmp(hooks, "not_installed") == 0;
     if (FILE* f = openStatus()) {
         fp::JsonOut j(f);
-        j.unum("pid", GetCurrentProcessId()).num("revision", FP_REVISION).str("build", FP_BUILD);
+        writeActivationStatus(j);
         if (removed)
             j.boolean("installed", false);
         else if (strcmp(hooks, "retained") == 0)
@@ -509,20 +623,21 @@ struct CameraGuard {
     CameraGuard() { AcquireSRWLockExclusive(&cameraLock); }
     ~CameraGuard() { ReleaseSRWLockExclusive(&cameraLock); }
 };
-// Risk audit item 5: while look owns the mouse, the OS cursor is
+// While look owns the mouse, the OS cursor is
 // confined to the game's client area, so a fast flick in windowed mode or on two
 // monitors cannot click another window. Released with input.
 static volatile LONG cursorClipped = 0;
 static void releaseInput() {
+    releaseInteractionInput();
     if (InterlockedExchange(&cursorClipped, 0)) ClipCursor(nullptr);
-    if (InterlockedExchange(&inputEnabled, 0)) InterlockedIncrement(&inputGeneration);
+    if (InterlockedExchange(&inputEnabled, 0))
+        inputOwner.releaseGameplay();
+    else
+        inputOwner.clearTransient();
     AcquireSRWLockExclusive(&rawLock);
     rawLook.reset();
     ReleaseSRWLockExclusive(&rawLock);
     InterlockedExchange(&mouseCaptured, 0);
-    InterlockedExchange(&heldKeys, 0);
-    InterlockedExchange(&tappedKeys, 0);
-    InterlockedExchange(&tappedButtons, 0);
 }
 static volatile LONG swapCalls = 0, nativeCursorUpdates = 0;
 using Behavior = void (*)(uintptr_t);
@@ -531,6 +646,8 @@ using Swap = BOOL(WINAPI*)(HDC);
 using Pose = void (*)(uintptr_t, float, unsigned char);
 static Pose originalPose;
 static Behavior originalStep;
+static Behavior originalDefenseReactive, originalDefenseAttackUpdate, defenseCleanup;
+static uint64_t (*originalDefenseMotionSelect)(uintptr_t, uintptr_t);
 static void (*originalInput)();
 static Behavior originalBehavior, originalCursor, originalExplore;
 static Point originalPoint;
@@ -583,7 +700,55 @@ static std::atomic<unsigned> doorHolds{0}, holdNotches{0}, holdPlacements{0}, wa
 static std::atomic<int> grabRange{
     fp::grabRangeDefault}; // [Input] GrabRange, cm from the eye (fp::clampGrabRange)
 static std::atomic<float> holdTarget{0}, holdApplied{0};
+// Holding an object (held_object.h). The eye the hold distance is measured from (global; the camera thread
+// publishes it with the view), the grab's distance from it, the rotate key ([Input] RotateHeldKey, default
+// right mouse), whether it is turning the object now, and the mouse movement it has not applied yet (the aim
+// thread adds, the placing thread takes).
+static std::atomic<float> eyeGlobal[3]{};
+static std::atomic<float> grabStartDistance{0};
+static std::atomic<bool> hoverOutOfRange{false};
+static std::atomic<ULONGLONG> hoverRangeAt{0};
+static std::atomic<int> rotateHeldKey{0x02};
+// [Input] LeanKey (F8 Mouse and keys; default Alt, 0 unbound): held, the mouse leans the upper body (fp::Lean)
+// instead of turning the view, in first and third person. The mouse is gathered here (input thread) and
+// used by the physics thread (spineBendStep).
+static std::atomic<int> leanKey{0x12};
+// [Camera] HoldHeading / TurnLead (F8 View): first person only (fp::holdHeading, fp::TurnLead; camera thread).
+static std::atomic<bool> holdHeadingOn{true}, turnLeadOn{false};
+static std::atomic<float> headingTurn{0};
+static std::atomic<bool> leaning{false}, leanKeysMode{false};
+static std::atomic<int> leanLeftKey{0}, leanRightKey{0}, leanKeySide{0};
+// Overhead controls kept from the game while the mod owns the camera: the wheel's zoom (status).
+static std::atomic<unsigned> overheadInputsHeld{0};
+static std::atomic<float> leanMouseX{0}, leanMouseY{0}, leanSideNow{0}, leanForwardNow{0};
+static std::atomic<bool> heldRotating{false};
+static std::atomic<float> heldTurnX{0}, heldTurnY{0};
+static std::atomic<unsigned> heldTurns{0};
+static void releaseInteractionInput() {
+    hoverOutOfRange = false;
+    hoverRangeAt = 0;
+    leaning = false;
+    heldRotating = false;
+    leanKeySide = 0;
+    leanMouseX = leanMouseY = heldTurnX = heldTurnY = 0.f;
+}
+// The fling (fp::flingHistory): the push the placement measured (its outward speed, cm/s, when, and along which
+// ray), the physics step measured from the player's pose builds (s; 0 until known), and how many flung.
+static std::atomic<float> pushSpeed{0}, pushDir[3]{};
+static std::atomic<ULONGLONG> pushAt{0};
+static std::atomic<unsigned> playerSteps{0}, flings{0};
+static std::atomic<float> physicsStep{0};
 static std::atomic<uintptr_t> holdObject{0};
+// A scene-node address can be grabbed repeatedly. Placement caches belong to a grab, not an address;
+// the grab-start hook invalidates them even if no idle placement ran between release and re-grab.
+static std::atomic<ULONGLONG> holdGeneration{0};
+static void resetHeldGrab() {
+    holdObject = 0;
+    pushSpeed = 0.f;
+    pushAt = 0;
+    heldTurnX = heldTurnY = 0.f;
+    ++holdGeneration;
+}
 static ULONGLONG holdTick = 0;
 static char dragName[17]{}; // status: the drag manager's flags while a drag is on
 static bool readable(uintptr_t address, size_t size);
@@ -629,7 +794,8 @@ static bool rmbEligible() {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
-    if (kind == 1) return true; // an item held in place
+    if (kind == 1)
+        return rotateHeldKey.load() != VK_RBUTTON; // an item held in place; right mouse may be the rotate key
     if (kind == 2)
         return doorDistance.load() > 0 &&
                heldDoorDrag(); // a door or lid held in place, never a locked door's rattle

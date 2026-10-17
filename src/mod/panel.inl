@@ -1,4 +1,4 @@
-// The F8 window: the editor's panel and its bridge in the dev build, the Settings window in the player build.
+// The F8 window: the Settings window and what its rows change.
 // Part of first_person.cpp (one translation unit): included there, in order.
 // ---- F8's Settings window (settings_window.h), made the first time F8 is pressed ----
 static std::atomic<panel::SettingsWindow*> f8Window{nullptr};
@@ -18,7 +18,7 @@ static void f8WindowTick(bool show, bool) {
         f8CreatedAt = GetTickCount64();
         p = new panel::SettingsWindow();
         p->getSettings = currentSettings;
-        p->setSettings = applySettings;
+        p->changeSetting = applySetting;
         p->onClosed = [] {
             InterlockedExchange(&cursorFree, 0);
         }; // its close box: the cursor goes back to the game

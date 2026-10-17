@@ -1,15 +1,21 @@
 // F8 settings: read and applied live, saved to first-person.ini.
 // Part of first_person.cpp (one translation unit): included there, in order.
 #include "../settings_window.h"
-// settings for the F8 panel (panel thread). Applied live; saved to first-person.ini.
-static panel::ModSettings currentSettings() {
+// The F8 settings live in the atomics the threads read; panel::ModSettings is their value as a whole, and
+// panel::rowInfo says, per row, which field and which [section] key in first-person.ini. Reading, writing
+// and comparing go through that table: a setting is described once.
+static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     panel::ModSettings s;
     s.fov = selectedFov.load();
     s.sensitivity = int(std::lround(sensitivity.load() / 0.0025f * 100.f));
+    s.headSteady = headSteady.load();
     s.rawMouse = rawWanted.load();
     s.hideHelmet = helmetMode.load() == fp::HelmetMode::hide;
     s.grabRange = grabRange.load();
     s.hideSwingCrosshair = hideSwingCrosshair.load();
+    s.idleCrosshairAlways = idleCrosshairAlways.load();
+    s.aimMarker = aimMarker.load();
+    s.flickCatchup = flickCatchup.load();
     s.tpDistance = tpDistance.load();
     s.tpShoulder = tpShoulder.load();
     s.tpHeight = tpHeight.load();
@@ -17,181 +23,203 @@ static panel::ModSettings currentSettings() {
     s.tpCombat = tpCombat.load();
     s.tpFov = tpFov.load();
     s.tpLag = tpLag.load();
-    s.tpHide = tpHide.load();
+    s.tpBlockers = tpBlockers.load();
     s.tpDown = tpDown.load();
-    s.headSteady = headSteady.load();
+    s.tpCombatAimFree = tpCombatAimFree.load();
     s.attackCue = attackCue.load();
     s.cueSize = cueSize.load();
     s.cueOpacity = cueOpacity.load();
     s.cueThrust = cueThrust.load();
+    s.fpDefense = fpManualGuard.load();
+    s.tpDefense = tpManualGuard.load();
+    s.manualDefenseAvailable = manualDefenseReady.load();
     s.rmbMode = rmbMode.load();
-    s.idleCrosshairAlways = idleCrosshairAlways.load();
     s.freezeWindows = windowsFreeze.load();
+    s.crouchMode = crouchMode.load();
+    s.nearClip = nearClip.load();
     s.headRoll = headSteadyRoll.load();
     s.headPitch = headSteadyPitch.load();
     s.headYaw = headSteadyYaw.load();
     s.headBob = headBob.load();
     s.spineFollow = spineFollow.load();
-    s.crouchMode = crouchMode.load();
-    s.nearClip = nearClip.load();
-    s.aimMarker = aimMarker.load();
-    s.flickCatchup = flickCatchup.load();
+    s.fpDeadzoneX = fpDeadzoneX.load();
+    s.fpDeadzoneY = fpDeadzoneY.load();
+    s.tpDeadzoneX = tpDeadzoneX.load();
+    s.tpDeadzoneY = tpDeadzoneY.load();
+    s.leanKeysMode = leanKeysMode.load();
+    s.leanLeftKey = leanLeftKey.load();
+    s.leanRightKey = leanRightKey.load();
+    s.eyeSetback = eyeSetback.load();
+    s.rotateHeldKey = rotateHeldKey.load();
+    s.leanKey = leanKey.load();
+    s.holdHeading = holdHeadingOn.load();
+    s.turnLead = turnLeadOn.load();
     return s;
 }
-static void saveSetting(const wchar_t* section, const wchar_t* key, const wchar_t* value) {
-    if (settingsPath[0]) WritePrivateProfileStringW(section, key, value, settingsPath);
+static panel::ModSettings currentSettings() { // a coherent display snapshot (any thread)
+    SettingsGuard guard;
+    return readLiveSettings();
 }
-static panel::ModSettings applySettings(const panel::ModSettings& s) {
-    const panel::ModSettings was = currentSettings();
-    wchar_t v[16];
-    wchar_t v16[16];
-    if (s.fov != was.fov) selectedFov.store(fp::clampFov(s.fov)); // saveFov writes it (worker)
-    if (s.sensitivity != was.sensitivity) {
-        const int pc = s.sensitivity < 10 ? 10 : (s.sensitivity > 400 ? 400 : s.sensitivity);
-        sensitivity = 0.0025f * float(pc) / 100.f;
-        swprintf_s(v, L"%d", pc);
-        saveSetting(L"Input", L"SensitivityPercent", v);
-    }
-    if (s.rawMouse != was.rawMouse) {
-        rawWanted = s.rawMouse;
-        rawMouse = s.rawMouse;
-        saveSetting(L"Input", L"RawMouse", s.rawMouse ? L"1" : L"0");
-        for (int i = 0;
-             i < 20 && s.rawMouse && !InterlockedCompareExchange(&rawRegistered, 0, 0) && rawWanted.load();
-             ++i)
-            Sleep(25);
-    } // the worker registers within 100 ms
-    if (s.hideHelmet != was.hideHelmet) {
-        helmetMode = s.hideHelmet ? fp::HelmetMode::hide : fp::HelmetMode::show;
-        saveSetting(L"View", L"Helmet", s.hideHelmet ? L"hide" : L"show");
-    }
-    if (s.grabRange != was.grabRange) {
-        grabRange = fp::clampGrabRange(s.grabRange);
-        wchar_t g[16];
-        swprintf_s(g, L"%d", grabRange.load());
-        saveSetting(L"Input", L"GrabRange", g);
-    }
-    if (s.rmbMode != was.rmbMode) {
-        rmbMode = s.rmbMode < 0 || s.rmbMode > 2 ? 1 : s.rmbMode;
-        saveSetting(L"Input", L"RightMouseFree", fp::rmbModeText(rmbMode.load()));
-        if (!rmbMode.load()) InterlockedExchange(&rmbFree, 0);
-    }
-    if (s.hideSwingCrosshair != was.hideSwingCrosshair) {
-        hideSwingCrosshair = s.hideSwingCrosshair;
-        saveSetting(L"View", L"SwingCrosshair", s.hideSwingCrosshair ? L"hide" : L"show");
-    }
-    if (s.aimMarker != was.aimMarker) {
-        aimMarker = s.aimMarker;
-        saveSetting(L"Input", L"AimMarker", s.aimMarker ? L"1" : L"0");
-    }
-    if (s.flickCatchup != was.flickCatchup) {
-        flickCatchup = s.flickCatchup < 0 ? 0 : (s.flickCatchup > 100 ? 100 : s.flickCatchup);
-        wchar_t f[16];
-        swprintf_s(f, L"%d", flickCatchup.load());
-        saveSetting(L"Input", L"FlickCatchup", f);
-    }
-    if (s.idleCrosshairAlways != was.idleCrosshairAlways) {
-        idleCrosshairAlways = s.idleCrosshairAlways;
-        saveSetting(L"View", L"IdleCrosshair", s.idleCrosshairAlways ? L"always" : L"rmb");
-    }
-    if (s.nearClip != was.nearClip) {
-        nearClip = fp::clampNearClip(s.nearClip);
-        wchar_t v[16];
-        swprintf_s(v, L"%d", nearClip.load());
-        saveSetting(L"Camera", L"NearClip", v);
-    }
-    if (s.crouchMode != was.crouchMode) {
-        crouchMode = s.crouchMode;
-        saveSetting(L"Input", L"Crouch", fp::crouchModeText(s.crouchMode));
-    }
-    if (s.freezeWindows != was.freezeWindows) {
-        windowsFreeze = s.freezeWindows;
-        saveSetting(L"View", L"FreezeForWindows", s.freezeWindows ? L"1" : L"0");
+static void
+writeLiveSettings(const panel::ModSettings& s) { // caller holds settingsLock; s is normalized
+    const bool policyChanged = fpManualGuard.load() != s.fpDefense || tpManualGuard.load() != s.tpDefense ||
+                               rmbMode.load() != s.rmbMode || rotateHeldKey.load() != s.rotateHeldKey ||
+                               leanKey.load() != s.leanKey || leanKeysMode.load() != s.leanKeysMode ||
+                               leanLeftKey.load() != s.leanLeftKey || leanRightKey.load() != s.leanRightKey ||
+                               crouchMode.load() != s.crouchMode;
+    fpManualGuard = s.fpDefense;
+    tpManualGuard = s.tpDefense;
+    selectedFov.store(s.fov);
+    sensitivity = 0.0025f * float(s.sensitivity) / 100.f;
+    headSteady = s.headSteady;
+    rawWanted = s.rawMouse;
+    rawMouse = s.rawMouse;
+    helmetMode = s.hideHelmet ? fp::HelmetMode::hide : fp::HelmetMode::show;
+    grabRange = s.grabRange;
+    hideSwingCrosshair = s.hideSwingCrosshair;
+    idleCrosshairAlways = s.idleCrosshairAlways;
+    aimMarker = s.aimMarker;
+    flickCatchup = s.flickCatchup;
+    tpDistance = s.tpDistance;
+    tpShoulder = s.tpShoulder;
+    tpHeight = s.tpHeight;
+    tpTight = s.tpTight;
+    tpCombat = s.tpCombat;
+    tpFov = s.tpFov;
+    tpLag = s.tpLag;
+    tpBlockers = s.tpBlockers;
+    tpDown = s.tpDown;
+    tpCombatAimFree = s.tpCombatAimFree;
+    attackCue = s.attackCue;
+    cueSize = s.cueSize;
+    cueOpacity = s.cueOpacity;
+    cueThrust = s.cueThrust;
+    rmbMode = s.rmbMode;
+    if (!s.rmbMode) InterlockedExchange(&rmbFree, 0);
+    windowsFreeze = s.freezeWindows;
+    crouchMode = s.crouchMode;
+    nearClip = s.nearClip;
+    headSteadyRoll = s.headRoll;
+    headSteadyPitch = s.headPitch;
+    headSteadyYaw = s.headYaw;
+    headBob = s.headBob;
+    spineFollow = s.spineFollow;
+    fpDeadzoneX = s.fpDeadzoneX;
+    fpDeadzoneY = s.fpDeadzoneY;
+    tpDeadzoneX = s.tpDeadzoneX;
+    tpDeadzoneY = s.tpDeadzoneY;
+    leanKeysMode = s.leanKeysMode;
+    leanLeftKey = s.leanLeftKey;
+    leanRightKey = s.leanRightKey;
+    eyeSetback = s.eyeSetback;
+    rotateHeldKey = s.rotateHeldKey;
+    leanKey = s.leanKey;
+    holdHeadingOn = s.holdHeading;
+    turnLeadOn = s.turnLead;
+    if (policyChanged) inputOwner.policyChanged();
+}
+static void makeLive(const panel::ModSettings& s) {
+    SettingsGuard guard;
+    writeLiveSettings(s);
+}
+// first-person.ini -> settings: a missing key, or a word the row does not know, keeps the default.
+static panel::ModSettings readSettings(const wchar_t* path) {
+    panel::ModSettings s;
+    for (int r = 0; r < panel::setting::count; ++r) {
+        const panel::RowInfo& i = panel::rowInfo(r);
+        if (!i.key) continue;
+        wchar_t text[64];
+        GetPrivateProfileStringW(i.section, i.key, L"", text, 64, path);
+        if (!text[0]) continue;
+        int v = panel::badText;
+        if (i.fromText)
+            v = i.fromText(text);
+        else {
+            wchar_t* end = nullptr;
+            const long n = wcstol(text, &end, 10);
+            if (end != text) v = int(n);
+        }
+        if (v == panel::badText) continue;
+        if (i.value)
+            s.*i.value = v;
+        else if (i.flag)
+            s.*i.flag = v != 0;
     }
     {
-        wchar_t t[16];
-        if (s.tpDistance != was.tpDistance) {
-            tpDistance = fp::clampRange(s.tpDistance, fp::tpDistanceMin, fp::tpDistanceMax);
-            swprintf_s(t, L"%d", tpDistance.load());
-            saveSetting(L"ThirdPerson", L"Distance", t);
-        }
-        if (s.tpShoulder != was.tpShoulder) {
-            tpShoulder = fp::clampRange(s.tpShoulder, -fp::tpShoulderMax, fp::tpShoulderMax);
-            swprintf_s(t, L"%d", tpShoulder.load());
-            saveSetting(L"ThirdPerson", L"Shoulder", t);
-        }
-        if (s.tpLag != was.tpLag) {
-            tpLag = s.tpLag < 0 ? 0 : (s.tpLag > 100 ? 100 : s.tpLag);
-            swprintf_s(t, L"%d", tpLag.load());
-            saveSetting(L"ThirdPerson", L"Lag", t);
-        }
-        if (s.tpHide != was.tpHide) {
-            tpHide = s.tpHide;
-            saveSetting(L"ThirdPerson", L"HideBlockers", s.tpHide ? L"1" : L"0");
-        }
-        if (s.tpDown != was.tpDown) {
-            tpDown = s.tpDown;
-            saveSetting(L"ThirdPerson", L"KnockdownFollow", s.tpDown ? L"1" : L"0");
-        }
-        if (s.tpCombat != was.tpCombat) {
-            tpCombat = s.tpCombat;
-            saveSetting(L"ThirdPerson", L"CombatFraming", s.tpCombat ? L"1" : L"0");
-        }
-        if (s.tpFov != was.tpFov) {
-            tpFov = s.tpFov <= 0 ? 0 : fp::clampFov(s.tpFov);
-            swprintf_s(t, L"%d", tpFov.load());
-            saveSetting(L"ThirdPerson", L"Fov", t);
-        }
-        if (s.tpTight != was.tpTight) {
-            tpTight = s.tpTight;
-            saveSetting(L"ThirdPerson", L"TightSpaces", s.tpTight ? L"1" : L"0");
-        }
-        if (s.tpHeight != was.tpHeight) {
-            tpHeight = fp::clampRange(s.tpHeight, fp::tpHeightMin, fp::tpHeightMax);
-            swprintf_s(t, L"%d", tpHeight.load());
-            saveSetting(L"ThirdPerson", L"Height", t);
-        }
+        wchar_t t[8];
+        GetPrivateProfileStringW(L"ThirdPerson", L"Blockers", L"", t, 8,
+                                 path); // before Blockers: HideBlockers, 1 hide, 0 pull in
+        const int legacy = GetPrivateProfileIntW(L"ThirdPerson", L"HideBlockers", -1, path);
+        if (!t[0] && legacy >= 0) s.tpBlockers = legacy ? fp::blockersHide : fp::blockersPush;
     }
+    s.normalize();
+    return s;
+}
+static void loadSettings(const wchar_t* path) {
+    makeLive(readSettings(path));
+}
+static bool saveSetting(const wchar_t* section, const wchar_t* key, const wchar_t* value) {
+    return settingsPath[0] && WritePrivateProfileStringW(section, key, value, settingsPath);
+}
+static bool saveRow(int r, const panel::ModSettings& s) {
+    const panel::RowInfo& i = panel::rowInfo(r);
+    if (!i.key) return true;
+    const int v = i.value ? s.*i.value : (i.flag && s.*i.flag ? 1 : 0);
+    if (i.toText) return saveSetting(i.section, i.key, i.toText(v));
+    wchar_t t[16];
+    swprintf_s(t, L"%d", v);
+    return saveSetting(i.section, i.key, t);
+}
+// Caller holds settingsLock through persistence and publication. A worker save
+// must never finish after a newer panel write and mark the older FOV as saved.
+static bool commitSettings(const panel::ModSettings& s, const panel::ModSettings& was) {
+    bool saved = true;
+    for (int r = 0; r < panel::setting::count; ++r)
+        if (!panel::sameRow(r, s, was)) {
+            const bool written = saveRow(r, s);
+            saved = written && saved;
+            if (r == panel::setting::fov && written) persistedFov = s.fov;
+        }
+    writeLiveSettings(s);
+    return saved;
+}
+static void awaitRawRegistration(bool enabling) {
+    for (int i = 0; i < 20 && enabling && !InterlockedCompareExchange(&rawRegistered, 0, 0) && rawWanted.load();
+         ++i)
+        Sleep(25); // the worker registers within 100 ms
+}
+// Bulk configuration remains available to the owned tests and explicit callers.
+// Interactive controls use applySetting below, which never accepts a stale image.
+[[maybe_unused]] static panel::ModSettings applySettings(const panel::ModSettings& want) {
+    panel::ModSettings s = want;
+    s.normalize();
+    bool enablingRaw;
     {
-        wchar_t t[16];
-        if (s.attackCue != was.attackCue) {
-            attackCue = s.attackCue;
-            saveSetting(L"View", L"AttackCue", s.attackCue ? L"1" : L"0");
-        }
-        if (s.cueThrust != was.cueThrust) {
-            cueThrust = s.cueThrust;
-            saveSetting(L"View", L"CueThrust", s.cueThrust ? L"1" : L"0");
-        }
-        if (s.cueSize != was.cueSize) {
-            cueSize = s.cueSize < 50 ? 50 : (s.cueSize > 200 ? 200 : s.cueSize);
-            swprintf_s(t, L"%d", cueSize.load());
-            saveSetting(L"View", L"CueSize", t);
-        }
-        if (s.cueOpacity != was.cueOpacity) {
-            cueOpacity = s.cueOpacity < 20 ? 20 : (s.cueOpacity > 100 ? 100 : s.cueOpacity);
-            swprintf_s(t, L"%d", cueOpacity.load());
-            saveSetting(L"View", L"CueOpacity", t);
-        }
+        SettingsGuard guard;
+        const panel::ModSettings was = readLiveSettings();
+        enablingRaw = s.rawMouse && !was.rawMouse;
+        commitSettings(s, was);
     }
-    {
-        wchar_t t[16];
-        auto axis = [&](int want, int had, std::atomic<int>& now, const wchar_t* key) {
-            if (want == had) return;
-            now = want < 0 ? 0 : (want > 100 ? 100 : want);
-            swprintf_s(t, L"%d", now.load());
-            saveSetting(L"Camera", key, t);
-        };
-        axis(s.headRoll, was.headRoll, headSteadyRoll, L"HeadRoll");
-        axis(s.headPitch, was.headPitch, headSteadyPitch, L"HeadPitch");
-        axis(s.headYaw, was.headYaw, headSteadyYaw, L"HeadYaw");
-        axis(s.headBob, was.headBob, headBob, L"HeadBobSteady");
-        axis(s.spineFollow, was.spineFollow, spineFollow, L"SpineFollowsAim");
-    }
-    if (s.headSteady != was.headSteady) {
-        const int v = s.headSteady < 0 ? 0 : (s.headSteady > 100 ? 100 : s.headSteady);
-        headSteady = v;
-        swprintf_s(v16, L"%d", v);
-        saveSetting(L"Camera", L"HeadStabilisation", v16);
-    }
+    awaitRawRegistration(enablingRaw); // worker reconciliation needs settingsLock too
     return currentSettings();
+}
+// From the F8 window: choose the latest state and apply one row action while the
+// same lock excludes FOV keys, bulk changes, raw fallback, and persistence.
+static panel::SettingsChange applySetting(int row, int delta, int group) {
+    panel::SettingsChange result;
+    bool enablingRaw = false;
+    {
+        SettingsGuard guard;
+        const panel::ModSettings was = readLiveSettings();
+        result.settings = was;
+        result.changed = result.settings.click(row, delta, group);
+        if (!result.changed) return result;
+        result.settings.normalize();
+        enablingRaw = result.settings.rawMouse && !was.rawMouse;
+        result.saved = commitSettings(result.settings, was);
+    }
+    awaitRawRegistration(enablingRaw);
+    result.settings = currentSettings();
+    result.rawUnavailable = enablingRaw && !result.settings.rawMouse;
+    return result;
 }

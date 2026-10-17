@@ -79,7 +79,11 @@ typedef enum MH_STATUS
     MH_ERROR_MODULE_NOT_FOUND,
 
     // The specified function is not found.
-    MH_ERROR_FUNCTION_NOT_FOUND
+    MH_ERROR_FUNCTION_NOT_FOUND,
+
+    // ExCamera: a target's entry or hot-patch area changed since this hook was
+    // created/enabled. No pending entries or suspended thread IPs are changed.
+    MH_ERROR_CONFLICT
 }
 MH_STATUS;
 

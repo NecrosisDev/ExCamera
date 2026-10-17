@@ -1,11 +1,16 @@
 #pragma once
-// Field offsets in the game's objects, by name. Exanima 0.9.5.2g (Steam build 25803178); identified by
-// decompiling the functions that use them and by reading them live. Signatures (game_signatures.h) find
-// the game's functions and globals in other builds, but not these: a game update that changes an object's
-// layout changes them (README, "Game versions").
+// Named field offsets reviewed against Exanima 0.9.5.2g (Steam build 25803178).
+// tools/native_contracts.json traces each native owner and access; generated game_contracts.h checks
+// these declarations at compile time. Both activation paths also validate the reviewed instruction
+// windows in the executable file before using these layouts. See README, "Game versions".
 #include <cstddef>
 
 namespace fp::game {
+
+namespace bindings {
+inline constexpr size_t stride = 0x10, count = 10; // runtime VK entries from movementKeys
+inline constexpr size_t interact = 9 * stride;     // 0x2B7370 in the source build
+} // namespace bindings
 
 // A character (playerRoot holds the controlled one). Positions are local to its scene sector.
 namespace character {
@@ -32,6 +37,8 @@ inline constexpr size_t lifeFlags = 0xDF8; // 0x100: dead
 inline constexpr size_t contextualTarget = 0xE50;
 inline constexpr size_t handParts = 0xE78;   // [2] body parts
 inline constexpr size_t heldItems = 0xE88;   // [2] what each hand holds
+inline constexpr size_t defenseIncomingMotion = 0xF5C; // int: native interception request, -1 absent
+inline constexpr size_t defenseActive = 0x12F3;        // u8: reactive defense owns constraints/posture
 inline constexpr size_t duckAmount = 0x100C; // float 0..1: the game's crouch, decays 0.02 a physics step
 inline constexpr size_t swingBits = 0x1018;  // bounce/block bits (& 0x26)
 inline constexpr size_t gripFlags =
@@ -42,6 +49,7 @@ inline constexpr size_t balanceMax = 0x10BC;   // float
 inline constexpr size_t gaitFlags = 0x10F4;    // bit 1: backward gait
 inline constexpr size_t headPart = 0x11E0;     // the head's body part
 inline constexpr size_t walking = 0x12EA;      // u8: exploration travel under way
+inline constexpr size_t actionCallback = 0x1230; // native action dispatcher, owns LMB even outside0x20
 inline constexpr size_t combatStance = 0x12FE; // u8: in combat mode
 } // namespace character
 
@@ -51,13 +59,16 @@ inline constexpr size_t character = 0x28;
 inline constexpr size_t hoverState = 0x30; // 4: hovering something usable
 inline constexpr size_t inactive = 0x58;   // u8
 inline constexpr size_t swingState = 0x90;
-inline constexpr size_t aimHeading = 0x1B0;    // float: what the next new press's side classifier reads
-inline constexpr size_t aimPoint = 0x854;      // float[3]
-inline constexpr size_t pressFlags = 0x890;    // bit 0: a press in progress
-inline constexpr size_t view = 0x898;          // the UI view gameplay input belongs to
+inline constexpr size_t aimHeading = 0x1B0; // float: what the next new press's side classifier reads
+inline constexpr size_t aimPoint = 0x854;   // float[3]
+inline constexpr size_t pressFlags = 0x890; // bit 0: a press in progress
+inline constexpr size_t view = 0x898;       // the UI view gameplay input belongs to
+inline constexpr size_t pendingMove =
+    0x8F8; // u32: combat's buffered directional request (0xC13F0), not an active physics step
 inline constexpr size_t lastPressTime = 0x8E4; // game clock ms
 inline constexpr size_t aimFilter = 0x90C;     // the native aim smoothing (aimFilterPush/aimFilterUpdate)
 inline constexpr size_t moveIntent = 0x96C;    // u8
+inline constexpr size_t interactionLatch = 0x96F; // u8: native Interact ownership can outlive its key
 inline constexpr size_t pressBlocked = 0x96E;  // u8
 } // namespace behaviour
 
@@ -67,7 +78,11 @@ inline constexpr size_t flags = 0xC;             // 0x4000: the pose builder app
 inline constexpr size_t meshNode = 0x18;         // its scene node
 inline constexpr size_t poseCoefficients = 0xB0; // turn the points into a pose
 inline constexpr size_t points = 0xF0;           // float[4][3]: the physics tetrahedron
-inline constexpr size_t pose = 0x2A0;            // float[12]: the achieved pose, three axes then the origin
+inline constexpr size_t history =
+    0x120; // float[4][3]: the points a step before (Verlet: the velocity is the difference)
+inline constexpr size_t history2 =
+    0x150; // float[4][3]: two steps before (release shifts points -> history -> history2)
+inline constexpr size_t pose = 0x2A0; // float[12]: the achieved pose, three axes then the origin
 inline constexpr size_t poseForward = pose + 0x18;
 inline constexpr size_t poseOrigin = pose + 0x24;
 inline constexpr size_t rootPart = 0x420; // the body's root part (its own rootPart is itself)
@@ -80,15 +95,14 @@ inline constexpr size_t slackCap = 0x77C;      // float: how far the head target
 // A node in a scene tree: a mesh, a group, a placed object.
 namespace sceneNode {
 inline constexpr size_t transform = 0x40;  // float[12], local to its sector
+inline constexpr size_t transformOrigin = transform + 0x24;
 inline constexpr size_t passMask = 0xE0;   // which render passes and picks take it (rebuilt every frame)
 inline constexpr size_t lastChild = 0x118; // int: index of the last child
 inline constexpr size_t children = 0x120;
 inline constexpr size_t parent = 0x128;
 inline constexpr size_t sector = 0x130;   // the scene sector it is drawn in
 inline constexpr size_t name = 0x140;     // char[16], not always terminated
-inline constexpr size_t bodyPart = 0x160; // the part a character's mesh belongs to
-inline constexpr size_t pose = 0x2A0;     // float[12]: where it is drawn, three axes then the origin
-inline constexpr size_t poseOrigin = pose + 0x24;
+inline constexpr size_t bodyPart = 0x160; // its physics body (a character's part, a loose object's body)
 inline constexpr size_t rayRoutine = 0x3B0; // the mesh type's ray test (game code)
 inline constexpr size_t rayContext = 0x3B8;
 } // namespace sceneNode
@@ -103,7 +117,7 @@ inline constexpr size_t meshes = 0x1D0;
 namespace camera {
 inline constexpr size_t pose = 0x40;        // float[12]
 inline constexpr size_t pose2 = 0x70;       // float[12]: a second copy the game keeps; written with pose
-inline constexpr size_t inverse = 0xA0;     // rebuilt from pose (rebuildInverse)
+inline constexpr size_t inverse = 0xA0;     // expanded 4x4 pose; legacy name, not a matrix inverse
 inline constexpr size_t dirty = 0xE4;       // 1: the projection is rebuilt
 inline constexpr size_t controller = 0x160; // the sampler object driving it (navSlot's owner)
 inline constexpr size_t fov = 0x1C8;        // float, degrees
@@ -130,9 +144,14 @@ inline constexpr size_t origin = 0x20;    // float[3]
 inline constexpr size_t distance = 0x2C;  // float, along direction
 } // namespace pick
 
+// The object the drag manager holds (drag::object) is a scene node; its physics body is sceneNode::bodyPart.
+
 // The drag manager (dragManager): +8 its flags.
 namespace drag {
+inline constexpr size_t flags = 0x8; // all native drag contexts
 inline constexpr size_t object = 0x10;
+inline constexpr size_t targetPoints =
+    0x40; // float[4][3]: where the held object's body points go; release copies them in
 inline constexpr size_t pivot = 0xD0; // float[3]: a door's hinge
 } // namespace drag
 

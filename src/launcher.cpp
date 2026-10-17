@@ -20,8 +20,11 @@
 #endif
 #include "native_build.h"
 #include "game_layout.h"
+#include "native_contracts.h"
 #include "hook_health.h"
 #include "build_identity.h"
+#include "module_export.h"
+#include "activation_status.h"
 static int fail(const wchar_t* message) {
     MessageBoxW(nullptr, message, L"ExCamera", MB_OK | MB_ICONERROR);
     return 1;
@@ -29,7 +32,8 @@ static int fail(const wchar_t* message) {
 static DWORD gamePid() {
     DWORD pid = 0;
     HANDLE s = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    PROCESSENTRY32W p{sizeof(p)};
+    PROCESSENTRY32W p{};
+    p.dwSize = sizeof p;
     if (s != INVALID_HANDLE_VALUE) {
         if (Process32FirstW(s, &p)) do {
                 if (!_wcsicmp(p.szExeFile, L"Exanima.exe")) {
@@ -80,7 +84,8 @@ static BOOL CALLBACK findGameWindow(HWND w, LPARAM data) {
 static bool ready(DWORD pid) {
     bool gl = false;
     HANDLE s = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
-    MODULEENTRY32W m{sizeof(m)};
+    MODULEENTRY32W m{};
+    m.dwSize = sizeof m;
     if (s != INVALID_HANDLE_VALUE) {
         if (Module32FirstW(s, &m)) do {
                 if (!_wcsicmp(m.szModule, L"opengl32.dll")) gl = true;
@@ -118,7 +123,20 @@ static bool resolveGameFile(const wchar_t* path) {
         swprintf_s(gameProblem, L"%s is not a 64-bit Exanima executable.", path);
         return false;
     }
-    if (fp::resolveLayout(gameView, layout, report)) return true;
+    fp::Layout candidate;
+    if (fp::resolveLayout(gameView, candidate, report)) {
+        fp::ContractReport contracts;
+        if (!fp::validateNativeContracts(gameView, candidate, contracts)) {
+            swprintf_s(gameProblem,
+                       L"This Exanima version's native layout is not supported: %hs (%hs). "
+                       L"No changes were made.",
+                       contracts.firstRequired ? contracts.firstRequired : "field contract",
+                       fp::contractFailureText(contracts.firstRequiredReason));
+            return false;
+        }
+        layout = candidate;
+        return true;
+    }
     int at = swprintf_s(gameProblem,
                         L"This Exanima version is not supported: %u of %u game functions were not found (",
                         report.failures, unsigned(fp::sig::targetCount));
@@ -131,35 +149,46 @@ static bool resolveGameFile(const wchar_t* path) {
         swprintf_s(gameProblem + at, 512 - at, L"%s). No changes were made.", listed > 4 ? L", ..." : L"");
     return false;
 }
-// Where an export of our DLL sits in the game: the module's base there plus the export's offset, read
-// from the file mapped here without running any of it. 0 if either is missing.
-static uintptr_t remoteExport(DWORD pid, const std::wstring& dll, const char* name) {
+// Resolve against the module actually loaded: a newer DLL on disk can have
+// different export RVAs from the version still mapped in the game.
+static uintptr_t remoteExport(HANDLE process, DWORD pid, const char* name) {
     uintptr_t remoteBase = 0;
+    uint32_t remoteSize = 0;
     for (int tries = 0; tries < 5 && !remoteBase; ++tries) {
         HANDLE s = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
-        MODULEENTRY32W m{sizeof(m)};
+        MODULEENTRY32W m{};
+        m.dwSize = sizeof m;
         if (s == INVALID_HANDLE_VALUE) {
             Sleep(200);
             continue;
         }
         if (Module32FirstW(s, &m)) do {
-                if (!_wcsicmp(m.szModule, L"ExanimaFirstPerson.dll")) remoteBase = (uintptr_t)m.modBaseAddr;
+                if (!_wcsicmp(m.szModule, L"ExanimaFirstPerson.dll")) {
+                    if (remoteBase) { // two copies: do not guess which one to call
+                        CloseHandle(s);
+                        return 0;
+                    }
+                    remoteBase = (uintptr_t)m.modBaseAddr;
+                    remoteSize = m.modBaseSize;
+                }
             } while (Module32NextW(
                 s, &m)); // by name, as the already-loaded check: a path can be spelled many ways
         CloseHandle(s);
         if (!remoteBase) Sleep(200);
     }
-    HMODULE image = LoadLibraryExW(dll.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
-    if (!image) return 0;
-    const auto at = (uintptr_t)GetProcAddress(image, name);
-    FreeLibrary(image);
-    return remoteBase && at ? remoteBase + (at - (uintptr_t)image) : 0;
+    if (!remoteBase || remoteSize > UINTPTR_MAX - remoteBase) return 0;
+    auto read = [&](uint32_t rva, void* out, size_t size) {
+        SIZE_T got = 0;
+        return ReadProcessMemory(process, (void*)(remoteBase + rva), out, size, &got) && got == size;
+    };
+    const uint32_t rva = fp::loadedExportRva(remoteSize, name, read);
+    return rva ? remoteBase + rva : 0;
 }
-// Runs the DLL's `enable` in the game and waits for it (it only starts a thread and returns).
-static bool callExport(HANDLE process, DWORD pid, const std::wstring& dll, const char* name) {
-    const uintptr_t at = remoteExport(pid, dll, name);
+// Waiting for an export only confirms the call; activation completes on the worker.
+static bool callExport(HANDLE process, DWORD pid, const char* name, void* argument = nullptr) {
+    const uintptr_t at = remoteExport(process, pid, name);
     if (!at) return false;
-    HANDLE thread = CreateRemoteThread(process, nullptr, 0, (LPTHREAD_START_ROUTINE)at, nullptr, 0, nullptr);
+    HANDLE thread = CreateRemoteThread(process, nullptr, 0, (LPTHREAD_START_ROUTINE)at, argument, 0, nullptr);
     if (!thread) return false;
     DWORD result = 0;
     const bool done =
@@ -169,9 +198,62 @@ static bool callExport(HANDLE process, DWORD pid, const std::wstring& dll, const
 }
 // Runs the DLL's `enable` in the game; first `allowOtherHooks` when the player chose to chain.
 static bool chainChosen = false;
-static bool callEnable(HANDLE process, DWORD pid, const std::wstring& dll) {
-    if (chainChosen && !callExport(process, pid, dll, "allowOtherHooks")) return false;
-    return callExport(process, pid, dll, "enable");
+static bool callEnable(HANDLE process, DWORD pid, uint64_t request) {
+    if (chainChosen && !callExport(process, pid, "allowOtherHooks")) return false;
+    return callExport(process, pid, "enableWithStatus", (void*)uintptr_t(request));
+}
+static bool readActivationFile(const std::wstring& path, fp::ActivationStatus& status) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER size{};
+    DWORD got = 0;
+    bool ok = GetFileSizeEx(file, &size) && size.QuadPart > 0 && size.QuadPart <= 64 * 1024;
+    std::vector<char> data;
+    if (ok) {
+        data.resize(size_t(size.QuadPart));
+        ok = ReadFile(file, data.data(), DWORD(data.size()), &got, nullptr) && got == data.size();
+    }
+    CloseHandle(file);
+    return ok && fp::readActivationStatus(data.data(), data.size(), status);
+}
+// Fresh loading and re-entry require the same acknowledgement from this process,
+// this mapped build and this request. A timestamp or an old "installed" field cannot satisfy it.
+static int activate(HANDLE process, DWORD pid, const std::wstring& directory) {
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (!GetProcessTimes(process, &created, &exited, &kernel, &user))
+        return fail(L"Could not identify the current Exanima process. Activation was not requested.");
+    const uint64_t processStarted = (uint64_t(created.dwHighDateTime) << 32) | created.dwLowDateTime;
+    uint64_t request = 0;
+    if (BCryptGenRandom(nullptr, (PUCHAR)&request, sizeof request, BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0 ||
+        !request)
+        return fail(L"Could not create an activation request. Activation was not requested.");
+    if (!callEnable(process, pid, request))
+        return fail(L"The loaded camera module could not accept this activation request. It may be an older "
+                    L"build or have stopped after a fault. See first-person-status.json; restart Exanima "
+                    L"to load the current build.");
+    const std::wstring path = directory + L"first-person-status.json";
+    for (unsigned i = 0; i < 100; ++i) {
+        if (!waitTick()) return 0;
+        DWORD code = 0;
+        if (!GetExitCodeProcess(process, &code) || code != STILL_ACTIVE)
+            return fail(L"Exanima closed before camera activation completed.");
+        fp::ActivationStatus status;
+        if (!readActivationFile(path, status)) continue;
+        switch (fp::activationResult(status, pid, processStarted, request, FP_REVISION, FP_BUILD)) {
+        case fp::ActivationResult::ready: return 0;
+        case fp::ActivationResult::failed:
+            return fail(L"ExCamera refused or failed activation. See first-person-status.json for the cause. "
+                        L"Restart Exanima after correcting the reported problem.");
+        case fp::ActivationResult::versionMismatch:
+            return fail(L"The camera module mapped in Exanima differs from this launcher. Restart Exanima "
+                        L"to load the current build.");
+        case fp::ActivationResult::waiting: break;
+        }
+    }
+    return fail(L"The camera module did not confirm this activation request within ten seconds. See "
+                L"first-person-status.json. A clean F7 stop can be re-armed with F6; a reported fault "
+                L"requires restarting Exanima.");
 }
 // [Compat] OtherHooks from the player's settings (the per-user file, else the one beside the launcher).
 static fp::OtherHooks otherHooksSetting(const std::wstring& directory) {
@@ -199,7 +281,12 @@ static bool otherHooksOk(HANDLE process, uintptr_t base, const std::wstring& dir
         return ReadProcessMemory(process, (void*)(base + rva), out, 16, &got) && got == 16;
     };
     fp::sig::Target found[8];
-    unsigned n = fp::patchedEntries(gameView, layout, read, found, 8);
+    // Optional defense entries have their own complete-group admission in
+    // the DLL; a conflict there keeps Automatic effective for the camera session.
+    fp::Layout required = layout;
+    for (unsigned t = 0; t < fp::sig::targetCount; ++t)
+        if (fp::sig::targetOptionalGroups[t]) required.rva[t] = 0;
+    unsigned n = fp::patchedEntries(gameView, required, read, found, 8);
     const fp::sig::Target slots[3][2] = {{fp::sig::navSlot, fp::sig::navSampler},
                                          {fp::sig::behaviorSlot, fp::sig::playerBehavior},
                                          {fp::sig::pointSlot, fp::sig::aimPoint}};
@@ -344,7 +431,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     const wchar_t* name = wcsrchr(ownerPath, L'\\');
     name = name ? name + 1 : ownerPath;
     uintptr_t remoteLoad = 0, base = 0;
-    bool already = false;
+    unsigned loadedCopies = 0;
     std::wstring loadedPath;
     // the module list can fail briefly while the game loads modules; try a few times.
     for (int tries = 0; tries < 5; ++tries) {
@@ -352,45 +439,44 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         if (snapshot != INVALID_HANDLE_VALUE) break;
         Sleep(200);
     }
-    MODULEENTRY32W m{sizeof(m)};
+    MODULEENTRY32W m{};
+    m.dwSize = sizeof m;
     if (snapshot != INVALID_HANDLE_VALUE) {
         if (Module32FirstW(snapshot, &m)) do {
                 if (!_wcsicmp(m.szModule, name))
                     remoteLoad = (uintptr_t)m.modBaseAddr + (uintptr_t)load - (uintptr_t)owner;
                 if (!_wcsicmp(m.szModule, L"Exanima.exe")) base = (uintptr_t)m.modBaseAddr;
                 if (!_wcsicmp(m.szModule, L"ExanimaFirstPerson.dll")) {
-                    already = true;
+                    ++loadedCopies;
                     loadedPath = m.szExePath;
                 }
             } while (Module32NextW(snapshot, &m));
         CloseHandle(snapshot);
     }
-    if (base && !otherHooksOk(process, base, directory)) {
-        CloseHandle(process);
-        return 0;
-    }
-    if (already) {
-        // Loaded by EMTK with the mod switched off, nothing runs yet: start it (enable starts a session once).
-        if (!_wcsicmp(loadedPath.c_str(), dll.c_str()) && !callEnable(process, pid, dll)) {
+    if (loadedCopies) {
+        if (loadedCopies > 1) {
             CloseHandle(process);
-            return fail(L"ExanimaFirstPerson.dll is loaded, but it could not be started. Restart Exanima "
-                        L"before retrying.");
+            return fail(L"More than one camera module is loaded. Restart Exanima with one copy before retrying.");
         }
+        if (_wcsicmp(loadedPath.c_str(), dll.c_str())) {
+            CloseHandle(process);
+            return fail((L"A camera version from another folder is already loaded. Restart Exanima to switch "
+                         L"versions.\n\nLoaded from:\n" + loadedPath).c_str());
+        }
+        // Our active patches are expected. The module retains its own re-arm
+        // admission and trampoline checks; no launcher-level foreign-hook prompt is needed.
+        const int result = activate(process, pid, directory);
         CloseHandle(process);
-        std::wstring message = _wcsicmp(loadedPath.c_str(), dll.c_str())
-                                   ? L"A first-person version from another folder is already loaded. Close "
-                                     L"Exanima, then run this launcher to switch versions.\n\nLoaded from:\n"
-                                   : L"First-person mode is already loaded.\nF6: toggle mode   F8: free "
-                                     L"cursor\nF9/F10: adjust FOV   F11: reset FOV\n\nAfter F7, restart "
-                                     L"Exanima before loading again.\n\nLoaded from:\n";
-        message += loadedPath;
-        MessageBoxW(nullptr, message.c_str(), L"ExCamera", MB_OK);
-        return 0;
+        return result;
     }
     if (!base || !remoteLoad) {
         CloseHandle(process);
         return fail(L"Could not read the game's module list (it may still be starting). Try again in a few "
                     L"seconds. No changes were made.");
+    }
+    if (!otherHooksOk(process, base, directory)) {
+        CloseHandle(process);
+        return 0;
     }
     SIZE_T bytes = (dll.size() + 1) * sizeof(wchar_t), written = 0;
     void* remote = VirtualAllocEx(process, nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
@@ -399,8 +485,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         CloseHandle(process);
         return fail(L"Could not prepare the module path.");
     }
-    FILETIME activationStarted;
-    GetSystemTimeAsFileTime(&activationStarted);
     HANDLE thread =
         CreateRemoteThread(process, nullptr, 0, (LPTHREAD_START_ROUTINE)remoteLoad, remote, 0, nullptr);
     if (!thread) {
@@ -422,34 +506,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         CloseHandle(process);
         return fail(L"Windows could not load ExanimaFirstPerson.dll.");
     }
-    // Loading no longer starts the camera (so EMTK can load the DLL with the mod switched off): call its
-    // `enable` export in the game.
-    const bool started = callEnable(process, pid, dll);
+    const int activation = activate(process, pid, directory);
     CloseHandle(process);
-    if (!started)
-        return fail(
-            L"ExanimaFirstPerson.dll loaded, but it could not be started. Restart Exanima before retrying.");
-    // Activation is reported by the module, not inferred from LoadLibrary success.
-    std::wstring status = dll.substr(0, dll.find_last_of(L'\\') + 1) + L"first-person-status.json";
-    for (int i = 0; i < 50; i++) {
-        Sleep(100);
-        WIN32_FILE_ATTRIBUTE_DATA info{};
-        if (!GetFileAttributesExW(status.c_str(), GetFileExInfoStandard, &info) ||
-            CompareFileTime(&info.ftLastWriteTime, &activationStarted) < 0)
-            continue;
-        FILE* f = nullptr;
-        _wfopen_s(&f, status.c_str(), L"rb");
-        if (f) {
-            char data[2048]{};
-            fread(data, 1, sizeof(data) - 1, f);
-            fclose(f);
-            char needle[64];
-            sprintf_s(needle, "\"pid\":%lu,", pid);
-            if (strstr(data, needle) && strstr(data, "\"revision\":" FP_REVISION_TEXT ",") &&
-                strstr(data, "\"build\":\"" FP_BUILD "\"") && strstr(data, "\"installed\":true"))
-                return 0;
-        }
-    }
-    return fail(L"The DLL loaded but did not confirm activation. See first-person-status.json. Restart "
-                L"Exanima before retrying.");
+    return activation;
 }

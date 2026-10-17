@@ -1,99 +1,109 @@
-ExCamera 0.1.0-beta3 - first person for Exanima
+ExCamera 0.1.0-beta3-input5
+First-person and third-person cameras for Exanima
 
-First person and third person for Exanima, plus the game's own overhead view, all
-on F6. The camera is your character's head: what you see is what the head sees.
-Settings are on F8.
-
-Tested on Exanima 0.9.5.2g (Steam build 25803178), Windows x64. Other versions
-work if every game function the mod needs is still found; you then get a short
-"untested Exanima version" notice. If something is missing, the mod says so and
-changes nothing.
+Windows x64. Automated tests and archived-executable checks pass, but this
+update has not been tested in game. The earlier beta was play-tested on
+Exanima 0.9.5.2g (Steam build 25803178).
 
 
 INSTALL
 
-Unzip to a folder you can write to (Desktop, Documents, Downloads; not Program
-Files, not the game folder). Run ExCamera.exe. It starts Exanima through Steam,
-or attaches to it if it is already running. No character needs to be loaded
-first. No game files are changed.
+Extract this ZIP to a writable folder such as Documents or Downloads. Keep
+ExanimaFirstPerson.dll beside ExCamera.exe, then run ExCamera.exe. It starts
+Exanima through Steam or connects to an already running game. No game files
+are changed. Close Exanima before replacing an older build.
 
-Keep ExanimaFirstPerson.dll next to ExCamera.exe.
-
-ExCamera.exe isn't signed and it loads a DLL into the game, so Windows SmartScreen
-or your antivirus may warn about it. That's expected ("More info" -> "Run anyway"
-for SmartScreen).
-
-Using EMTK?
-- Current EMTK releases: start the game through EMTK as usual, then run
-  ExCamera.exe. Your EMTK mods and first person run side by side. Not tested in
-  game yet.
-- EMTK's legacy "rust-plugins" build (the only one that loads DLL mods): copy the
-  mods\exanima-first-person folder from this zip into <Exanima>\mods\. EMTK then
-  loads it when the game starts. Switching it off in EMTK works like holding F7,
-  and switching it back on works like F6. Not tested in game yet. Don't also run
-  ExCamera.exe with this route.
-
-This mod works alongside EMTK. It isn't part of it.
-
-Other mods hooking the same game functions: ExCamera.exe tells you which, and
-asks whether to start on top of them. If you always want one answer, set
-OtherHooks=allow (or OtherHooks=refuse) under [Compat] in first-person.ini.
-Started by a mod loader instead, it only starts on top of another mod with
-OtherHooks=allow.
+The launcher is unsigned, so Windows may show a SmartScreen prompt.
 
 
 CONTROLS
 
-Mouse          look
-F6             first person -> third person -> overhead
-F7             hold one second to switch the mod off (F6 turns it back on)
-F8             cursor and the Settings window
-Right mouse    hold to free the cursor out of combat (setting: hold, toggle, off)
-Mouse wheel    while holding an object: nearer / farther
-Duck key (X)   out of combat, crouch (toggle by default; stays down under low
-               ceilings)
-F9 / F10       field of view down / up
-F11            field of view back to 75
+In first and third person:
 
-Everything else is the game's own: movement, run, combat stance, swings, grabbing,
-doors. In combat a thin arc by the crosshair shows a swing winding up.
+Mouse             Aim and look
+Movement keys     Move relative to the view; strafe outside combat too
+Left mouse        Attack using the game's timing
+F6                First person -> third person -> overhead
+F7 (hold 1 sec)   Switch ExCamera off; F6 turns it back on
+F8                Settings and free cursor
+Right mouse       Outside combat: hold to free the cursor
+Right mouse       Manual defense: hold to guard in ordinary combat
+Right mouse       While holding an object: hold and move mouse to rotate
+Mouse wheel       Held object: push farther/pull nearer; release while
+                  pushing to throw
+Alt + mouse       Lean; release to straighten
+Duck key (X)      Crouch outside combat; toggle by default
+F9 / F10 / F11    Base field of view down / up / reset to 75 degrees
 
-Inventory, containers, item descriptions, loot, dialogue, the arena merchant and
-the end-of-match menu free the cursor and hold the view while they are open.
+Movement, run, Duck, alternate attack, combat stance and interactions use your
+Exanima bindings. Overhead keeps the game's controls. Ordinary right-mouse
+cursor walking is disabled in first and third person.
+
+Inventory, dialogue and other supported game windows free the cursor and
+suspend gameplay input by default.
+
+
+AIM AND DEFENSE
+
+F8 has separate aim-box width/height settings for each perspective. Mouse
+movement inside the box aims; reaching its edge turns the view. Set an axis
+to zero for direct turning. Third person also has a free-aim switch.
+
+F8 -> Crosshair and combat lets you choose defense separately for each view:
+
+- Automatic (default): the game's automatic defense.
+- Manual: hold right mouse to enable the game's defensive assistance. Aim
+  and movement remain available. Equipment, reach and recovery still decide
+  whether a parry succeeds. Guard wins over an overlapping attack; release
+  left mouse before starting another attack.
+
+Interactions and held-object rotation keep priority. If Manual is unavailable,
+F8 shows Auto (fallback) and keeps your saved preference.
 
 
 SETTINGS
 
-Everything is on F8: head steadiness, field of view, mouse, crosshair, the swing
-arc, grab range, crouch, near clip and the third-person camera (distance,
-shoulder, height, lag, combat framing, what to do with things in the way).
-Changes apply at once.
+F8 controls field of view, head steadiness, sensitivity, crosshair and swing
+cues, crouch, lean, grab distance and third-person framing. Changes apply
+immediately; each page has a reset button.
 
-They're saved in Documents\ExCamera\first-person.ini, so a new version keeps
-them. Delete that file to go back to the defaults. Settings from versions
-before the ExCamera name (Documents\ExaniMate) are copied over the first time.
+Right-mouse free cursor can use hold, toggle or off. Lean can use a modifier
+plus mouse or separate left/right keys, which start unbound. Lean and held-
+object rotation bindings are configurable. Third person can override the
+base field of view with its own setting.
+
+Settings: Documents\ExCamera\first-person.ini
+They survive updates. Older Documents\ExaniMate settings are copied on first
+use. F8 reports if a change applies but cannot be saved.
+
+
+COMPATIBILITY
+
+Required compatibility checks must pass before ExCamera starts. Passing them
+does not guarantee gameplay compatibility. If another mod changes the same
+game functions, the launcher asks before running together. Set OtherHooks to
+ask, allow or refuse under [Compat] in first-person.ini to choose a policy.
+
+If raw mouse input becomes unavailable, ordinary mouse input takes over.
+Restart Exanima when switching builds or when a restart is requested.
+
+Controller movement is not fully adapted. Gameplay feel and EMTK integration
+remain untested in this update. Native carrying and movement restrictions
+remain.
+
+EMTK is optional. Choose one route:
+- Launcher: start the game through EMTK, then run ExCamera.exe.
+- Legacy native-DLL loader only: copy mods\exanima-first-person from this ZIP
+  into Exanima's mods folder. Do not also run ExCamera.exe. If EMTK disables
+  the mod, use EMTK's switch to enable it again.
 
 
 UNINSTALL
 
-Close the game. Delete this folder, and the mods\exanima-first-person folder if
-you used the EMTK route. Delete Documents\ExCamera\first-person.ini if you don't
-want to keep your settings.
+Close Exanima and delete the extracted folder. If you used the legacy EMTK
+route, also delete mods\exanima-first-person from the game folder. Delete
+Documents\ExCamera\first-person.ini only if you want to remove your settings.
 
-
-KNOWN ISSUES
-
-- It's a beta.
-- Looking up or down, the view drifts a few degrees sideways (left looking down,
-  right looking up).
-- Both EMTK routes are untested in game.
-- Under the legacy EMTK route, pressing F6 while EMTK has the mod switched off
-  turns it on and straight off again, and the "stopped" notice mentions F7 even
-  when EMTK stopped it.
-- Indoors, the third-person height is capped by the ceiling.
-- No free camera in this build.
-- Editing tools (items, levels, NPCs) aren't included.
-
-Files: ExCamera.exe, ExanimaFirstPerson.dll, first-person.ini (defaults), this
-readme, LICENSE.txt (MIT), LICENSE-MinHook.txt, mods\exanima-first-person (EMTK legacy route) and
-SHA256SUMS.txt.
+Updates and source: https://github.com/NecrosisDev/ExCamera
+License: MIT (LICENSE.txt); MinHook: BSD-2 (LICENSE-MinHook.txt).
+ExCamera is unaffiliated with Bare Mettle Entertainment and ships no game files.

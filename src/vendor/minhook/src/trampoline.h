@@ -98,6 +98,7 @@ typedef struct _TRAMPOLINE
 #endif
     BOOL   patchAbove;      // [Out] Should use the hot patch area?
     UINT   nIP;             // [Out] Number of the instruction boundaries.
+    UINT8  oldSize;         // [Out] ExCamera: original bytes consumed by the trampoline.
     UINT8  oldIPs[8];       // [Out] Instruction boundaries of the target function.
     UINT8  newIPs[8];       // [Out] Instruction boundaries of the trampoline function.
 } TRAMPOLINE, *PTRAMPOLINE;

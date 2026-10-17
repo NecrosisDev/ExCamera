@@ -1,9 +1,6 @@
 // Drawn over the frame: the attack wind-up arc (OpenGL); the game windows that free the cursor; crouch.
 // Part of first_person.cpp (one translation unit): included there, in order.
-// Attack-origin cue drawn into the finished frame (default framebuffer) just
-// before present, beside where the native cursor was drawn this frame. Owns a
-// private program/VAO/VBO per GL context and restores every state it touches.
-// Any missing entry point, non-default framebuffer or exception: no cue.
+#include "../cue_resources.h"
 namespace gl {
 typedef char GLchar;
 typedef ptrdiff_t GLsizeiptr;
@@ -11,173 +8,216 @@ using CreateShader = GLuint(APIENTRY*)(GLenum);
 using ShaderSource = void(APIENTRY*)(GLuint, GLsizei, const GLchar* const*, const GLint*);
 using CompileShader = void(APIENTRY*)(GLuint);
 using GetShaderiv = void(APIENTRY*)(GLuint, GLenum, GLint*);
+using DeleteShader = void(APIENTRY*)(GLuint);
 using CreateProgram = GLuint(APIENTRY*)();
 using AttachShader = void(APIENTRY*)(GLuint, GLuint);
+using DetachShader = void(APIENTRY*)(GLuint, GLuint);
 using BindAttribLocation = void(APIENTRY*)(GLuint, GLuint, const GLchar*);
 using LinkProgram = void(APIENTRY*)(GLuint);
 using GetProgramiv = void(APIENTRY*)(GLuint, GLenum, GLint*);
+using DeleteProgram = void(APIENTRY*)(GLuint);
 using UseProgram = void(APIENTRY*)(GLuint);
 using GetUniformLocation = GLint(APIENTRY*)(GLuint, const GLchar*);
 using Uniform4f = void(APIENTRY*)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
 using GenVertexArrays = void(APIENTRY*)(GLsizei, GLuint*);
+using DeleteVertexArrays = void(APIENTRY*)(GLsizei, const GLuint*);
 using BindVertexArray = void(APIENTRY*)(GLuint);
 using GenBuffers = void(APIENTRY*)(GLsizei, GLuint*);
+using DeleteBuffers = void(APIENTRY*)(GLsizei, const GLuint*);
 using BindBuffer = void(APIENTRY*)(GLenum, GLuint);
 using BufferData = void(APIENTRY*)(GLenum, GLsizeiptr, const void*, GLenum);
 using VertexAttribPointer = void(APIENTRY*)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
 using EnableVertexAttribArray = void(APIENTRY*)(GLuint);
 using BlendFuncSeparate = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
 using BlendEquationSeparate = void(APIENTRY*)(GLenum, GLenum);
-using BindFramebuffer = void(APIENTRY*)(GLenum, GLuint);
 struct Api {
     CreateShader createShader;
     ShaderSource shaderSource;
     CompileShader compileShader;
     GetShaderiv getShaderiv;
+    DeleteShader deleteShader;
     CreateProgram createProgram;
     AttachShader attachShader;
+    DetachShader detachShader;
     BindAttribLocation bindAttribLocation;
     LinkProgram linkProgram;
     GetProgramiv getProgramiv;
+    DeleteProgram deleteProgram;
     UseProgram useProgram;
     GetUniformLocation getUniformLocation;
     Uniform4f uniform4f;
     GenVertexArrays genVertexArrays;
+    DeleteVertexArrays deleteVertexArrays;
     BindVertexArray bindVertexArray;
     GenBuffers genBuffers;
+    DeleteBuffers deleteBuffers;
     BindBuffer bindBuffer;
     BufferData bufferData;
     VertexAttribPointer vertexAttribPointer;
     EnableVertexAttribArray enableVertexAttribArray;
     BlendFuncSeparate blendFuncSeparate;
     BlendEquationSeparate blendEquationSeparate;
+    void(APIENTRY* getIntegerv)(GLenum, GLint*);
+    GLenum(APIENTRY* getError)();
 };
 } // namespace gl
 static void drainGl() {
     for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; ++i) {}
 }
-static HGLRC cueContext = nullptr;
-static gl::Api cueApi{};
-static GLuint cueProgram = 0, cueVao = 0, cueVbo = 0;
-static GLint cueColor = -1;
-static GLuint cueArcProgram = 0, cueArcVao = 0, cueArcVbo = 0;
-static GLint cueArcColor = -1; // vertices are x, y, alpha
 template <class T> static bool loadGl(T& f, const char* name) {
     f = (T)wglGetProcAddress(name);
     return f && (uintptr_t)f > 3 && (intptr_t)f != -1;
 }
-static GLuint compileCue(const char* vs, const char* fs) {
-    auto& g = cueApi;
-    GLint ok = 0;
-    GLuint v = g.createShader(0x8B31), f = g.createShader(0x8B30);
-    if (!v || !f) return 0;
-    g.shaderSource(v, 1, &vs, nullptr);
-    g.compileShader(v);
-    g.getShaderiv(v, 0x8B81, &ok);
-    if (!ok) return 0;
-    g.shaderSource(f, 1, &fs, nullptr);
-    g.compileShader(f);
-    g.getShaderiv(f, 0x8B81, &ok);
-    if (!ok) return 0;
-    GLuint p = g.createProgram();
-    if (!p) return 0;
-    g.attachShader(p, v);
-    g.attachShader(p, f);
-    g.bindAttribLocation(p, 0, "position");
-    g.linkProgram(p);
-    g.getProgramiv(p, 0x8B82, &ok);
-    return ok ? p : 0;
+static bool loadCueApi(gl::Api& g) {
+    g.getIntegerv = glGetIntegerv;
+    g.getError = glGetError;
+    return loadGl(g.createShader, "glCreateShader") && loadGl(g.shaderSource, "glShaderSource") &&
+           loadGl(g.compileShader, "glCompileShader") && loadGl(g.getShaderiv, "glGetShaderiv") &&
+           loadGl(g.deleteShader, "glDeleteShader") && loadGl(g.createProgram, "glCreateProgram") &&
+           loadGl(g.attachShader, "glAttachShader") && loadGl(g.detachShader, "glDetachShader") &&
+           loadGl(g.bindAttribLocation, "glBindAttribLocation") && loadGl(g.linkProgram, "glLinkProgram") &&
+           loadGl(g.getProgramiv, "glGetProgramiv") && loadGl(g.deleteProgram, "glDeleteProgram") &&
+           loadGl(g.useProgram, "glUseProgram") && loadGl(g.getUniformLocation, "glGetUniformLocation") &&
+           loadGl(g.uniform4f, "glUniform4f") && loadGl(g.genVertexArrays, "glGenVertexArrays") &&
+           loadGl(g.deleteVertexArrays, "glDeleteVertexArrays") && loadGl(g.bindVertexArray, "glBindVertexArray") &&
+           loadGl(g.genBuffers, "glGenBuffers") && loadGl(g.deleteBuffers, "glDeleteBuffers") &&
+           loadGl(g.bindBuffer, "glBindBuffer") && loadGl(g.bufferData, "glBufferData") &&
+           loadGl(g.vertexAttribPointer, "glVertexAttribPointer") &&
+           loadGl(g.enableVertexAttribArray, "glEnableVertexAttribArray") &&
+           loadGl(g.blendFuncSeparate, "glBlendFuncSeparate") &&
+           loadGl(g.blendEquationSeparate, "glBlendEquationSeparate");
 }
-static bool prepareCue() {
-    HGLRC context = wglGetCurrentContext();
-    if (!context) return false;
-    if (context == cueContext) return cueProgram != 0;
-    cueContext = context;
-    cueProgram = 0;
-    cueArcProgram = 0; // Old objects belong to the old context; never touched again.
-    auto& g = cueApi;
-    if (!loadGl(g.createShader, "glCreateShader") || !loadGl(g.shaderSource, "glShaderSource") ||
-        !loadGl(g.compileShader, "glCompileShader") || !loadGl(g.getShaderiv, "glGetShaderiv") ||
-        !loadGl(g.createProgram, "glCreateProgram") || !loadGl(g.attachShader, "glAttachShader") ||
-        !loadGl(g.bindAttribLocation, "glBindAttribLocation") || !loadGl(g.linkProgram, "glLinkProgram") ||
-        !loadGl(g.getProgramiv, "glGetProgramiv") || !loadGl(g.useProgram, "glUseProgram") ||
-        !loadGl(g.getUniformLocation, "glGetUniformLocation") || !loadGl(g.uniform4f, "glUniform4f") ||
-        !loadGl(g.genVertexArrays, "glGenVertexArrays") || !loadGl(g.bindVertexArray, "glBindVertexArray") ||
-        !loadGl(g.genBuffers, "glGenBuffers") || !loadGl(g.bindBuffer, "glBindBuffer") ||
-        !loadGl(g.bufferData, "glBufferData") || !loadGl(g.vertexAttribPointer, "glVertexAttribPointer") ||
-        !loadGl(g.enableVertexAttribArray, "glEnableVertexAttribArray") ||
-        !loadGl(g.blendFuncSeparate, "glBlendFuncSeparate") ||
-        !loadGl(g.blendEquationSeparate, "glBlendEquationSeparate"))
-        return false;
-    GLint program = 0;
-    glGetIntegerv(0x8B8D, &program); // Compilation does not change bindings, but be exact.
-    GLuint p = compileCue("#version 150\nin vec2 position;void main(){gl_Position=vec4(position,0.0,1.0);}",
-                          "#version 150\nuniform vec4 color;out vec4 fragment;void main(){fragment=color;}");
-    if (!p)
-        p = compileCue("#version 130\nin vec2 position;void main(){gl_Position=vec4(position,0.0,1.0);}",
-                       "#version 130\nuniform vec4 color;out vec4 fragment;void main(){fragment=color;}");
-    if (!p)
-        p = compileCue(
-            "#version 120\nattribute vec2 position;void main(){gl_Position=vec4(position,0.0,1.0);}",
-            "#version 120\nuniform vec4 color;void main(){gl_FragColor=color;}");
-    drainGl();
-    if (!p) return false;
-    cueColor = g.getUniformLocation(p, "color");
-    GLint vao = 0, buffer = 0;
-    glGetIntegerv(0x85B5, &vao);
-    glGetIntegerv(0x8894, &buffer);
-    g.genVertexArrays(1, &cueVao);
-    g.genBuffers(1, &cueVbo);
-    g.bindVertexArray(cueVao);
-    g.bindBuffer(0x8892, cueVbo);
-    g.bufferData(0x8892, sizeof(float) * 12, nullptr, 0x88E8);
-    g.vertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
-    g.enableVertexAttribArray(0);
-    g.bindVertexArray(GLuint(vao));
-    g.bindBuffer(0x8892, GLuint(buffer));
-    const bool ok = glGetError() == GL_NO_ERROR && cueColor >= 0 && cueVao && cueVbo;
-    drainGl();
-    if (ok) cueProgram = p;
-    if (ok) { // the arc has its own program and buffers so the highlight's stay untouched
-        GLuint q = compileCue("#version 150\nin vec3 position;out float v;void "
-                              "main(){v=position.z;gl_Position=vec4(position.xy,0.0,1.0);}",
-                              "#version 150\nuniform vec4 color;in float v;out vec4 fragment;void "
-                              "main(){fragment=vec4(color.rgb,color.a*v);}");
-        if (!q)
-            q = compileCue("#version 130\nin vec3 position;out float v;void "
-                           "main(){v=position.z;gl_Position=vec4(position.xy,0.0,1.0);}",
-                           "#version 130\nuniform vec4 color;in float v;out vec4 fragment;void "
-                           "main(){fragment=vec4(color.rgb,color.a*v);}");
-        if (!q)
-            q = compileCue("#version 120\nattribute vec3 position;varying float v;void "
-                           "main(){v=position.z;gl_Position=vec4(position.xy,0.0,1.0);}",
-                           "#version 120\nuniform vec4 color;varying float v;void "
-                           "main(){gl_FragColor=vec4(color.rgb,color.a*v);}");
-        drainGl();
-        if (q) {
-            cueArcColor = g.getUniformLocation(q, "color");
-            GLint vao2 = 0, buffer2 = 0;
-            glGetIntegerv(0x85B5, &vao2);
-            glGetIntegerv(0x8894, &buffer2);
-            g.genVertexArrays(1, &cueArcVao);
-            g.genBuffers(1, &cueArcVbo);
-            g.bindVertexArray(cueArcVao);
-            g.bindBuffer(0x8892, cueArcVbo);
-            g.bufferData(0x8892, sizeof(float) * 3 * 3 * 68, nullptr, 0x88E8);
-            g.vertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-            g.enableVertexAttribArray(0);
-            g.bindVertexArray(GLuint(vao2));
-            g.bindBuffer(0x8892, GLuint(buffer2));
-            if (glGetError() == GL_NO_ERROR && cueArcColor >= 0 && cueArcVao && cueArcVbo) cueArcProgram = q;
-            drainGl();
-        }
+static HGLRC(WINAPI* cueCurrentContext)() = wglGetCurrentContext;
+static HDC(WINAPI* cueCurrentDC)() = wglGetCurrentDC;
+static BOOL(WINAPI* originalCueMakeCurrent)(HDC, HGLRC) = wglMakeCurrent;
+static BOOL(WINAPI* originalCueDeleteContext)(HGLRC) = wglDeleteContext;
+static bool (*cueApiLoader)(gl::Api&) = loadCueApi;
+struct CueContext {
+    HGLRC context = nullptr;
+    gl::Api api{};
+    fp::CueResources resources{};
+    bool attempted = false, failed = false;
+};
+// A core WGL switch retires before unbinding. Only simultaneously current
+// contexts need slots; excess contexts omit the optional cue.
+static CueContext cueContexts[8];
+static SRWLOCK cueLock = SRWLOCK_INIT;
+static unsigned cueDeletesInFlight = 0; // cueLock; blocks handle reuse during native deletion
+static volatile LONG cueCallsInFlight = 0;
+static CueContext* findCueContext(HGLRC context) {
+    if (context)
+        for (auto& owner : cueContexts)
+            if (owner.context == context) return &owner;
+    return nullptr;
+}
+static bool retireCueContext(CueContext& owner) {
+    __try {
+        if (owner.resources.live()) owner.resources.retire(owner.api);
+        owner = CueContext{};
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        owner.failed = true;
+        return false; // Keep incomplete ownership visible to the stop drain.
     }
-    return ok;
+}
+static bool retireCurrentCue() {
+    bool resourcesRetired = true;
+    AcquireSRWLockExclusive(&cueLock);
+    __try {
+        if (auto* owner = findCueContext(cueCurrentContext())) resourcesRetired = retireCueContext(*owner);
+    } __finally {
+        ReleaseSRWLockExclusive(&cueLock);
+    }
+    return resourcesRetired;
+}
+static void failCurrentCue() {
+    AcquireSRWLockExclusive(&cueLock);
+    __try {
+        const HGLRC context = cueCurrentContext();
+        if (auto* owner = findCueContext(context)) {
+            retireCueContext(*owner);
+            owner->context = context;
+            owner->attempted = owner->failed = true;
+        }
+    } __finally {
+        ReleaseSRWLockExclusive(&cueLock);
+    }
+}
+static bool awaitCueRetirement(DWORD timeout = 2000) {
+    const ULONGLONG started = GetTickCount64();
+    for (;;) {
+        bool pending = true;
+        if (TryAcquireSRWLockExclusive(&cueLock)) {
+            pending = cueDeletesInFlight != 0 || InterlockedCompareExchange(&cueCallsInFlight, 0, 0) != 0;
+            for (const auto& owner : cueContexts) pending = pending || owner.resources.live();
+            if (!pending)
+                for (auto& owner : cueContexts) owner = CueContext{};
+            ReleaseSRWLockExclusive(&cueLock);
+        }
+        if (!pending) return true;
+        if (GetTickCount64() - started >= timeout) return false;
+        Sleep(1); // Render/WGL callbacks retain exclusive responsibility for GL deletion.
+    }
+}
+static BOOL WINAPI cueMakeCurrent(HDC dc, HGLRC context) {
+    InterlockedIncrement(&cueCallsInFlight);
+    __try {
+        const HGLRC before = cueCurrentContext();
+        if (before && (before != context || cueCurrentDC() != dc ||
+                       InterlockedCompareExchange(&stopping, 0, 0)))
+            retireCurrentCue();
+        return originalCueMakeCurrent(dc, context);
+    } __finally {
+        InterlockedDecrement(&cueCallsInFlight);
+    }
+}
+static BOOL WINAPI cueDeleteContext(HGLRC context) {
+    InterlockedIncrement(&cueCallsInFlight);
+    AcquireSRWLockExclusive(&cueLock);
+    ++cueDeletesInFlight;
+    if (context && context == cueCurrentContext())
+        if (auto* owner = findCueContext(context)) retireCueContext(*owner);
+    ReleaseSRWLockExclusive(&cueLock);
+    BOOL deleted = FALSE;
+    DWORD error = 0;
+    __try {
+        deleted = originalCueDeleteContext(context);
+        error = GetLastError();
+        return deleted;
+    } __finally {
+        AcquireSRWLockExclusive(&cueLock);
+        // A successful native deletion ends this context's identity. No GL
+        // entry point may use its record after the numeric HGLRC is reused.
+        if (deleted)
+            if (auto* owner = findCueContext(context)) *owner = CueContext{};
+        --cueDeletesInFlight;
+        ReleaseSRWLockExclusive(&cueLock);
+        InterlockedDecrement(&cueCallsInFlight);
+        SetLastError(error);
+    }
+}
+static CueContext* prepareCue() { // cueLock held by the draw
+    const HGLRC context = cueCurrentContext();
+    if (!context || cueDeletesInFlight || InterlockedCompareExchange(&stopping, 0, 0)) return nullptr;
+    auto* owner = findCueContext(context);
+    if (!owner)
+        for (auto& slot : cueContexts)
+            if (!slot.context) {
+                slot.context = context;
+                owner = &slot;
+                break;
+            }
+    if (!owner) return nullptr;
+    if (!owner->attempted) {
+        owner->attempted = true;
+        owner->failed = !cueApiLoader(owner->api) || !owner->resources.prepare(owner->api);
+    }
+    return owner->failed ? nullptr : owner;
 }
 // The game's "CursorCom" option (the player's combat cursor colour) is stored here as RGBA bytes; its
 // setter is 0x12B830 and the cursor draw 0x13E9C0 tints the combat crosshair with it.
 // Returns false when the cue cannot be drawn on this context.
-static bool drawCue(fp::CueSide side, float x, float y, float fill, float alpha, int width, int height) {
+static bool drawCueOwned(fp::CueSide side, float x, float y, float fill, float alpha, int width, int height) {
     const int built =
         *(int*)(gameAt(fp::sig::cursorTextureSize)); // the size 0x13E740 last built the cursor texture for
     const float cursorPx = float(built >= 8 && built <= 256 ? built : fp::defaultCursorPx);
@@ -186,11 +226,13 @@ static bool drawCue(fp::CueSide side, float x, float y, float fill, float alpha,
     if (!(alpha > 0) ||
         !fp::cueArc(side, x, y, cursorPx, cueSize.load(), fill, arc, int(sizeof arc / sizeof(float)), counts))
         return true;
-    if (!prepareCue() || !cueArcProgram) return false;
+    auto* owner = prepareCue();
+    if (!owner) return false;
+    auto& resources = owner->resources;
     GLint framebuffer = 0;
     glGetIntegerv(0x8CA6, &framebuffer);
     if (framebuffer != 0) return true; // Not the presented image.
-    auto& g = cueApi;
+    auto& g = owner->api;
     GLint program = 0, vao = 0, buffer = 0, viewport[4]{}, src[2]{}, dst[2]{}, eq[2]{};
     GLboolean mask[4]{};
     glGetIntegerv(0x8B8D, &program);
@@ -210,72 +252,94 @@ static bool drawCue(fp::CueSide side, float x, float y, float fill, float alpha,
     GLboolean enabled[7];
     for (int i = 0; i < 7; ++i) enabled[i] = glIsEnabled(caps[i]);
     drainGl();
-    glViewport(0, 0, width, height);
-    for (int i = 1; i < 7; ++i) glDisable(caps[i]);
-    glEnable(GL_BLEND);
-    g.blendEquationSeparate(0x8006, 0x8006);
-    g.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    glColorMask(1, 1, 1, 1);
-    g.useProgram(cueArcProgram);
-    g.bindVertexArray(cueArcVao);
-    g.bindBuffer(0x8892, cueArcVbo);
-    // The arc itself is white; it is drawn the way 0x13E9C0 draws the cursor so the two match: the lines in
-    // black at four one-pixel offsets, then everything multiplied by the player's combat cursor colour.
-    const int total = counts[0] + counts[1] + counts[2];
-    for (int i = 0; i < total; ++i) {
-        arc[i * 3] = arc[i * 3] / float(width) * 2 - 1;
-        arc[i * 3 + 1] = 1 - arc[i * 3 + 1] / float(height) * 2;
-    }
-    const float a = alpha * float(cueOpacity.load()) / 100.f;
-    const unsigned char* colour = (const unsigned char*)(gameAt(fp::sig::combatCursorColour));
-    const float tint[3] = {float(colour[0]) / 255.f, float(colour[1]) / 255.f, float(colour[2]) / 255.f};
-    {
-        static float shifted[3 * 3 * 68];
-        const float ox = 2.f / float(width), oy = 2.f / float(height);
-        const float off[4][2] = {{-ox, 0}, {ox, 0}, {0, -oy}, {0, oy}};
-        g.uniform4f(cueArcColor, 0, 0, 0, a * a);
-        for (const auto& o : off) {
-            for (int i = 0; i < total; ++i) {
-                shifted[i * 3] = arc[i * 3] + o[0];
-                shifted[i * 3 + 1] = arc[i * 3 + 1] + o[1];
-                shifted[i * 3 + 2] = arc[i * 3 + 2];
-            }
-            g.bufferData(0x8892, ptrdiff_t(sizeof(float) * 3 * total), shifted, 0x88E8);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, counts[0]);
-            if (counts[2]) glDrawArrays(GL_TRIANGLE_STRIP, counts[0] + counts[1], counts[2]);
+    bool ok = false;
+    __try {
+        glViewport(0, 0, width, height);
+        for (int i = 1; i < 7; ++i) glDisable(caps[i]);
+        glEnable(GL_BLEND);
+        g.blendEquationSeparate(0x8006, 0x8006);
+        g.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glColorMask(1, 1, 1, 1);
+        g.useProgram(resources.program);
+        g.bindVertexArray(resources.vao);
+        g.bindBuffer(0x8892, resources.vbo);
+        // The arc itself is white; it is drawn the way 0x13E9C0 draws the cursor so the two match: the lines in
+        // black at four one-pixel offsets, then everything multiplied by the player's combat cursor colour.
+        const int total = counts[0] + counts[1] + counts[2];
+        for (int i = 0; i < total; ++i) {
+            arc[i * 3] = arc[i * 3] / float(width) * 2 - 1;
+            arc[i * 3 + 1] = 1 - arc[i * 3 + 1] / float(height) * 2;
         }
+        const float a = alpha * float(cueOpacity.load()) / 100.f;
+        const unsigned char* colour = (const unsigned char*)(gameAt(fp::sig::combatCursorColour));
+        const float tint[3] = {float(colour[0]) / 255.f, float(colour[1]) / 255.f, float(colour[2]) / 255.f};
+        {
+            static float shifted[3 * 3 * 68];
+            const float ox = 2.f / float(width), oy = 2.f / float(height);
+            const float off[4][2] = {{-ox, 0}, {ox, 0}, {0, -oy}, {0, oy}};
+            g.uniform4f(resources.color, 0, 0, 0, a * a);
+            for (const auto& o : off) {
+                for (int i = 0; i < total; ++i) {
+                    shifted[i * 3] = arc[i * 3] + o[0];
+                    shifted[i * 3 + 1] = arc[i * 3 + 1] + o[1];
+                    shifted[i * 3 + 2] = arc[i * 3 + 2];
+                }
+                g.bufferData(0x8892, ptrdiff_t(sizeof(float) * 3 * total), shifted, 0x88E8);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, counts[0]);
+                if (counts[2]) glDrawArrays(GL_TRIANGLE_STRIP, counts[0] + counts[1], counts[2]);
+            }
+        }
+        g.bufferData(0x8892, ptrdiff_t(sizeof(float) * 3 * total), arc, 0x88E8);
+        g.uniform4f(resources.color, tint[0], tint[1], tint[2], a);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, counts[0]);
+        if (counts[1]) glDrawArrays(GL_TRIANGLE_STRIP, counts[0], counts[1]);
+        if (counts[2]) glDrawArrays(GL_TRIANGLE_STRIP, counts[0] + counts[1], counts[2]);
+        ok = glGetError() == GL_NO_ERROR;
+    } __finally {
+        g.useProgram(GLuint(program));
+        g.bindVertexArray(GLuint(vao));
+        g.bindBuffer(0x8892, GLuint(buffer));
+        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        g.blendFuncSeparate(src[0], dst[0], src[1], dst[1]);
+        g.blendEquationSeparate(eq[0], eq[1]);
+        glColorMask(mask[0], mask[1], mask[2], mask[3]);
+        for (int i = 0; i < 7; ++i) (enabled[i] ? glEnable : glDisable)(caps[i]);
+        drainGl();
     }
-    g.bufferData(0x8892, ptrdiff_t(sizeof(float) * 3 * total), arc, 0x88E8);
-    g.uniform4f(cueArcColor, tint[0], tint[1], tint[2], a);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, counts[0]);
-    if (counts[1]) glDrawArrays(GL_TRIANGLE_STRIP, counts[0], counts[1]);
-    if (counts[2]) glDrawArrays(GL_TRIANGLE_STRIP, counts[0] + counts[1], counts[2]);
-    const bool ok = glGetError() == GL_NO_ERROR;
-    g.useProgram(GLuint(program));
-    g.bindVertexArray(GLuint(vao));
-    g.bindBuffer(0x8892, GLuint(buffer));
-    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    g.blendFuncSeparate(src[0], dst[0], src[1], dst[1]);
-    g.blendEquationSeparate(eq[0], eq[1]);
-    glColorMask(mask[0], mask[1], mask[2], mask[3]);
-    for (int i = 0; i < 7; ++i) (enabled[i] ? glEnable : glDisable)(caps[i]);
-    drainGl();
     if (ok) ++cueDraws;
     return ok;
 }
+static bool drawCue(fp::CueSide side, float x, float y, float fill, float alpha, int width, int height) {
+    bool ok = false;
+    AcquireSRWLockExclusive(&cueLock);
+    __try {
+        if (!InterlockedCompareExchange(&stopping, 0, 0)) {
+            ok = drawCueOwned(side, x, y, fill, alpha, width, height);
+            if (!ok)
+                if (auto* owner = findCueContext(cueCurrentContext())) {
+                    if (owner->resources.live()) owner->resources.retire(owner->api);
+                    owner->failed = true;
+                }
+        }
+    } __finally {
+        ReleaseSRWLockExclusive(&cueLock);
+    }
+    return ok;
+}
 static void presentCue(fp::CueSide side, LONG x, LONG y, float fill, float alpha) {
+    if (InterlockedCompareExchange(&stopping, 0, 0)) {
+        retireCurrentCue(); // Also runs on cue-free frames while the worker waits.
+        cueGl = 0;
+        return;
+    }
     if (side == fp::CueSide::none) return;
-    if (wglGetCurrentContext() != cueContext) cueGl = 0; // A new context gets its own attempt.
-    if (cueGl.load() < 0) return;
     HWND w = hookedWindow;
     RECT rect;
     if (!w || !GetClientRect(w, &rect) || rect.right < 40 || rect.bottom < 40) return;
     __try {
-        if (!drawCue(side, float(x), float(y), fill, alpha, rect.right, rect.bottom))
-            cueGl = -1;
-        else
-            cueGl = 1;
+        cueGl = drawCue(side, float(x), float(y), fill, alpha, rect.right, rect.bottom) ? 1 : -1;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        failCurrentCue();
         cueGl = -1;
     }
 }
@@ -382,26 +446,70 @@ static bool crouchHeadroomClear(uintptr_t root) {
     const float up[3] = {0, 1, 0};
     return levelBlocked(level, from, up, crouchHeadroom) != 1;
 }
-static fp::Crouch crouchState; // the game's thread
+static bool crouchAllowed(uintptr_t root) {
+    if (!root || !readable(root, 0x1300) || !InterlockedCompareExchange(&active, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0) || viewMode.load() >= 2)
+        return false;
+    const unsigned state = *(unsigned*)(root + field::character::stateFlags);
+    return !*(unsigned char*)(root + field::character::combatStance) &&
+           !(state & (0xac0 | 0x40204 | 0xa00)) &&
+           !(*(unsigned*)(root + field::character::lifeFlags) & 0x100) && !dialogueOpen();
+}
+static bool crouchAppliesTo(uintptr_t root) {
+    CrouchRequest request;
+    AcquireSRWLockShared(&crouchLock);
+    request = crouchRequest;
+    ReleaseSRWLockShared(&crouchLock);
+    if (!request.held || request.root != root || !request.mode || request.mode != crouchMode.load())
+        return false;
+    __try {
+        return root == *(uintptr_t*)gameAt(fp::sig::playerRoot) && crouchAllowed(root) &&
+               request.head == *(uintptr_t*)(root + field::character::headPart) &&
+               request.scene == *(uintptr_t*)gameAt(fp::sig::currentScene);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+static fp::Crouch crouchState; // render thread, under cameraLock in swap
+static uintptr_t crouchRoot = 0, crouchHead = 0, crouchScene = 0;
+static bool crouchOwnerSeen = false, crouchWaitRelease = false;
 static void crouchFrame() {
-    const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
+    CrouchRequest next;
+    const int mode = crouchMode.load();
+    const bool physicalKey = duckKey.load();
     bool allowed = false, room = true;
     __try {
-        if (root && readable(root, 0x1300) && InterlockedCompareExchange(&active, 0, 0) &&
-            !InterlockedCompareExchange(&stopping, 0, 0) && viewMode.load() < 2) {
-            const unsigned state = *(unsigned*)(root + field::character::stateFlags);
-            allowed = !*(unsigned char*)(root + field::character::combatStance) &&
-                      !(state & (0xac0 | 0x40204 | 0xa00)) &&
-                      !(*(unsigned*)(root + field::character::lifeFlags) & 0x100) &&
-                      !dialogueOpen(); // not in combat, down, dead or talking
-            if (allowed && crouchState.on) room = crouchHeadroomClear(root);
-        }
+        next.root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
+        next.scene = *(uintptr_t*)gameAt(fp::sig::currentScene);
+        if (readable(next.root, 0x1300)) next.head = *(uintptr_t*)(next.root + field::character::headPart);
+        allowed = crouchAllowed(next.root);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        next = {};
         allowed = false;
     }
-    const bool key = duckKey.load() &&
-                     !InterlockedCompareExchange(
-                         &windowFree, 0,
-                         0); // a press while a game window holds the view (typing, clicking) is not a crouch
-    crouchHeld = fp::crouchStep(crouchState, crouchMode.load(), key, allowed, room);
+    if (next.root != crouchRoot || next.head != crouchHead || next.scene != crouchScene) {
+        crouchState = {};
+        if (crouchOwnerSeen) crouchWaitRelease = physicalKey;
+        crouchRoot = next.root;
+        crouchHead = next.head;
+        crouchScene = next.scene;
+        if (next.root) crouchOwnerSeen = true;
+    }
+    if (!physicalKey) crouchWaitRelease = false;
+    if (allowed && mode && crouchState.on) {
+        __try {
+            room = crouchHeadroomClear(next.root);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            allowed = false; // a failed native query ends this frame's request
+        }
+    }
+    // A press that belonged to a previous character must be released before
+    // either hold or toggle can start a new crouch. FP/TP share this request.
+    const bool key = physicalKey && !crouchWaitRelease && !InterlockedCompareExchange(&windowFree, 0, 0);
+    next.mode = mode;
+    next.held = fp::crouchStep(crouchState, mode, key, allowed, room);
+    AcquireSRWLockExclusive(&crouchLock);
+    crouchRequest = next;
+    ReleaseSRWLockExclusive(&crouchLock);
+    crouchHeld = next.held;
 }

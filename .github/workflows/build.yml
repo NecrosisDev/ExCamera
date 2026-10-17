@@ -25,9 +25,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Pure-math suites
+      - name: Portable C++ suites
         working-directory: src
+        # One command per line: under bash -e a failure anywhere stops the job (in `a && b`, a failing `a` would not).
         run: |
-          for t in test_camera_motion test_yaw_stabilization test_view_boundaries test_game_layout test_status_json; do
-            g++ -std=c++17 -O2 "$t.cpp" -o "/tmp/$t" && "/tmp/$t"
+          for t in test_camera_motion test_yaw_stabilization test_view_boundaries test_game_layout test_status_json test_held_object test_module_export test_input_ownership test_activation_status test_raw_registration test_cue_resources test_native_contracts; do
+            g++ -std=c++17 -O2 -Wall -Wextra -Werror "$t.cpp" -o "/tmp/$t"
+            "/tmp/$t"
           done
+      - name: Signature checker regression tests
+        run: python3 tools/test_signatures.py
+      - name: Native contract regression tests
+        run: python3 tools/test_native_contracts.py

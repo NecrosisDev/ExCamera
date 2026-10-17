@@ -7,11 +7,18 @@
 
 namespace fp {
 
-inline constexpr unsigned healthHooks = 5;
+inline constexpr unsigned healthHooks = 6;
 // The hooks every game tick reaches while a character is in play, in or out of combat, moving or not.
-enum class HealthHook : uint8_t { pollInput, navSampler, playerBehavior, poseBuilder, partSettle };
-inline constexpr const char* healthHookNames[healthHooks] = {"pollInput", "navSampler", "playerBehavior",
-                                                             "poseBuilder", "partSettle"};
+enum class HealthHook : uint8_t {
+    pollInput,
+    navSampler,
+    playerBehavior,
+    poseBuilder,
+    partSettle,
+    cameraMouse
+};
+inline constexpr const char* healthHookNames[healthHooks] = {"pollInput",   "navSampler", "playerBehavior",
+                                                             "poseBuilder", "partSettle", "cameraMouse"};
 // Game-clock milliseconds of play the check watches before it decides.
 inline constexpr uint32_t healthWindowMs = 5000;
 

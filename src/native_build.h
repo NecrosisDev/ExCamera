@@ -7,8 +7,9 @@
 #include <vector>
 #pragma comment(lib, "bcrypt.lib")
 namespace fp {
-// The build this release was tested on in play (Exanima 0.9.5.2g, Steam build 25803178). Other builds run
-// when every game target resolves by signature (game_layout.h) and the hooks prove they run (hook_health.h).
+// Source archive for static verification (Exanima 0.9.5.2g, Steam build 25803178).
+// Core targets resolve by signature; optional capabilities require their complete group.
+// Hook health verifies native callback execution. This build has not been play-tested.
 inline constexpr char executableHash[] = "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70";
 inline bool supportedExecutable(const wchar_t* path) {
     HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);

@@ -1,24 +1,30 @@
 // Picking and holding: the game's pick rays past your own body, held-object distance and drop spot, grab reach, doors and lids, the crosshair position.
 // Part of first_person.cpp (one translation unit): included there, in order.
+// The held object (a scene node; skipped by its own placement pick), 0 when nothing is held.
+static uintptr_t heldNode() {
+    const uintptr_t drag = *(uintptr_t*)gameAt(fp::sig::dragManager);
+    const uintptr_t object = readable(drag, 0x20) ? *(uintptr_t*)(drag + field::drag::object) : 0;
+    return readable(object, 0x2a0) ? object : 0;
+}
 static char pickRay(uintptr_t camera, float x, float y, uintptr_t out) {
     const uintptr_t caller = (uintptr_t)_ReturnAddress();
     bool dropping = false;
     if (caller == gameAt(fp::sig::dropSpotPickReturn) && out) {
         __try {
-            dropping = firstPersonHold();
+            dropping = heldDropWanted();
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             dropping = false;
         }
     }
     if (dropping) {
         memset((void*)out, 0, 0x34);
-        return dropSpot(pickPastSelf(originalPickRay, camera, x, y, out), out);
+        return dropSpot(pickPastSelf(originalPickRay, camera, x, y, out, heldNode()), out);
     }
     const bool placing = placingThread == GetCurrentThreadId() && out;
     // 0x8F720 leaves out untouched when the pointer is off the viewport (the reticle reports -1,-1
     // when the eye is in a wall): cleared, the native drag sees a level ray and leaves the object.
     if (placing) memset((void*)out, 0, 0x34);
-    const char hit = pickPastSelf(originalPickRay, camera, x, y, out);
+    const char hit = pickPastSelf(originalPickRay, camera, x, y, out, placing ? heldNode() : 0);
     if (!placing) return hit;
     const float* dir = (const float*)(out + field::pick::direction);
     const float* origin = (const float*)(out + field::pick::origin);
@@ -29,11 +35,12 @@ static char pickRay(uintptr_t camera, float x, float y, uintptr_t out) {
     const uintptr_t drag = *(uintptr_t*)gameAt(fp::sig::dragManager);
     if (!readable(drag, 0x20)) return hit; // released between the placement and this pick
     const uintptr_t object = *(uintptr_t*)(drag + field::drag::object);
+    const float eye[3] = {eyeGlobal[0].load(), eyeGlobal[1].load(), eyeGlobal[2].load()};
     const ULONGLONG now = GetTickCount64();
-    if (holdObject.load() != object) {
-        const float start = hit && reached > 0
-                                ? std::fmin(std::fmax(reached, fp::holdNear), float(grabRange.load()))
-                                : fp::holdNear * 2;
+    if (holdObject.load() != object) { // a new hold: at the distance it was grabbed at, from the eye
+        const float grabbed = grabStartDistance.load();
+        const float start = std::fmin(std::fmax(grabbed > 0.f ? grabbed : fp::holdNear * 2, fp::holdNear),
+                                      float(grabRange.load()));
         holdObject = object;
         holdTarget = start;
         holdApplied = start;
@@ -42,9 +49,25 @@ static char pickRay(uintptr_t camera, float x, float y, uintptr_t out) {
     const float dt = holdTick ? float(now - holdTick) * 0.001f : 0.f;
     holdTick = now;
     holdApplied = fp::holdApproach(holdApplied.load(), holdTarget.load(), dt);
-    float t = holdApplied.load();
+    {
+        static fp::PushRate push;
+        static uintptr_t pushed = 0; // how fast the wheel is pushing it out, for a fling
+        static ULONGLONG pushedGeneration = 0;
+        const ULONGLONG generation = holdGeneration.load();
+        if (pushed != object || pushedGeneration != generation) {
+            push = fp::PushRate{};
+            pushed = object;
+            pushedGeneration = generation;
+        }
+        push.step(holdApplied.load(), now);
+        pushSpeed = push.pushing(now);
+        pushAt = now;
+        for (int i = 0; i < 3; ++i) pushDir[i] = dir[i];
+    }
+    float t = fp::holdAlongRay(origin, dir, eye, holdApplied.load());
+    if (t < 0.f) return hit; // pointing away from the character: the game's
     t = holdReachClamp(origin, dir, t);
-    if (hit && t >= reached) return hit; // a surface before the hold point: native
+    if (hit && t >= reached) return hit; // something nearer (never the held object: it is skipped)
     if (const uintptr_t level = levelGrid()) t = levelClear(level, origin, dir, t);
     if (t < 1.f) return hit; // the eye itself is in geometry: native
     for (int i = 0; i < 3; i++) ((float*)(out + 8))[i] = origin[i] + dir[i] * t;
@@ -64,30 +87,45 @@ static GrabPick originalGrabPick; // RVA 0x8FB30
 // start also forgets the last hold, so a re-grab of the same item starts at its native distance.
 static char grabPickResult(uintptr_t caller, char hit, uintptr_t out) {
     if (caller == gameAt(fp::sig::grabStartPickReturn)) {
-        holdObject = 0;
+        resetHeldGrab();
         doorDistance = hit && out ? *(float*)(out + field::pick::distance) : 0.f;
         doorCameraOffset = 0;
         lastDoorObject = 0;
+        grabStartDistance = 0.f;
+        if (hit && out) {
+            const float* d = (const float*)(out + field::pick::direction);
+            const float* o = (const float*)(out + field::pick::origin);
+            const float eye[3] = {eyeGlobal[0].load(), eyeGlobal[1].load(), eyeGlobal[2].load()};
+            grabStartDistance = fp::eyeDistance(o, d, *(float*)(out + field::pick::distance), eye);
+        }
     }
-    if (!out || !InterlockedCompareExchange(&active, 0, 0) || InterlockedCompareExchange(&stopping, 0, 0))
+    if (!out || viewMode.load() >= 2 || !InterlockedCompareExchange(&active, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0))
         return hit;
     float reachDistance = *(float*)(out + field::pick::distance);
     if (viewMode.load() == 1 &&
         hit) { // the pick ray starts at the third-person camera; reach is measured from the eye
         const float* d = (const float*)(out + field::pick::direction);
         const float* o = (const float*)(out + field::pick::origin);
+        float head[3];
+        readReachHead(head);
         float s = 0;
         for (int i = 0; i < 3; ++i) {
-            const float p = o[i] + d[i] * reachDistance - lastHeadGlobal[i];
+            const float p = o[i] + d[i] * reachDistance - head[i];
             s += p * p;
         }
         if (std::isfinite(s)) reachDistance = std::sqrt(s);
         if (caller == gameAt(fp::sig::grabStartPickReturn))
             doorCameraOffset = *(float*)(out + field::pick::distance) - reachDistance;
     }
+    const bool tooFar = hit && fp::grabTooFar(reachDistance, float(grabRange.load()));
+    if (caller == gameAt(fp::sig::hoverPickReturn)) {
+        hoverOutOfRange = tooFar;
+        hoverRangeAt = GetTickCount64();
+    }
     if (hit &&
         (caller == gameAt(fp::sig::grabStartPickReturn) || caller == gameAt(fp::sig::hoverPickReturn)) &&
-        fp::grabTooFar(reachDistance, float(grabRange.load()))) {
+        tooFar) {
         if (caller == gameAt(fp::sig::grabStartPickReturn)) ++grabsRefused;
         return 0;
     }
@@ -255,27 +293,43 @@ static void releaseHeldDoor() {
 // or lid is let go as the button release does instead; items keep the game's path.
 using DragDrop = void (*)(uintptr_t);
 static DragDrop originalDragDrop; // RVA 0x119C30
+// Let go while the wheel pushes: after the game's own release (which stops the body), the body's point history is
+// rewritten for the push's speed along the pointer's ray (fp::flingHistory). Only an item this mod was holding.
+static void fling(uintptr_t body) {
+    const ULONGLONG now = GetTickCount64();
+    const float speed = now - pushAt.load() <= fp::flingFreshMs ? pushSpeed.load() : 0.f;
+    const float v[3] = {pushDir[0].load() * speed, pushDir[1].load() * speed, pushDir[2].load() * speed};
+    if (!readable(body, field::bodyPart::history2 + 48)) return;
+    if (fp::flingHistory(v, physicsStep.load(), (const float(*)[3])(body + field::bodyPart::points),
+                         (float(*)[3])(body + field::bodyPart::history),
+                         (float(*)[3])(body + field::bodyPart::history2)))
+        ++flings;
+}
 static void dragDrop(uintptr_t drag) {
     const uintptr_t ui = *(uintptr_t*)(gameAt(fp::sig::guiManager));
-    if (InterlockedCompareExchange(&active, 0, 0) && ui && readable(drag, 0x20) &&
+    const bool ownView = viewMode.load() < 2 && InterlockedCompareExchange(&active, 0, 0) &&
+                         !InterlockedCompareExchange(&stopping, 0, 0);
+    if (ownView && ui && readable(drag, 0x20) &&
         (*(unsigned*)(drag + 8) & (0x4000 | 0x10000)) && *(uintptr_t*)(drag + field::drag::object)) {
         doorDistance = 0;
         lastDoorObject = 0;
         sendDoorMessage(drag, 0x80);
         return;
     }
+    uintptr_t body = 0; // captured first: the release clears the drag
+    if (ownView && readable(drag, 0x20) && *(unsigned*)(drag + 8) == 0x2000) {
+        const uintptr_t object = *(uintptr_t*)(drag + field::drag::object);
+        if (object && object == holdObject.load() && readable(object, field::sceneNode::bodyPart + 8))
+            body = *(uintptr_t*)(object + field::sceneNode::bodyPart);
+    }
     originalDragDrop(drag);
+    if (body) fling(body);
 }
 static void f8WindowTick(bool show, bool title);
 static void f8MouseStep();
 // The title screen: no controlled character (root 0, as the park logic reads gameplay) for 2 s, so
 // a load's brief gap does not count. Worker thread.
-static char pendingLevel[17]{};
-static std::atomic<ULONGLONG> pendingLevelSince{0}; // the pending level name at the title (worker thread)
 static ULONGLONG noPlayerSince = 0;
-static std::atomic<bool> f8OpenedAtTitle{false}, atTitleNow{false},
-    titleSettled{
-        false}; // published by the worker; Settled: 10 s without a character (restore) // set by the panel thread (Editor button)
 static bool atTitle() {
     const ULONGLONG now = GetTickCount64();
     if (*(uintptr_t*)(gameAt(fp::sig::playerRoot))) {
@@ -321,19 +375,23 @@ static void cursorPosition(LONG* x, LONG* y) {
             float px, py;
             bool projected = fp::projectCursor(delta, lastCamera, float(rect.right), float(rect.bottom),
                                                renderedFov, px, py);
-            if (viewMode.load() != 0) {
-                px = float(rect.right) * 0.5f;
-                py = float(rect.bottom) * 0.5f;
+            if (viewMode.load() !=
+                0) { // third person: the centre, or the free combat crosshair's place in its box
+                const bool free = viewMode.load() == 1 && tpAimFree.load();
+                px = float(rect.right) * 0.5f + (free ? tpAimX.load() : 0.f);
+                py = float(rect.bottom) * 0.5f + (free ? tpAimY.load() : 0.f);
                 projected = true;
             }
             if (projected) {
+                const bool combat = *(unsigned char*)(a.root + field::character::combatStance) != 0;
                 static float sx = -1, sy = -1;
                 static ULONGLONG st = 0;
                 const ULONGLONG nowMs = GetTickCount64();
                 const float dt = st ? float(nowMs - st) / 1000.f : 1.f;
                 st = nowMs;
                 const float dx = px - sx, dy = py - sy;
-                if (sx < 0 || dt > 0.25f || dx * dx + dy * dy > 80.f * 80.f || viewMode.load() != 0) {
+                if (sx < 0 || dt > 0.25f || dx * dx + dy * dy > 80.f * 80.f || viewMode.load() != 0 ||
+                    combat) {
                     sx = px;
                     sy = py;
                 } else {
@@ -344,7 +402,7 @@ static void cursorPosition(LONG* x, LONG* y) {
                 static float shownX = -1, shownY = -1;
                 const float dead = 1.5f * float(rect.bottom) / 1080.f; // tiny wobbles do not move it at all
                 if (shownX < 0 || std::fabs(sx - shownX) > dead || std::fabs(sy - shownY) > dead ||
-                    viewMode.load() != 0) {
+                    viewMode.load() != 0 || combat) {
                     shownX = sx;
                     shownY = sy;
                 }
@@ -398,7 +456,9 @@ static void cursorPosition(LONG* x, LONG* y) {
                 }
                 if (viewMode.load() < 2 &&
                     !fp::crosshairDrawn(combat, swinging.load(), hideSwingCrosshair.load(),
-                                        idleCrosshairAlways.load(), markerShown)) {
+                                        idleCrosshairAlways.load(), markerShown,
+                                        hoverOutOfRange.load() &&
+                                            GetTickCount64() - hoverRangeAt.load() <= reticleFreshMs)) {
                     *x = rect.right + 256;
                     *y = rect.bottom + 256;
                     if (swinging.load()) ++swingHides;
@@ -431,7 +491,6 @@ static void currentCamera(uintptr_t& view, uintptr_t& camera) {
 static void resetViewHistory() {
     InterlockedExchange(&cameraReady, 0);
     nearPlane.reset();
-    lastViewClearance = -1;
     filterRoot = filterHead = 0;
     releaseInput();
     AcquireSRWLockExclusive(&aimLock);

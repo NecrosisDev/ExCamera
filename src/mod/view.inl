@@ -1,28 +1,14 @@
 // What the eye sees: hiding meshes (helmet, body wear, what blocks the third-person camera), the tile covers.
 // Part of first_person.cpp (one translation unit): included there, in order.
 // ---- First-person view features (render thread only; no C++ unwinding inside __try) ----
-// Ceilings: level tiles carry collision-only
-// "+Ceiling" slabs (built by 0x145C90 / 0x146A50 with flagsC (c&~0x30000)|0xC0000
-// and the "_black" material), which finalize (0x5F860) never sets up for drawing.
-// Changing them after the level is live faulted the sector lighting
-// pass every frame (no light records, "Scene manager: Validation error.") and
-// bypassed the per-material draw lists. So the slab is changed while it is
-// built: in the builder's face flip (0x68630, between the merge and the mesh
-// compile 0x67070/0x68730) it gets the room's wall material, planar UVs from the
-// floor's own mapper (0x145890) and floor-like flags (0x80000 and 0x40000 off:
-// 0x40000 keeps a mesh out of its sector's per-material draw lists, 0x55960). Finalize, sector light
-// registration (0x56B50 -> 0x55070) and draw lists then treat it as any floor.
-// Hiding: what decides whether a registered mesh is drawn is its
-// pass mask mesh+0xE0, which the per-sector update 0x58CD0 rebuilds every frame
-// (sector bit 0x10000000 from +0x3A0, | 0x1000001 when the bounds pass the view
-// tests 0x79E60 / 0x58AC0). The render passes (0x4E610, 0x4EB30, 0x4EE10,
-// 0x4EFE0, 0x4F0B0) and the screen pick 0x8F720 take a mesh only when their pass
-// mask & mesh+0xE0 is non-zero. flagsC 0x10000 is not read there, which is why the
-// - hiding (clearing it) left helmets and ceilings on screen
-// (live A/B, ceilings-preview flaw 1). A hidden mesh now gets, right after
-// 0x58CD0 returns for its sector, the value of a mesh outside the view
-// (fp::hiddenPassMask). Nothing is stored in the mesh: the next frame recomputes
-// it, so leaving the hide list, F6, F7 or a scene change show it again with no undo.
+// Hiding: what decides whether a registered mesh is drawn is its pass mask mesh+0xE0, which the
+// per-sector update 0x58CD0 rebuilds every frame (sector bit 0x10000000 from +0x3A0, | 0x1000001 when
+// the bounds pass the view tests 0x79E60 / 0x58AC0). The render passes (0x4E610, 0x4EB30, 0x4EE10,
+// 0x4EFE0, 0x4F0B0) and the screen pick 0x8F720 take a mesh only when their pass mask & mesh+0xE0 is
+// non-zero; flagsC 0x10000 is not read there, so clearing it hides nothing. A hidden mesh gets, right
+// after 0x58CD0 returns for its sector, the value of a mesh outside the view (fp::hiddenPassMask).
+// Nothing is stored in the mesh: the next frame recomputes it, so leaving the hide list, F6, F7 or a
+// scene change show it again with no undo.
 static bool readable(uintptr_t address, size_t size) {
     MEMORY_BASIC_INFORMATION m;
     if (address < 0x10000 || VirtualQuery((void*)address, &m, sizeof(m)) != sizeof(m)) return false;
@@ -83,13 +69,14 @@ static void hideAdd(uintptr_t mesh) {
 // Publishes pendingHide when it differs from the live list.
 static void hidePublish() {
     const unsigned n = fp::sortUnique(pendingHide, pendingHideCount);
+    const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
+    AcquireSRWLockExclusive(&hideLock);
     if (n != hideMeshCount || memcmp(pendingHide, hideMeshes, n * sizeof(uintptr_t))) {
-        AcquireSRWLockExclusive(&hideLock);
         memcpy(hideMeshes, pendingHide, n * sizeof(uintptr_t));
         hideMeshCount = n;
-        ReleaseSRWLockExclusive(&hideLock);
     }
-    hideScene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
+    hideScene = scene;
+    ReleaseSRWLockExclusive(&hideLock);
     hiddenMeshes = n;
     pendingHideCount = 0;
 }
@@ -109,16 +96,22 @@ static void maskSector(uintptr_t sector) {
 static uintptr_t sectorUpdate(uintptr_t sector) {
     const uintptr_t result = originalSectorUpdate(sector);
     InterlockedExchange(&sectorThread, LONG(GetCurrentThreadId()));
-    if (!hideMeshCount) return result;
+    bool fault = false;
     AcquireSRWLockShared(&hideLock);
     // The list is exactly what 0x58CD0 just walked for this sector.
     __try {
-        maskSector(sector);
+        if (hideMeshCount) maskSector(sector);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         viewFault = 1;
-        hideMeshCount = 0;
+        fault = true;
     }
     ReleaseSRWLockShared(&hideLock);
+    if (fault) {
+        AcquireSRWLockExclusive(&hideLock);
+        hideMeshCount = 0;
+        hideScene = 0;
+        ReleaseSRWLockExclusive(&hideLock);
+    }
     return result;
 }
 // Breadth-first scene walk into a flat list. Returns node count.
@@ -207,6 +200,7 @@ static fp::HelmetVerdict helmetVerdict(uintptr_t node, float length = fp::helmet
     }
     return fp::HelmetVerdict::clear;
 }
+static std::atomic<unsigned> helmetTurnRetests{0};
 static void updateHeadWear(bool live) {
     const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
@@ -236,11 +230,19 @@ static void updateHeadWear(bool live) {
         next[n++] = w;
     }
     unsigned hidden = 0, blocking = 0, unknown = 0;
+    // Tested when it appears, every 30 frames (the head pose relative to the eye moves with animation), and at
+    // once when the view has turned fp::helmetRetestCos (8 degrees) since the last test: a fast look no longer
+    // shows a strip of helmet until the next round. Hide mode needs no test.
+    static float testedForward[3]{};
+    const float forward[3] = {-lastCamera[6], -lastCamera[7], -lastCamera[8]};
+    const bool turned = fp::helmetRetestDue(testedForward, forward);
+    if (turned) {
+        memcpy(testedForward, forward, 12);
+        ++helmetTurnRetests;
+    }
     for (unsigned k = 0; k < n; ++k) {
         HeadWear& w = next[k];
-        // Tested when it appears and every 30 frames (the head pose relative to the
-        // eye moves with animation); hide mode needs no test.
-        if (helmetMode == fp::HelmetMode::show && (w.verdict == -2 || ++w.age >= 30)) {
+        if (helmetMode == fp::HelmetMode::show && (w.verdict == -2 || turned || ++w.age >= 30)) {
             w.verdict = int(helmetVerdict(w.node));
             w.age = 0;
         }

@@ -113,7 +113,7 @@ struct Fixture {
         memcpy((void*)(camera + 0x40), initial, 48);
         *(float*)(camera + 0x1c8) = 37;
         *(float*)(camera + 0x1cc) = 100;
-        original = fakeNav;
+        originalNav = fakeNav;
         rebuildProjection = fakeProjection;
         rebuildInverse = fakeInverse;
         originalSwap = fakeSwap;
@@ -140,7 +140,6 @@ struct Fixture {
         savedView = savedController = 0;
         cameraReady = 0;
         restorationUnknown = 0;
-        cameraFault = NoCameraFault;
         savedRoot = savedScene = 0;
         park = Park{};
         for (Retired& r : retired) r = Retired{};
@@ -165,6 +164,20 @@ struct Fixture {
     }
 };
 int main() {
+    {
+        Fixture f;
+        aim = {};
+        aim.valid = true;
+        aim.root = f.root;
+        aim.head = f.head;
+        aim.yaw = aim.targetYaw = 0.05f;
+        holdHeadingOn = true;
+        turnLeadOn = false;
+        nav((void*)42, 0);
+        const float* c = (const float*)(f.camera + 0x40);
+        check(std::fabs(c[6]) < 1e-5f && std::fabs(c[8] + 1.f) < 1e-5f,
+              "small aim error never rotates the first-person camera independently of its head");
+    }
     {
         Fixture f;
         check(nav((void*)42, 0) == 123, "native return preserved");
@@ -382,8 +395,7 @@ int main() {
         check(memcmp((void*)(f.camera + 0x40), held, 48) == 0 && *(float*)(f.camera + 0x1c8) == 75 &&
                   projectedFov == 75,
               "held frame republishes the last good pose");
-        check(heldFrames == 1 && holds == 1 && holdingNow == 1 && cameraFault == NoCameraFault,
-              "hold counted");
+        check(heldFrames == 1 && holds == 1 && holdingNow == 1, "hold counted");
         for (unsigned i = 1; i < fp::headHoldFrames; ++i) nav((void*)42, 0);
         check(
             memcmp((void*)(f.camera + 0x40), held, 48) == 0 && *(float*)(f.camera + 0x1c8) == 75,
@@ -395,7 +407,7 @@ int main() {
         check(f.stock() && projectedFov == 37, "exhausted hold restores fields AND derived projection");
         check(active && !stopping && !inputEnabled && !controls(f.bh) && parkedNow && holdParks == 1,
               "exhausted hold parks: no stop, input released");
-        check(!pendingRestore && !savedCamera && !restorationUnknown && cameraFault == NoCameraFault,
+        check(!pendingRestore && !savedCamera && !restorationUnknown,
               "parked hold has no dangling restoration debt");
         check(awaitRestore(0), "F7 while a hold is parked is a clean stop");
 #endif
@@ -507,8 +519,7 @@ int main() {
 #ifdef FP_LIFECYCLE_V2
         if (changed == 1 || changed == 2) {
             // Our camera is still the current one: restoration is provable, no fault.
-            check(f.stock() && !savedCamera && !pendingRestore && !restorationUnknown &&
-                      cameraFault == NoCameraFault,
+            check(f.stock() && !savedCamera && !pendingRestore && !restorationUnknown,
                   "current camera restored on owner change");
             check(parks == 1 && parkKind == int(fp::OwnerChange::parkRestore) && awaitRestore(0),
                   "restored owner change parks and allows a clean stop");
@@ -521,8 +532,7 @@ int main() {
         check(!awaitRestore(10) && parks == 1 && parkKind == int(fp::OwnerChange::parkRelease) &&
                   retired[retiredSlots - 1].camera == f.camera,
               "unknown restoration cannot pass stop gate");
-        check(restorationUnknown && cameraFault == NoCameraFault,
-              "owner change explicitly records unknown outcome");
+        check(restorationUnknown, "owner change explicitly records unknown outcome");
 #else
         check(!awaitRestore(10) && pendingRestore, "unknown restoration cannot pass stop gate");
 #endif
@@ -663,9 +673,9 @@ int main() {
             reportFault("stop_rollback_failed", "unknown", "restored");
             check(statusContains("\"installed\":null") && statusContains("\"restored\":true"),
                   "rollback uncertainty distinguished from restored camera");
-            reportFault("camera_source_lost", "removed", "restored");
-            check(statusContains("\"installed\":false") && statusContains("\"state\":\"camera_source_lost\""),
-                  "source fault reports confirmed restoration/removal");
+            reportFault("hook_not_firing", "removed", "restored");
+            check(statusContains("\"installed\":false") && statusContains("\"state\":\"hook_not_firing\""),
+                  "a stop with hooks removed reports confirmed restoration/removal");
             DeleteFileW(statusPath);
             DeleteFileW(statusTempPath);
             statusPath[0] = statusTempPath[0] = 0;
@@ -686,8 +696,7 @@ int main() {
         *(uintptr_t*)(base + 0x4f0830) = 0;
         *(int*)(base + 0x499860) = 1; // Title screen.
         swap(nullptr);
-        check(active && !stopping && !restorationUnknown && cameraFault == NoCameraFault,
-              "title return is not a fault");
+        check(active && !stopping && !restorationUnknown, "title return is not a fault");
         check(!savedCamera && !pendingRestore && parkedNow && parks == 1 &&
                   parkKind == int(fp::OwnerChange::parkRelease),
               "title return parks and releases the record");
@@ -763,7 +772,7 @@ int main() {
         for (unsigned i = 1; i < fp::parkGraceFrames; ++i) swap(nullptr);
         check(!stopping && !restorationUnknown && park.active, "grace frames before deciding");
         swap(nullptr);
-        check(!stopping && !restorationUnknown && cameraFault == NoCameraFault && !park.active,
+        check(!stopping && !restorationUnknown && !park.active,
               "unresolved live swap re-arms instead of stopping");
         nav((void*)42, 0);
         check(savedCamera == other && *(float*)(other + 0x1c8) == 75 && stockFov == 30 && rearms == 1,
@@ -781,8 +790,7 @@ int main() {
         nav((void*)42, 0);
         *(uintptr_t*)(f.view + 0x50) = other;
         swap(nullptr);
-        check(!stopping && parkedNow && parkKind == int(fp::OwnerChange::parkRelease) &&
-                  cameraFault == NoCameraFault,
+        check(!stopping && parkedNow && parkKind == int(fp::OwnerChange::parkRelease),
               "no-menu swap parks, no fault");
         for (unsigned i = 0; i < fp::parkGraceFrames; ++i) swap(nullptr);
         nav((void*)42, 0);
@@ -827,8 +835,7 @@ int main() {
         *(int*)(base + 0x499860) = 1;
         *(uintptr_t*)(f.root + 0x11e0) = 0;
         nav((void*)42, 0);
-        check(f.stock() && !stopping && cameraFault == NoCameraFault && parkedNow &&
-                  parkKind == int(fp::OwnerChange::parkRestore),
+        check(f.stock() && !stopping && parkedNow && parkKind == int(fp::OwnerChange::parkRestore),
               "death-screen source loss parks");
         *(uintptr_t*)(f.root + 0x11e0) = f.head;
         *(int*)(base + 0x499860) = 0;
@@ -850,8 +857,7 @@ int main() {
             check(!savedCamera, "no re-attach inside the grace frames");
             for (unsigned i = 0; i < fp::parkGraceFrames; ++i) swap(nullptr);
         }
-        check(parkBackoffs == 1 && park.active && !stopping && cameraFault == NoCameraFault,
-              "third quick live park backs off, no stop");
+        check(parkBackoffs == 1 && park.active && !stopping, "third quick live park backs off, no stop");
         nav((void*)42, 0);
         check(!savedCamera && f.stock(), "no re-attach during the back-off");
         park.backoffUntil = 0; // The back-off time has passed.
@@ -889,8 +895,7 @@ int main() {
         check(stopping && !stopPress.load(), "F7 held a second stops");
         swap(nullptr);
         check(awaitRestore(0) && f.stock(), "F7 hold stop restores stock");
-        check(fp::rearmAllowed(true, true, cameraFault != NoCameraFault, restorationUnknown != 0),
-              "clean F7 stop is re-armable");
+        check(fp::rearmAllowed(true, true, restorationUnknown != 0), "clean F7 stop is re-armable");
         check(notices >= 2, "F7 hint notices shown");
         if (noticeWindow) {
             DestroyWindow(noticeWindow);

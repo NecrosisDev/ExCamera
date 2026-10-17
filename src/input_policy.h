@@ -3,6 +3,18 @@
 #include <cmath>
 #include <cstring>
 namespace fp {
+inline int defenseModeFromText(const wchar_t* text) {
+    if (!text) return 0;
+    const wchar_t* manual = L"manual";
+    while (*text && *manual && ((*text | 32) == *manual)) {
+        ++text;
+        ++manual;
+    }
+    return !*text && !*manual ? 1 : 0;
+}
+inline const wchar_t* defenseModeText(int mode) {
+    return mode == 1 ? L"manual" : L"automatic";
+}
 // Native semantic bits, not physical keys. Polling remains owned by the game.
 inline unsigned movementKey(unsigned key, const unsigned* bindings) {
     unsigned mask = 0;
@@ -169,7 +181,9 @@ inline CueSide originSide(OriginCue cue, const SwingHands& s) {
 // sides, so the cue goes neutral (|right.y| > 0.5).
 inline CueSide cueSide(CueSide origin, float cameraRightY) {
     if (!std::isfinite(cameraRightY) || std::fabs(cameraRightY) > 0.5f) return CueSide::none;
-    return origin;
+    // Owner reports the lateral indicator reversed. Mirror presentation only; overhead/thrust
+    // and the native attack classification stay unchanged.
+    return origin == CueSide::left ? CueSide::right : origin == CueSide::right ? CueSide::left : origin;
 }
 // Pick clearance. Picks unproject from the view near plane, 1
 // unit ahead of the eye. With the eye pressed into a wall that point is past
@@ -223,7 +237,8 @@ inline int gameCursorSlot(int index) {
 // player wants it always (right mouse brings up the game's own cursor instead); in combat it shows,
 // except during a swing if the player hides it then. Picks use the aim point either way.
 inline bool crosshairDrawn(bool combat, bool swinging, bool hideDuringSwing, bool alwaysOutOfCombat,
-                           bool catchingUp = false) {
+                           bool catchingUp = false, bool unreachableHover = false) {
+    if (!combat && unreachableHover) return false;
     if (!combat) return alwaysOutOfCombat || catchingUp;
     return !(hideDuringSwing && swinging);
 }
@@ -575,11 +590,10 @@ inline StopKey stopKeyStep(uint64_t press, uint64_t release, uint64_t now, bool 
     return now - press >= stopHoldMs ? StopKey::stop : StopKey::holding;
 }
 // After an F7 stop, F6 turns the mod back on only when the stop was clean:
-// camera restoration verified, hooks and window procedure removed, no camera
-// fault. Any other stop keeps the restart requirement.
-inline bool rearmAllowed(bool restoredVerified, bool hooksRemoved, bool cameraFault,
-                         bool restorationUnknown) {
-    return restoredVerified && hooksRemoved && !cameraFault && !restorationUnknown;
+// camera restoration verified, hooks and window procedure removed. Any other
+// stop keeps the restart requirement.
+inline bool rearmAllowed(bool restoredVerified, bool hooksRemoved, bool restorationUnknown) {
+    return restoredVerified && hooksRemoved && !restorationUnknown;
 }
 // Draw hiding. The per-sector update 0x58CD0 rebuilds each
 // registered mesh's pass mask (+0xE0) every frame: 0x10000000 from the sector
@@ -776,6 +790,12 @@ inline int bodyPartNumber(const char* name) {
     if (!name || name[0] < '0' || name[0] > '9' || name[1] < '0' || name[1] > '9' || !name[2]) return -1;
     return (name[0] - '0') * 10 + (name[1] - '0');
 }
+// The view turned enough since the head wear was last tested to test it again now (8 degrees). A zero
+// "tested" (never) is due.
+inline constexpr float helmetRetestCos = 0.99027f;
+inline bool helmetRetestDue(const float* tested, const float* forward) {
+    return tested[0] * forward[0] + tested[1] * forward[1] + tested[2] * forward[2] < helmetRetestCos;
+}
 inline bool torsoPart(int part) {
     return part == 8 || part == 9 || part == 11 || part == 12 || part == 14 || part == 15;
 }
@@ -788,17 +808,7 @@ inline void worldToLocalPoint(const float* m, const float* p, float* out) {
 inline void worldToLocalDirection(const float* m, const float* d, float* out) {
     for (int r = 0; r < 3; ++r) out[r] = d[0] * m[r * 3] + d[1] * m[r * 3 + 1] + d[2] * m[r * 3 + 2];
 }
-// Finalized mesh bounds (+0x20 centre, +0x2C radius, +0x30 half extents) in world
-// units. Two built ceiling slabs with the same bounds occupy the same space.
-struct SlabBounds {
-    float c[3], r, e[3];
-};
-inline bool sameSlabBounds(const SlabBounds& a, const SlabBounds& b, float tolerance = 1.f) {
-    for (int i = 0; i < 3; ++i)
-        if (std::fabs(a.c[i] - b.c[i]) > tolerance || std::fabs(a.e[i] - b.e[i]) > tolerance) return false;
-    return std::fabs(a.r - b.r) <= tolerance;
-}
-// (risk audit item 8): the native analog travel vector (0x5B29F0,
+// The native analog travel vector (0x5B29F0,
 // a controller stick) is left alone when no movement key is held and the stick
 // is outside a small deadzone, instead of being zeroed by keyboard travel.
 inline bool analogActive(const float* v) {
@@ -809,11 +819,11 @@ inline bool analogActive(const float* v) {
     }
     return m > 0.2f * 0.2f;
 }
-// Risk audit item 16: mouse buttons as the held attack-side key would flip every attack.
+// Mouse buttons as the held attack-side key would flip every attack.
 inline bool attackSideKeyValid(int key) {
     return key >= 3 && key <= 254 && key != 4 && key != 5 && key != 6;
 }
-// Risk audit item 6: another program hooking the game's SwapBuffers over ours
+// Another program hooking the game's SwapBuffers over ours
 // starves the swap hook (park, re-arm, restore all run there). Starved: camera
 // samples keep rising while swap calls stay flat for starvedSeconds checks in a row.
 struct SwapWatch {
@@ -831,299 +841,6 @@ inline bool swapWatchStep(SwapWatch& w, unsigned samples, unsigned swaps, bool a
         return true;
     } // report once
     return false;
-}
-inline float distance3(const float* a, const float* b) {
-    const float x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2];
-    return std::sqrt(x * x + y * y + z * z);
-}
-// Median of n values (sorted in place); 0 for none.
-inline float median(float* v, unsigned n) {
-    if (!n) return 0;
-    for (unsigned i = 1; i < n; ++i) {
-        const float x = v[i];
-        unsigned j = i;
-        while (j > 0 && v[j - 1] > x) {
-            v[j] = v[j - 1];
-            --j;
-        }
-        v[j] = x;
-    }
-    return n & 1 ? v[n / 2] : 0.5f * (v[n / 2 - 1] + v[n / 2]);
-}
-// The lid's planar UV scale: the measured density of the material's own meshes
-// when plausible (one texture repeat per 10..20000 world units), else the floor's.
-inline float lidDensity(float measured, float floorScale) {
-    return std::isfinite(measured) && measured >= 1.f / 20000.f && measured <= 0.1f ? measured : floorScale;
-}
-// the built "+Ceiling" slab is the ceiling the wall sets author (geometry
-// dump: a ledge on the wall tops at the wall line, a slope to a flat cap;
-// exanima01 264 -> 400, catacomb 324 -> 451). Tile-local frame, centred: side 0 is -z,
-// 1 -x, 2 +z, 3 +x (the tile's per-side wall nibbles, 0x145C90 param 3).
-inline unsigned wallSides(unsigned tileFlags) {
-    unsigned m = 0;
-    for (int i = 0; i < 4; ++i)
-        if ((tileFlags >> (4 * i)) & 0xf) m |= 1u << i;
-    return m;
-}
-// Columns:
-// low vertices (below the cap - 20) that are not on a walled side's ledge band form
-// small rings at column tops (catacomb: 55 x 55 squares at tile corners; exanima01:
-// corner pilasters). A cap vertex joined by a face only to one such ring moves to
-// directly above the nearest ring vertex, so the slope becomes a vertical column
-// extension up to the cap. Rings wider than 150 (diagonal walls) are left alone.
-// Returns the number of cap vertices moved.
-inline unsigned extendColumns(float* P, unsigned count, const int* C, unsigned faces, unsigned walled) {
-    constexpr unsigned maxVerts = 512;
-    constexpr float band = 120.f, link = 100.f, maxRing = 150.f;
-    if (count < 3 || count > maxVerts || !faces) return 0;
-    float cap = -1e30f;
-    for (unsigned i = 0; i < count; ++i) cap = std::fmax(cap, P[i * 3 + 1]);
-    auto ledge = [&](const float* p) {
-        return ((walled & 1) && p[2] <= -300.f + band) || ((walled & 2) && p[0] <= -300.f + band) ||
-               ((walled & 4) && p[2] >= 300.f - band) || ((walled & 8) && p[0] >= 300.f - band);
-    };
-    // kind: 0 high, 1 ledge-low, 2 ring-low
-    unsigned char kind[maxVerts];
-    int ring[maxVerts];
-    for (unsigned i = 0; i < count; ++i) {
-        const float* p = P + i * 3;
-        kind[i] = p[1] >= cap - 20.f ? 0 : (ledge(p) ? 1 : 2);
-        ring[i] = int(i);
-    }
-    auto root = [&](int i) {
-        while (ring[i] != i) i = ring[i] = ring[ring[i]];
-        return i;
-    };
-    for (unsigned i = 0; i < count; ++i)
-        if (kind[i] == 2)
-            for (unsigned j = i + 1; j < count; ++j)
-                if (kind[j] == 2) {
-                    const float dx = P[i * 3] - P[j * 3], dz = P[i * 3 + 2] - P[j * 3 + 2];
-                    if (dx * dx + dz * dz <= link * link) ring[root(int(i))] = root(int(j));
-                }
-    float lo[maxVerts][2], hi[maxVerts][2];
-    bool seen[maxVerts]{};
-    for (unsigned i = 0; i < count; ++i)
-        if (kind[i] == 2) {
-            const int r = root(int(i));
-            if (!seen[r]) {
-                seen[r] = true;
-                lo[r][0] = hi[r][0] = P[i * 3];
-                lo[r][1] = hi[r][1] = P[i * 3 + 2];
-            }
-            lo[r][0] = std::fmin(lo[r][0], P[i * 3]);
-            hi[r][0] = std::fmax(hi[r][0], P[i * 3]);
-            lo[r][1] = std::fmin(lo[r][1], P[i * 3 + 2]);
-            hi[r][1] = std::fmax(hi[r][1], P[i * 3 + 2]);
-        }
-    auto pillar = [&](int r) {
-        return hi[r][0] - lo[r][0] <= maxRing && hi[r][1] - lo[r][1] <= maxRing;
-    };
-    // Per cap vertex: the one ring it touches (-1 none, -2 more than one or a ledge/diagonal).
-    int touch[maxVerts];
-    for (unsigned i = 0; i < count; ++i) touch[i] = -1;
-    for (unsigned f = 0; f < faces; ++f) {
-        const int* v = C + f * 3;
-        int r = -1;
-        bool other = false;
-        for (int k = 0; k < 3; ++k) {
-            const unsigned x = unsigned(v[k]);
-            if (x >= count) return 0;
-            if (kind[x] == 1)
-                other = true;
-            else if (kind[x] == 2) {
-                const int rr = root(int(x));
-                if (!pillar(rr))
-                    other = true;
-                else if (r < 0)
-                    r = rr;
-                else if (r != rr)
-                    other = true;
-            }
-        }
-        if (r < 0 && !other) continue;
-        for (int k = 0; k < 3; ++k) {
-            const unsigned x = unsigned(v[k]);
-            if (kind[x]) continue;
-            if (other)
-                touch[x] = -2;
-            else if (touch[x] == -1)
-                touch[x] = r;
-            else if (touch[x] != r)
-                touch[x] = -2;
-        }
-    }
-    unsigned moved = 0;
-    for (unsigned i = 0; i < count; ++i) {
-        if (kind[i] || touch[i] < 0) continue;
-        float best = 1e30f;
-        int at = -1;
-        for (unsigned j = 0; j < count; ++j)
-            if (kind[j] == 2 && root(int(j)) == touch[i]) {
-                const float dx = P[i * 3] - P[j * 3], dz = P[i * 3 + 2] - P[j * 3 + 2], d = dx * dx + dz * dz;
-                if (d < best) {
-                    best = d;
-                    at = int(j);
-                }
-            }
-        if (at >= 0) {
-            P[i * 3] = P[at * 3];
-            P[i * 3 + 2] = P[at * 3 + 2];
-            ++moved;
-        }
-    }
-    return moved;
-}
-// Orientation (proof run 1: wall-top ledges and some slope pieces drew
-// black, seen from their back): the cap's faces give the winding that faces into
-// the room (their normal-y sign); every non-vertical face with the other sign is
-// turned (corners 0 and 2 swapped in every map, as the native flip 0x68630 does).
-// Returns the faces turned.
-inline unsigned orientDown(const float* P, unsigned count, int* const* maps, unsigned mapCount,
-                           unsigned faces) {
-    float cap = -1e30f;
-    for (unsigned i = 0; i < count; ++i) cap = std::fmax(cap, P[i * 3 + 1]);
-    auto normalY = [&](unsigned f, float* len) {
-        const int* v = maps[0] + f * 3;
-        const float* a = P + v[0] * 3;
-        const float* b = P + v[1] * 3;
-        const float* c = P + v[2] * 3;
-        const float d1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]},
-                    d2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-        const float n[3] = {d1[1] * d2[2] - d1[2] * d2[1], d1[2] * d2[0] - d1[0] * d2[2],
-                            d1[0] * d2[1] - d1[1] * d2[0]};
-        *len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-        return n[1];
-    };
-    double capSign = 0;
-    for (unsigned f = 0; f < faces; ++f) {
-        const int* v = maps[0] + f * 3;
-        if (unsigned(v[0]) >= count || unsigned(v[1]) >= count || unsigned(v[2]) >= count) return 0;
-        if (P[v[0] * 3 + 1] >= cap - 1 && P[v[1] * 3 + 1] >= cap - 1 && P[v[2] * 3 + 1] >= cap - 1) {
-            float l;
-            capSign += normalY(f, &l);
-        }
-    }
-    if (capSign == 0) return 0;
-    unsigned turned = 0;
-    for (unsigned f = 0; f < faces; ++f) {
-        float len;
-        const float y = normalY(f, &len);
-        if (len < 1e-3f || std::fabs(y) < 0.2f * len || (y > 0) == (capSign > 0)) continue;
-        for (unsigned m = 0; m < mapCount; ++m) {
-            int* v = maps[m] + f * 3;
-            const int t = v[0];
-            v[0] = v[2];
-            v[2] = t;
-        }
-        ++turned;
-    }
-    return turned;
-}
-// Market vault ("The market should have a vaulted sort of
-// ceiling, as the trees currently clip through it. I don't want to clearly see the very
-// top/center."). The open ground of exanima67 is flat cover slabs at 450 (dump). Over each
-// open area they become one continuous cavern vault: tile distance to the nearest walled or
-// edge cell (the level's own tile grid, 0x148790's per-cell flags) sets the rise, flat where
-// the open area meets its structures, up to an apex clear of the tallest tree (995) and lamp
-// (751) in the geometry dump. A small rock unevenness is a function of world position only,
-// so neighbouring tiles share exact vertex heights.
-inline bool vaultedLevel(const char* level) {
-    return level && !strcmp(level, "exanima67");
-}
-// Distance in tiles from every present cell to the nearest boundary cell (present with a wall
-// on any side, or next to an absent cell); absent cells are 0. Returns false on bad input.
-inline bool tileDistances(const uint32_t* flags, int w, int h, float* d) {
-    if (!flags || w < 3 || h < 3 || w > 512 || h > 512) return false;
-    const int n = w * h;
-    int* queue = new int[n];
-    int head = 0, tail = 0;
-    auto present = [&](int x, int y) {
-        return x >= 0 && y >= 0 && x < w && y < h && (flags[y * w + x] & 0x80000u);
-    };
-    for (int y = 0; y < h; ++y)
-        for (int x = 0; x < w; ++x) {
-            const int i = y * w + x;
-            d[i] = -1;
-            if (!present(x, y)) {
-                d[i] = 0;
-                continue;
-            }
-            bool edge = (flags[i] & 0xffffu) != 0;
-            if (!present(x + 1, y) || !present(x - 1, y) || !present(x, y + 1) || !present(x, y - 1))
-                edge = true;
-            if (edge) {
-                d[i] = 0;
-                queue[tail++] = i;
-            }
-        }
-    while (head < tail) {
-        const int i = queue[head++], x = i % w, y = i / w;
-        const int nb[4][2] = {{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}};
-        for (const auto& q : nb) {
-            if (q[0] < 0 || q[1] < 0 || q[0] >= w || q[1] >= h) continue;
-            const int j = q[1] * w + q[0];
-            if (d[j] < 0) {
-                d[j] = d[i] + 1;
-                queue[tail++] = j;
-            }
-        }
-    }
-    for (int i = 0; i < n; ++i)
-        if (d[i] < 0) d[i] = 0;
-    delete[] queue;
-    return true;
-}
-// Bilinear sample of the cell-centre distances at fractional cell coordinates.
-inline float sampleDistance(const float* d, int w, int h, float col, float row) {
-    col = std::fmin(std::fmax(col, 0.f), float(w - 1));
-    row = std::fmin(std::fmax(row, 0.f), float(h - 1));
-    const int x0 = int(col), y0 = int(row), x1 = x0 + 1 < w ? x0 + 1 : x0, y1 = y0 + 1 < h ? y0 + 1 : y0;
-    const float fx = col - float(x0), fy = row - float(y0);
-    const float a = d[y0 * w + x0] * (1 - fx) + d[y0 * w + x1] * fx,
-                b = d[y1 * w + x0] * (1 - fx) + d[y1 * w + x1] * fx;
-    return a * (1 - fy) + b * fy;
-}
-inline constexpr float vaultHeight = 950.f, vaultSpan = 600.f; // apex 450+950 = 1400
-// Rise above the flat cover for a point `units` in from the open area's edge (the shared edge
-// with a boundary cell sits half a tile from its centre: callers pass (distance-0.5)*cell).
-// Square-root profile over one tile: steep where it leaves the structures, so trees near the
-// edge of an open area clear it (dump check: 25 tree parts above the vault on open tiles with
-// a quadratic rise over two tiles, 4 with this one).
-inline float vaultRise(float units) {
-    const float t = std::fmin(std::fmax(units, 0.f) / vaultSpan, 1.f);
-    return vaultHeight * std::sqrt(t);
-}
-// Deterministic unevenness in [-1,1] from a world position.
-inline float rockJitter(float x, float z) {
-    uint32_t h = uint32_t(int32_t(std::floor(x * 0.5f))) * 0x9E3779B1u ^
-                 uint32_t(int32_t(std::floor(z * 0.5f))) * 0x85EBCA77u;
-    h ^= h >> 15;
-    h *= 0x2C1B3C6Du;
-    h ^= h >> 12;
-    return float(h & 0xffff) / 32767.5f - 1.f;
-}
-// Per-face planar UVs: the face's dominant axis picks the plane (cap: x/z as the floor
-// mapper 0x145890 does, u = x*s+o, v = o-z*s; walls of a column extension: the
-// horizontal axis along the face and y). s = texture repeats per world unit.
-inline void faceUv(const float* a, const float* b, const float* c, float s, float o, float uv[3][2]) {
-    const float d1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]},
-                d2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-    const float n[3] = {std::fabs(d1[1] * d2[2] - d1[2] * d2[1]), std::fabs(d1[2] * d2[0] - d1[0] * d2[2]),
-                        std::fabs(d1[0] * d2[1] - d1[1] * d2[0])};
-    const float* p[3] = {a, b, c};
-    for (int k = 0; k < 3; ++k) {
-        if (n[1] >= n[0] && n[1] >= n[2]) {
-            uv[k][0] = p[k][0] * s + o;
-            uv[k][1] = o - p[k][2] * s;
-        } else if (n[0] >= n[2]) {
-            uv[k][0] = p[k][2] * s + o;
-            uv[k][1] = o - p[k][1] * s;
-        } else {
-            uv[k][0] = p[k][0] * s + o;
-            uv[k][1] = o - p[k][1] * s;
-        }
-    }
 }
 // Held objects and the cursor hand-off.
 // Held objects: the native drag puts the object at the pointer ray's first hit
@@ -1192,105 +909,6 @@ inline bool heldPointOnPlane(const float* origin, const float* dir, float distan
 inline constexpr uint64_t rearmF6GuardMs = 250;
 inline bool rearmF6Accepted(uint64_t now, uint64_t rearmedAt) {
     return !rearmedAt || now - rearmedAt >= rearmF6GuardMs;
-}
-// Ceilings. The tile builder (0x145C90 / 0x146A50) makes each
-// "+Ceiling" slab with flagsC (c & ~0x30000) | 0xC0000: 0x80000 makes finalize
-// (0x5F860) skip GPU setup and clear the draw bytes; 0x30000 off keeps it out
-// of sector lighting, and 0x40000 keeps it out of the sector's per-material
-// draw lists (added by 0x55960 and removed by 0x56220 -> 0x56050 only when the
-// bit is clear). With Ceilings=1 the slab is built like the floor: lit bits on
-// (registration sizes its light records), 0x80000 and 0x40000 off.
-inline unsigned ceilingBuildFlags(unsigned flags) {
-    return (flags | 0x30000u) & ~0xC0000u;
-}
-// Open-air wall sets (zones that are
-// not indoors must not get a flat lid). The game's only garden is the
-// exanima67 hedge maze (GEWS_UBB01Mz: juniper hedge walls). A tile whose wall
-// set carries such a material keeps the game's look (no lid). Provisional,
-// interim until the dome-with-fog top is built and seen live in the garden.
-inline bool openAirMaterial(const char* name) {
-    return name && (!strncmp(name, "jpnrwall", 8) || !strncmp(name, "juniper", 7));
-}
-// One wall material of the tile's wall set, faces summed over its templates.
-struct CeilingCandidate {
-    const char* name;
-    unsigned faces;
-    bool textured;
-};
-// The room's ceiling material: the textured wall material covering the most
-// faces. Never a placeholder ("+..." is the builder's planar-mapped floor
-// style), an engine material ("_null", "_black", "_Default"), or the floor's
-// material with or without its '+'. -1: keep the game's look for this tile.
-// Wooden plank floors: names like floorwodpl5a1 / FloorWodPl5A1 (GEFS_WodPlA1/A2).
-inline bool woodFloor(const char* name) {
-    if (!name) return false;
-    for (const char* p = name; p[0] && p[1] && p[2]; ++p) {
-        char a = p[0] | 0x20, b = p[1] | 0x20, c = p[2] | 0x20;
-        if (a == 'w' && b == 'o' && c == 'd') return true;
-    }
-    return false;
-}
-// Case-insensitive substring test within a 16-byte material name.
-inline bool nameHas(const char* name, const char* token) {
-    if (!name) return false;
-    const size_t k = strlen(token);
-    for (size_t i = 0; i < 16 && name[i]; ++i) {
-        size_t j = 0;
-        while (j < k && i + j < 16 && name[i + j] && (name[i + j] | 0x20) == token[j]) ++j;
-        if (j == k) return true;
-    }
-    return false;
-}
-// edge and detail pieces never vote. Trims (trim, ub6ta/tb, ub7ta), arches,
-// pillars, skirtings, lintels, bases, metal, lamps, pipes, doors, decorations.
-inline bool detailMaterial(const char* name) {
-    static const char* const tokens[] = {"trim", "arch", "pilr", "pillar", "plight", "metal", "brazier",
-                                         "dec",  "pipe", "door", "skrt",   "lint",   "base"};
-    for (const char* t : tokens)
-        if (nameHas(name, t)) return true;
-    return name && (!strncmp(name, "ub6t", 4) || !strncmp(name, "ub7t", 4));
-}
-// True wall surfaces: wall, wl (ub6wl01, ubmatwl00, tmbwl02d), bw (uswbw01).
-inline bool wallSurfaceMaterial(const char* name) {
-    return !detailMaterial(name) && (nameHas(name, "wall") || nameHas(name, "wl") || nameHas(name, "bw"));
-}
-// Rock surfaces in a wall set (GEWS_StnMsB's rocks_ala01/02) or terrain (trn_rocka01).
-inline bool rockMaterial(const char* name) {
-    return name && (!strncmp(name, "rocks_", 6) || !strncmp(name, "trn_", 4));
-}
-// Levels whose rooms are carved: the catacomb (exanima04) and the
-// Market (exanima67). Their lids take the level's terrain rock where it has one.
-inline bool carvedLevel(const char* level) {
-    return level && (!strcmp(level, "exanima04") || !strcmp(level, "exanima67"));
-}
-inline int pickCeilingMaterial(const CeilingCandidate* c, unsigned n, const char* floorName) {
-    const char* floorBase = floorName && floorName[0] == '+' ? floorName + 1 : floorName;
-    int best = -1, plain = -1, any = -1;
-    for (unsigned i = 0; i < n; ++i) {
-        const char* name = c[i].name;
-        if (!name || !name[0] || name[0] == '+' || name[0] == '_' || !c[i].textured || !c[i].faces) continue;
-        if (floorBase && floorBase[0] && strncmp(name, floorBase, 16) == 0) continue;
-        if (any < 0 || c[i].faces > c[any].faces) any = int(i);
-        if (detailMaterial(name)) continue;
-        if (plain < 0 || c[i].faces > c[plain].faces) plain = int(i);
-        if (wallSurfaceMaterial(name) && (best < 0 || c[i].faces > c[best].faces)) best = int(i);
-    }
-    if (best < 0) best = plain >= 0 ? plain : any; // a set of details only keeps the old vote
-    // (shots, arenahub x-360 z1960): a room with a wooden plank
-    // floor takes the set's timber wall material (tmb..., wod...) when it has one,
-    // not the stone that dominates the whole set.
-    if (woodFloor(floorBase)) {
-        int timber = -1;
-        for (unsigned i = 0; i < n; ++i) {
-            const char* name = c[i].name;
-            if (!name || !c[i].textured || !c[i].faces ||
-                !(strncmp(name, "tmb", 3) == 0 || strncmp(name, "wod", 3) == 0))
-                continue;
-            if (timber < 0 || c[i].faces > c[timber].faces) timber = int(i);
-        }
-        if (timber >= 0) return timber;
-    }
-    return best;
 }
 
 } // namespace fp

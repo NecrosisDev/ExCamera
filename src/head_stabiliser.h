@@ -69,6 +69,37 @@ inline void turn3(const float* r, const float* v, float* o) {
     const float kd = dot3(k, v);
     for (int i = 0; i < 3; ++i) o[i] = v[i] * c + kv[i] * s + k[i] * kd * (1 - c);
 }
+inline float steadyHeading(float (*points)[3], const float* coeffs, const float* gaze, int strength) {
+    float pose[12];
+    tetraPose(points, coeffs, pose);
+    for (float v : pose)
+        if (!std::isfinite(v)) return 0.f;
+    for (int k = 0; k < 4; ++k)
+        for (int i = 0; i < 3; ++i)
+            if (!std::isfinite(points[k][i])) return 0.f;
+    const float horizontal = pose[6] * pose[6] + pose[8] * pose[8];
+    const float wanted = gaze[0] * gaze[0] + gaze[2] * gaze[2];
+    if (!(horizontal > 1e-4f && wanted > 1e-4f) || strength <= 0) return 0.f;
+    float error = std::remainder(std::atan2(gaze[0], gaze[2]) - std::atan2(pose[6], pose[8]), 6.28318530718f);
+    // Only the small steady bias; large gaps belong to the game's ordinary head turn.
+    if (!std::isfinite(error) || std::fabs(error) > 0.35f) return 0.f;
+    float turn = error * float(strength > 100 ? 100 : strength) * 0.01f * 0.25f;
+    turn = turn < -steadyTurnClamp ? -steadyTurnClamp : (turn > steadyTurnClamp ? steadyTurnClamp : turn);
+    if (std::fabs(turn) < 1e-6f) return 0.f;
+    float centre[3]{};
+    for (int k = 0; k < 4; ++k)
+        for (int i = 0; i < 3; ++i) centre[i] += points[k][i] * 0.25f;
+    for (float v : centre)
+        if (!std::isfinite(v)) return 0.f;
+    const float rotation[3] = {0, turn, 0};
+    for (int k = 0; k < 4; ++k) {
+        float v[3], out[3];
+        for (int i = 0; i < 3; ++i) v[i] = points[k][i] - centre[i];
+        turn3(rotation, v, out);
+        for (int i = 0; i < 3; ++i) points[k][i] = centre[i] + out[i];
+    }
+    return turn;
+}
 // The rotation vector taking frame (a0, a1, a2) to (b0, b1, b2), for small turns: half the sum of a_i x b_i.
 inline void frameTurn(const float* const* a, const float* const* b, float* r) {
     r[0] = r[1] = r[2] = 0;
@@ -241,33 +272,107 @@ inline bool steadyBodyPart(BodySteadyState& st, float (*points)[3], const float*
 inline constexpr float spineBendShare = 0.6f;           // of the gaze pitch at 100 %
 inline constexpr float spineBendMax = 0.7f;             // radians (40 degrees), the whole spine
 inline constexpr float spineLowerShare = 0.4f;          // the part below the chest; the chest takes the rest
+// Extra rotations are in the parent frame. Preserve an existing native extra
+// rotation by applying the mod's bend after it: qMod * qExisting * qAnimation.
+inline bool composeSpineRotation(const float* mod, const float* existing, float* out) {
+    float norm = 0.f;
+    for (int i = 0; i < 4; ++i) {
+        if (!std::isfinite(mod[i]) || !std::isfinite(existing[i])) return false;
+        norm += existing[i] * existing[i];
+    }
+    if (!(norm > 1e-8f) || !std::isfinite(norm)) return false;
+    const float q[4] = {
+        mod[3] * existing[0] + mod[0] * existing[3] + mod[1] * existing[2] - mod[2] * existing[1],
+        mod[3] * existing[1] - mod[0] * existing[2] + mod[1] * existing[3] + mod[2] * existing[0],
+        mod[3] * existing[2] + mod[0] * existing[1] - mod[1] * existing[0] + mod[2] * existing[3],
+        mod[3] * existing[3] - mod[0] * existing[0] - mod[1] * existing[1] - mod[2] * existing[2]};
+    for (float v : q)
+        if (!std::isfinite(v)) return false;
+    std::memcpy(out, q, sizeof q);
+    return true;
+}
 inline float spineBend(const float* gaze, int follow) { // radians, positive forward (looking down)
     const float y = gaze[1] < -1.f ? -1.f : (gaze[1] > 1.f ? 1.f : gaze[1]);
     const float bend =
         -std::asin(y) * spineBendShare * float(follow < 0 ? 0 : (follow > 100 ? 100 : follow)) / 100.f;
     return bend > spineBendMax ? spineBendMax : (bend < -spineBendMax ? -spineBendMax : bend);
 }
-// The extra rotation for one part: `angle` forward (negative: back) about its local X. pose, parentPose: the
-// part's and its parent's achieved poses (rows 0..2 their axes in the world). 0x1760F0 forms the extra
-// rotation times the part's own (quaternion product 0x1CBD0); whether its X is then the part's or the
-// parent's is not settled, so a part is bent only while the two X axes agree (spine bones bend about a shared
-// side axis) and run across the gaze's heading.
-inline bool spineBendQuat(const float* pose, const float* parentPose, const float* gaze, float angle,
+// 0x1CBD0(qNative,qExtra,out) computes Hamilton(qExtra,qNative); 0x1760F0 then
+// composes the result with the parent's pose. Extra axes are therefore in the PARENT frame.
+// Using the already-bent part frame both changes the axis and made the old 0.9 agreement gate
+// switch the bend off once it had succeeded. The achieved part pose is deliberately not fed back.
+inline bool spineBendQuat(const float* /*pose*/, const float* parentPose, const float* gaze, float angle,
                           float* quat) {
-    float x[3] = {pose[0], pose[1], pose[2]}, px[3] = {parentPose[0], parentPose[1], parentPose[2]},
-          heading[3] = {gaze[0], 0, gaze[2]};
-    if (!unit3(x) || !unit3(px) || !unit3(heading) || !std::isfinite(angle)) return false;
-    if (dot3(x, px) < 0.9f) return false;
+    float heading[3] = {gaze[0], 0, gaze[2]};
+    if (!unit3(heading) || !std::isfinite(angle)) return false;
     const float up[3] = {0, 1, 0};
-    float forward[3];
-    cross3(up, heading, forward); // turning about this tips the top toward the heading
-    const float along = dot3(x, forward);
-    if (std::fabs(along) < 0.7f) return false;
-    const float a = (along > 0 ? angle : -angle) * 0.5f;
-    quat[0] = std::sin(a);
-    quat[1] = 0;
-    quat[2] = 0;
-    quat[3] = std::cos(a);
+    float across[3], axis[3];
+    cross3(up, heading, across);
+    for (int i = 0; i < 3; ++i) axis[i] = dot3(parentPose + 3 * i, across);
+    if (!unit3(axis)) return false;
+    const float sn = std::sin(angle * .5f);
+    for (int i = 0; i < 3; ++i) quat[i] = axis[i] * sn;
+    quat[3] = std::cos(angle * .5f);
+    return true;
+}
+// Lean: while the lean key is held the mouse bends the upper body instead of turning the view: sideways with
+// its x, forward and back with its y, through the same chest and spine rotation (the head, and so the first-
+// person eye, go with it). Let go and it eases back upright. It rides on the animation and the joints, so
+// whether a lean reaches past a wall or round a corner is the game's collision's say.
+inline constexpr float leanRadiansPerPixel = 0.004f, leanSideMax = 0.5f, leanForwardMax = 0.35f,
+                       leanReturnSeconds = 0.15f;
+struct Lean {
+    float side = 0, forward = 0; // radians; side positive: to the right; forward positive: forward
+    void step(float dx, float dy, bool held, float seconds) {
+        auto clampTo = [](float v, float m) {
+            return v < -m ? -m : (v > m ? m : v);
+        };
+        if (held) {
+            side = clampTo(side + dx * leanRadiansPerPixel, leanSideMax);
+            forward = clampTo(forward - dy * leanRadiansPerPixel, leanForwardMax);
+        } else {
+            const float keep =
+                std::isfinite(seconds) && seconds > 0.f ? std::exp(-seconds / leanReturnSeconds) : 0.f;
+            side *= keep;
+            forward *= keep;
+            if (std::fabs(side) < 1e-4f) side = 0;
+            if (std::fabs(forward) < 1e-4f) forward = 0;
+        }
+        if (!std::isfinite(side) || !std::isfinite(forward)) side = forward = 0;
+    }
+    void keys(int sideHeld, float seconds) {
+        const float k =
+            seconds > 0.f && std::isfinite(seconds) ? 1.f - std::exp(-seconds / leanReturnSeconds) : 1.f;
+        side += (float(sideHeld) * leanSideMax - side) * k;
+        forward *= 1.f - k;
+        if (std::fabs(side) < 1e-4f) side = 0;
+        if (std::fabs(forward) < 1e-4f) forward = 0;
+    }
+    bool active() const { return side != 0 || forward != 0; }
+};
+// The extra rotation for one part with a lean: `forward` about the side axis (as spineBendQuat), then `side`
+// about the heading. Both axes are expressed in the parent's frame, as the game's composition requires.
+inline bool spineLeanQuat(const float* /*pose*/, const float* parentPose, const float* gaze, float forward,
+                          float side, float* quat) {
+    float heading[3] = {gaze[0], 0, gaze[2]};
+    if (!unit3(heading) || !std::isfinite(forward) || !std::isfinite(side)) return false;
+    const float up[3] = {0, 1, 0};
+    float across[3];
+    cross3(up, heading, across);
+    auto local = [](const float* frame, const float* v, float* out) {
+        for (int i = 0; i < 3; ++i)
+            out[i] = frame[3 * i] * v[0] + frame[3 * i + 1] * v[1] + frame[3 * i + 2] * v[2];
+        return unit3(out);
+    };
+    float a[3], h[3];
+    if (!local(parentPose, across, a) || !local(parentPose, heading, h)) return false;
+    const float sf = std::sin(forward * 0.5f), cf = std::cos(forward * 0.5f), ss = std::sin(side * 0.5f),
+                cs = std::cos(side * 0.5f);
+    const float p[4] = {a[0] * sf, a[1] * sf, a[2] * sf, cf}, q[4] = {h[0] * ss, h[1] * ss, h[2] * ss, cs};
+    quat[0] = p[3] * q[0] + p[0] * q[3] + p[1] * q[2] - p[2] * q[1]; // p * q: the lean, then the bend
+    quat[1] = p[3] * q[1] - p[0] * q[2] + p[1] * q[3] + p[2] * q[0];
+    quat[2] = p[3] * q[2] + p[0] * q[1] - p[1] * q[0] + p[2] * q[3];
+    quat[3] = p[3] * q[3] - p[0] * q[0] - p[1] * q[1] - p[2] * q[2];
     return true;
 }
 } // namespace fp

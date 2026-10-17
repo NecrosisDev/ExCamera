@@ -1,4 +1,4 @@
-"""Builds Exanima First Person and runs its tests.
+"""Builds ExCamera and runs its tests.
 
     python build.py             build + tests, into build/
     python build.py --package   also make build/ExCamera-<version>.zip, laid out as a release
@@ -21,10 +21,23 @@ OUT = ROOT / 'build'
 MINHOOK = ['vendor/minhook/src/buffer.c', 'vendor/minhook/src/hook.c', 'vendor/minhook/src/trampoline.c',
            'vendor/minhook/src/hde/hde64.c']
 CL = 'cl /nologo /MT /O2 /std:c++17 /EHsc /fp:strict /W4 /Brepro'
+# MinHook includes the documented entry-ownership guard and is built once at /W1: its upstream
+# warnings would bury ours.
+MINHOOK_CL = 'cl /nologo /MT /O2 /W1 /Brepro /c'
 LIBS = 'user32.lib gdi32.lib opengl32.lib'
-# The tests that build first_person.cpp itself need the hook library and the system libraries too.
+# True: the test builds first_person.cpp itself, so it links MinHook and the system libraries too.
 TESTS = {'test_camera_motion': False, 'test_yaw_stabilization': False, 'test_view_boundaries': False,
-         'test_fov_input': True, 'test_controls': True, 'test_runtime_lifecycle': True, 'test_game_layout': False, 'test_chaining': True, 'test_status_json': False}
+         'test_game_layout': False, 'test_status_json': False, 'test_held_object': False,
+         'test_module_export': False,
+         'test_fov_input': True, 'test_controls': True, 'test_runtime_lifecycle': True, 'test_chaining': True,
+         'test_pose_ownership': True, 'test_held_lifecycle': True,
+         'test_input_handoff': True, 'test_exploration_movement': True, 'test_movement': True,
+         'test_combat_controls': True, 'test_binding_ownership': True, 'test_tp_aim_freshness': True,
+         'test_manual_admission': True, 'test_input_ownership': False,
+         'test_activation_status': False, 'test_raw_registration': False,
+         'test_activation_lifecycle': True, 'test_cue_resources': False,
+         'test_cue_lifecycle': True, 'test_tp_hide_origin': True,
+         'test_native_contracts': False}
 GAME_VERSION = '0.9.5.2g'
 
 
@@ -95,22 +108,27 @@ def main():
     obj = OUT / 'obj'
     obj.mkdir(exist_ok=True)
     cl = f'{CL} /Fo:"{obj}\\\\" '
-    minhook = ' '.join(MINHOOK)
+    minhook = ' '.join(f'"{obj / Path(c).with_suffix(".obj").name}"' for c in MINHOOK)
     commands = [
+        f'{MINHOOK_CL} {" ".join(MINHOOK)} /Fo:"{obj}\\\\"',
         f'{cl}/LD first_person.cpp {minhook} {LIBS} /Fe:"{OUT / "ExanimaFirstPerson.dll"}" /link /INCREMENTAL:NO /Brepro',
         f'{cl}launcher.cpp user32.lib /Fe:"{OUT / "ExCamera.exe"}" /link /SUBSYSTEM:WINDOWS /INCREMENTAL:NO /Brepro',
-        # EMTK's native-plugin loader needs both exports; ExCamera.exe calls enable.
+        # EMTK keeps enable/disable; ExCamera.exe uses the request-bound activation protocol.
         f'dumpbin /nologo /exports "{OUT / "ExanimaFirstPerson.dll"}" > "{obj / "exports.txt"}"',
         f'findstr /r /c:" enable$" "{obj / "exports.txt"}" >nul',
         f'findstr /r /c:" disable$" "{obj / "exports.txt"}" >nul',
         f'findstr /r /c:" allowOtherHooks$" "{obj / "exports.txt"}" >nul',
+        f'findstr /r /c:" enableWithStatus$" "{obj / "exports.txt"}" >nul',
+        f'"{sys.executable}" "{ROOT / "tools/test_signatures.py"}" > "{OUT / "test_signatures.log"}" 2>&1',
+        f'"{sys.executable}" "{ROOT / "tools/test_native_contracts.py"}" > "{OUT / "test_native_contracts_python.log"}" 2>&1',
     ]
     for test, game in TESTS.items():
         deps = f' {minhook} {LIBS}' if game else ''
         exe = obj / (test + '.exe')
         commands += [f'{cl}{test}.cpp{deps} /Fe:"{exe}" /link /INCREMENTAL:NO /Brepro', f'"{exe}" > "{OUT / (test + ".log")}"']
     run(commands)
-    print('BUILT=' + str(OUT / 'ExanimaFirstPerson.dll') + ' (' + version + '); tests passed: ' + ', '.join(TESTS))
+    print('BUILT=' + str(OUT / 'ExanimaFirstPerson.dll') + ' (' + version + '); tests passed: '
+          + ', '.join(TESTS) + ', test_signatures, test_native_contracts_python')
     if args.package:
         package(version)
 

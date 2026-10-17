@@ -10,6 +10,13 @@
 
 namespace panel {
 
+struct SettingsChange {
+    ModSettings settings;
+    bool changed = false;
+    bool rawUnavailable = false;
+    bool saved = true;
+};
+
 class SettingsWindow {
 public:
     ~SettingsWindow() { stop(); }
@@ -40,9 +47,22 @@ public:
         if (HWND w = window.load()) PostMessageW(w, WM_CLOSE, 0, 0);
         if (thread.joinable()) thread.join();
     }
-    // The mod's settings (set before start): read when a page opens, written on each click.
+    // Send the action to the settings owner. A snapshot read here could already
+    // be stale when the callback runs (FOV keys stay live while this window opens).
+    bool applyControl(int row, int delta) {
+        if (!changeSetting) return false;
+        const SettingsChange got = changeSetting(row, delta, view.settingsGroup);
+        view.settings = got.settings;
+        if (got.changed)
+            view.page.status = got.rawUnavailable
+                                   ? "Raw mouse input is not available here (another program "
+                                     "holds it); the cursor is used."
+                                   : (got.saved ? "Saved." : "Applied, but settings could not be saved.");
+        return got.changed;
+    }
+    // Set before start: snapshots for display; row/delta/group actions for edits.
     std::function<ModSettings()> getSettings;
-    std::function<ModSettings(const ModSettings&)> setSettings;
+    std::function<SettingsChange(int, int, int)> changeSetting;
     std::function<void()> onClosed; // its close box: the cursor goes back to the game
 private:
     std::atomic<bool> running{false}, done{false};
@@ -57,7 +77,8 @@ private:
     POINT pointerAt{-100, -100};
     bool pointerOwn = false;
     static bool systemCursorShown() {
-        CURSORINFO ci{sizeof ci};
+        CURSORINFO ci{};
+        ci.cbSize = sizeof ci;
         return GetCursorInfo(&ci) && (ci.flags & CURSOR_SHOWING) && ci.hCursor;
     }
     void movePointer(HWND w, POINT p) {
@@ -143,18 +164,9 @@ private:
         if (p.x >= view.layout.nav.right) {
             int delta = 0;
             const int row = view.settingAt(p, delta);
-            if (row >= 0 && setSettings) {
+            if (row >= 0 && changeSetting) {
                 playMenuSound(true);
-                ModSettings want = view.settings;
-                if (want.step(row, delta)) {
-                    const ModSettings got = setSettings(want);
-                    view.settings = got;
-                    view.page.status = got == want ? "Saved."
-                                                   : (row == 3 && want.rawMouse && !got.rawMouse
-                                                          ? "Raw mouse input is not available here (another "
-                                                            "program holds it); the cursor is used."
-                                                          : "Saved.");
-                }
+                applyControl(row, delta);
             }
             InvalidateRect(w, nullptr, FALSE);
             return;

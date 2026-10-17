@@ -2,6 +2,7 @@
 #ifdef NDEBUG
 #error "The tests check with assert(); build them without NDEBUG."
 #endif
+#define _CRT_SECURE_NO_WARNINGS // tmpfile is standard C; MSVC's tmpfile_s is not portable
 #include "status_json.h"
 #include <cassert>
 #include <cstdio>
@@ -23,11 +24,11 @@ static std::string written(void (*fill)(fp::JsonOut&)) {
 }
 
 int main() {
-    // The launcher reads these by plain text: the shapes must stay exactly so.
+    // Compact formatting remains stable for status consumers and readable diffs.
     assert(written([](fp::JsonOut& j) {
                j.unum("pid", 4242).boolean("installed", true).num("revision", 9);
            }) == "{\"pid\":4242,\"installed\":true,\"revision\":9}\n");
-    puts("PASS: fields in order, no spaces: the launcher's text matches keep working");
+    puts("PASS: fields preserve the compact writer format");
     assert(written([](fp::JsonOut& j) {
                const float v[3] = {1.f, 2.5f, -3.f};
                j.reals("target", v, 3).real("yaw", 0.1f).fixed("hold", 1.25, 3).real("near", 1.0 / 3.0, 3);

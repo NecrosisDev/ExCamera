@@ -1,5 +1,84 @@
 // Input: the game window procedure (F6-F11, right mouse, raw mouse), mouse-look aim, the input and behaviour hooks, head steadying, movement, the attack cue's state.
 // Part of first_person.cpp (one translation unit): included there, in order.
+static bool closeViewContext();
+static bool manualCombatNow();
+static bool bindingContextNow();
+// Holding an item (drag 0x2000) while the mod drives the view: the rotate key then turns it.
+static bool holdingItem() {
+    if (!InterlockedCompareExchange(&active, 0, 0) || InterlockedCompareExchange(&stopping, 0, 0) ||
+        viewMode.load() >= 2)
+        return false;
+    int kind = 0;
+    __try {
+        kind = dragKind();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        kind = 0;
+    }
+    return kind == 1;
+}
+// The physical key is decoded independently of today's binding. A rebind
+// cannot transfer an older press's release to a different native action.
+static int bindingMessageKey(UINT message, WPARAM wp) {
+    switch (message) {
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK:
+    case WM_LBUTTONUP:
+        return VK_LBUTTON;
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONDBLCLK:
+    case WM_RBUTTONUP:
+        return VK_RBUTTON;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONDBLCLK:
+    case WM_MBUTTONUP:
+        return VK_MBUTTON;
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONDBLCLK:
+    case WM_XBUTTONUP:
+        return GET_XBUTTON_WPARAM(wp) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2;
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+    case WM_KEYUP:
+    case WM_SYSKEYUP:
+        return wp > 0 && wp < 256 ? int(wp) : 0;
+    }
+    return 0;
+}
+// Down (1), up (0), or a message for a different physical key (-1).
+static int rotateKeyMessage(UINT message, WPARAM wp, int key) {
+    if (!key || bindingMessageKey(message, wp) != key) return -1;
+    return message == WM_LBUTTONUP || message == WM_RBUTTONUP || message == WM_MBUTTONUP ||
+                   message == WM_XBUTTONUP || message == WM_KEYUP || message == WM_SYSKEYUP
+               ? 0
+               : 1;
+}
+// A different window procedure was active while this hook session was absent:
+// it owned those releases. Ordinary input/profile handoffs keep this ledger.
+static void resetBindingWindowOwnership() {
+    inputOwner.newWindowSession();
+}
+// Observe only messages that survived held-item/lean ownership. Suppression
+// survives an up so even a fully released overlap cannot replay as a tap.
+static void combatMouseMessage(UINT message, WPARAM wp) {
+    if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) {
+        const bool overlap = manualCombatNow() && ((keyState(VK_RBUTTON) & 0x8000) || (wp & MK_RBUTTON));
+        inputOwner.attackDown(overlap);
+    } else if ((message == WM_RBUTTONDOWN || message == WM_RBUTTONDBLCLK) && manualCombatNow() &&
+               ((keyState(VK_LBUTTON) & 0x8000) || (wp & MK_LBUTTON) ||
+                (inputOwner.pendingButtons() & 1))) {
+        inputOwner.suppressAttack();
+    }
+}
+static void consumeNativeBinding(int key) {
+    *(unsigned*)gameAt(fp::sig::keyWord) &= ~actionMask(WPARAM(key));
+    if (key == VK_LBUTTON) *(unsigned*)gameAt(fp::sig::buttonWord) &= ~1u;
+    if (key == VK_RBUTTON) *(unsigned*)gameAt(fp::sig::buttonWord) &= ~2u;
+}
+// float atomics have no fetch_add before C++20
+static void addTo(std::atomic<float>& a, float v) {
+    float o = a.load();
+    while (!a.compare_exchange_weak(o, o + v)) {}
+}
 static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     if (InterlockedCompareExchange(&stopping, 0, 0))
         return CallWindowProcW(originalWindowProc, w, message, wp, lp);
@@ -8,48 +87,79 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     const bool fovKey = wp == VK_F9 || wp == VK_F10 || wp == VK_F11;
     const bool fovMessage = message == WM_KEYDOWN || message == WM_KEYUP ||
                             (wp == VK_F10 && (message == WM_SYSKEYDOWN || message == WM_SYSKEYUP));
-    if (fovKey && fovMessage && !(lp & (1LL << 29))) {
+    if (InterlockedCompareExchange(&active, 0, 0) && viewMode.load() < 2 && fovKey && fovMessage &&
+        !(lp & (1LL << 29))) {
         if ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN) && !(lp & (1LL << 30)))
-            selectedFov.store(wp == VK_F11 ? 75 : fp::clampFov(selectedFov.load() + (wp == VK_F10 ? 5 : -5)));
+            adjustFov(wp == VK_F10 ? 5 : -5, wp == VK_F11);
         return 0;
     }
+    const unsigned released = keyMask(wp);
+    if ((message == WM_KEYUP || message == WM_SYSKEYUP) && released)
+        inputOwner.movementUp(released);
+    const int bindingKey = bindingMessageKey(message, wp);
+    if (bindingKey) {
+        const int edge = rotateKeyMessage(message, wp, bindingKey);
+        const bool xbutton =
+            message == WM_XBUTTONDOWN || message == WM_XBUTTONDBLCLK || message == WM_XBUTTONUP;
+        if (edge == 0 && inputOwner.windowRelease(bindingKey)) return xbutton ? TRUE : 0;
+        if (edge == 1) {
+            const bool repeat = (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) && (lp & (1LL << 30));
+            if (repeat && inputOwner.windowOwns(bindingKey)) return 0;
+            // A new physical down also retires a release lost outside this window.
+            if (!repeat) inputOwner.windowBegin(bindingKey);
+            const bool canTake = !repeat && bindingContextNow();
+            if (canTake && bindingKey == rotateHeldKey.load() && holdingItem()) {
+                inputOwner.windowClaim(bindingKey);
+                return xbutton ? TRUE : 0;
+            }
+            if (canTake && !(bindingKey == VK_RBUTTON && manualCombatNow())) {
+                const bool keysMode = leanKeysMode.load();
+                const bool matches =
+                    keysMode ? bindingKey == leanLeftKey.load() || bindingKey == leanRightKey.load()
+                             : bindingKey == leanKey.load();
+                if (matches) {
+                    inputOwner.windowClaim(bindingKey);
+                    return xbutton ? TRUE : 0;
+                }
+            }
+        }
+    }
+    combatMouseMessage(message, wp);
     if (message == WM_RBUTTONDOWN || message == WM_RBUTTONDBLCLK || message == WM_RBUTTONUP) {
         bool eaten = false;
         rmbEvent(message == WM_RBUTTONUP ? fp::RmbEvent::up : fp::RmbEvent::down,
                  message != WM_RBUTTONUP && rmbEligible(), &eaten);
         if (eaten) return 0;
     }
-    if (InterlockedCompareExchange(&inputEnabled, 0, 0)) {
-        // Free mouse-look replaces overhead rotation. Never start the native
-        // camera's middle-button drag while this input context owns the mouse.
-        if (message == WM_MBUTTONDOWN || message == WM_MBUTTONDBLCLK) return 0;
-        if (message == WM_LBUTTONDOWN) InterlockedOr(&tappedButtons, 1);
-        if (message == WM_RBUTTONDOWN) InterlockedOr(&tappedButtons, 2);
+    // The native camera stays hidden even when RMB/F8 frees the pointer.
+    if (closeViewContext() && (message == WM_MBUTTONDOWN || message == WM_MBUTTONDBLCLK)) return 0;
+    if (gameplayOwnsPointer()) {
+        if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) inputOwner.buttonDown(1);
+        if (message == WM_RBUTTONDOWN) inputOwner.buttonDown(2);
     }
     if (message == WM_INPUT && InterlockedCompareExchange(&rawRegistered, 0, 0)) {
         RAWINPUT raw;
         UINT size = sizeof(raw);
         if (GetRawInputData((HRAWINPUT)lp, RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) != UINT(-1) &&
             raw.header.dwType == RIM_TYPEMOUSE) {
+            AcquireSRWLockExclusive(&rawLock);
             const bool owns = InterlockedCompareExchange(&inputEnabled, 0, 0) &&
                               InterlockedCompareExchange(&mouseCaptured, 0, 0) && !cursorFreeNow();
-            AcquireSRWLockExclusive(&rawLock);
-            rawLook.event((raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) != 0, raw.data.mouse.lLastX,
-                          raw.data.mouse.lLastY, owns);
+            if (InterlockedCompareExchange(&rawRegistered, 0, 0))
+                rawLook.event((raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) != 0, raw.data.mouse.lLastX,
+                              raw.data.mouse.lLastY, owns);
             ReleaseSRWLockExclusive(&rawLock);
         }
         return CallWindowProcW(originalWindowProc, w, message, wp, lp); // DefWindowProc cleanup.
     }
     unsigned bit = keyMask(wp);
     if (message == WM_KEYDOWN && bit && InterlockedCompareExchange(&inputEnabled, 0, 0)) {
-        InterlockedOr(&heldKeys, bit);
-        if (!(lp & (1LL << 30))) InterlockedOr(&tappedKeys, bit);
+        inputOwner.movementDown(bit, !(lp & (1LL << 30)));
     }
     if ((message == WM_KEYUP || message == WM_SYSKEYUP) && bit)
-        InterlockedAnd(&heldKeys, ~bit); // with Alt held a release comes as WM_SYSKEYUP
+        inputOwner.movementUp(bit); // with Alt held a release comes as WM_SYSKEYUP
     // Held object: the wheel sets the hold distance and does nothing else meanwhile.
-    if (message == WM_MOUSEWHEEL && InterlockedCompareExchange(&active, 0, 0) &&
-        (InterlockedCompareExchange(&inputEnabled, 0, 0) || InterlockedCompareExchange(&rmbFree, 0, 0))) {
+    if (message == WM_MOUSEWHEEL && closeViewContext()) {
         int kind = 0;
         __try {
             kind = dragKind();
@@ -71,6 +181,10 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             ++holdNotches;
             return 0;
         }
+        if (*(int*)gameAt(fp::sig::uiOpenCount) <= 0) {
+            ++overheadInputsHeld;
+            return 0;
+        } // the overhead camera's zoom: unseen here, and it would be changed on return
     }
     // F7 stops only when held (fp::stopKeyStep on the worker); never passed on.
     if (wp == VK_F7 && (message == WM_KEYDOWN || message == WM_KEYUP)) {
@@ -92,8 +206,9 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             if (InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
                 viewMode.load() == 0) {
                 viewMode = 1;
+                releaseInput();
                 return 0;
-            } // first -> third: the same session, the camera only
+            } // same session, a fresh profile/input ownership boundary
             if (InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
                 viewMode.load() == 1) { // third -> overhead blends (0.3 s), then hands over
                 tpBlendStart = GetTickCount64();
@@ -114,10 +229,6 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         if (wp == VK_F8) {
             InterlockedExchange(&cursorFree, !InterlockedCompareExchange(&cursorFree, 0, 0));
             releaseInput();
-            return 0;
-        }
-        if (probeKey && wp == WPARAM(probeKey) && InterlockedCompareExchange(&active, 0, 0)) {
-            InterlockedExchange(&probeRequest, 1);
             return 0;
         }
         if (wp == VK_ESCAPE) releaseInput();
@@ -165,7 +276,87 @@ static bool playerContext(uintptr_t behavior) {
                                    *(uintptr_t*)(manager + field::gui::capture) == view);
 }
 static bool controls(uintptr_t behavior) {
-    return !cursorFreeNow() && playerContext(behavior);
+    return viewMode.load() < 2 && !cursorFreeNow() && playerContext(behavior);
+}
+// Window messages can precede the render hook's windowFree publication.
+// Check the native view/capture owner too before taking a new binding press.
+static bool bindingContextNow() {
+    __try {
+        return gameplayOwnsPointer() && closeViewContext();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+// Window messages can race scene teardown and native UI ownership changes.
+static bool manualCombatNow() {
+    if (!base || !InterlockedCompareExchange(&inputEnabled, 0, 0)) return false;
+    __try {
+        const uintptr_t root = *(uintptr_t*)gameAt(fp::sig::playerRoot),
+                        bh = root ? *(uintptr_t*)(root + field::character::behaviour) : 0;
+        return bh && controls(bh) && manualCombat(root, bh);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+// The close view may release its pointer while native controller and GUI
+// movement producers still run. This is only a request freeze: the native
+// locomotion owner keeps its accepted steps, gait state and physical recovery.
+// No Aim snapshot is required when input has just been handed to a window.
+static bool movementFrozen(uintptr_t behavior) {
+    if (!base || !behavior || viewMode.load() >= 2 || !InterlockedCompareExchange(&active, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0) || !InterlockedCompareExchange(&cameraReady, 0, 0))
+        return false;
+    __try {
+        const uintptr_t root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
+        if (!root || *(uintptr_t*)(root + field::character::behaviour) != behavior ||
+            *(uintptr_t*)(behavior + field::behaviour::character) != root)
+            return false;
+        if (cursorFreeNow() || !gameWindow()) return true;
+        if (!windowsFreeze.load()) return false;
+        // Detect a new UI handoff before the render hook publishes windowFree.
+        // A description-only popup retains windowFreeStep's settling policy.
+        const uintptr_t view = *(uintptr_t*)(behavior + field::behaviour::view),
+                        ui = *(uintptr_t*)gameAt(fp::sig::uiView),
+                        manager = *(uintptr_t*)gameAt(fp::sig::guiManager);
+        return *(int*)gameAt(fp::sig::uiOpenCount) > 0 || (ui && ui != view) ||
+               (manager && *(uintptr_t*)(manager + field::gui::capture) &&
+                *(uintptr_t*)(manager + field::gui::capture) != view);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false; // uncertain ownership stays native
+    }
+}
+static bool closeViewContext() {
+    if (viewMode.load() >= 2 || !InterlockedCompareExchange(&active, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0) || !InterlockedCompareExchange(&cameraReady, 0, 0))
+        return false;
+    const uintptr_t root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
+    const uintptr_t bh = root ? *(uintptr_t*)(root + field::character::behaviour) : 0;
+    return bh && playerContext(bh);
+}
+// Native 0x11EF40 polls both configured camera bindings directly, including the
+// body-turn variant. Window-message suppression alone cannot isolate it.
+static char (*originalCameraMouse)();
+static void (*copyCameraSnapshots)();
+static void (*originalCameraOrbit)(uintptr_t, float, float, int);
+static int (*originalCameraZoom)(uintptr_t, int);
+// Controller paths 0x22E070 / 0x22E130 call these mutators without the
+// mouse-mode callback. Their input still belongs to the overhead camera.
+static void cameraOrbit(uintptr_t self, float x, float y, int flags) {
+    if (!closeViewContext()) originalCameraOrbit(self, x, y, flags);
+}
+static int cameraZoom(uintptr_t self, int amount) {
+    return closeViewContext() ? amount : originalCameraZoom(self, amount);
+}
+static char cameraMouse() {
+    healthHit(fp::HealthHook::cameraMouse);
+    if (!closeViewContext()) return originalCameraMouse();
+    // End an overhead drag inherited on F6 so returning overhead starts a fresh
+    // native gesture. Preserve the native cache publication used by picking.
+    *(unsigned char*)gameAt(fp::sig::cameraMouseActive) = 0;
+    *(unsigned char*)gameAt(fp::sig::cameraMouseTurn) = 0;
+    *(unsigned*)gameAt(fp::sig::keyWord) &= ~0x300u;
+    copyCameraSnapshots();
+    return 1;
 }
 // Where the physics head faces (its achieved pose's forward axis, head+0x2B8), as the aim's yaw and pitch.
 static bool headFacing(uintptr_t root, float& yaw, float& pitch) {
@@ -180,6 +371,51 @@ static bool headFacing(uintptr_t root, float& yaw, float& pitch) {
     return true;
 }
 static std::atomic<unsigned> aimHolds{0};
+static uintptr_t tpAimSector(uintptr_t head) {
+    __try {
+        const uintptr_t mesh = *(uintptr_t*)(head + field::bodyPart::meshNode);
+        return mesh ? *(uintptr_t*)(mesh + field::sceneNode::sector) : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+// aimLock is held by the caller. Recheck lifecycle/settings too: a capture can
+// be released or a projection changed while the camera's native pick runs.
+static bool tpAimRequestCurrent(const TpAimRequest& request) {
+    if (!sameTpAimRequest(request, tpAimRequest) || !aim.valid || aim.root != request.root ||
+        aim.head != request.head || aim.yaw != request.yaw || aim.pitch != request.pitch ||
+        viewMode.load() != 1 || !InterlockedCompareExchange(&inputEnabled, 0, 0) ||
+        request.generation != inputOwner.generation() ||
+        request.policy != inputOwner.policyRevision() || request.free != tpCombatAimFree.load())
+        return false;
+    const int thirdFov = tpFov.load();
+    if (request.fov != float(thirdFov > 0 ? thirdFov : selectedFov.load())) return false;
+    __try {
+        if (request.root != *(uintptr_t*)gameAt(fp::sig::playerRoot) ||
+            request.worldScene != *(uintptr_t*)gameAt(fp::sig::currentScene) ||
+            request.head != *(uintptr_t*)(request.root + field::character::headPart) ||
+            request.sector != tpAimSector(request.head))
+            return false;
+        const uintptr_t bh = *(uintptr_t*)(request.root + field::character::behaviour);
+        return bh && controls(bh);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+// One lock supplies the orientation and box/projection descriptor together.
+// No camera lock is acquired from input; nav already owns cameraLock here.
+static TpAimRequest captureTpAimRequest(uintptr_t root, uintptr_t head, uintptr_t sector, float& yaw,
+                                        float& pitch) {
+    TpAimRequest request;
+    AcquireSRWLockShared(&aimLock);
+    if (aim.valid && aim.root == root && aim.head == head) {
+        yaw = aim.yaw;
+        pitch = aim.pitch;
+        if (tpAimRequest.sector == sector && tpAimRequestCurrent(tpAimRequest)) request = tpAimRequest;
+    }
+    ReleaseSRWLockShared(&aimLock);
+    return request;
+}
 static void updateAim(uintptr_t behavior) {
     if (!controls(behavior)) {
         releaseInput();
@@ -218,6 +454,8 @@ static void updateAim(uintptr_t behavior) {
     auto anchor = (float*)(root + field::character::position);
     if (!aim.valid || aim.root != root || aim.head != head) {
         InterlockedExchange(&mouseCaptured, 0);
+        tpAimRequest.valid = false;
+        tpAimSet = false;
         aim = {};
         aim.root = root;
         aim.head = head;
@@ -231,20 +469,48 @@ static void updateAim(uintptr_t behavior) {
                 aim.pitch = aim.targetPitch = p > 1.15f ? 1.15f : (p < -1.15f ? -1.15f : p);
             }
         }
-        fp::eyePoint(physical, aim.origin);
+        fp::eyePoint(physical, aim.origin, float(eyeSetback.load()));
         for (int a = 0; a < 3; a++) aim.anchor[a] = anchor[a];
     }
+    // Independent free-aim boxes: interior motion aims; only the excess turns the view.
+    // Recapture/mode/size changes reset the offset so an old box cannot shove the view.
+    static int boxMode = -1, previousBoxX = -1, previousBoxY = -1;
+    const int mode = viewMode.load();
+    const bool freeAim = mode == 0 || (mode == 1 && tpCombatAimFree.load());
+    const int boxX = mode == 0 ? fpDeadzoneX.load() : tpDeadzoneX.load(),
+              boxY = mode == 0 ? fpDeadzoneY.load() : tpDeadzoneY.load();
+    if (!freeAim || boxMode != mode || boxX != previousBoxX || boxY != previousBoxY ||
+        !InterlockedCompareExchange(&mouseCaptured, 0, 0))
+        tpAimBox = fp::AimBox{};
+    if (boxMode != mode) tpAimSet = false;
+    boxMode = mode;
+    previousBoxX = boxX;
+    previousBoxY = boxY;
     if (!freeCursor && InterlockedCompareExchange(&mouseCaptured, 0, 0)) {
-        long dx = cursor.x - center.x, dy = cursor.y - center.y;
+        float dx = float(cursor.x - center.x), dy = float(cursor.y - center.y);
         if (InterlockedCompareExchange(&rawRegistered, 0, 0)) {
             long rx = 0, ry = 0;
             AcquireSRWLockExclusive(&rawLock);
-            const bool relative = rawLook.take(rx, ry);
+            const bool relative = InterlockedCompareExchange(&rawRegistered, 0, 0) && rawLook.take(rx, ry);
             ReleaseSRWLockExclusive(&rawLock);
             if (relative) {
-                dx = rx;
-                dy = ry;
+                dx = float(rx);
+                dy = float(ry);
             }
+        }
+        if (heldRotating.load()) {
+            addTo(heldTurnX, float(dx));
+            addTo(heldTurnY, float(dy));
+            dx = dy = 0;
+        } // turning a held item
+        else if (leaning.load() && !leanKeysMode.load()) {
+            addTo(leanMouseX, float(dx));
+            addTo(leanMouseY, float(dy));
+            dx = dy = 0;
+        } // leaning: the view holds still
+        if (freeAim) {
+            fp::aimBoxStep(tpAimBox, dx, dy, float(rect.right) * float(boxX) * 0.01f,
+                           float(rect.bottom) * float(boxY) * 0.01f);
         }
         float yawStep = -float(dx) * sensitivity,
               pitchStep = -float(dy) * sensitivity * (invertY ? -1.f : 1.f);
@@ -259,19 +525,57 @@ static void updateAim(uintptr_t behavior) {
         aim.targetYaw = std::remainder(aim.targetYaw + yawStep, 6.28318530718f);
         aim.targetPitch += pitchStep;
     }
+    tpAimX = tpAimBox.x;
+    tpAimY = tpAimBox.y;
+    tpAimFree = freeAim;
     if (aim.targetPitch > 1.15f) aim.targetPitch = 1.15f;
     if (aim.targetPitch < -1.15f) aim.targetPitch = -1.15f;
-    aim.yaw = fp::approachAngle(aim.yaw, aim.targetYaw, dt);
-    aim.pitch = fp::approachAngle(aim.pitch, aim.targetPitch, dt);
-    float direction[3] = {sinf(aim.yaw) * cosf(aim.pitch), sinf(aim.pitch), cosf(aim.yaw) * cosf(aim.pitch)};
-    // Translate the input ray with locomotion; head animation never rotates or recenters it.
+    // Requested combat intent is immediate; the physical head/weapon/body
+    // still achieve it through native dynamics. Exploration retains its filter.
+    const bool combat = *(unsigned char*)(root + field::character::combatStance) != 0;
+    aim.yaw = combat ? aim.targetYaw : fp::approachAngle(aim.yaw, aim.targetYaw, dt);
+    aim.pitch = combat ? aim.targetPitch : fp::approachAngle(aim.pitch, aim.targetPitch, dt);
+    float orientation[12]{}, direction[3];
+    fp::basis(aim.yaw, aim.pitch, orientation);
+    const int thirdFov = tpFov.load();
+    const float aimFov = float(mode == 1 && thirdFov > 0 ? thirdFov : selectedFov.load());
+    fp::cursorRay(orientation, freeAim ? tpAimBox.x : 0.f, freeAim ? tpAimBox.y : 0.f, float(rect.bottom),
+                  aimFov, direction);
+    aim.rayYaw = fp::cursorHeading(orientation, direction);
+    aim.rayValid = true;
+    // The ray starts at today's eye, not a mount cached before a crouch/lean/pitch change.
+    fp::eyePoint(physical, aim.origin, float(eyeSetback.load()));
     for (int a = 0; a < 3; a++) {
-        aim.origin[a] += anchor[a] - aim.anchor[a];
         aim.anchor[a] = anchor[a];
         aim.point[a] = aim.origin[a] + direction[a] * 1000.f;
     }
-    if (viewMode.load() == 1 && tpAimSet)
-        memcpy(aim.point, tpAimLocal, 12); // third person aims where the crosshair is
+    TpAimRequest request;
+    request.root = root;
+    request.head = head;
+    request.sector = mode == 1 ? tpAimSector(head) : 0;
+    request.worldScene = *(uintptr_t*)gameAt(fp::sig::currentScene);
+    request.generation = inputOwner.generation();
+    request.policy = inputOwner.policyRevision();
+    request.yaw = aim.yaw;
+    request.pitch = aim.pitch;
+    request.x = freeAim ? tpAimBox.x : 0.f;
+    request.y = freeAim ? tpAimBox.y : 0.f;
+    request.fov = aimFov;
+    request.width = rect.right;
+    request.height = rect.bottom;
+    request.free = freeAim;
+    request.valid = mode == 1 && request.sector && request.worldScene && request.width > 40 &&
+                    request.height > 40 && std::isfinite(request.yaw) && std::isfinite(request.pitch) &&
+                    std::isfinite(request.x) && std::isfinite(request.y) && std::isfinite(request.fov) &&
+                    request.fov > 1.f && request.fov < 170.f;
+    request.sequence = tpAimRequest.sequence + (sameTpAimGeometry(request, tpAimRequest) ? 0 : 1);
+    tpAimRequest = request;
+    if (tpAimSet && sameTpAimRequest(tpAimSample, request))
+        memcpy(aim.point, tpAimLocal, 12);
+    else
+        tpAimSet = false;
+    // A cached world hit may refine the point only for matching input geometry.
+    // Body/attack heading always retains this input sample's freshly computed ray.
     aim.valid = true;
     ++aim.revision;
     ReleaseSRWLockExclusive(&aimLock);
@@ -293,7 +597,7 @@ static void updateAim(uintptr_t behavior) {
 // mouse in the window does not turn it. Look itself is already frozen (no mouse delta is read
 // without capture); on close the first frame recaptures without a delta.
 static bool heldAim(uintptr_t behavior, Aim& a) {
-    if (!InterlockedCompareExchange(&cameraReady, 0, 0) || !InterlockedCompareExchange(&active, 0, 0) ||
+    if (viewMode.load() >= 2 || !InterlockedCompareExchange(&cameraReady, 0, 0) || !InterlockedCompareExchange(&active, 0, 0) ||
         InterlockedCompareExchange(&stopping, 0, 0))
         return false;
     const uintptr_t root = *(uintptr_t*)(behavior + field::behaviour::character);
@@ -329,11 +633,20 @@ static bool getAim(uintptr_t behavior, Aim& a) {
 // point, which in third person is where the screen centre meets the world: looking steeply down from
 // behind the shoulder that point lies behind the body, and the body turned round to face the camera.
 static void headingToPoint(const Aim& a, float* d) {
-    d[0] = std::sin(a.yaw);
+    const float yaw = a.rayValid ? a.rayYaw : a.yaw;
+    d[0] = std::sin(yaw);
     d[1] = 0;
-    d[2] = std::cos(a.yaw);
+    d[2] = std::cos(yaw);
 }
 static void gazeToPoint(const Aim& a, float* d) {
+    // Inside the first-person box the head keeps the look direction while body/weapon aim follows the cursor.
+    // Otherwise aiming the head at that cursor would move the view before the box's edge.
+    if (viewMode.load() == 0) {
+        d[0] = std::sin(a.yaw) * std::cos(a.pitch);
+        d[1] = std::sin(a.pitch);
+        d[2] = std::cos(a.yaw) * std::cos(a.pitch);
+        return;
+    }
     auto head = *(uintptr_t*)(a.root + field::character::headPart);
     if (!head) {
         d[0] = sinf(a.yaw) * cosf(a.pitch);
@@ -343,17 +656,89 @@ static void gazeToPoint(const Aim& a, float* d) {
     }
     auto h = (float*)(head + field::bodyPart::pose);
     float eye[3];
-    fp::eyePoint(h, eye);
+    fp::eyePoint(h, eye, float(eyeSetback.load()));
     for (int i = 0; i < 3; i++) d[i] = a.point[i] - eye[i];
     normalize(d);
+}
+struct AttackHeadingPresentation {
+    uintptr_t behavior = 0;
+    float heading = 0, presented = 0;
+    bool flipped = false;
+};
+static thread_local AttackHeadingPresentation attackHeadingPresentation;
+// Native C1CF0 polls first, then classifies a new press before cursorAim.
+// Publish this sample's heading here; cursorAim alone advances its native filter.
+static void prepareAttackHeading(uintptr_t bh) {
+    Aim a;
+    if (!getAim(bh, a)) return;
+    const float heading = a.rayValid ? a.rayYaw : a.yaw;
+    if (!std::isfinite(heading)) return;
+    float presented = heading;
+    bool flipped = false;
+    if (attackHeadingPresentation.behavior == bh && attackSideKey && (keyState(attackSideKey) & 0x8000) &&
+        (*(unsigned*)gameAt(fp::sig::buttonWord) & 1u) &&
+        !*(unsigned char*)(bh + field::behaviour::pressBlocked) &&
+        !(*(unsigned*)(bh + field::behaviour::pressFlags) & 1u)) {
+        const float body = *(float*)(a.root + field::character::bodyHeading);
+        if (std::isfinite(body)) {
+            presented =
+                fp::flippedSideHeading(heading, body, *(int*)(a.root + field::character::gripFlags) != 0);
+            flipped = true;
+            ++sideFlips;
+        }
+    }
+    *(float*)(bh + field::behaviour::aimHeading) = presented;
+    if (attackHeadingPresentation.behavior == bh)
+        attackHeadingPresentation = {bh, heading, presented, flipped};
+}
+static fp::InputContext<field::bindings::count> inputContext(uintptr_t root, uintptr_t bh) {
+    fp::InputContext<field::bindings::count> context;
+    context.root = root;
+    context.head = root ? *(uintptr_t*)(root + field::character::headPart) : 0;
+    context.scene = *(uintptr_t*)gameAt(fp::sig::currentScene);
+    context.mode = viewMode.load();
+    context.combat = root && *(unsigned char*)(root + field::character::combatStance);
+    context.ordinary = bh && ordinaryCombat(root, bh);
+    context.policy = inputOwner.policyRevision();
+    for (size_t i = 0; i < context.bindings.size(); ++i)
+        context.bindings[i] = nativeBinding(i);
+    return context;
+}
+static bool heldBinding(fp::HeldBinding role, int key, bool eligible, const InputOwner::Sample& sample) {
+    const bool down = key > 0 && key < 256 && (keyState(key) & 0x8000);
+    return inputOwner.held(role, key, down, eligible, sample);
+}
+static void sampleHeldBindings(uintptr_t root, uintptr_t bh, bool owned, const InputOwner::Sample& sample) {
+    const int rotate = rotateHeldKey.load(), key = leanKey.load(), left = leanLeftKey.load(),
+              right = leanRightKey.load();
+    const bool keysMode = leanKeysMode.load();
+    const bool turning = heldBinding(fp::HeldBinding::rotate, rotate, owned && holdingItem(), sample);
+    heldRotating = turning;
+    if (turning) inputOwner.consumeBinding(rotate);
+    const bool enabled = owned && viewMode.load() < 2 && !turning;
+    const bool manual = enabled && manualCombat(root, bh);
+    const bool l = heldBinding(fp::HeldBinding::left, left,
+                               enabled && keysMode && !(left == VK_RBUTTON && manual), sample),
+               r = heldBinding(fp::HeldBinding::right, right,
+                               enabled && keysMode && !(right == VK_RBUTTON && manual), sample),
+               mouseLean = heldBinding(fp::HeldBinding::lean, key,
+                                       enabled && !keysMode && !(key == VK_RBUTTON && manual), sample);
+    leanKeySide = keysMode ? int(r) - int(l) : 0;
+    leaning = mouseLean || l || r;
+    if (mouseLean) inputOwner.consumeBinding(key);
+    if (l) inputOwner.consumeBinding(left);
+    if (r) inputOwner.consumeBinding(right);
+    // Keep an old physical press masked across a rebind or gameplay release.
+    // Observing release retires polling ownership, not the WndProc's owed up.
+    for (int bound = 1; bound < 256; ++bound)
+        if (inputOwner.bindingOwned(bound) && inputOwner.maskBinding(bound, (keyState(bound) & 0x8000) != 0))
+            consumeNativeBinding(bound);
 }
 static void input() {
     healthHit(fp::HealthHook::pollInput);
     originalInput();
     auto root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     auto bh = root ? *(uintptr_t*)(root + field::character::behaviour) : 0;
-    duckKey = (*(unsigned*)(gameAt(fp::sig::keyWord)) & duckKeyBit) !=
-              0; // the game's own duck binding, as it polled it
     // Before ownership is decided, so a right mouse still physically held is blocked by the hand-off
     // rather than passed to the game. A release that never reached the window (let go outside it) ends
     // a hold too.
@@ -363,37 +748,37 @@ static void input() {
         releaseInput();
     }
     const bool owned = bh && controls(bh);
-    const LONG generation = InterlockedCompareExchange(&inputGeneration, 0, 0);
-    if (generation != sampledInputGeneration) {
-        buttonHandoff.reset();
-        sampledInputGeneration = generation;
-    }
     auto buttons = (unsigned*)(gameAt(fp::sig::buttonWord));
-    const bool continuing = buttonHandoff.owned;
-    const unsigned safeButtons = buttonHandoff.sample(owned, *buttons);
+    const InputOwner::Sample sample = inputOwner.beginSample(inputContext(root, bh), owned, *buttons);
     if (owned) {
         // Movement only while its key is physically down (a tap within the frame still counts): a release that
         // never reached the window (an overlay ate it, focus moved between frames) left a held bit set, and
         // the character walked on by itself.
         const unsigned physical = physicalMovement();
-        InterlockedAnd(&heldKeys, LONG(physical));
         unsigned& keyWord = *(unsigned*)(gameAt(fp::sig::keyWord));
-        keyWord =
-            (keyWord & ~movementBits) |
-            ((keyWord | unsigned(InterlockedCompareExchange(&heldKeys, 0, 0))) & physical & movementBits) |
-            unsigned(InterlockedExchange(&tappedKeys, 0));
-        const unsigned taps = unsigned(InterlockedExchange(&tappedButtons, 0));
-        *buttons = (safeButtons | (continuing ? taps : 0)) & ~buttonHandoff.blocked;
+        keyWord = inputOwner.movementSample(keyWord, physical, movementBits);
+        *buttons = inputOwner.bufferedButtons(sample);
     } else
-        InterlockedExchange(&tappedButtons, 0);
-    // A game window's freeze holds movement wherever the pointer is: over the window the game's own view
-    // is not the hovered one (playerContext fails), yet it still reads the movement keys.
-    if (bh && cursorFreeNow() && (playerContext(bh) || InterlockedCompareExchange(&windowFree, 0, 0))) {
-        // HUD still receives native window messages. Suppress only gameplay actions
-        // so clicking inventory does not also swing a weapon or start walking.
-        *(unsigned*)(gameAt(fp::sig::keyWord)) &= ~15u;
-        *(unsigned*)(gameAt(fp::sig::buttonWord)) = 0;
+        inputOwner.discardButtons();
+    // Freeze each gameplay movement producer after polling and before native
+    // behavior consumes it. 0xBFEA0 can assert moveIntent from analogStick even
+    // when the keyboard is neutral; 0x11F610 can have cached cursor-walk intent.
+    // Raw controller/UI channels and accepted native motion remain untouched.
+    __try {
+        if (movementFrozen(bh)) {
+            *(unsigned*)gameAt(fp::sig::keyWord) &= ~movementBits;
+            *(unsigned*)gameAt(fp::sig::buttonWord) = 0;
+            float* stick = (float*)gameAt(fp::sig::analogStick);
+            stick[0] = stick[1] = stick[2] = 0;
+            *(unsigned char*)(bh + field::behaviour::moveIntent) = 0;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Scene teardown can invalidate the former controlled actor.
     }
+    sampleHeldBindings(root, bh, owned, sample);
+    combatInput(root, bh, owned, sample);
+    if (owned) prepareAttackHeading(bh);
+    duckKey = (*(unsigned*)gameAt(fp::sig::keyWord) & duckKeyBit) != 0;
 }
 static void cursorAim(uintptr_t behavior) {
     Aim a;
@@ -488,103 +873,160 @@ static void steadyHeadAround(uintptr_t root, void (*build)(uintptr_t, float, uns
 // The crouch holds it at 1 every step, before the pose build that reads it.
 static constexpr float crouchHeadroom =
     70.f; // cm above the head that must be clear to stand up (the head rises about this much)
-// Spine follows aim (fp::spineBend; [Camera] SpineFollowsAim): written into the chest (root+0xD48, the part
-// the arms hang from) and the spine part below it before the game builds this step's pose targets. First
-// and third person, combat included (it aims the swing); identity whenever it does not apply, so the game's
-// pose is untouched then. Never the root part (the pelvis carries the legs).
+// Spine follows aim: 0x1760F0 consumes each part's extra quaternion into its
+// target matrix during this call. Borrow those inputs only for that build, then
+// restore the exact previous quaternion and only the flag bit we changed.
 static std::atomic<int> spineFollow{60};
 static std::atomic<unsigned> spineBendTicks{0};
-static constexpr unsigned partExtraRotation = 0x4000; // part+0xC: 0x1760F0 multiplies +0x5EC (and +0x5CC) in
+static constexpr unsigned partExtraRotation = 0x4000;
 static bool bodyCalm(uintptr_t root, uintptr_t head);
-static uintptr_t spineBent[2]{},
-    spineBentRoot =
-        0; // the parts given a rotation, and whose (physics thread; the stop path once the hooks are off)
-static constexpr float spineIdentity[4] = {0, 0, 0, 1};
-static void spineBendPart(uintptr_t part, const float* quat) {
-    if (!readable(part, 0x600)) return;
+struct SpinePoseBorrow {
+    uintptr_t part = 0, root = 0;
+    unsigned flag = 0;
+    float kept[4]{}, written[4]{};
+};
+static void borrowSpinePart(uintptr_t root, uintptr_t part, const float* quat, SpinePoseBorrow& b) {
+    if (!readable(part, 0x600) || *(uintptr_t*)(part + field::bodyPart::character) != root) return;
+    b.root = root;
+    b.flag = *(unsigned*)(part + field::bodyPart::flags) & partExtraRotation;
+    memcpy(b.kept, (const void*)(part + field::bodyPart::extraRotation), 16);
+    if (b.flag) {
+        if (!fp::composeSpineRotation(quat, b.kept, b.written)) return;
+    } else
+        memcpy(b.written, quat, 16);
+    b.part = part;
+    memcpy((void*)(part + field::bodyPart::extraRotation), b.written, 16);
     *(unsigned*)(part + field::bodyPart::flags) |= partExtraRotation;
-    memcpy((void*)(part + field::bodyPart::extraRotation), quat, 16);
 }
-// Back to the game's pose, only on parts still the same character's (part+0x580): a freed or reused part is
-// never written.
-static void spineBendRelease() {
-    const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
-    for (uintptr_t& p : spineBent) {
-        if (p && root == spineBentRoot && readable(p, 0x600) &&
-            *(uintptr_t*)(p + field::bodyPart::character) == root)
-            spineBendPart(p, spineIdentity);
-        p = 0;
-    }
-    spineBentRoot = 0;
+static void restoreSpinePart(const SpinePoseBorrow& b) {
+    if (!b.part || !readable(b.part, 0x600) ||
+        *(uintptr_t*)(b.part + field::bodyPart::character) != b.root) return;
+    auto q = (float*)(b.part + field::bodyPart::extraRotation);
+    auto flags = (unsigned*)(b.part + field::bodyPart::flags);
+    // A native replacement is now its own value. Keep it, as with slackCap.
+    if (memcmp(q, b.written, 16) != 0) return;
+    memcpy(q, b.kept, 16);
+    if (*flags & partExtraRotation) *flags = (*flags & ~partExtraRotation) | b.flag;
 }
-static void spineBendStep(uintptr_t root) {
-    uintptr_t* bent = spineBent;
-    const float* identity = spineIdentity;
-    if (root != spineBentRoot) {
-        spineBent[0] = spineBent[1] = 0;
-        spineBentRoot = root;
-    } // another body: what was bent belongs to the old one (never written)
+static void spineBendStep(uintptr_t root, SpinePoseBorrow (&borrowed)[2]) {
     const uintptr_t head = readable(root, 0x11e8) ? *(uintptr_t*)(root + field::character::headPart) : 0;
     const uintptr_t chest = readable(root, 0xd50) ? *(uintptr_t*)(root + field::character::chestPart) : 0;
     const uintptr_t rootPart = readable(chest, 0x430) ? *(uintptr_t*)(chest + field::bodyPart::rootPart) : 0,
                     lower = readable(chest, 0x430) ? *(uintptr_t*)(chest + field::bodyPart::parentPart) : 0;
     const uintptr_t parts[2] = {chest && chest != rootPart ? chest : 0,
                                 lower && lower != rootPart ? lower : 0};
+    static fp::Lean lean;
+    static uintptr_t leanRoot = 0;
+    const bool eligible = InterlockedCompareExchange(&active, 0, 0) &&
+                          !InterlockedCompareExchange(&stopping, 0, 0) && viewMode.load() < 2 && head &&
+                          bodyCalm(root, head);
+    if (leanRoot != root || !eligible) {
+        lean = {};
+        leanRoot = root;
+    }
+    {
+        const float step = physicsStep.load();
+        const float seconds = step > 0.f ? step : 1.f / 60.f;
+        const float dx = leanMouseX.exchange(0.f), dy = leanMouseY.exchange(0.f);
+        if (eligible && leanKeysMode.load())
+            lean.keys(leanKeySide.load(), seconds);
+        else if (eligible)
+            lean.step(dx, dy, leaning.load(), seconds);
+    }
+    leanSideNow = lean.side;
+    leanForwardNow = lean.forward;
     const bool on = InterlockedCompareExchange(&active, 0, 0) &&
                     !InterlockedCompareExchange(&stopping, 0, 0) && viewMode.load() < 2 &&
-                    spineFollow.load() > 0 && head && bodyCalm(root, head);
-    const float bend =
-        on ? fp::spineBend((const float*)(root + field::character::gaze), spineFollow.load()) : 0.f;
+                    (spineFollow.load() > 0 || lean.active()) && head && bodyCalm(root, head);
+    const float bend = on && spineFollow.load() > 0
+                           ? fp::spineBend((const float*)(root + field::character::gaze), spineFollow.load())
+                           : 0.f;
     for (int i = 0; i < 2; ++i) {
         float q[4];
         const float share = i == 0 ? 1.f - fp::spineLowerShare : fp::spineLowerShare;
         const uintptr_t parent =
             parts[i] && readable(parts[i], 0x430) ? *(uintptr_t*)(parts[i] + field::bodyPart::parentPart) : 0;
-        const bool apply = on && parts[i] && readable(parts[i], 0x2d0) && readable(parent, 0x2d0) &&
-                           fp::spineBendQuat((const float*)(parts[i] + field::bodyPart::pose),
-                                             (const float*)(parent + field::bodyPart::pose),
-                                             (const float*)(root + field::character::gaze), bend * share, q);
-        if (bent[i] && bent[i] != parts[i]) {
-            if (readable(bent[i], 0x600) && *(uintptr_t*)(bent[i] + field::bodyPart::character) == root)
-                spineBendPart(bent[i], identity);
-            bent[i] = 0;
-        } // the part changed: put back only if still ours
-        if (apply) {
-            spineBendPart(parts[i], q);
-            bent[i] = parts[i];
-        } else if (bent[i]) {
-            spineBendPart(bent[i], identity);
-            bent[i] = 0;
-        }
+        const bool apply =
+            on && parts[i] && readable(parts[i], 0x2d0) && readable(parent, 0x2d0) &&
+            (lean.active()
+                 ? fp::spineLeanQuat((const float*)(parts[i] + field::bodyPart::pose),
+                                     (const float*)(parent + field::bodyPart::pose),
+                                     (const float*)(root + field::character::gaze),
+                                     (bend + lean.forward) * share, lean.side * share, q)
+                 : fp::spineBendQuat((const float*)(parts[i] + field::bodyPart::pose),
+                                     (const float*)(parent + field::bodyPart::pose),
+                                     (const float*)(root + field::character::gaze), bend * share, q));
+        if (apply) borrowSpinePart(root, parts[i], q, borrowed[i]);
     }
     if (on) ++spineBendTicks;
 }
-static void poseBuilder(uintptr_t root, float time, unsigned char mode) {
-    healthHit(fp::HealthHook::poseBuilder);
-    if (root == *(uintptr_t*)(gameAt(fp::sig::playerRoot))) {
-        if (crouchHeld.load()) {
-            *(float*)(root + field::character::duckAmount) = 1.f;
-            ++crouchTicks;
+// Increment before any stop/eligibility check: a callback already admitted when
+// hooks are disabled must finish restoring its borrowed fields before teardown
+// may report completion. Late callbacks see stopping and cannot borrow fields.
+static volatile LONG poseBuildsInFlight = 0;
+static bool awaitPoseBuilders(DWORD timeout = 2000) {
+    const ULONGLONG started = GetTickCount64();
+    while (InterlockedCompareExchange(&poseBuildsInFlight, 0, 0)) {
+        if (GetTickCount64() - started >= timeout) return false;
+        Sleep(1); // called without cameraLock, after native hooks are disabled
+    }
+    return true;
+}
+static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
+    SpinePoseBorrow borrowed[2]{};
+    uintptr_t* contextual = nullptr;
+    uintptr_t savedContext = 0;
+    __try {
+        if (root == *(uintptr_t*)gameAt(fp::sig::playerRoot)) {
+            ++playerSteps;
+            if (InterlockedCompareExchange(&active, 0, 0) &&
+                !InterlockedCompareExchange(&stopping, 0, 0) && viewMode.load() < 2) {
+                // The render request belongs to one character/head/scene. Native combat or
+                // recovery may start between that frame and this physical pose build.
+                if (crouchAppliesTo(root)) {
+                    *(float*)(root + field::character::duckAmount) = 1.f;
+                    ++crouchTicks;
+                }
+                __try {
+                    spineBendStep(root, borrowed);
+                } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            }
         }
+        const auto bh = *(uintptr_t*)(root + field::character::behaviour);
+        Aim a;
+        if (!bh || !getAim(bh, a))
+            originalPose(root, time, mode);
+        else {
+            contextual = (uintptr_t*)(root + field::character::contextualTarget);
+            savedContext = *contextual;
+            *contextual = 0;
+            float d[3];
+            gazeToPoint(a, d);
+            memcpy((void*)(root + field::character::gaze), d, 12);
+            steadyHeadAround(root, originalPose, time, mode);
+        }
+    } __finally {
         __try {
-            spineBendStep(root);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            if (contextual && !*contextual) *contextual = savedContext;
+        } __finally {
+            // Restore even when the native builder changes the selected player:
+            // the part's recorded owner, not today's playerRoot, owns this borrow.
+            __try {
+                restoreSpinePart(borrowed[1]);
+            } __finally {
+                restoreSpinePart(borrowed[0]);
+            }
+        }
     }
-    auto bh = *(uintptr_t*)(root + field::character::behaviour);
-    Aim a;
-    if (!bh || !getAim(bh, a)) {
-        originalPose(root, time, mode);
-        return;
+}
+static void poseBuilder(uintptr_t root, float time, unsigned char mode) {
+    InterlockedIncrement(&poseBuildsInFlight);
+    __try {
+        healthHit(fp::HealthHook::poseBuilder);
+        poseBuilderOwned(root, time, mode);
+    } __finally {
+        InterlockedDecrement(&poseBuildsInFlight);
     }
-    auto contextual = (uintptr_t*)(root + field::character::contextualTarget);
-    uintptr_t saved = *contextual;
-    *contextual = 0;
-    float d[3];
-    gazeToPoint(a, d);
-    memcpy((void*)(root + field::character::gaze), d, 12);
-    steadyHeadAround(root, originalPose, time,
-                     mode); // only the controlled player in first person reaches here (getAim)
-    if (!*contextual) *contextual = saved;
 }
 // Active head stabiliser (fp::steadyHead): run on the physics thread for the player's head and
 // the two parts under it (neck and upper chest), after the game's constraint passes and before it builds
@@ -649,6 +1091,11 @@ static void steadyHeadPart(uintptr_t root, uintptr_t head) {
                        (const float*)(head + field::bodyPart::poseCoefficients),
                        (const float*)(root + field::character::gaze), s))
         ++steadyTicks;
+    headingTurn = holdHeadingOn.load()
+                      ? fp::steadyHeading((float(*)[3])(head + field::bodyPart::points),
+                                          (const float*)(head + field::bodyPart::poseCoefficients),
+                                          (const float*)(root + field::character::gaze), headSteadyYaw.load())
+                      : 0.f;
 }
 static void steadyUnderHead(uintptr_t root, int which, uintptr_t part) {
     if (*(unsigned char*)(root + field::character::combatStance)) {
@@ -677,7 +1124,29 @@ static void partSettle(uintptr_t part) {
 }
 static void step(uintptr_t bh) {
     Aim a;
-    if (!getAim(bh, a)) {
+    const bool frozen = movementFrozen(bh);
+    const bool owned = !frozen && getAim(bh, a);
+    if (!owned && !frozen) {
+        originalStep(bh);
+        return;
+    }
+    // 0xC13F0 cancels opposite pairs before selecting its request. Raw nonzero
+    // key bits can still mean neutral (forward+back, left+right, or all four).
+    unsigned digital = *(unsigned*)gameAt(fp::sig::keyWord) & movementBits;
+    if ((digital & 5u) == 5u) digital &= ~5u;
+    if ((digital & 10u) == 10u) digital &= ~10u;
+    const float* stick = (const float*)gameAt(fp::sig::analogStick);
+    const float magnitude = stick[0] * stick[0] + stick[1] * stick[1] + stick[2] * stick[2];
+    // Match this owner's native threshold (squared magnitude > 0.01), not the
+    // exploration helper's 0.04. Invalid native input also stays native.
+    const bool analog = !std::isfinite(magnitude) || double(magnitude) > 0.01;
+    auto& pending = *(unsigned*)(bh + field::behaviour::pendingMove);
+    const bool pendingDigital = pending && !(pending & ~movementBits);
+    if ((frozen || (!digital && !analog)) && (pendingDigital || (frozen && pending == 0x8000))) pending = 0;
+    // A frozen input owner has no live Aim. Drop its unaccepted direction
+    // memory, then leave hover/aim and the native physical step entirely alone.
+    // The separate FE0/FEC correction stage remains owned by native physics.
+    if (!owned) {
         originalStep(bh);
         return;
     }
@@ -685,14 +1154,34 @@ static void step(uintptr_t bh) {
         ++combatSteps;
     else
         ++unexpectedRelaxedSteps;
-    auto mask = (unsigned*)(gameAt(fp::sig::keyWord));
-    unsigned saved = *mask;
     auto state = (unsigned*)(bh + field::behaviour::hoverState);
-    unsigned hovered = *state;
-    if (hovered == 4) *state = 0;
-    originalStep(bh);
-    if (hovered == 4 && *state == 0) *state = hovered;
-    *mask = saved;
+    const unsigned hovered = *state;
+    float* facing = (float*)(a.root + field::character::facing);
+    float savedFacing[3]{}, presentedFacing[3]{};
+    const bool present = digital && !analog && std::isfinite(a.yaw) &&
+                         *(unsigned char*)(a.root + field::character::combatStance);
+    if (present) {
+        memcpy(savedFacing, facing, sizeof savedFacing);
+        presentedFacing[0] = std::sin(a.yaw);
+        presentedFacing[2] = std::cos(a.yaw);
+    }
+    __try {
+        if (hovered == 4) *state = 0;
+        // C1CF0 copies gaze into CFC before this call. C12D0/C19D0 flatten that
+        // facing and divide by its length: a vertical TP target has no planar
+        // direction. Present finite look yaw only while the digital request is
+        // built, before native threat-distance adjustment and environment
+        // queries. Native lengths, diagonal weights, hold windows and accepted
+        // motion remain unchanged; cursor/ray yaw does not steer the feet.
+        if (present) memcpy(facing, presentedFacing, sizeof presentedFacing);
+        originalStep(bh);
+    } __finally {
+        // Restore only fields that still contain our exact borrowed value.
+        // Native changes win, including when it raises an exception or stops.
+        if (present && !memcmp(facing, presentedFacing, sizeof presentedFacing))
+            memcpy(facing, savedFacing, sizeof savedFacing);
+        if (hovered == 4 && *state == 0) *state = hovered;
+    }
 }
 static void travelTarget(float* out, const float* origin, const float* direction, float scale) {
     auto caller = (uintptr_t)_ReturnAddress();
@@ -711,8 +1200,8 @@ static void travelTarget(float* out, const float* origin, const float* direction
 static void walkGait(uintptr_t root, const float* direction) {
     auto bh = *(uintptr_t*)(root + field::character::behaviour);
     Aim a;
-    if (!*(unsigned char*)(root + field::character::combatStance) && bh && getAim(bh, a) && a.travelValid &&
-        *(unsigned char*)(root + field::character::walking)) {
+    if (!*(unsigned char*)(root + field::character::combatStance) && bh && getAim(bh, a) && a.root == root &&
+        a.travelValid && *(unsigned char*)(root + field::character::walking)) {
         // 163EF0 expects a gait axis, not a signed travel vector. Its backward
         // gait (10F4 bit 2) already uses the negative thrust at 12C0+3C. Passing
         // backward intent unchanged reverses twice and walks forward on S.
@@ -730,41 +1219,52 @@ static void explore(uintptr_t behavior) {
         originalExplore(behavior);
         return;
     }
-    auto mask = (unsigned*)(gameAt(fp::sig::keyWord));
-    unsigned saved = *mask;
-    float travel[3];
-    bool moving = fp::travel(saved, a.yaw, travel);
+    auto mask = (unsigned*)gameAt(fp::sig::keyWord);
+    auto nativeAnalog = (float*)gameAt(fp::sig::analogStick);
+    const unsigned saved = *mask;
+    float travel[3], analog[3];
+    const bool moving = fp::travel(saved, a.yaw, travel);
+    memcpy(analog, nativeAnalog, sizeof analog);
+    const bool stick = !moving && fp::analogActive(analog);
+    const bool walking = *(unsigned char*)(a.root + field::character::walking) != 0;
     AcquireSRWLockExclusive(&aimLock);
-    if (aim.root == a.root) {
+    if (aim.root == a.root && aim.head == a.head) {
         if (moving) {
-            memcpy(aim.travel, travel, 12);
+            memcpy(aim.travel, travel, sizeof travel);
             aim.travelValid = true;
-        } else if (!*(unsigned char*)(a.root + field::character::walking))
+        } else if (stick || !walking)
+            // A controller owns its native gait axis immediately. With neither input,
+            // retain the last digital axis only while native walking brakes to a stop.
             aim.travelValid = false;
     }
     ReleaseSRWLockExclusive(&aimLock);
-    float analog[3];
-    memcpy(analog, (void*)(gameAt(fp::sig::analogStick)), 12);
     auto intent = (unsigned char*)(behavior + field::behaviour::moveIntent);
-    unsigned char savedIntent = *intent;
-    // Native analog exploration already owns continuous walking, run/crouch,
-    // collision queries and braking. Feed it camera-relative digital intent.
-    const bool stick = !moving && fp::analogActive(analog); // a controller stick keeps its native vector
-    *mask &= ~15u;
-    if (!stick) memcpy((void*)(gameAt(fp::sig::analogStick)), travel, 12);
-    *intent = 0;
-    uintptr_t previousRoot = exploringRoot;
+    const unsigned char savedIntent = *intent;
+    const uintptr_t previousRoot = exploringRoot;
     float previousDirection[3];
-    memcpy(previousDirection, exploringDirection, 12);
-    exploringRoot = moving ? a.root : 0;
-    memcpy(exploringDirection, travel, 12);
-    originalExplore(behavior);
-    exploringRoot = previousRoot;
-    memcpy(exploringDirection, previousDirection, 12);
-    memcpy((void*)(gameAt(fp::sig::analogStick)), analog, 12);
-    *mask = saved;
-    *intent = savedIntent;
-    if (moving) ++relaxedSteps;
+    memcpy(previousDirection, exploringDirection, sizeof previousDirection);
+    // Native analog exploration still owns walking, running, collision queries,
+    // braking and the carried-item veto. Borrow only its directional input.
+    __try {
+        *mask &= ~movementBits;
+        if (!stick) memcpy(nativeAnalog, travel, sizeof travel);
+        *intent = 0;
+        exploringRoot = moving ? a.root : 0;
+        memcpy(exploringDirection, travel, sizeof travel);
+        originalExplore(behavior);
+        if (moving) ++relaxedSteps;
+    } __finally {
+        // Always pop this thread's caller scope, including native exceptions and
+        // nested exploration. Native replacement publications keep their values.
+        exploringRoot = previousRoot;
+        memcpy(exploringDirection, previousDirection, sizeof previousDirection);
+        if (!stick && !memcmp(nativeAnalog, travel, sizeof travel))
+            memcpy(nativeAnalog, analog, sizeof analog);
+        if (!(*mask & movementBits)) *mask = (*mask & ~movementBits) | (saved & movementBits);
+        if (readable(behavior, field::behaviour::moveIntent + sizeof *intent) &&
+            *(uintptr_t*)(behavior + field::behaviour::character) == a.root && !*intent)
+            *intent = savedIntent;
+    }
 }
 static bool readable(uintptr_t address, size_t size);
 // Hand of the weapon that swings for this cue (see fp::SwingHands). Read-only.
@@ -885,28 +1385,17 @@ static void publishCue(uintptr_t self) {
 static void behavior(uintptr_t self) {
     healthHit(fp::HealthHook::playerBehavior);
     updateAim(self);
-    // Held side binding: affect only the native new-press classifier. The same
-    // call's cursorAim rewrites +0x1B0 from real aim afterwards, so aiming and
-    // native follow-ups/continuations are untouched.
-    float* aimHeading = (float*)(self + field::behaviour::aimHeading);
-    float savedHeading = *aimHeading, presented = savedHeading;
-    bool flipped = false;
-    Aim side;
-    if (attackSideKey && (GetAsyncKeyState(attackSideKey) & 0x8000) && getAim(self, side) &&
-        (*(unsigned*)(gameAt(fp::sig::buttonWord)) & 1) &&
-        !*(unsigned char*)(self + field::behaviour::pressBlocked) &&
-        !(*(unsigned*)(self + field::behaviour::pressFlags) & 1)) {
-        const float body = *(float*)(side.root + field::character::bodyHeading);
-        if (std::isfinite(savedHeading) && std::isfinite(body)) {
-            presented = fp::flippedSideHeading(savedHeading, body,
-                                               *(int*)(side.root + field::character::gripFlags) != 0);
-            *aimHeading = presented;
-            flipped = true;
-            ++sideFlips;
-        }
+    const AttackHeadingPresentation previous = attackHeadingPresentation;
+    attackHeadingPresentation = {self};
+    __try {
+        originalBehavior(self);
+    } __finally {
+        const AttackHeadingPresentation shown = attackHeadingPresentation;
+        if (shown.behavior == self && shown.flipped &&
+            *(float*)(self + field::behaviour::aimHeading) == shown.presented)
+            *(float*)(self + field::behaviour::aimHeading) = shown.heading;
+        attackHeadingPresentation = previous;
     }
-    originalBehavior(self);
-    if (flipped && *aimHeading == presented) *aimHeading = savedHeading; // cursorAim did not run.
     Aim a;
     if (getAim(self, a)) {
         // The original behavior already calls cursorAim. Do not advance its native
@@ -933,9 +1422,9 @@ static void behavior(uintptr_t self) {
 // native. Stale, off-screen or free-cursor states keep the native pointer.
 static constexpr ULONGLONG reticleFreshMs = 250;
 static bool gameplayOwnsPointer() {
-    return InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
-           InterlockedCompareExchange(&inputEnabled, 0, 0) && !cursorFreeNow() &&
-           *(int*)(gameAt(fp::sig::uiOpenCount)) <= 0;
+    return base && viewMode.load() < 2 && InterlockedCompareExchange(&active, 0, 0) &&
+           !InterlockedCompareExchange(&stopping, 0, 0) && InterlockedCompareExchange(&inputEnabled, 0, 0) &&
+           !cursorFreeNow() && *(int*)(gameAt(fp::sig::uiOpenCount)) <= 0;
 }
 // 0x4996B0 > 0: the game's own temporary pointer override (0x22710) wins.
 static bool reticleForUi(LONG* x, LONG* y) {
@@ -1022,7 +1511,36 @@ using DragPlace = int (*)(uintptr_t, uintptr_t, float);
 static DragPlace originalDragPlace; // RVA 0x1183C0
 using PickRay = char (*)(uintptr_t, float, float, uintptr_t);
 static PickRay originalPickRay; // RVA 0x8F720
-static volatile DWORD placingThread = 0;
+// Placement scope follows the native call stack; callers on another thread cannot overwrite it.
+static thread_local DWORD placingThread = 0;
+// The rotate key's turns, applied after the game placed the held object: to the drag's target points (the
+// object's pose as the game drags it; release copies them into its physics body), about their centre
+// (fp::HeldRotation::applyPoints: once, whether the game keeps the shape or sets its own). Only the drag
+// manager's own target is written, never the body. The placing thread.
+static void turnHeld(uintptr_t object) {
+    static fp::HeldRotation turned;
+    static uintptr_t turnedObject = 0;
+    static ULONGLONG turnedGeneration = 0;
+    const ULONGLONG generation = holdGeneration.load();
+    if (object != turnedObject || generation != turnedGeneration) {
+        turned.reset();
+        turnedObject = object;
+        turnedGeneration = generation;
+    }
+    const float tx = heldTurnX.exchange(0.f), ty = heldTurnY.exchange(0.f);
+    if (tx != 0.f || ty != 0.f) {
+        float view[12];
+        fp::basis(viewYaw.load(), viewPitch.load(), view); // the view's right (row 0) and up (row 1)
+        turned.turn(-tx, -ty, view, view + 3);
+        ++heldTurns;
+    } // the same signs as mouse look: right turns it right
+    if (!turned.turns) return; // never turned: the game's orientation, untouched
+    const uintptr_t drag = *(uintptr_t*)gameAt(fp::sig::dragManager);
+    if (!readable(drag, field::drag::targetPoints + 48) ||
+        *(uintptr_t*)(drag + field::drag::object) != object)
+        return;
+    turned.applyPoints((float(*)[3])(drag + field::drag::targetPoints));
+}
 static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
     bool held = false;
     if (InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0)) {
@@ -1034,15 +1552,21 @@ static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
             kind = 0;
         }
         held = kind == 1 && dragged == object &&
-               viewMode.load() == 0; // the hold distance is a first-person feature
+               viewMode.load() < 2; // first and third person (the overhead view is the game's)
     }
     if (!held) {
-        holdObject = 0;
+        if (holdObject.load()) resetHeldGrab();
         return originalDragPlace(object, camera, h);
-    } // a later grab starts fresh
+    } // returning from the overhead view or another drag starts with its current native pose
+    const DWORD previousPlacingThread = placingThread;
     placingThread = GetCurrentThreadId();
-    const int result = originalDragPlace(object, camera, h);
-    placingThread = 0;
+    int result = 0;
+    __try {
+        result = originalDragPlace(object, camera, h);
+    } __finally {
+        placingThread = previousPlacingThread;
+    } // a handled native fault must not turn later unrelated picks into held-object placement
+    turnHeld(object);
     return result;
 }
 // Reach sphere round the body: root+0xAB4 is scene-local; the ray is global (scene +0x64 offset).
@@ -1076,14 +1600,11 @@ static float levelClear(uintptr_t level, const float* origin, const float* dir, 
 // eye along the view centre and the four frustum corners (16 units, the level ray queries the
 // pick clearance uses). Every frame; -1 unknown (no level grid, a fault, a bad pose), 1e9 nothing near.
 // Level geometry only: props and characters are not in the level grid.
-static unsigned clearanceFrame = 0;
-static float lastViewClearance = -1;
 static float viewClearance(const float* pose) {
-    ++clearanceFrame;
     for (int i = 0; i < 12; i++)
-        if (!std::isfinite(pose[i])) return lastViewClearance = -1;
+        if (!std::isfinite(pose[i])) return -1;
     const uintptr_t level = levelGrid();
-    if (!level || !levelRay || !levelRay2) return lastViewClearance = -1;
+    if (!level || !levelRay || !levelRay2) return -1;
     float aspect = 16.f / 9.f;
     RECT r;
     if (hookedWindow && GetClientRect(hookedWindow, &r) && r.bottom > 0 && r.right > 0)
@@ -1105,13 +1626,13 @@ static float viewClearance(const float* pose) {
             16.f,
             9.f * float(n)); // a corner ray reaches about 9 deep at any field of view (wide views slant it)
         const int hit = levelBlocked(level, pose + 9, d, length);
-        if (hit < 0) return lastViewClearance = -1;
+        if (hit < 0) return -1;
         if (hit == 0) continue;
         float lo = 0, hi = length;
         for (int i = 0; i < 6; i++) {
             const float mid = (lo + hi) * .5f;
             const int m = levelBlocked(level, pose + 9, d, mid);
-            if (m < 0) return lastViewClearance = -1;
+            if (m < 0) return -1;
             if (m == 1)
                 hi = mid;
             else
@@ -1119,7 +1640,7 @@ static float viewClearance(const float* pose) {
         }
         best = std::fmin(best, lo * float(1.0 / n)); // along the ray -> view depth
     }
-    return lastViewClearance = best;
+    return best;
 }
 // Drop where you hold it. During an 0x2000 drag the input step 0x11F610 asks
 // 0x117AA0 for the drop spot each frame; it unprojects the pointer (0x8F720, return 0x117B18) and
@@ -1129,8 +1650,8 @@ static float viewClearance(const float* pose) {
 // so it was always invalid. While first person holds an item and owns the pointer, that pick
 // reports a short downward ray onto the hold point (wall- and reach-clamped like the placement),
 // so the drop spot is where the item is held. A nearer real surface keeps the native result.
-static bool firstPersonHold() {
-    if (viewMode.load() != 0) return false; // third person keeps the game's own drop spot
+static bool heldDropWanted() {
+    if (viewMode.load() >= 2) return false; // the overhead view keeps the game's own drop spot
     if (!InterlockedCompareExchange(&active, 0, 0) || InterlockedCompareExchange(&stopping, 0, 0))
         return false;
     if (!gameplayOwnsPointer() && !InterlockedCompareExchange(&rmbFree, 0, 0))
@@ -1147,7 +1668,10 @@ static char dropSpot(char hit, uintptr_t out) {
     const float length = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
     if (!std::isfinite(length) || length < 0.5f || !std::isfinite(origin[0] + origin[1] + origin[2]))
         return hit;
-    float t = holdReachClamp(origin, dir, holdApplied.load());
+    const float eye[3] = {eyeGlobal[0].load(), eyeGlobal[1].load(), eyeGlobal[2].load()};
+    float t = fp::holdAlongRay(origin, dir, eye, holdApplied.load());
+    if (t < 0.f) return hit; // pointing away from the character
+    t = holdReachClamp(origin, dir, t);
     if (hit && *(float*)(out + field::pick::distance) <= t)
         return hit; // a surface before the hold point: native
     const uintptr_t level = levelGrid();
@@ -1187,21 +1711,30 @@ static bool selfPickWanted() {
     return InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
            viewMode.load() < 2 && onGameThread();
 } // one thread owns the mask
-static void selfPickMask() {
+// held: the scene node of an object being held, skipped as well (else the placement's pick met the object's
+// own front every frame and pulled it toward the eye).
+static uintptr_t heldPickNodes[256];
+static unsigned heldPickParents[256];
+static void selfPickMask(uintptr_t held = 0) {
     selfPickSet = 0;
-    const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
-    const uintptr_t mesh = readable(root, 0x20) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
-    if (!mesh) return;
-    const unsigned count = walkScene(mesh, selfPickNodes, selfPickParents, 1024);
-    for (unsigned i = 0; i < count; ++i) {
-        const uintptr_t node = selfPickNodes[i];
-        if (!readable(node, 0x10)) continue;
+    auto mask = [](uintptr_t node) {
+        if (!readable(node, 0x10) || selfPickSet >= 1024) return;
         unsigned& flags = *(unsigned*)(node + 8);
         if (!(flags & pickSkipBit)) {
             flags |= pickSkipBit;
             selfPickNodes[selfPickSet++] = node;
         }
-    } // compacted in place: only the ones changed here
+    }; // compacted in place: only the ones changed here
+    const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
+    const uintptr_t mesh = readable(root, 0x20) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
+    if (mesh) {
+        const unsigned count = walkScene(mesh, selfPickNodes, selfPickParents, 1024);
+        for (unsigned i = 0; i < count; ++i) mask(selfPickNodes[i]);
+    }
+    if (held) {
+        const unsigned count = walkScene(held, heldPickNodes, heldPickParents, 256);
+        for (unsigned i = 0; i < count; ++i) mask(heldPickNodes[i]);
+    }
     if (selfPickSet) ++selfPicksMasked;
 }
 static void selfPickRestore() {
@@ -1209,12 +1742,13 @@ static void selfPickRestore() {
         if (readable(selfPickNodes[i], 0x10)) *(unsigned*)(selfPickNodes[i] + 8) &= ~pickSkipBit;
     selfPickSet = 0;
 }
-static char pickPastSelf(PickRay pick, uintptr_t camera, float x, float y, uintptr_t out) {
+static char pickPastSelf(PickRay pick, uintptr_t camera, float x, float y, uintptr_t out,
+                         uintptr_t held = 0) {
     if (!selfPickWanted() || selfPickSet)
         return pick(camera, x, y, out); // nested: the outer call already masked
     char hit = 0;
     __try {
-        selfPickMask();
+        selfPickMask(held);
         hit = pick(camera, x, y, out);
     } __finally {
         selfPickRestore();
