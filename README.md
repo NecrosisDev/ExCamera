@@ -8,12 +8,32 @@ head sees. Settings are on F8.
 > versions are supported when every game function the mod uses can still be found and its hooks are seen
 > running (see [Game versions](#game-versions)). Otherwise it refuses to start and changes nothing.
 
-**Players:** download the ZIP from [Releases](../../releases) and read its `README.txt`
-(also in [`packaging/README.txt`](packaging/README.txt)). This page is for people building or
-modifying the mod.
-
 ExCamera is a standalone camera mod. It is not part of the ExaniMate editor and does not need it, or
 EMTK (it can run alongside EMTK, see the player readme).
+
+## Download and install
+
+**Players do not need to build the mod or install Visual Studio or Python.** Use the prebuilt
+Windows x64 package:
+
+1. Open [Releases](https://github.com/NecrosisDev/ExCamera/releases) and expand **Assets** on the
+   release you want, including prereleases marked **Pre-release**.
+2. Download **`ExCamera-0.1.0-beta3.zip`** for this version (future versions use
+   `ExCamera-<version>.zip`). GitHub's **Source code (zip)** and **Source code (tar.gz)** downloads
+   contain source files, not the runnable mod. If the ExCamera ZIP is missing, the binary package
+   has not been attached to that release yet.
+3. Extract the entire ZIP to a writable folder such as Downloads or Documents, outside Program
+   Files and the Exanima game folder. Extract it before running anything.
+4. Keep **`ExCamera.exe`** and **`ExanimaFirstPerson.dll`** together in the extracted folder, then
+   run **`ExCamera.exe`**. It starts Exanima through Steam or attaches to it if it is already running.
+   No game files are changed.
+5. Use **F6** to switch first person / third person / overhead, **F8** for settings, and hold **F7**
+   for one second to switch the mod off.
+
+Read the included `README.txt` for EMTK installation options and known issues (also available as
+the [player readme](packaging/README.txt)). Settings are saved separately, so a new download keeps
+your settings. To uninstall, close the game and delete the extracted folder; if you used EMTK's
+legacy loader, also remove its `mods\exanima-first-person` folder.
 
 ## Controls
 
