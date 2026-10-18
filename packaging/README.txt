@@ -1,10 +1,7 @@
-ExCamera 0.1.0-beta3-input5
+ExCamera 0.1.0-beta3-input16
 First-person and third-person cameras for Exanima
 
-Windows x64. Automated tests and archived-executable checks pass, but this
-update has not been tested in game. The earlier beta was play-tested on
-Exanima 0.9.5.2g (Steam build 25803178).
-
+Windows x64. Targets Exanima 0.9.5.2g (Steam build 25803178).
 
 INSTALL
 
@@ -22,7 +19,9 @@ In first and third person:
 
 Mouse             Aim and look
 Movement keys     Move relative to the view; strafe outside combat too
-Left mouse        Attack using the game's timing
+Left mouse        Exploration: click to interact; hold and drag objects or
+                  doors; double-click containers within reach
+Left mouse        Combat: attack using the game's timing
 F6                First person -> third person -> overhead
 F7 (hold 1 sec)   Switch ExCamera off; F6 turns it back on
 F8                Settings and free cursor
@@ -47,34 +46,52 @@ AIM AND DEFENSE
 
 F8 has separate aim-box width/height settings for each perspective. Mouse
 movement inside the box aims; reaching its edge turns the view. Set an axis
-to zero for direct turning. Third person also has a free-aim switch.
+to zero for direct turning. These settings apply in exploration and combat.
+Third person: aiming mode offers Aim box or Screen centre. Screen centre
+turns directly and disables the third-person aim-box size controls.
 
-F8 -> Crosshair and combat lets you choose defense separately for each view:
+Each view also has Swing selection: Mouse direction (default) or Native facing.
+Mouse direction chooses the swing's starting side from left/right mouse
+movement before you click, including with small boxes or Screen centre.
+Native facing lets Exanima choose from the angle between aim and body;
+small aim boxes can limit side changes.
+
+F8 -> Aim & combat lets you choose defense separately for each view:
 
 - Automatic (default): the game's automatic defense.
-- Manual: hold right mouse to enable the game's defensive assistance. Aim
+- Manual (hold RMB): hold right mouse to ready the weapon and enable
+  attack-specific native interception after recovery. Aim
   and movement remain available. Equipment, reach and recovery still decide
   whether a parry succeeds. Guard wins over an overlapping attack; release
   left mouse before starting another attack.
 
 Interactions and held-object rotation keep priority. If Manual is unavailable,
-F8 shows Auto (fallback) and keeps your saved preference.
+F8 reports Manual as unavailable and keeps your saved preference while
+Automatic remains effective.
 
 
 SETTINGS
 
+F8 has three pages: Camera (First person, Third person, Head and body),
+Controls (mouse, keys and interaction), and Aim & combat.
+
 F8 controls field of view, head steadiness, sensitivity, crosshair and swing
 cues, crouch, lean, grab distance and third-person framing. Changes apply
-immediately; each page has a reset button.
+immediately. Scroll for more options; Reset page stays at the bottom.
+Hover an inactive control to see which setting enables it. You can
+configure either perspective without switching views.
 
 Right-mouse free cursor can use hold, toggle or off. Lean can use a modifier
 plus mouse or separate left/right keys, which start unbound. Lean and held-
-object rotation bindings are configurable. Third person can override the
-base field of view with its own setting.
+object rotation bindings are configurable. In combat, the game's alternate-
+attack binding takes priority over lean: Alt retains alternate attacks
+with the default bindings. Third person can override the base field of
+view with its own setting.
 
 Settings: Documents\ExCamera\first-person.ini
 They survive updates. Older Documents\ExaniMate settings are copied on first
-use. F8 reports if a change applies but cannot be saved.
+use. F8 reports a save failure, keeps the live change and retries automatically.
+Direct INI edits are read when the game next starts; F7/F6 does not reload them.
 
 
 COMPATIBILITY
@@ -87,9 +104,8 @@ ask, allow or refuse under [Compat] in first-person.ini to choose a policy.
 If raw mouse input becomes unavailable, ordinary mouse input takes over.
 Restart Exanima when switching builds or when a restart is requested.
 
-Controller movement is not fully adapted. Gameplay feel and EMTK integration
-remain untested in this update. Native carrying and movement restrictions
-remain.
+Controller movement uses view yaw; a complete controller controlset is not implemented. EMTK loading routes still need
+in-game testing. Native carrying and movement restrictions remain.
 
 EMTK is optional. Choose one route:
 - Launcher: start the game through EMTK, then run ExCamera.exe.

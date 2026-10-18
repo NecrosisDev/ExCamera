@@ -3,7 +3,11 @@
 #include "first_person.cpp"
 #include <cassert>
 
-static unsigned actorCalls = 0, selectorCalls = 0;
+static unsigned actorCalls = 0, selectorCalls = 0, postureCalls = 0;
+static uint32_t nativePosture(uintptr_t) {
+    ++postureCalls;
+    return 3;
+}
 static unsigned admissionChecks = 0, admissionFailures = 0;
 static void checkAdmission(bool passed, const char* label, fp::sig::Target target) {
     ++admissionChecks;
@@ -47,11 +51,14 @@ int main() {
     base = (uintptr_t)live;
     layout = fp::Layout{};
     const fp::Layout known = layout;
-    const uintptr_t entries[3] = {gameAt(fp::sig::defenseReactive), gameAt(fp::sig::defenseAttackUpdate),
-                                  gameAt(fp::sig::defenseMotionSelect)};
+    const uintptr_t entries[5] = {gameAt(fp::sig::defenseReactive), gameAt(fp::sig::defenseAttackUpdate),
+                                  gameAt(fp::sig::defenseMotionSelect), gameAt(fp::sig::combatPosture),
+                                  gameAt(fp::sig::combatUpdate)};
     for (auto target : manualDefenseTargets) {
-        thunk(live + layout.rva[target], target == fp::sig::defenseMotionSelect ? (const void*)nativeSelector
-                                                                                : (const void*)nativeActor);
+        thunk(live + layout.rva[target], target == fp::sig::combatPosture ? (const void*)nativePosture
+                                         : target == fp::sig::defenseMotionSelect
+                                             ? (const void*)nativeSelector
+                                             : (const void*)nativeActor);
         DWORD old = 0;
         assert(VirtualProtect(live + layout.rva[target], 16, PAGE_EXECUTE_READ, &old));
     }
@@ -63,6 +70,7 @@ int main() {
     assert(admitEntries(image));
     assert(!manualDefenseReady && manualDefenseAvailability == 2);
     for (auto target : manualDefenseTargets) assert(!layout.rva[target]);
+    assert(!layout.rva[fp::sig::combatUpdateSlot]);
     assert(createManualDefenseHooks() && !manualDefenseReady);
     assert(layout.rva[fp::sig::cursorAim] == known.rva[fp::sig::cursorAim]);
     puts("PASS: unresolved optional group creates no hook and preserves the core layout");
@@ -91,7 +99,9 @@ int main() {
     ((Behavior)entries[1])(0);
     assert(((uint64_t (*)(uintptr_t, uintptr_t))entries[2])(0, 0) == 0x16);
     defenseCleanup(0);
-    assert(actorCalls == 3 && selectorCalls == 1);
+    assert(((CombatPosture)entries[3])(0) == 3);
+    ((Behavior)entries[4])(0);
+    assert(actorCalls == 4 && selectorCalls == 1 && postureCalls == 1);
     assert(MH_DisableHook(MH_ALL_HOOKS) == MH_OK);
     assert(admitEntries(image));
     assert(manualDefenseReady && manualDefenseAvailability == 1);
@@ -109,6 +119,8 @@ int main() {
         const auto reactiveOriginal = originalDefenseReactive, attackOriginal = originalDefenseAttackUpdate;
         const auto selectOriginal = originalDefenseMotionSelect;
         const auto cleanupOriginal = defenseCleanup;
+        const auto postureOriginal = originalCombatPosture;
+        const auto updateOriginal = originalCombatUpdate;
         // F7 disables hooks but deliberately retains the registered entries and
         // trampolines. Another writer then changes one stopped native entry.
         auto* entry = live + retained.rva[target];
@@ -119,11 +131,12 @@ int main() {
         bool identities = layout.optionalGroupAvailable("manualDefense");
         for (const auto identity : manualDefenseTargets)
             identities &= layout.rva[identity] == retained.rva[identity];
-        checkAdmission(identities, "all four removal and cleanup identities remain intact", target);
-        checkAdmission(originalDefenseReactive == reactiveOriginal &&
-                           originalDefenseAttackUpdate == attackOriginal &&
-                           originalDefenseMotionSelect == selectOriginal && defenseCleanup == cleanupOriginal,
-                       "retained native callbacks are preserved", target);
+        checkAdmission(identities, "all six removal and cleanup identities remain intact", target);
+        checkAdmission(
+            originalDefenseReactive == reactiveOriginal && originalDefenseAttackUpdate == attackOriginal &&
+                originalDefenseMotionSelect == selectOriginal && defenseCleanup == cleanupOriginal &&
+                originalCombatPosture == postureOriginal && originalCombatUpdate == updateOriginal,
+            "retained native callbacks are preserved", target);
         checkAdmission(!manualDefenseReady && manualDefenseAvailability == 5 &&
                            !std::strcmp(manualDefenseReasonText(), "native_entry_changed_after_creation") &&
                            std::strstr(faultDetail, "restart required"),
@@ -131,7 +144,7 @@ int main() {
         checkAdmission(*entry == changed, "admission leaves the foreign entry bytes untouched", target);
         bool registered = true;
         for (uintptr_t hooked : entries) registered &= MH_DisableHook((void*)hooked) == MH_ERROR_DISABLED;
-        checkAdmission(registered, "all three hooks remain registered and disabled", target);
+        checkAdmission(registered, "all five hooks remain registered and disabled", target);
 #ifndef EXCAMERA_PRE_REVIEW
         assert(manualDefenseHooksCreated);
 #endif
@@ -163,23 +176,27 @@ int main() {
     assert(admitEntries(image));
     assert(!manualDefenseReady && manualDefenseAvailability == 3);
     for (auto target : manualDefenseTargets) assert(!layout.rva[target]);
+    assert(!layout.rva[fp::sig::combatUpdateSlot]);
     assert(createManualDefenseHooks() && !manualDefenseReady);
     file[known.rva[fp::sig::defenseCleanup]] ^= 1;
     puts("PASS: a changed non-hooked cleanup entry withholds the entire optional group");
 
     layout = known;
     layout.resolved = true;
-    // The third hook cannot be created; the first two must be removed before
+    // The fifth hook cannot be created; the first four must be removed before
     // this can truthfully fall back to Automatic and continue core startup.
     DWORD old = 0;
-    assert(VirtualProtect((void*)entries[2], 16, PAGE_READWRITE, &old));
+    assert(VirtualProtect((void*)entries[4], 16, PAGE_READWRITE, &old));
     assert(createManualDefenseHooks() && !manualDefenseReady && manualDefenseAvailability == 4);
 #ifndef EXCAMERA_PRE_REVIEW
     assert(!manualDefenseHooksCreated);
 #endif
     assert(MH_EnableHook((void*)entries[0]) == MH_ERROR_NOT_CREATED);
     assert(MH_EnableHook((void*)entries[1]) == MH_ERROR_NOT_CREATED);
+    assert(MH_EnableHook((void*)entries[2]) == MH_ERROR_NOT_CREATED);
+    assert(MH_EnableHook((void*)entries[3]) == MH_ERROR_NOT_CREATED);
     for (auto target : manualDefenseTargets) assert(!layout.rva[target]);
+    assert(!layout.rva[fp::sig::combatUpdateSlot]);
     assert(layout.rva[fp::sig::cursorAim] == known.rva[fp::sig::cursorAim]);
     puts("PASS: partial optional hook creation rolls back completely and leaves core admission intact");
 

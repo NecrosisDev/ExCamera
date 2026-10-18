@@ -63,7 +63,7 @@ static BOOL tpFixtureClip(const RECT*) {
 static unsigned tpChecks = 0, tpFailures = 0, tpNativeCalls = 0;
 static uintptr_t tpRoot = 0, tpBehavior = 0, tpHead = 0, tpMesh = 0, tpSector = 0, tpWorldScene = 0,
                  tpCamera = 0, tpView = 0;
-static int tpDuringPick = 0;
+static int tpDuringPick = 0, tpPickResult = 1;
 static float tpPickX = 0, tpPickY = 0;
 static float tpLastNativePoint[3]{};
 static void checkTp(bool ok, const char* label) {
@@ -145,6 +145,20 @@ static void tpMutate(int which) {
     case 15:
         tpFixtureForeground = false;
         break;
+    case 20:
+        tickTp();
+        checkTp(tpAimSet && !memcmp(aim.point, tpAimLocal, 12),
+                "input during a valid refresh retains matching depth until replacement");
+        break;
+    case 17:
+        *(uintptr_t*)(tpView + field::viewport::pickCamera) = tpCamera + 0x2000;
+        break;
+    case 18:
+        *(uintptr_t*)gameAt(fp::sig::mainViewport) = tpView + 0x2000;
+        break;
+    case 19:
+        *(uintptr_t*)(tpView + 0x1000 + field::view::camera) = tpCamera + 0x2000;
+        break;
     case 16:
         // Same geometry again after two real input updates: an old in-flight
         // query must not alias a newer command merely because its floats match.
@@ -153,7 +167,10 @@ static void tpMutate(int which) {
         break;
     }
 }
-static char tpNativePick(uintptr_t camera, float x, float y, uintptr_t out) {
+static char tpNativePick(uintptr_t viewport, float x, float y, uintptr_t out) {
+    checkTp(viewport == tpView, "native pick receives viewport, never camera");
+    if (viewport != tpView) return 0;
+    const uintptr_t camera = *(uintptr_t*)(viewport + field::viewport::pickCamera);
     ++tpNativeCalls;
     tpPickX = x;
     tpPickY = y;
@@ -161,16 +178,21 @@ static char tpNativePick(uintptr_t camera, float x, float y, uintptr_t out) {
     float direction[3];
     fp::cursorRay(pose, x - float(tpFixtureWidth) * 0.5f, y - float(tpFixtureHeight) * 0.5f,
                   float(tpFixtureHeight), *(float*)(camera + field::camera::fov), direction);
-    memcpy((void*)(out + field::pick::origin), pose + 9, 12);
+    float origin[3];
+    for (int i = 0; i < 3; ++i) origin[i] = pose[9 + i] + direction[i] * 3.f;
+    memcpy((void*)(out + field::pick::origin), origin, 12);
     memcpy((void*)(out + field::pick::direction), direction, 12);
     *(float*)(out + field::pick::distance) = 650.f;
     for (int i = 0; i < 3; ++i)
         tpLastNativePoint[i] =
-            pose[9 + i] + direction[i] * 650.f - *(float*)(tpSector + field::sector::origin + i * 4);
+            origin[i] + direction[i] * 650.f - *(float*)(tpSector + field::sector::origin + i * 4);
     const int change = tpDuringPick;
     tpDuringPick = 0;
     if (change) tpMutate(change);
-    return 1;
+    if (tpPickResult == -1) RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+    if (tpPickResult == -2) memset((void*)(out + field::pick::direction), 0, 12);
+    if (!tpPickResult) *(float*)(out + field::pick::distance) = INFINITY;
+    return tpPickResult == 1;
 }
 static void sampleTp(int beforePick = 0) {
     float yaw = 0, pitch = 0;
@@ -209,7 +231,12 @@ static void resetTp() {
     memset((void*)tpHead, 0, 0x1000);
     *(uintptr_t*)gameAt(fp::sig::playerRoot) = tpRoot;
     *(uintptr_t*)gameAt(fp::sig::currentScene) = tpWorldScene;
-    *(uintptr_t*)gameAt(fp::sig::mainViewport) = 0;
+    *(uintptr_t*)gameAt(fp::sig::mainViewport) = tpView;
+    *(uintptr_t*)(tpView + field::viewport::pickCamera) = tpCamera;
+    *(uintptr_t*)(tpView + field::viewport::view) = tpView + 0x1000;
+    *(uintptr_t*)(tpView + 0x1000 + field::view::camera) = tpCamera;
+    *(int*)(tpView + field::viewport::width) = 800;
+    *(int*)(tpView + field::viewport::height) = 600;
     *(uintptr_t*)gameAt(fp::sig::uiView) = tpView;
     *(uintptr_t*)gameAt(fp::sig::guiManager) = 0;
     *(int*)gameAt(fp::sig::uiOpenCount) = 0;
@@ -255,6 +282,7 @@ static void resetTp() {
     thirdPerson.lag = 40.f;
     originalPickRay = tpNativePick;
     tpDuringPick = 0;
+    tpPickResult = 1;
     tickTp();
 }
 
@@ -312,7 +340,7 @@ int main() {
                 "look/pitch/FOV/size/free-mode/policy/recapture changes invalidate the cached hit");
     }
 
-    for (int change = 1; change <= 16; ++change) {
+    for (int change = 1; change <= 19; ++change) {
         resetTp();
         tpDuringPick = change;
         sampleTp();
@@ -343,17 +371,50 @@ int main() {
     tickTp(60, -30);
     originalPickRay = nullptr;
     sampleTp();
-    checkTp(tpAimSet, "missing native pick retains a finite query from the captured free-box geometry");
-    const float* cameraPose = (const float*)(tpCamera + field::camera::pose);
-    float cameraRay[3];
-    fp::cursorRay(cameraPose, 60.f, -30.f, 600.f, 75.f, cameraRay);
-    bool sameRay = true;
-    for (int i = 0; i < 3; ++i) {
-        const float expected =
-            cameraPose[9 + i] + cameraRay[i] * 1000.f - *(float*)(tpSector + field::sector::origin + i * 4);
-        sameRay = sameRay && std::fabs(tpAimLocal[i] - expected) < 0.003f;
+    tickTp();
+    checkTp(!tpAimSet && tpEyeFallback(),
+            "missing native pick reuses input owner fallback, no second reconstructed ray");
+    resetTp();
+    sampleTp();
+    tpDuringPick = 20;
+    sampleTp();
+    checkTp(tpAimSet, "refresh publishes after interleaved unchanged input");
+    for (int result : {0, -1, -2}) {
+        for (bool free : {false, true}) {
+            resetTp();
+            tpCombatAimFree = free;
+            tickTp(30, -20);
+            sampleTp();
+            checkTp(tpAimSet, "fresh native depth exists before refresh");
+            tpPickResult = result;
+            sampleTp();
+            tickTp();
+            if (result) {
+                checkTp(!tpAimSet && tpEyeFallback(), "failed/invalid refresh drops previous depth");
+            } else {
+                checkTp(tpAimSet, "native miss retains finite forward depth on native near ray");
+                const float* pose = (float*)(tpCamera + field::camera::pose);
+                float direction[3];
+                fp::cursorRay(pose, free ? 30.f : 0.f, free ? -20.f : 0.f, 600.f, 75.f, direction);
+                bool finiteForward = true;
+                for (int i = 0; i < 3; ++i) {
+                    const float expected = pose[9 + i] + direction[i] * 1003.f -
+                                           *(float*)(tpSector + field::sector::origin + i * 4);
+                    finiteForward = finiteForward && std::isfinite(tpAimLocal[i]) &&
+                                    std::fabs(tpAimLocal[i] - expected) < .003f;
+                }
+                checkTp(finiteForward, "native miss ignores horizontal-plane infinity in either aim mode");
+            }
+        }
     }
-    checkTp(sameRay, "fallback TP query follows captured offset rather than stale camera center");
+    for (int change : {17, 18, 19}) {
+        resetTp();
+        sampleTp();
+        tpMutate(change);
+        sampleTp();
+        tickTp();
+        checkTp(!tpAimSet && tpEyeFallback(), "camera/viewport handoff cannot reuse old gaze depth");
+    }
 
     std::printf("TP aim freshness: %u checks, %u failures, %u native picks.\n", tpChecks, tpFailures,
                 tpNativeCalls);

@@ -27,6 +27,15 @@ static bool sameVector(const float* a, const float* b) {
         if (!std::isfinite(a[i]) || !std::isfinite(b[i]) || std::fabs(a[i] - b[i]) > 1e-5f) return false;
     return true;
 }
+static int analogCalls = 0;
+static void nativeAnalogScale(float* out, const float* axis, float amount) {
+    ++analogCalls;
+    for (int i = 0; i < 3; ++i) out[i] = axis[i] * amount;
+}
+static void nativeAnalogAdd(float* out, const float* axis, float amount) {
+    ++analogCalls;
+    for (int i = 0; i < 3; ++i) out[i] += axis[i] * amount;
+}
 enum class ExploreCall { ordinary, fault, replaceInput, replaceFlags, replaceAnalog, replaceOwner, nested };
 static ExploreCall exploreCall = ExploreCall::ordinary;
 static int exploreCalls = 0, exploreDepth = 0;
@@ -168,6 +177,51 @@ int main() {
     const float nativeDirection[3] = {-1.f, 0.f, 0.f};
     const float forward[3] = {0.f, 0.f, 1.f};
     const float zero[3]{};
+
+    originalAnalogScale = nativeAnalogScale;
+    originalAnalogAdd = nativeAnalogAdd;
+    for (int mode : {0, 1}) {
+        viewMode = mode;
+        for (float yaw : {0.f, 1.57079632679f, -0.7f}) {
+            aim.yaw = yaw;
+            for (int provider : {0, 1}) {
+                const uintptr_t rightReturn =
+                    gameAt(provider ? fp::sig::xinputRightReturn : fp::sig::controllerRightReturn);
+                const uintptr_t forwardReturn =
+                    gameAt(provider ? fp::sig::xinputForwardReturn : fp::sig::controllerForwardReturn);
+                for (float pitch : {-1.f, 0.f, 1.f}) {
+                    float pose[12];
+                    fp::basis(yaw, pitch, pose);
+                    pose[4] = 0.f;
+                    const float expected[3] = {-std::cos(yaw) * 0.3f + std::sin(yaw) * 0.4f, 0.f,
+                                               std::sin(yaw) * 0.3f + std::cos(yaw) * 0.4f};
+                    const int calls = analogCalls;
+                    analogVectorFor(rightReturn, false, nativeAnalog, pose, 0.3f);
+                    analogVectorFor(forwardReturn, true, nativeAnalog, pose + 3, 0.4f);
+                    check(sameVector(nativeAnalog, expected) && analogCalls == calls + 2,
+                          "both native providers retain stick magnitude and yaw at down/level/up pitch");
+                }
+                float other[3];
+                analogVectorFor(rightReturn, false, other, nativeDirection, 1.f);
+                check(sameVector(other, nativeDirection), "nonmovement destination remains native");
+                analogVectorFor(0, false, nativeAnalog, nativeDirection, 1.f);
+                check(sameVector(nativeAnalog, nativeDirection), "unrelated math caller remains native");
+                for (int gate = 0; gate < 4; ++gate) {
+                    viewMode = gate == 0 ? 2 : mode;
+                    cursorFree = gate == 1;
+                    windowFree = gate == 2;
+                    if (gate == 3) aim.root = replacement;
+                    analogVectorFor(rightReturn, false, nativeAnalog, nativeDirection, 1.f);
+                    check(sameVector(nativeAnalog, nativeDirection),
+                          "overhead/UI/stale controller owner remains native");
+                    aim.root = root;
+                    cursorFree = windowFree = 0;
+                    viewMode = mode;
+                }
+            }
+        }
+    }
+    aim.yaw = 0.f;
 
     for (int view : {0, 1}) {
         viewMode = view;

@@ -113,6 +113,156 @@ static void bindingWidthTests() {
     *forward = keptForward;
     reset();
 }
+static LRESULT altMessage(bool pressed) {
+    fixtureKeys[VK_MENU] = fixtureKeys[VK_LMENU] = pressed;
+    return windowProc(nullptr, pressed ? WM_SYSKEYDOWN : WM_SYSKEYUP, VK_MENU,
+                      LPARAM(1LL << 29) | (pressed ? 0 : LPARAM(1LL << 31)));
+}
+static unsigned polledAlternate() {
+    return *(unsigned*)gameAt(fp::sig::keyWord) & 0x80u;
+}
+static void alternateLeanTests() {
+    auto alternate = (uint32_t*)(gameAt(fp::sig::movementKeys) + 6 * field::bindings::stride);
+    const uint32_t keptAlternate = *alternate;
+    for (int mode : {0, 1}) {
+        reset();
+        viewMode = mode;
+        *alternate = VK_MENU;
+        leanKey = VK_MENU;
+        *(unsigned char*)(actor + field::character::combatStance) = 1;
+        input();
+        nativeKeys = 0x80;
+        expect(altMessage(true) == 42 && !inputOwner.windowOwns(VK_MENU),
+               "combat Alt system-key down stays native in both close views");
+        input();
+        expect(!leaning && polledAlternate(), "combat native alternate survives lean polling");
+        *(unsigned char*)(behaviorObject + field::behaviour::pressBlocked) = 1;
+        input();
+        expect(!leaning && polledAlternate(), "temporary attack blocking cannot give native Alt to lean");
+        *(unsigned char*)(behaviorObject + field::behaviour::pressBlocked) = 0;
+        expect(altMessage(false) == 42, "native combat Alt keeps its matching system-key release");
+    }
+
+    reset();
+    *alternate = VK_MENU;
+    leanKey = VK_MENU;
+    input();
+    nativeKeys = 0x80;
+    expect(altMessage(true) == 0, "exploration still owns its configured Alt lean press");
+    input();
+    expect(leaning && !polledAlternate(), "exploration Alt leans without a simultaneous native action");
+    *(unsigned char*)(actor + field::character::combatStance) = 1;
+    input();
+    expect(!leaning && !polledAlternate(), "entering combat cannot transfer a held lean press into an attack");
+    expect(altMessage(false) == 0, "former lean press retains its release after entering combat");
+    nativeKeys = 0;
+    input();
+    nativeKeys = 0x80;
+    expect(altMessage(true) == 42, "fresh Alt after lean release belongs to native combat");
+    input();
+    expect(!leaning && polledAlternate(), "fresh combat Alt restores native alternate attack");
+    *(unsigned char*)(actor + field::character::combatStance) = 0;
+    input();
+    expect(!leaning && polledAlternate(), "leaving combat cannot turn an existing native Alt hold into lean");
+    expect(altMessage(false) == 42, "former native combat press retains its release in exploration");
+    nativeKeys = 0;
+    input();
+    expect(altMessage(true) == 0, "a fresh exploration Alt press can lean again");
+    input();
+    expect(leaning, "lean resumes after the native press was physically released");
+
+    reset();
+    *alternate = 'K';
+    leanKey = 'K';
+    *(unsigned char*)(actor + field::character::combatStance) = 1;
+    input();
+    nativeKeys = 0x80;
+    expect(message('K', true) == 42, "rebound native alternate key takes priority over lean");
+    input();
+    expect(!leaning && polledAlternate(), "rebound native alternate bit survives polling");
+    message('K', false);
+    nativeKeys = 0;
+    input();
+    *alternate = VK_MENU;
+    input();
+    expect(message('K', true) == 0, "nonconflicting configured lean key remains usable in combat");
+    input();
+    expect(leaning, "native rebinding removes the former lean conflict");
+
+    reset();
+    *alternate = VK_MENU;
+    leanKeysMode = true;
+    leanLeftKey = VK_MENU;
+    leanRightKey = 'J';
+    *(unsigned char*)(actor + field::character::combatStance) = 1;
+    input();
+    nativeKeys = 0x80;
+    expect(altMessage(true) == 42, "two-key lean also leaves native alternate press untouched");
+    input();
+    expect(!leaning && polledAlternate(), "two-key lean cannot consume native alternate while polling");
+    expect(message('J', true) == 0, "the other nonconflicting lean direction remains available");
+    input();
+    expect(leaning && leanKeySide == 1 && polledAlternate(),
+           "independent lean direction does not erase the held native alternate key");
+
+    const unsigned aliases[][2] = {{VK_MENU, VK_LMENU}, {VK_MENU, VK_RMENU},
+                                   {VK_LMENU, VK_MENU}, {VK_RMENU, VK_MENU},
+                                   {VK_CONTROL, VK_LCONTROL}, {VK_RCONTROL, VK_CONTROL},
+                                   {VK_SHIFT, VK_RSHIFT}, {VK_LSHIFT, VK_SHIFT}};
+    for (const auto& keys : aliases) {
+        reset();
+        *alternate = keys[0];
+        leanKey = int(keys[1]);
+        *(unsigned char*)(actor + field::character::combatStance) = 1;
+        input();
+        fixtureKeys[keys[0]] = fixtureKeys[keys[1]] = true;
+        nativeKeys = 0x80;
+        input();
+        expect(!leaning && polledAlternate(), "generic and side-specific modifier aliases cannot bypass combat priority");
+    }
+
+    reset();
+    *alternate = VK_LMENU;
+    leanKey = VK_MENU;
+    *(unsigned char*)(actor + field::character::combatStance) = 1;
+    input();
+    expect(altMessage(true) == 42 && !inputOwner.windowOwns(VK_MENU),
+           "generic Alt window event respects a side-specific native alternate binding");
+
+    reset();
+    *alternate = VK_MENU;
+    leanKey = VK_LMENU;
+    input();
+    fixtureKeys[VK_MENU] = fixtureKeys[VK_LMENU] = true;
+    nativeKeys = 0x80;
+    input();
+    expect(leaning && !polledAlternate(), "side-specific exploration lean owns its generic native modifier");
+    *(unsigned char*)(actor + field::character::combatStance) = 1;
+    input();
+    expect(!leaning && !polledAlternate(), "modifier alias cannot transfer a held lean into native alternate at a stance change");
+    fixtureKeys[VK_MENU] = fixtureKeys[VK_LMENU] = false;
+    nativeKeys = 0;
+    input();
+    fixtureKeys[VK_MENU] = fixtureKeys[VK_LMENU] = true;
+    nativeKeys = 0x80;
+    input();
+    expect(!leaning && polledAlternate(), "physical alias release admits a later native alternate hold");
+
+    reset();
+    *alternate = VK_LMENU;
+    leanKey = VK_RMENU;
+    *(unsigned char*)(actor + field::character::combatStance) = 1;
+    input();
+    fixtureKeys[VK_RMENU] = true;
+    input();
+    expect(leaning, "separately assigned left and right modifiers remain independent");
+    fixtureKeys[VK_LMENU] = true;
+    nativeKeys = 0x80;
+    input();
+    expect(leaning && polledAlternate(), "right-modifier lean cannot mask a distinct left-modifier native attack");
+    *alternate = keptAlternate;
+    reset();
+}
 #endif
 
 int main() {
@@ -137,6 +287,7 @@ int main() {
     expect(controls(behaviorObject), "shared player fixture reaches the production input adapter");
 #ifndef EXCAMERA_PRE_REVIEW
     bindingWidthTests();
+    alternateLeanTests();
 #endif
 
     expect(rotateKeyMessage(WM_LBUTTONDOWN, MK_LBUTTON, VK_LBUTTON) == 1,

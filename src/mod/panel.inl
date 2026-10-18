@@ -16,13 +16,20 @@ static void f8WindowTick(bool show, bool) {
         HWND w = gameWindow();
         if (!w || GetTickCount64() - f8CreatedAt < 5000) return;
         f8CreatedAt = GetTickCount64();
-        p = new panel::SettingsWindow();
-        p->getSettings = currentSettings;
-        p->changeSetting = applySetting;
-        p->onClosed = [] {
+        try {
+            p = new panel::SettingsWindow();
+            p->getSettings = currentSettings;
+            p->changeSetting = applySetting;
+            p->onClosed = [] {
+                InterlockedExchange(&cursorFree, 0);
+            }; // its close box: the cursor goes back to the game
+            p->start(w);
+        } catch (...) {
+            delete p;
             InterlockedExchange(&cursorFree, 0);
-        }; // its close box: the cursor goes back to the game
-        p->start(w);
+            showNotice(L"Settings could not open. Try F8 again.");
+            return;
+        }
         f8Window = p;
     }
     p->heartbeat();

@@ -34,6 +34,7 @@ static BOOL fakeCounter(LARGE_INTEGER* counter) {
 #undef GetForegroundWindow
 #undef GetWindowThreadProcessId
 #undef QueryPerformanceCounter
+#include "test_head_render_pose.h"
 static int checks = 0, failures = 0, projections = 0, inverses = 0;
 static float projectedFov = 0;
 static bool inspectNative = false, nativeSawStock = false, movingNative = false;
@@ -104,6 +105,7 @@ struct Fixture {
         *(uintptr_t*)(head + 0x18) = mesh;
         *(uintptr_t*)(mesh + 0x160) = head;
         *(uintptr_t*)(mesh + 0x130) = scene;
+        fixtureHeadRenderSampling(head);
         auto h = (float*)(mesh + 0x40);
         h[0] = h[4] = h[8] = 1;
         fp::basis(.7f, .3f, initial);
@@ -565,6 +567,10 @@ int main() {
         if (scenario % 2) nav((void*)42, 0);
         ResetEvent(sampleEntered);
         ResetEvent(sampleContinue);
+        // The renderer samples the clock once per presented frame. The priming
+        // call above belongs to the previous frame; advance its swap epoch before
+        // waiting at the next callback's publication boundary.
+        InterlockedIncrement(&swapCalls);
         holdCounter = true;
         std::thread callback([] { nav((void*)42, 0); });
         auto arrived = WaitForSingleObject(sampleEntered, 5000);
@@ -612,6 +618,10 @@ int main() {
         nav((void*)42, 0);
         ResetEvent(sampleEntered);
         ResetEvent(sampleContinue);
+        // The renderer samples the clock once per presented frame. The priming
+        // call above belongs to the previous frame; advance its swap epoch before
+        // waiting at the next callback's publication boundary.
+        InterlockedIncrement(&swapCalls);
         holdCounter = true;
         std::thread callback([] { nav((void*)42, 0); });
         if (WaitForSingleObject(sampleEntered, 5000) != WAIT_OBJECT_0) {

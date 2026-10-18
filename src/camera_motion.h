@@ -392,6 +392,7 @@ struct ThirdPerson {
     // 50 cm at most). Knockdown: while down, the pivot follows the given body point with 0.3 s.
     float lag = 0.f;
     bool down = false;
+    KnockdownFollow knock; // Belongs to this camera/actor lifetime, including its delayed release.
     float downPoint[3]{}, vel[3]{}, lastEye[3]{};
     bool haveEye = false;
     float radius = tpCameraRadius;
@@ -407,6 +408,8 @@ struct ThirdPerson {
         pinned = 0.f;
         swapHold = 0.f;
         haveEye = false;
+        down = false;
+        knock = {};
         for (float& v : vel) v = 0.f;
     }
     // How far the camera can go from `from` along dir, kept `radius` clear: the centre ray (the only one that
@@ -544,8 +547,9 @@ struct ThirdPerson {
             len = 1.f;
         } else
             for (float& v : dir) v /= len;
-        float allowed = boxCast(clear, pivot, dir, len, pose);
-        if (allowed < 12.f) allowed = 12.f;
+        // A minimum boom length must never overrule an actual collision. At zero
+        // clearance the camera stays at the reachable pivot until space opens.
+        const float allowed = std::fmax(0.f, boxCast(clear, pivot, dir, len, pose));
         lastAllowed = allowed;
         if (tight && mag > 1.f) {
             const float p =

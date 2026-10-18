@@ -100,6 +100,7 @@ int main() {
     auto reset = [&](unsigned flag = 0x81) {
         *(uintptr_t*)gameAt(fp::sig::playerRoot) = testRoot;
         *(unsigned*)(testRoot + field::character::stateFlags) = 0;
+        *(unsigned char*)(testRoot + field::character::combatStance) = 0;
         viewMode = 0;
         stopping = 0;
         nativeMode = 0;
@@ -122,6 +123,51 @@ int main() {
         check((seenFlags[0] & 0x4000) && seenQuat[0][0] > 0 && seenQuat[1][0] > 0 &&
                   seenQuat[1][0] < seenQuat[0][0], "native pose consumes split spine bend in both close views");
         check(restoredParts(), "native quaternion bytes and original flag restored after pose returns");
+    }
+    for (int mode : {0, 1}) {
+        for (int motion : {4, 5, 11}) {
+            for (unsigned flags : {0x81u, 0x4081u}) {
+                reset(flags);
+                viewMode = mode;
+                *(unsigned char*)(testRoot + field::character::combatStance) = 1;
+                *(int*)(testRoot + field::character::motion) = motion;
+                *(unsigned*)(testRoot + field::character::stateFlags) = motion == 4 ? 8 : 2;
+                const unsigned ticks = spineBendTicks.load();
+                poseBuilder(testRoot, 0, 0);
+                check(
+                    seenFlags[0] == flags && seenFlags[1] == flags && !memcmp(seenQuat[0], original, 16) &&
+                        !memcmp(seenQuat[1], original, 16) && spineBendTicks.load() == ticks &&
+                        restoredParts(flags),
+                    "combat ready, swing and thrust receive native torso inputs without automatic gaze bend");
+                check(!memcmp((void*)(head + field::bodyPart::pose), rows, sizeof rows),
+                      "combat torso policy does not rewrite the achieved physical head pose");
+            }
+        }
+        float leanOnly[2][4]{};
+        for (int follow : {0, 60}) {
+            reset();
+            // Park once to retire the previous explicit lean before comparing.
+            viewMode = 2;
+            poseBuilder(testRoot, 0, 0);
+            viewMode = mode;
+            *(unsigned char*)(testRoot + field::character::combatStance) = 1;
+            spineFollow = follow;
+            leanKeysMode = true;
+            leanKeySide = 1;
+            poseBuilder(testRoot, 0, 0);
+            check((seenFlags[0] & partExtraRotation) && restoredParts(),
+                  "explicit combat lean still reaches native pose construction and restores its borrow");
+            if (!follow)
+                memcpy(leanOnly, seenQuat, sizeof leanOnly);
+            else
+                check(!memcmp(leanOnly, seenQuat, sizeof leanOnly),
+                      "combat lean is independent of the exploration spine-follow setting");
+        }
+        viewMode = 2;
+        poseBuilder(testRoot, 0, 0);
+        leanKeysMode = false;
+        leanKeySide = 0;
+        spineFollow = 60;
     }
     reset(0x4081);
     poseBuilder(testRoot, 0, 0);
@@ -159,6 +205,22 @@ int main() {
         poseBuilder(testRoot, 0, 0);
         check(!(seenFlags[0] & 0x4000) && restoredParts(), "stopped, overhead and knockdown builds stay native");
     }
+    reset();
+    savedRoot = testRoot;
+    savedScene = *(uintptr_t*)gameAt(fp::sig::currentScene);
+    {
+        CameraGuard guard;
+        parkCamera(fp::OwnerChange::parkRestore);
+    }
+    poseBuilder(testRoot, 0, 0);
+    check(active && !cameraReady && park.active && !(seenFlags[0] & 0x4000) && restoredParts(),
+          "parking in native overhead ends physical spine ownership while hooks remain active");
+    headSteady = 100;
+    check(!steadyAllowed(testRoot, head) && !crouchAllowed(testRoot),
+          "parked camera also ends head stabilization and exploration crouch ownership");
+    cameraReady = 1;
+    park = {};
+    headSteady = 0;
     reset(0x4081);
     *(float*)(testChest + field::bodyPart::extraRotation) = NAN;
     poseBuilder(testRoot, 0, 0);

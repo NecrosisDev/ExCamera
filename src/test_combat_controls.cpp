@@ -753,7 +753,7 @@ static void headingTests() {
         check(faulted == (call == BehaviorCall::fault) &&
                   closeFloat(at<float>(bh, field::behaviour::aimHeading), expected) &&
                   attackHeadingPresentation.behavior == outer.behavior &&
-                  attackHeadingPresentation.heading == outer.heading && attackHeadingPresentation.flipped,
+                  attackHeadingPresentation.heading == outer.heading && attackHeadingPresentation.borrowed,
               "temporary attack heading restores its nested scope and preserves native writes, including SEH "
               "exit");
     }
@@ -794,7 +794,7 @@ struct DefenseSettingsSurface {
         view.page.kind = panel::Page::item;
         view.page.settingsPage = true;
         view.page.title = "Settings";
-        view.settingsGroup = 3; // actual Crosshair and combat page
+        view.settingsGroup = 2; // consolidated Aim & combat page
         check(dc && bitmap, "owned offscreen settings surface is available");
     }
     ~DefenseSettingsSurface() {
@@ -806,14 +806,19 @@ struct DefenseSettingsSurface {
     bool click(panel::SettingsWindow& settings, int wantedRow) {
         if (!dc || !bitmap) return false;
         view.settings = currentSettings();
-        view.paint(dc, 1000, 640);
+        view.settingsScroll = 0;
         unsigned found = 0;
         panel::PanelView::SettingControl button{};
-        for (const auto& candidate : view.settingControls)
-            if (candidate.row == wantedRow) {
-                button = candidate;
-                ++found;
-            }
+        for (;;) {
+            view.paint(dc, 1000, 640);
+            for (const auto& candidate : view.settingControls)
+                if (candidate.row == wantedRow) {
+                    button = candidate;
+                    ++found;
+                }
+            if (found || view.settingsScroll == view.settingsScrollMax()) break;
+            view.scrollSettings(1);
+        }
         check(found == 1 && button.r.left >= view.layout.content.left && button.r.right <= 1000 &&
                   button.r.top >= 0 && button.r.bottom <= 640,
               "each defense choice has one visible button in the rendered settings page");
@@ -906,7 +911,7 @@ static void settingsTests() {
     wchar_t saved[32]{};
     GetPrivateProfileStringW(L"FirstPerson", L"Defense", L"", saved, 32, settingsPath);
     check(!got.manualDefenseAvailable && got.fpDefense == 1 && !std::wcscmp(saved, L"manual") &&
-              got.value(panel::setting::fpDefense) == L"Auto (fallback)" &&
+              got.value(panel::setting::fpDefense) == L"Automatic fallback" &&
               got.value(panel::setting::tpDefense) == L"Automatic (native)",
           "unavailable Manual remains saved as a request while the UI reports effective Automatic");
     clearCalls();
@@ -944,6 +949,405 @@ static void writeThunk(fp::sig::Target target, const void* destination) {
     unsigned char* code = (unsigned char*)gameAt(target);
     std::memcpy(code, jump, sizeof jump);
     std::memcpy(code + 2, &destination, sizeof destination);
+}
+// B7560 native contract spy: native relaxed/ready/active-defense selection.
+// It deliberately does not animate arms; these checks prove owner requests only.
+static uint32_t fixturePosture = 3;
+static unsigned postureCalls = 0;
+static uint32_t nativePosture(uintptr_t) {
+    ++postureCalls;
+    return fixturePosture;
+}
+static uint32_t invokePosture(uintptr_t behaviorObject) {
+#if FP_REVISION >= 17
+    originalCombatPosture = nativePosture;
+    return combatPosture(behaviorObject);
+#else
+    return nativePosture(behaviorObject);
+#endif
+}
+static void readySetup(int view = 0, bool manual = true) {
+    resetFixture(view, manual, manual);
+    fixturePosture = 3;
+    postureCalls = 0;
+    at<float>(actor, 0xD58) = 1.f; // reviewed native readiness witness
+    at<float>(actor, field::character::balance) = 1.f;
+    at<float>(actor, field::character::balanceMax) = 1.f;
+    sample(2);
+}
+static void readyPostureTests() {
+    for (int view : {0, 1}) {
+        readySetup(view);
+        const std::vector<unsigned char> before((unsigned char*)actor, (unsigned char*)actor + 0x1400);
+        check(invokePosture(bh) == 4 && postureCalls == 1,
+              "held Manual guard requests native ready posture even without an opponent");
+        check(!std::memcmp(before.data(), (void*)actor, before.size()),
+              "readiness request leaves accepted attack, recovery, head, arms and all actor bytes native");
+        check(invokePosture(otherBh) == 3, "held guard cannot ready another actor");
+        fixtureKeys[VK_RBUTTON] = false;
+        check(invokePosture(bh) == 3, "physical release immediately returns posture selection to native");
+        fixturePosture = 4;
+        check(invokePosture(bh) == 4,
+              "release preserves a native ready posture selected for a nearby threat");
+        readySetup(view, false);
+        check(invokePosture(bh) == 3, "Automatic does not gain an explicit RMB posture request");
+        for (uint32_t state : {0u, 4u, 5u, 12u, 20u, 21u, 22u, 23u, 24u, 34u}) {
+            readySetup(view);
+            fixturePosture = state;
+            check(invokePosture(bh) == state,
+                  "native non-relaxed result and active parry choice are preserved");
+        }
+        readySetup(view);
+        at<unsigned char>(actor, field::character::defenseActive) = 1;
+        check(invokePosture(bh) == 3, "active defense keeps even its native relaxed result");
+        for (float readiness : {0.f, .009f, NAN, INFINITY}) {
+            readySetup(view);
+            at<float>(actor, 0xD58) = readiness;
+            check(invokePosture(bh) == 3, "native readiness gate and invalid scalar cannot force a pose");
+        }
+        for (float balance : {.949f, NAN, INFINITY}) {
+            readySetup(view);
+            at<float>(actor, field::character::balance) = balance;
+            check(invokePosture(bh) == 3, "native balance limit and invalid balance cannot force a pose");
+        }
+        readySetup(view);
+        at<float>(actor, field::character::balance) = .951f;
+        check(invokePosture(bh) == 4, "native balance tolerance admits a ready request");
+        readySetup(view);
+        at<float>(actor, field::character::balanceMax) = NAN;
+        check(invokePosture(bh) == 3, "invalid maximum balance leaves native posture intact");
+        for (int exclusion = 0; exclusion < 17; ++exclusion) {
+            readySetup(view);
+            switch (exclusion) {
+            case 0:
+                viewMode = 2;
+                break;
+            case 1:
+                *(uintptr_t*)gameAt(fp::sig::currentScene) = otherScene;
+                break;
+            case 2:
+                inputOwner.releaseGameplay();
+                break;
+            case 3:
+                inputOwner.policyChanged();
+                break;
+            case 4:
+                at<uintptr_t>(actor, field::character::headPart) = otherHead;
+                break;
+            case 5:
+                inputEnabled = 0;
+                break;
+            case 6:
+                manualDefenseReady = false;
+                break;
+            case 7:
+                at<unsigned char>(actor, field::character::combatStance) = 0;
+                break;
+            case 8:
+                at<uintptr_t>(actor, field::character::behaviour) = otherBh;
+                break;
+            case 9:
+                at<unsigned>(drag, field::drag::flags) = 1;
+                break;
+            case 10:
+                at<unsigned>(gui, field::gui::dragFormat) = 1;
+                break;
+            case 11:
+                at<unsigned>(actor, field::character::lifeFlags) = 0x100;
+                break;
+            case 12:
+                at<unsigned>(actor, field::character::stateFlags) = 0x20;
+                break;
+            case 13:
+                at<uintptr_t>(actor, field::character::actionCallback) = 1;
+                break;
+            case 14:
+                fixtureKeys['E'] = true;
+                break;
+            case 15:
+                active = 0;
+                break;
+            case 16:
+                stopping = 1;
+                break;
+            }
+            check(invokePosture(bh) == 3, "excluded context or stale owner leaves posture selection native");
+        }
+    }
+    check(invokePosture(0) == 3, "failed optional identity leaves the native posture result intact");
+}
+// Native interception contract spies. Output coordinates/motions stand for
+// native-owned results, not a reimplementation or simulation of weapon physics.
+static unsigned nativeUpdates = 0, interceptionCalls = 0, interceptionSelections = 0;
+static bool schedulerAttempts = false, incomingThreat = true, updateFault = false, interceptionFault = false;
+static bool nativeSelectsPose = true;
+static int updateChange = 0, nestedUpdate = 0, updateDepth = 0, threatPose = 20;
+static uintptr_t interceptionActor = 0, interceptionIncoming = 0;
+static float nativeWeaponTarget[3]{1.f, 2.f, 3.f};
+static void invokeCombatUpdate(uintptr_t root);
+static uint64_t nativeInterceptionSelection(uintptr_t root, uintptr_t incoming) {
+    ++interceptionSelections;
+    interceptionActor = root;
+    interceptionIncoming = incoming;
+    return uint64_t(threatPose);
+}
+static void nativeInterception(uintptr_t root) {
+    ++interceptionCalls;
+    record('I');
+    if (interceptionFault) RaiseException(0xE0424242, 0, 0, nullptr);
+    if (!incomingThreat || !at<unsigned char>(root, nativeFixture::eligible) ||
+        !at<unsigned char>(root, nativeFixture::capability)) {
+        nativeCleanup(root);
+        return;
+    }
+    // Native 1636E0 may retain a pose while 162F80 updates its target. The
+    // adapter must accept either native choice without adding a selection.
+    if (nativeSelectsPose) {
+        const uint64_t selected = defenseMotionSelect(root, otherActor);
+        if (selected == 0xffffffffu) return;
+        at<int>(root, field::character::motion) = int(selected);
+    }
+    at<unsigned char>(root, field::character::defenseActive) = 1;
+    at<int>(root, field::character::defenseIncomingMotion) = 7;
+    std::memcpy((void*)(root + 0xF7C), nativeWeaponTarget, sizeof nativeWeaponTarget);
+}
+static void nativeCombatUpdate(uintptr_t root) {
+    ++nativeUpdates;
+    record('U');
+    if (updateFault) RaiseException(0xE0424242, 0, 0, nullptr);
+    if (nestedUpdate && updateDepth == 0) {
+        ++updateDepth;
+        invokeCombatUpdate(nestedUpdate == 1 ? root : otherActor);
+        --updateDepth;
+    }
+    // Model a native callback that changes ownership/physical state before the
+    // adapter resumes. The native body itself remains authoritative.
+    switch (updateChange) {
+    case 1:
+        fixtureKeys[VK_RBUTTON] = false;
+        break;
+    case 2:
+        *(uintptr_t*)gameAt(fp::sig::currentScene) = otherScene;
+        break;
+    case 3:
+        *(uintptr_t*)gameAt(fp::sig::playerRoot) = otherActor;
+        break;
+    case 4:
+        at<uintptr_t>(root, field::character::headPart) = otherHead;
+        break;
+    case 5:
+        inputOwner.policyChanged();
+        break;
+    case 6:
+        viewMode = 2;
+        break;
+    case 7:
+        inputEnabled = 0;
+        break;
+    case 8:
+        stopping = 1;
+        break;
+    case 9:
+        at<int>(root, field::character::motion) = 7;
+        break;
+    case 10:
+        at<unsigned>(root, field::character::stateFlags) = 0x800;
+        break;
+    case 11:
+        at<float>(root, field::character::balance) = .2f;
+        break;
+    }
+    if (schedulerAttempts || at<unsigned char>(root, field::character::defenseActive)) defenseReactive(root);
+}
+static void invokeCombatUpdate(uintptr_t root) {
+#if FP_REVISION >= 18
+    originalCombatUpdate = nativeCombatUpdate;
+    combatUpdate(root);
+#else
+    nativeCombatUpdate(root);
+#endif
+}
+static bool catchCombatUpdate() {
+    __try {
+        invokeCombatUpdate(actor);
+    } __except (GetExceptionCode() == 0xE0424242 ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return true;
+    }
+    return false;
+}
+static bool updateScopeClear() {
+#if FP_REVISION >= 18
+    return defenseUpdate == nullptr;
+#else
+    return true;
+#endif
+}
+static void interceptionSetup(int view = 0, bool manual = true) {
+    readySetup(view, manual);
+    at<int>(actor, field::character::motion) = 3;
+    at<unsigned>(actor, field::character::stateFlags) = 0;
+    at<unsigned char>(actor, field::character::physicsLive) = 1;
+    originalDefenseReactive = nativeInterception;
+    originalDefenseMotionSelect = nativeInterceptionSelection;
+    nativeUpdates = interceptionCalls = interceptionSelections = 0;
+    schedulerAttempts = updateFault = interceptionFault = false;
+    incomingThreat = true;
+    nativeSelectsPose = true;
+    updateChange = nestedUpdate = updateDepth = 0;
+    threatPose = 20;
+    nativeWeaponTarget[0] = 1.f;
+    nativeWeaponTarget[1] = 2.f;
+    nativeWeaponTarget[2] = 3.f;
+    clearCalls();
+}
+static void interceptionTests() {
+    for (int view : {0, 1}) {
+        interceptionSetup(view);
+        float headBefore[12];
+        std::memcpy(headBefore, (void*)(head + field::bodyPart::pose), sizeof headBefore);
+        invokeCombatUpdate(actor);
+        check(nativeUpdates == 1 && interceptionCalls == 1 && interceptionSelections == 1 &&
+                  !std::strcmp(callOrder, "UI") && interceptionActor == actor &&
+                  interceptionIncoming == otherActor,
+              "held guard explicitly drives native interception after the physical update without an "
+              "automatic trigger");
+        check(at<int>(actor, field::character::motion) == 20 &&
+                  vectorNear((float*)(actor + 0xF7C), nativeWeaponTarget) &&
+                  at<unsigned char>(actor, field::character::defenseActive),
+              "native attack-specific defensive motion and weapon target survive the adapter");
+        check(!std::memcmp(headBefore, (void*)(head + field::bodyPart::pose), sizeof headBefore),
+              "interception bridge does not alter the physical-head pose");
+        threatPose = 24;
+        nativeSelectsPose = false;
+        nativeWeaponTarget[0] = -4.f;
+        nativeWeaponTarget[1] = 6.f;
+        invokeCombatUpdate(actor);
+        check(nativeUpdates == 2 && interceptionCalls == 2 && interceptionSelections == 1 &&
+                  at<int>(actor, field::character::motion) == 20 &&
+                  vectorNear((float*)(actor + 0xF7C), nativeWeaponTarget),
+              "native target tracking can retain its pose without the adapter forcing reselection");
+        nativeSelectsPose = true;
+        invokeCombatUpdate(actor);
+        check(nativeUpdates == 3 && interceptionCalls == 3 && interceptionSelections == 2 &&
+                  at<int>(actor, field::character::motion) == 24 &&
+                  vectorNear((float*)(actor + 0xF7C), nativeWeaponTarget),
+              "active native interception updates to a changed threat without an extra request");
+        fixtureKeys[VK_RBUTTON] = false;
+        invokeCombatUpdate(actor);
+        check(interceptionCalls == 3 && !at<unsigned char>(actor, field::character::defenseActive) &&
+                  at<int>(actor, field::character::defenseIncomingMotion) == -1,
+              "release withdraws active interception through the existing native cleanup owner");
+        interceptionSetup(view);
+        schedulerAttempts = true;
+        invokeCombatUpdate(actor);
+        check(nativeUpdates == 1 && interceptionCalls == 1, "an existing native attempt is not duplicated");
+        interceptionSetup(view);
+        schedulerAttempts = true;
+        incomingThreat = false;
+        invokeCombatUpdate(actor);
+        check(interceptionCalls == 1 && !at<unsigned char>(actor, field::character::defenseActive),
+              "a rejected native attempt is not retried in the same update");
+        for (int rejected = 0; rejected < 3; ++rejected) {
+            interceptionSetup(view);
+            if (rejected == 0) incomingThreat = false;
+            if (rejected == 1) at<unsigned char>(actor, nativeFixture::eligible) = 0;
+            if (rejected == 2) at<unsigned char>(actor, nativeFixture::capability) = 0;
+            invokeCombatUpdate(actor);
+            check(interceptionCalls == 1 && !interceptionSelections &&
+                      !at<unsigned char>(actor, field::character::defenseActive),
+                  "native no-threat or equipment/eligibility rejection remains authoritative");
+        }
+        for (int motion : {5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 28, 34}) {
+            interceptionSetup(view);
+            at<int>(actor, field::character::motion) = motion;
+            invokeCombatUpdate(actor);
+            check(!interceptionCalls && at<int>(actor, field::character::motion) == motion &&
+                      closeFloat(at<float>(actor, field::character::motionProgress), .37f),
+                  "accepted attack, recovery and special motions are never interrupted by an extra request");
+        }
+        for (unsigned state : {1u, 2u, 4u, 0x20u, 0x40u, 0x200u, 0x800u, 0x10000u}) {
+            interceptionSetup(view);
+            at<unsigned>(actor, field::character::stateFlags) = state;
+            invokeCombatUpdate(actor);
+            check(!interceptionCalls,
+                  "non-rest/ready native physical state cannot be replaced by manual interception");
+        }
+        interceptionSetup(view);
+        at<int>(actor, field::character::motion) = 4;
+        at<unsigned>(actor, field::character::stateFlags) = 8;
+        invokeCombatUpdate(actor);
+        check(interceptionCalls == 1, "accepted ready stance also admits explicit interception");
+        for (int change = 1; change <= 11; ++change) {
+            interceptionSetup(view);
+            updateChange = change;
+            invokeCombatUpdate(actor);
+            check(!interceptionCalls,
+                  "native update handoff or loss of physical readiness invalidates the held request");
+        }
+        for (int exclusion = 0; exclusion < 11; ++exclusion) {
+            interceptionSetup(view);
+            switch (exclusion) {
+            case 0:
+                viewMode = 2;
+                break;
+            case 1:
+                manualDefenseReady = false;
+                break;
+            case 2:
+                inputOwner.releaseGameplay();
+                break;
+            case 3:
+                at<unsigned char>(actor, field::character::physicsLive) = 0;
+                break;
+            case 4:
+                at<float>(actor, field::character::postureReadiness) = 0;
+                break;
+            case 5:
+                at<float>(actor, field::character::balance) = NAN;
+                break;
+            case 6:
+                at<float>(actor, field::character::balanceMax) = INFINITY;
+                break;
+            case 7:
+                at<unsigned>(drag, field::drag::flags) = 1;
+                break;
+            case 8:
+                at<unsigned>(gui, field::gui::dragFormat) = 1;
+                break;
+            case 9:
+                fixtureKeys['E'] = true;
+                break;
+            case 10:
+                at<uintptr_t>(actor, field::character::actionCallback) = 1;
+                break;
+            }
+            invokeCombatUpdate(actor);
+            check(nativeUpdates == 1 && !interceptionCalls,
+                  "excluded context forwards physics without an extra interception");
+        }
+        interceptionSetup(view, false);
+        invokeCombatUpdate(actor);
+        check(nativeUpdates == 1 && !interceptionCalls, "Automatic retains its own initiation schedule");
+        interceptionSetup(view);
+        invokeCombatUpdate(otherActor);
+        check(nativeUpdates == 1 && !interceptionCalls,
+              "NPC physical update is not driven by the player's guard");
+        for (int nested : {1, 2}) {
+            interceptionSetup(view);
+            nestedUpdate = nested;
+            invokeCombatUpdate(actor);
+            check(nativeUpdates == 2 && interceptionCalls == 1 && updateScopeClear(),
+                  "nested same/other actor updates do not duplicate or leak the held interception request");
+        }
+        interceptionSetup(view);
+        updateFault = true;
+        check(catchCombatUpdate() && !interceptionCalls && updateScopeClear(),
+              "native update faults propagate without adding a request and restore the scope");
+        interceptionSetup(view);
+        interceptionFault = true;
+        check(catchCombatUpdate() && interceptionCalls == 1 && updateScopeClear(),
+              "native interception faults propagate and restore the update scope");
+    }
 }
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -983,6 +1387,8 @@ int main() {
         nativeStateTests();
         headingTests();
         settingsTests();
+        readyPostureTests();
+        interceptionTests();
     }
     check(image.close(), "synthetic combat image released");
     std::printf("Combat control owner checks: %d; failures: %d\n", checks, failures);

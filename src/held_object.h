@@ -51,58 +51,6 @@ inline void rotateAxes(float* axes, const float* axis, float angle) {
 // mouse's turn rate.
 inline constexpr float heldRotateRadiansPerPixel = 0.006f;
 
-// The rotation the player has given the held object, applied after the game's own placement each frame.
-struct HeldRotation {
-    float user[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1}; // the player's rotation since the grab (rows)
-    float nativeShape[12]{},
-        writtenShape[12]{}; // applyPoints: the game's shape and the one written, about the centre
-    bool havePoints = false;
-    unsigned turns = 0;
-    void reset() { *this = HeldRotation{}; }
-    // Mouse movement in pixels, the view's right and up axes (unit).
-    void turn(float dx, float dy, const float* viewRight, const float* viewUp) {
-        if (!std::isfinite(dx) || !std::isfinite(dy) || (dx == 0.f && dy == 0.f)) return;
-        rotateColumns(viewUp, dx * heldRotateRadiansPerPixel);
-        rotateColumns(viewRight, dy * heldRotateRadiansPerPixel);
-        ++turns;
-    }
-    // The drag's four target points (the held object's pose as the game drags it; on release it copies them
-    // into the object's physics body): turned about their centre. The game moves them every frame; whether it
-    // keeps the shape written last frame or sets its own, the result is its shape turned by the player's
-    // rotation, once.
-    void applyPoints(float (*points)[3]) {
-        float centre[3]{};
-        for (int k = 0; k < 4; ++k)
-            for (int i = 0; i < 3; ++i) centre[i] += 0.25f * points[k][i];
-        float shape[12];
-        for (int k = 0; k < 4; ++k)
-            for (int i = 0; i < 3; ++i) shape[k * 3 + i] = points[k][i] - centre[i];
-        bool kept = havePoints;
-        for (int i = 0; i < 12 && kept; ++i) kept = std::fabs(shape[i] - writtenShape[i]) < 1e-3f;
-        if (!kept) std::memcpy(nativeShape, shape, 48);
-        for (int k = 0; k < 4; ++k) {
-            const float* v = nativeShape + k * 3;
-            for (int i = 0; i < 3; ++i) {
-                const float w = user[i * 3 + 0] * v[0] + user[i * 3 + 1] * v[1] + user[i * 3 + 2] * v[2];
-                writtenShape[k * 3 + i] = w;
-                points[k][i] = centre[i] + w;
-            }
-        }
-        havePoints = true;
-    }
-
-private:
-    // user <- R(axis, angle) * user: a turn in the world's frame, after the earlier ones.
-    void rotateColumns(const float* axis, float angle) {
-        float cols[9];
-        for (int r = 0; r < 3; ++r)
-            for (int i = 0; i < 3; ++i) cols[r * 3 + i] = user[i * 3 + r]; // columns as rows
-        rotateAxes(cols, axis, angle);
-        for (int r = 0; r < 3; ++r)
-            for (int i = 0; i < 3; ++i) user[i * 3 + r] = cols[r * 3 + i];
-    }
-};
-
 // Flinging: let go while the wheel is pushing the object out and it keeps that speed. The game zeroes a released
 // object's velocity by making its physics points' history equal to where they are (Verlet: the velocity is
 // the difference); the fling writes that history as "where they are, minus the velocity times one physics

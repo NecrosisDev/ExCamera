@@ -448,7 +448,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("guard_withdrawals", guardWithdrawals.load());
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
     j.num("fov", selectedFov.load());
-    j.boolean("settings_saved", persistedFov == selectedFov.load());
+    j.boolean("settings_saved", !settingsSavePending());
     j.num("cursor_free", InterlockedCompareExchange(&cursorFree, 0, 0));
     j.num("raw_mouse", InterlockedCompareExchange(&rawRegistered, 0, 0));
     j.unum("side_flips", sideFlips.load());
@@ -619,7 +619,8 @@ static DWORD runSession() {
             wchar_t profile[MAX_PATH]{};
             const DWORD n = GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH);
             const std::wstring user =
-                userSettingsFile(settingsPath, n && n < MAX_PATH ? userSettingsDir(profile) : std::wstring());
+                userSettingsFile(settingsPath, n && n < MAX_PATH ? userSettingsDir(profile, userDocumentsDir())
+                                                               : std::wstring());
             if (user.size() < MAX_PATH) wcscpy_s(settingsPath, user.c_str());
         }
         loadSettings(settingsPath);
@@ -658,14 +659,22 @@ static DWORD runSession() {
         return 2;
     }
     copyCameraSnapshots = (void (*)())gameAt(fp::sig::copyCameraSnapshots);
-    if (MH_CreateHook((void*)gameAt(fp::sig::cameraOrbit), (void*)cameraOrbit,
+    if (MH_CreateHook((void*)gameAt(fp::sig::analogScale), (void*)analogScale,
+                      (void**)&originalAnalogScale) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::analogAdd), (void*)analogAdd, (void**)&originalAnalogAdd) !=
+            MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::cameraOrbit), (void*)cameraOrbit,
                       (void**)&originalCameraOrbit) != MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::cameraZoom), (void*)cameraZoom, (void**)&originalCameraZoom) !=
             MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::cameraMouse), (void*)cameraMouse,
                       (void**)&originalCameraMouse) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::aimWorldToLocal), (void*)aimWorldToLocal,
+                      (void**)&originalAimWorldToLocal) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::cursorAim)), (void*)cursorAim, (void**)&originalCursor) !=
             MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::combatAttention), (void*)combatAttention,
+                      (void**)&originalCombatAttention) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::explore)), (void*)explore, (void**)&originalExplore) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::combatStep)), (void*)step, (void**)&originalStep) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::poseBuilder)), (void*)poseBuilder, (void**)&originalPose) !=
@@ -675,17 +684,33 @@ static DWORD runSession() {
         MH_CreateHook((void*)(gameAt(fp::sig::cursorPosition)), (void*)cursorPosition,
                       (void**)&originalCursorPosition) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::pollInput)), (void*)input, (void**)&originalInput) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::guiMousePress), (void*)guiMousePress,
+                      (void**)&originalGuiMousePress) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::guiMousePoll), (void*)guiMousePoll,
+                      (void**)&originalGuiMousePoll) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::travelTarget)), (void*)travelTarget,
                       (void**)&originalTravelTarget) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::walkGait)), (void*)walkGait, (void**)&originalWalkGait) !=
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::sectorUpdate)), (void*)sectorUpdate,
                       (void**)&originalSectorUpdate) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::cameraFade), (void*)cameraFade, (void**)&originalCameraFade) !=
+            MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::fadeBounds), (void*)fadeBounds, (void**)&originalFadeBounds) !=
+            MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::coverPass)), (void*)coverPass, (void**)&originalCoverPass) !=
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::coverDepth)), (void*)coverDepth, (void**)&originalCoverDepth) !=
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::dragPlace)), (void*)dragPlace, (void**)&originalDragPlace) !=
+            MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::heldQuery), (void*)heldQuery, (void**)&originalHeldQuery) !=
+            MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::heldPlace), (void*)heldPlace, (void**)&originalHeldPlace) !=
+            MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::heldSweep), (void*)heldSweep, (void**)&originalHeldSweep) !=
+            MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::dragRotate), (void*)dragRotate, (void**)&originalDragRotate) !=
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::pickRay)), (void*)pickRay, (void**)&originalPickRay) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::cursorWarp)), (void*)cursorWarp, (void**)&originalCursorWarp) !=
@@ -698,6 +723,12 @@ static DWORD runSession() {
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::dragDrop)), (void*)dragDrop, (void**)&originalDragDrop) !=
             MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::queueWork), (void*)queueWork, (void**)&originalQueueWork) !=
+            MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::applyHeldRelease), (void*)applyHeldRelease,
+                      (void**)&originalApplyHeldRelease) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::constraintHandler), (void*)constraintHandler,
+                      (void**)&originalConstraintHandler) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::hingeHandler)), (void*)hingeHandler,
                       (void**)&originalHingeHandler) != MH_OK ||
         MH_CreateHook((void*)GetProcAddress(GetModuleHandleW(L"opengl32.dll"), "wglMakeCurrent"),
@@ -707,11 +738,13 @@ static DWORD runSession() {
         MH_CreateHook((void*)GetProcAddress(GetModuleHandleW(L"opengl32.dll"), "wglSwapBuffers"), (void*)swap,
                       (void**)&originalSwap) != MH_OK) {
         MH_Uninitialize();
+        awaitNativeHookRecovery();
         reportFault("hook_creation_failed", "not_installed", "not_required");
         return 3;
     }
     if (!createManualDefenseHooks()) {
         MH_Uninitialize();
+        awaitNativeHookRecovery();
         reportFault("manual_hook_rollback_failed", "not_installed", "not_required");
         return 3;
     }
@@ -883,10 +916,19 @@ static DWORD runSession() {
         if (!rearm(executable)) return 10;
     }
 }
-// A fault notice outlives the session loop: keep pumping it on this thread.
+// Pending native cleanup outlives a fault notice. Keep its worker even when
+// the notice is absent/dismissed; never re-arm hooks from this completion path.
+static void finishSessionWorker(bool (*noticePump)() = pumpNotice) {
+    for (;;) {
+        awaitNativeHookRecovery();
+        const bool notice = noticePump();
+        if (!notice && !nativeHookRecoveryPending()) return;
+        hookRecoveryWait(50);
+    }
+}
 static DWORD WINAPI run(void*) {
     const DWORD result = runSession();
-    while (pumpNotice()) Sleep(50);
+    finishSessionWorker();
     return result;
 }
 // Started only by `enable` (our launcher calls it right after loading the DLL; EMTK's native plugin loader

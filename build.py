@@ -30,13 +30,20 @@ TESTS = {'test_camera_motion': False, 'test_yaw_stabilization': False, 'test_vie
          'test_game_layout': False, 'test_status_json': False, 'test_held_object': False,
          'test_module_export': False,
          'test_fov_input': True, 'test_controls': True, 'test_runtime_lifecycle': True, 'test_chaining': True,
-         'test_pose_ownership': True, 'test_held_lifecycle': True,
+         'test_pose_ownership': True, 'test_held_lifecycle': True, 'test_held_rotation': True,
          'test_input_handoff': True, 'test_exploration_movement': True, 'test_movement': True,
-         'test_combat_controls': True, 'test_binding_ownership': True, 'test_tp_aim_freshness': True,
+         'test_combat_controls': True, 'test_combat_attention': True, 'test_native_aim': True,
+         'test_binding_ownership': True, 'test_tp_aim_freshness': True,
+         'test_swing_selection': True,
+         'test_camera_integration': True,
+         'test_world_interaction': True,
+         'test_settings_ui': True,
+         'test_minhook_transaction': False,
+         'test_hook_recovery': True,
          'test_manual_admission': True, 'test_input_ownership': False,
          'test_activation_status': False, 'test_raw_registration': False,
          'test_activation_lifecycle': True, 'test_cue_resources': False,
-         'test_cue_lifecycle': True, 'test_tp_hide_origin': True,
+         'test_cue_lifecycle': True, 'test_tp_hide_origin': True, 'test_native_fade': True,
          'test_native_contracts': False}
 GAME_VERSION = '0.9.5.2g'
 

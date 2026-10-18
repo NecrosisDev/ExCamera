@@ -24,7 +24,22 @@ public:
     void start(HWND owner) {
         if (running.exchange(true)) return;
         ownerWindow = owner;
-        thread = std::thread([this] { run(); });
+        try {
+            thread = std::thread([this] {
+                try {
+                    run();
+                } catch (...) {
+                    if (HWND w = window.exchange(nullptr)) DestroyWindow(w);
+                    if (menuCursor) DestroyCursor(menuCursor);
+                    menuCursor = nullptr;
+                    done = true;
+                }
+            });
+        } catch (...) {
+            running = false;
+            done = true;
+            throw;
+        }
     }
     void show(bool on) {
         if (HWND w = window.load()) PostMessageW(w, WM_APP + 2, on ? 1 : 0, 0);
@@ -57,7 +72,7 @@ public:
             view.page.status = got.rawUnavailable
                                    ? "Raw mouse input is not available here (another program "
                                      "holds it); the cursor is used."
-                                   : (got.saved ? "Saved." : "Applied, but settings could not be saved.");
+                                   : (got.saved ? "Saved." : "Applied. Save failed; retrying automatically.");
         return got.changed;
     }
     // Set before start: snapshots for display; row/delta/group actions for edits.
@@ -108,11 +123,16 @@ private:
         return self ? self->handle(w, m, wp, lp) : DefWindowProcW(w, m, wp, lp);
     }
     void openGroup(int g) {
-        view.settingsGroup = std::clamp(g, 0, ModSettings::groupCount - 1);
+        g = std::clamp(g, 0, ModSettings::groupCount - 1);
+        if (g != view.settingsGroup) view.settingsScroll = 0;
+        view.settingsGroup = g;
+        view.settingControls.clear(); // Never act on the previous page before repaint.
+        view.tip.clear();
         view.page = Page();
         view.page.kind = Page::table;
         view.page.settingsPage = true;
-        view.page.title = std::string("Settings: ") + ModSettings::group(view.settingsGroup).name;
+        view.page.title = ModSettings::group(view.settingsGroup).name;
+        view.page.description = ModSettings::groupDescription(view.settingsGroup);
         if (getSettings) view.settings = getSettings();
         for (NavNode* n : view.visible)
             if (n->request == "settings:" + std::to_string(view.settingsGroup)) view.selected = n;
@@ -124,18 +144,20 @@ private:
         wc.lpfnWndProc = proc;
         wc.hInstance = inst;
         wc.lpszClassName = L"ExCameraSettings";
-        wc.hCursor = menuCursor ? menuCursor : LoadCursor(nullptr, IDC_ARROW);
+        wc.hCursor =
+            LoadCursor(nullptr, IDC_ARROW); // Shared class cursor; menuCursor belongs to this window.
         RegisterClassW(&wc);
         HWND w = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, wc.lpszClassName, L"ExCamera",
                                  WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1000, 680, ownerWindow,
                                  nullptr, inst, this);
         if (!w) {
+            if (menuCursor) DestroyCursor(menuCursor);
+            menuCursor = nullptr;
             done = true;
             return;
         }
+        window = w;
         darkCaption(w);
-        SetWindowLongPtrW(w, GWL_EXSTYLE, GetWindowLongPtrW(w, GWL_EXSTYLE) | WS_EX_LAYERED);
-        SetLayeredWindowAttributes(w, 0, 217, LWA_ALPHA); // the game shows faintly behind
         NavNode s;
         s.label = "Settings";
         s.depth = 0;
@@ -150,14 +172,16 @@ private:
         view.roots = {s};
         view.flatten();
         openGroup(0);
-        window = w;
         SetTimer(w, 1, 250, nullptr);
+        if (!running.load()) PostMessageW(w, WM_CLOSE, 0, 0); // Stop may have raced slow window creation.
         MSG msg;
         while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
         window = nullptr;
+        if (menuCursor) DestroyCursor(menuCursor);
+        menuCursor = nullptr;
         done = true;
     }
     void click(HWND w, POINT p) {
@@ -192,10 +216,23 @@ private:
         case WM_MOUSEACTIVATE:
             return MA_NOACTIVATE; // the keyboard stays the game's
         case WM_TIMER:
-            if (IsWindowVisible(w) && GetTickCount64() - lastBeat.load() > 1000) ShowWindow(w, SW_HIDE);
+            if (IsWindowVisible(w) && GetTickCount64() - lastBeat.load() > 1000)
+                ShowWindow(w, SW_HIDE);
+            else if (IsWindowVisible(w) && getSettings) {
+                const ModSettings now = getSettings();
+                if (!(now == view.settings) ||
+                    now.manualDefenseAvailable != view.settings.manualDefenseAvailable ||
+                    now.rawMouseFallback != view.settings.rawMouseFallback ||
+                    now.savePending != view.settings.savePending) {
+                    if (view.settings.savePending && !now.savePending) view.page.status = "Saved.";
+                    view.settings = now;
+                    InvalidateRect(w, nullptr, FALSE);
+                }
+            }
             return 0;
         case WM_APP + 2:
-            ShowWindow(w, wp ? SW_SHOWNA : SW_HIDE);
+            ShowWindow(w, wp ? SW_SHOWNOACTIVATE
+                             : SW_HIDE); // Restore a minimized settings window, without taking keys.
             if (wp) openGroup(view.settingsGroup);
             InvalidateRect(w, nullptr, FALSE);
             return 0; // fresh values
@@ -212,8 +249,15 @@ private:
             PostQuitMessage(0);
             return 0; // also when the owner (game window) is rebuilt: the mod makes a new one
         case WM_SIZE:
+            view.settingControls.clear(); // Hitboxes are rebuilt for the new client size in WM_PAINT.
             InvalidateRect(w, nullptr, FALSE);
             return 0;
+        case WM_GETMINMAXINFO: {
+            auto* limits = reinterpret_cast<MINMAXINFO*>(lp);
+            limits->ptMinTrackSize.x = 700;
+            limits->ptMinTrackSize.y = 420;
+            return 0;
+        }
         case WM_ERASEBKGND:
             return 1;
         case WM_PAINT: {
@@ -279,8 +323,10 @@ private:
             GetClientRect(w, &c);
             if (p.x < view.layout.nav.right) {
                 view.scrollBy(-3 * (GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA), c.bottom);
-                InvalidateRect(w, nullptr, FALSE);
-            }
+            } else
+                view.scrollSettings(-3 * (GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA));
+            view.settingControls.clear();
+            InvalidateRect(w, nullptr, FALSE);
             return 0;
         }
         }

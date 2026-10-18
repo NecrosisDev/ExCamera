@@ -100,20 +100,43 @@ static bool replace(uintptr_t address, void* expected, void* value) {
 // MinHook rejects a changed entry before changing bytes or suspended-thread IPs.
 // If one target was taken over, remove the still-owned hooks individually and
 // retain all trampolines; the caller reports an incomplete removal honestly.
+static MH_STATUS(WINAPI* nativeDisableHook)(LPVOID) = MH_DisableHook;
+static BOOL(WINAPI* nativeHookRecoveryPending)() = MH_HasPendingRecovery;
+static MH_STATUS(WINAPI* recoverNativeHookState)() = MH_Recover;
+static void(WINAPI* hookRecoveryWait)(DWORD) = Sleep;
+// Worker only, with no gameplay lock held. A suspended callback may own rawLock
+// or another lock needed by fault reporting: finish this debt before reporting
+// or waiting for callbacks. A timeout must never abandon our suspension count.
+static void awaitNativeHookRecovery() {
+    while (nativeHookRecoveryPending()) {
+        recoverNativeHookState();
+        if (nativeHookRecoveryPending()) hookRecoveryWait(100);
+    }
+}
 static MH_STATUS disableNativeHooks() {
-    const MH_STATUS status = MH_DisableHook(MH_ALL_HOOKS);
+    awaitNativeHookRecovery();
+    MH_STATUS status = nativeDisableHook(MH_ALL_HOOKS);
+    if (nativeHookRecoveryPending()) {
+        awaitNativeHookRecovery();
+        // The first transaction may have failed before or after committing.
+        // One fresh disable establishes its final state after cleanup succeeds.
+        status = nativeDisableHook(MH_ALL_HOOKS);
+        awaitNativeHookRecovery();
+    }
     if (status != MH_ERROR_CONFLICT) return status;
     bool seen[fp::sig::targetCount]{};
     const char* changed = "unknown";
     for (const auto& s : fp::sig::signatures) {
         if (!s.hook || seen[s.target] || !layout.rva[s.target]) continue;
         seen[s.target] = true;
-        if (MH_DisableHook((void*)gameAt(s.target)) == MH_ERROR_CONFLICT)
+        if (nativeDisableHook((void*)gameAt(s.target)) == MH_ERROR_CONFLICT)
             changed = fp::sig::targetNames[s.target];
+        awaitNativeHookRecovery();
     }
     for (const char* name : {"wglSwapBuffers", "wglMakeCurrent", "wglDeleteContext"}) {
         const auto entry = GetProcAddress(GetModuleHandleW(L"opengl32.dll"), name);
-        if (entry && MH_DisableHook((void*)entry) == MH_ERROR_CONFLICT) changed = name;
+        if (entry && nativeDisableHook((void*)entry) == MH_ERROR_CONFLICT) changed = name;
+        awaitNativeHookRecovery();
     }
     snprintf(faultDetail, sizeof faultDetail,
              "native hook entry changed (%s); replacement code and retained trampolines kept; restart required",
@@ -290,53 +313,54 @@ static void tpHideAdd() {
         for (unsigned j = 0; j < c; ++j) hideAdd(tpWalk[j]);
     }
 }
-// the point under the third-person crosshair (the screen centre): the game's own pick ray from the
-// camera just committed, else the level grid, else 1000 units out; the character's own body (within 70
-// of the eye) does not count. Published in the aim's (scene-local) frame for the input step.
+// Third-person physical head gaze still needs world depth. Combat targeting
+// belongs to AE2E0; this sample is not another opponent/weapon target selector.
+// Reuse the native pick's near origin and direction for both aim-box modes.
 static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye, uintptr_t scene,
                            const TpAimRequest& request) {
+    // Keep matching depth available during a valid refresh; only a failed
+    // query retires it so input can fall back without reusing a stale owner.
+    auto discard = [&]() {
+        AcquireSRWLockExclusive(&aimLock);
+        if (sameTpAimRequest(tpAimSample, request)) tpAimSet = false;
+        ReleaseSRWLockExclusive(&aimLock);
+    };
+    const uintptr_t viewport = pickViewportForCamera(camera);
     RECT client{};
-    if (!request.valid || request.sector != scene || !hookedWindow || !GetClientRect(hookedWindow, &client) ||
-        client.right != request.width || client.bottom != request.height ||
+    if (!viewport || !originalPickRay || !request.valid || request.sector != scene || !hookedWindow ||
+        !GetClientRect(hookedWindow, &client) || client.right != request.width ||
+        client.bottom != request.height || *(int*)(viewport + field::viewport::width) != request.width ||
+        *(int*)(viewport + field::viewport::height) != request.height ||
         *(float*)(camera + field::camera::fov) != request.fov)
-        return;
+        return discard();
     AcquireSRWLockShared(&aimLock);
     const bool current = tpAimRequestCurrent(request);
     ReleaseSRWLockShared(&aimLock);
-    if (!current) return;
-    // The pose and box come from the same camera-owner snapshot. Never pair an
-    // older pose with box atomics published by a newer input sample.
-    float fwd[3], from[3] = {pose[9], pose[10], pose[11]};
-    fp::cursorRay(pose, request.x, request.y, float(request.height), request.fov, fwd);
+    if (!current) return discard();
+    const float x = float(request.width) * .5f + request.x, y = float(request.height) * .5f + request.y;
+    alignas(8) unsigned char hit[0x40]{};
+    bool got = false;
+    __try {
+        got = originalPickRay(viewport, x, y, (uintptr_t)hit) != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return discard();
+    }
+    const float* fwd = (const float*)(hit + field::pick::direction);
+    const float* from = (const float*)(hit + field::pick::origin);
+    const float length2 = fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2];
+    if (!std::isfinite(length2) || std::fabs(length2 - 1.f) >= .01f || !finiteAimVector(from))
+        return discard();
+    // A native miss still supplies the real ray. Its overhead ground-plane
+    // distance can be infinite or behind us, so keep the finite forward fallback.
     float t = 1000.f;
-    if (originalPickRay) {
-        const bool free = request.free;
-        const float x = float(request.width) * 0.5f + request.x, y = float(request.height) * 0.5f + request.y;
-        alignas(8) unsigned char hit[0x40]{};
-        bool got = false;
-        __try {
-            got = originalPickRay(camera, x, y, (uintptr_t)hit) != 0;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            got = false;
+    const float h = *(float*)(hit + field::pick::distance);
+    if (got && std::isfinite(h) && h > 0.f && h < t) {
+        float s = 0;
+        for (int i = 0; i < 3; ++i) {
+            const float p = from[i] + fwd[i] * h - eye[i];
+            s += p * p;
         }
-        if (free) {
-            const float* d = (const float*)(hit + field::pick::direction);
-            const float* o = (const float*)(hit + field::pick::origin);
-            const float l = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-            if (std::isfinite(l) && std::fabs(l - 1.f) < 0.01f && std::isfinite(o[0] + o[1] + o[2])) {
-                memcpy(fwd, d, 12);
-                memcpy(from, o, 12);
-            }
-        }
-        const float h = *(float*)(hit + field::pick::distance);
-        if (got && std::isfinite(h) && h > 0.f && h < t) {
-            float s = 0;
-            for (int i = 0; i < 3; ++i) {
-                const float p = from[i] + fwd[i] * h - eye[i];
-                s += p * p;
-            }
-            if (std::sqrt(s) > 70.f) t = h;
-        }
+        if (s > 70.f * 70.f) t = h;
     }
     if (const uintptr_t level = levelGrid(); level && levelRay && levelRay2)
         t = std::fmin(t, levelClear(level, from, fwd, t) + 8.f);
@@ -354,13 +378,17 @@ static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye
     for (float v : local)
         if (!std::isfinite(v)) ok = false;
     RECT after{};
-    ok = ok && GetClientRect(hookedWindow, &after) && after.right == request.width &&
+    ok = ok && pickViewportForCamera(camera) == viewport &&
+         *(int*)(viewport + field::viewport::width) == request.width &&
+         *(int*)(viewport + field::viewport::height) == request.height &&
+         GetClientRect(hookedWindow, &after) && after.right == request.width &&
          after.bottom == request.height && *(float*)(camera + field::camera::fov) == request.fov;
     AcquireSRWLockExclusive(&aimLock);
     if (ok && tpAimRequestCurrent(request)) {
         memcpy(tpAimLocal, local, 12);
         tpAimSample = request;
         tpAimSet = true;
-    }
+    } else if (sameTpAimRequest(tpAimSample, request))
+        tpAimSet = false;
     ReleaseSRWLockExclusive(&aimLock);
 }

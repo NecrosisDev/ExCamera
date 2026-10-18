@@ -34,7 +34,7 @@ static char nativeRay(uintptr_t, float, float, uintptr_t out) {
 static int nativePlace(uintptr_t, uintptr_t camera, float) {
     if (failPlacement) RaiseException(0xe0420001, 0, 0, nullptr);
     alignas(8) unsigned char out[0x40]{};
-    pickRay(camera, 0, 0, (uintptr_t)out);
+    pickRayFor(gameAt(fp::sig::placementPickReturn), camera, 0, 0, (uintptr_t)out);
     // The native placement may preserve the existing shape while translating it. Individual tests
     // install a new native shape to model release, settling and a subsequent grab.
     return 1;
@@ -55,7 +55,9 @@ static unsigned long long nativeDoor(uintptr_t, uintptr_t, int message) {
     if (message == 0x80) ++nativeDoorReleases;
     return 1;
 }
-static void place(uintptr_t object) { dragPlace(object, 0, -100000.f); }
+static void place(uintptr_t object) {
+    dragPlace(object, *(uintptr_t*)gameAt(fp::sig::mainViewport), -100000.f);
+}
 static bool placementFaultCaught(uintptr_t object) {
     __try {
         place(object);
@@ -71,7 +73,18 @@ int main() {
     const uintptr_t drag = base + 0x5b0000, object = base + 0x5b1000, body = base + 0x5b2000;
     *(uintptr_t*)gameAt(fp::sig::dragManager) = drag;
     *(uintptr_t*)(object + field::sceneNode::bodyPart) = body;
+    *(uintptr_t*)(body + field::bodyPart::meshNode) = object;
+    *(unsigned*)(body + field::bodyPart::flags) = 0x10000000;
+    const float nativePose[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+    float* placementPose = (float*)(object + field::sceneNode::localTransform);
+    std::memcpy(placementPose, nativePose, 48);
+    std::memcpy((void*)(body + field::bodyPart::pose), nativePose, 48);
+    propagateHeldPose = [](uintptr_t) {};
     *(uintptr_t*)gameAt(fp::sig::guiManager) = base + 0x5b3000;
+    // Model the actual placement caller and owned main viewport. A null camera
+    // or arbitrary pick call is deliberately outside close-view placement.
+    *(uintptr_t*)gameAt(fp::sig::mainViewport) = base + 0x5b7000;
+    *(uintptr_t*)gameAt(fp::sig::playerRoot) = base + 0x5b8000;
     originalPickRay = nativeRay;
     originalDragPlace = nativePlace;
     originalDragDrop = nativeDrop;
@@ -119,24 +132,28 @@ int main() {
     begin(100.f);
     std::memcpy(pts, original, 48);
     heldTurnX = 100.f;
+    check(turnHeld(object), "the native rotation adapter consumes a held mouse turn");
     place(object);
-    check(std::memcmp(pts, original, 48) != 0, "a held mouse turn rotates the native target points");
-    float firstTurn[4][3];
-    std::memcpy(firstTurn, pts, 48);
+    check(std::memcmp(placementPose, nativePose, 36) != 0 && std::memcmp(pts, original, 48) == 0,
+          "a held mouse turn changes placement orientation and preserves original recovery points");
+    float firstTurn[12];
+    std::memcpy(firstTurn, placementPose, 48);
     fixtureTick += 16;
+    turnHeld(object);
     place(object);
     bool stable = true;
-    for (int k = 0; k < 4; ++k)
-        for (int i = 0; i < 3; ++i) stable &= std::fabs(firstTurn[k][i] - pts[k][i]) < 1e-3f;
+    for (int k = 0; k < 12; ++k) stable &= std::fabs(firstTurn[k] - placementPose[k]) < 1e-3f;
     check(stable, "the same grab preserves one rotation without compounding it");
     pushSpeed = 0.f;
     dragDrop(drag);
     fixtureTick += 16;
     // The released body settled to a different native pose. It remains the same scene-node address.
+    std::memcpy(placementPose, nativePose, 48);
     begin(100.f);
     std::memcpy(pts, original, 48);
+    turnHeld(object);
     place(object);
-    check(std::memcmp(pts, original, 48) == 0,
+    check(std::memcmp(placementPose, nativePose, 48) == 0 && std::memcmp(pts, original, 48) == 0,
           "same-item re-grab starts from its current native pose with no old rotation");
     heldTurnX = 25.f;
     pushSpeed = 500.f;
@@ -200,13 +217,16 @@ int main() {
     begin(100.f);
     std::memcpy(pts, original, 48);
     heldTurnX = 60.f;
+    turnHeld(object);
     place(object);
     viewMode = 2;
     place(object);
     std::memcpy(pts, original, 48);
+    std::memcpy(placementPose, nativePose, 48);
     viewMode = 0;
+    turnHeld(object);
     place(object);
-    check(std::memcmp(pts, original, 48) == 0,
+    check(std::memcmp(placementPose, nativePose, 48) == 0 && std::memcmp(pts, original, 48) == 0,
           "return from overhead uses the held object's current native pose");
     failPlacement = true;
     const bool caught = placementFaultCaught(object);

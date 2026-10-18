@@ -4,12 +4,25 @@
 // The F8 settings live in the atomics the threads read; panel::ModSettings is their value as a whole, and
 // panel::rowInfo says, per row, which field and which [section] key in first-person.ini. Reading, writing
 // and comparing go through that table: a setting is described once.
+// Only row identities are queued: every retry reads the latest live value under
+// settingsLock, so an older failed save cannot overwrite a newer edit.
+static std::array<bool, panel::setting::count> pendingSettingsRows{};
+static bool settingsSavePendingLocked() {
+    return selectedFov.load() != persistedFov.load() ||
+           std::any_of(pendingSettingsRows.begin(), pendingSettingsRows.end(), [](bool dirty) { return dirty; });
+}
+static bool settingsSavePending() {
+    SettingsGuard guard;
+    return settingsSavePendingLocked();
+}
 static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     panel::ModSettings s;
     s.fov = selectedFov.load();
     s.sensitivity = int(std::lround(sensitivity.load() / 0.0025f * 100.f));
     s.headSteady = headSteady.load();
-    s.rawMouse = rawWanted.load();
+    s.rawMouse = rawMouse;
+    s.rawMouseFallback = rawMouse && !rawWanted.load();
+    s.savePending = settingsSavePendingLocked();
     s.hideHelmet = helmetMode.load() == fp::HelmetMode::hide;
     s.grabRange = grabRange.load();
     s.hideSwingCrosshair = hideSwingCrosshair.load();
@@ -32,6 +45,8 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.cueThrust = cueThrust.load();
     s.fpDefense = fpManualGuard.load();
     s.tpDefense = tpManualGuard.load();
+    s.fpSwingSelection = fpSwingSelection.load();
+    s.tpSwingSelection = tpSwingSelection.load();
     s.manualDefenseAvailable = manualDefenseReady.load();
     s.rmbMode = rmbMode.load();
     s.freezeWindows = windowsFreeze.load();
@@ -66,13 +81,17 @@ writeLiveSettings(const panel::ModSettings& s) { // caller holds settingsLock; s
                                rmbMode.load() != s.rmbMode || rotateHeldKey.load() != s.rotateHeldKey ||
                                leanKey.load() != s.leanKey || leanKeysMode.load() != s.leanKeysMode ||
                                leanLeftKey.load() != s.leanLeftKey || leanRightKey.load() != s.leanRightKey ||
-                               crouchMode.load() != s.crouchMode;
+                               crouchMode.load() != s.crouchMode ||
+                               fpSwingSelection.load() != s.fpSwingSelection ||
+                               tpSwingSelection.load() != s.tpSwingSelection;
     fpManualGuard = s.fpDefense;
     tpManualGuard = s.tpDefense;
+    fpSwingSelection = s.fpSwingSelection;
+    tpSwingSelection = s.tpSwingSelection;
     selectedFov.store(s.fov);
     sensitivity = 0.0025f * float(s.sensitivity) / 100.f;
     headSteady = s.headSteady;
-    rawWanted = s.rawMouse;
+    if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;
     rawMouse = s.rawMouse;
     helmetMode = s.hideHelmet ? fp::HelmetMode::hide : fp::HelmetMode::show;
     grabRange = s.grabRange;
@@ -137,7 +156,9 @@ static panel::ModSettings readSettings(const wchar_t* path) {
         else {
             wchar_t* end = nullptr;
             const long n = wcstol(text, &end, 10);
-            if (end != text) v = int(n);
+            const bool parsed = end != text;
+            while (end && (*end == L' ' || *end == L'\t')) ++end;
+            if (parsed && end && !*end) v = int(n);
         }
         if (v == panel::badText) continue;
         if (i.value)
@@ -175,13 +196,29 @@ static bool saveRow(int r, const panel::ModSettings& s) {
 static bool commitSettings(const panel::ModSettings& s, const panel::ModSettings& was) {
     bool saved = true;
     for (int r = 0; r < panel::setting::count; ++r)
-        if (!panel::sameRow(r, s, was)) {
+        if (!panel::sameRow(r, s, was) || pendingSettingsRows[r]) {
             const bool written = saveRow(r, s);
             saved = written && saved;
             if (r == panel::setting::fov && written) persistedFov = s.fov;
+            if (r != panel::setting::fov) pendingSettingsRows[r] = !written;
         }
     writeLiveSettings(s);
     return saved;
+}
+// The worker retries at most `budget` rows per tick, in round-robin order. FOV
+// keeps its existing selected/persisted marker and is saved by saveFov itself.
+static void retrySettingsRowsLocked(unsigned budget) {
+    if (!settingsPath[0] || !budget) return;
+    static unsigned next = 0;
+    const panel::ModSettings current = readLiveSettings();
+    unsigned attempted = 0;
+    for (unsigned scanned = 0; scanned < panel::setting::count && attempted < budget; ++scanned) {
+        const unsigned row = next;
+        next = (next + 1) % panel::setting::count;
+        if (!pendingSettingsRows[row]) continue;
+        ++attempted;
+        if (saveRow(int(row), current)) pendingSettingsRows[row] = false;
+    }
 }
 static void awaitRawRegistration(bool enabling) {
     for (int i = 0; i < 20 && enabling && !InterlockedCompareExchange(&rawRegistered, 0, 0) && rawWanted.load();
@@ -212,6 +249,7 @@ static panel::SettingsChange applySetting(int row, int delta, int group) {
         SettingsGuard guard;
         const panel::ModSettings was = readLiveSettings();
         result.settings = was;
+        if (row != panel::ModSettings::resetControl && was.inactiveReason(row)) return result;
         result.changed = result.settings.click(row, delta, group);
         if (!result.changed) return result;
         result.settings.normalize();
@@ -220,6 +258,6 @@ static panel::SettingsChange applySetting(int row, int delta, int group) {
     }
     awaitRawRegistration(enablingRaw);
     result.settings = currentSettings();
-    result.rawUnavailable = enablingRaw && !result.settings.rawMouse;
+    result.rawUnavailable = enablingRaw && result.settings.rawMouseFallback;
     return result;
 }

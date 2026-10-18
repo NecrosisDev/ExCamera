@@ -448,7 +448,8 @@ static bool crouchHeadroomClear(uintptr_t root) {
 }
 static bool crouchAllowed(uintptr_t root) {
     if (!root || !readable(root, 0x1300) || !InterlockedCompareExchange(&active, 0, 0) ||
-        InterlockedCompareExchange(&stopping, 0, 0) || viewMode.load() >= 2)
+        InterlockedCompareExchange(&stopping, 0, 0) ||
+        !InterlockedCompareExchange(&cameraReady, 0, 0) || viewMode.load() >= 2)
         return false;
     const unsigned state = *(unsigned*)(root + field::character::stateFlags);
     return !*(unsigned char*)(root + field::character::combatStance) &&

@@ -255,13 +255,13 @@ int main() {
             return 0.f;
         };
         tp.update(eye, 0, 0, 250, 40, 15, 1.f / 60, none,
-                  pose); // never closer than 12 to the pivot (now easing down to the eye: no room above it)
+                  pose); // No room: stay at the reachable pivot rather than crossing geometry.
         d = 0;
         for (int i = 0; i < 3; ++i) {
             const float v = pose[9 + i] - tp.pivot[i];
             d += v * v;
         }
-        assert(std::fabs(std::sqrt(d) - 12) < 0.5f);
+        assert(d == 0.f);
         const float far[3] = {5000, 170, 0};
         tp.update(far, 0.5f, 0.2f, 250, -40, 15, 1.f / 60, open, pose);
         float back2 = 0;
@@ -641,6 +641,26 @@ int main() {
                fp::clampEyeSetback(99) == fp::eyeSetbackMax);
         puts("PASS: eye setback moves the viewpoint straight back along the head by the setting, clamped "
              "inside the head");
+    }
+    { // Collision results closer than the old minimum boom must remain authoritative.
+        const float eye[3] = {0, 170, 0};
+        for (float gap : {0.f, 5.f, 11.f, 12.f, 25.f}) {
+            auto wall = [gap](const float* origin, const float* dir, float length, bool) {
+                if (dir[2] >= 0.f) return length;
+                const float hit = (-gap - origin[2]) / dir[2];
+                return hit >= 0.f && hit <= length ? hit : length;
+            };
+            fp::ThirdPerson camera;
+            float pose[12]{};
+            camera.update(eye, 0, 0, 250, 0, 0, 1.f / 60.f, wall, pose);
+            assert(pose[11] >= -gap && camera.lastAllowed <= gap);
+        }
+        fp::ThirdPerson camera;
+        assert(fp::knockdownStep(camera.knock, 4, 0, 1000));
+        camera.down = true;
+        camera.reset();
+        assert(!camera.down && !fp::knockdownStep(camera.knock, 0, 0, 1100));
+        puts("PASS: sub-12cm camera clearance is respected and reset retires knockdown state");
     }
     // dynamic near plane
     {

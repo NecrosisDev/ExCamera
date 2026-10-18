@@ -30,6 +30,56 @@ static bool manualCombat(uintptr_t root, uintptr_t bh) {
     return manualDefenseReady.load() &&
            (viewMode.load() == 0 ? fpManualGuard.load() : tpManualGuard.load()) && ordinaryCombat(root, bh);
 }
+// BEAC0 scores perceived opponents with character+CB0, also used by the head.
+// Give only this native owner the accepted aim-point direction. Its visibility,
+// distance, tie-breaking, target publication and posture selection stay native.
+// The separate reactive-defense forward vector (+A08) is deliberately untouched.
+static Behavior originalCombatAttention;
+static bool attentionDirection(uintptr_t bh, Aim& a, float (&direction)[3]) {
+    if (!InterlockedCompareExchange(&inputEnabled, 0, 0) || !getAim(bh, a) || !ordinaryCombat(a.root, bh) ||
+        *(uintptr_t*)(a.root + field::character::behaviour) != bh)
+        return false;
+    const fp::InputStamp& stamp = a.attentionStamp;
+    if (!a.revision || stamp.mode < 0 || stamp.mode > 1 || stamp.root != a.root || stamp.head != a.head ||
+        !stamp.scene || stamp.scene != *(uintptr_t*)gameAt(fp::sig::currentScene) ||
+        stamp.mode != viewMode.load() || stamp.generation != inputOwner.generation() ||
+        stamp.policyRevision != inputOwner.policyRevision())
+        return false;
+    // Both positions are in the same actor sector. TP's point is already
+    // admitted by the existing current-geometry test; do not repick or cache it.
+    double length2 = 0;
+    double delta[3];
+    for (int i = 0; i < 3; ++i) {
+        delta[i] = double(a.point[i]) - double(a.origin[i]);
+        if (!std::isfinite(delta[i])) return false;
+        length2 += delta[i] * delta[i];
+    }
+    if (!(length2 > 1e-8) || !std::isfinite(length2)) return false;
+    const double length = std::sqrt(length2);
+    for (int i = 0; i < 3; ++i) direction[i] = float(delta[i] / length);
+    return true;
+}
+static void combatAttention(uintptr_t bh) {
+    Aim a;
+    float presented[3]{}, saved[3]{};
+    float* gaze = nullptr;
+    __try {
+        if (attentionDirection(bh, a, presented)) {
+            gaze = (float*)(a.root + field::character::gaze);
+            memcpy(saved, gaze, sizeof saved);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        gaze = nullptr;
+    }
+    __try {
+        if (gaze) memcpy(gaze, presented, sizeof presented);
+        originalCombatAttention(bh);
+    } __finally {
+        // Restore the recorded actor, even after a view/scene/player handoff.
+        // Preserve a later native owner's write, and unwind nested calls/faults.
+        if (gaze && !memcmp(gaze, presented, sizeof presented)) memcpy(gaze, saved, sizeof saved);
+    }
+}
 static void publishGuard(const InputOwner::Sample& sample, bool held) {
     // Carry the sampled owner through publication. Reloading these fields here
     // could give an older physical hold a newer handoff or settings revision.
@@ -80,6 +130,38 @@ static DefensePermission defensePermission(uintptr_t root) {
         return DefensePermission::native;
     }
 }
+// Shared B7560 readiness boundary for the two explicit guard requests below.
+// Callers validate ownership and contain optional reads with SEH. Active native
+// defense does not use this gate: its tracking and transitions stay native.
+static bool guardReadiness(uintptr_t root) {
+    const float readiness = *(float*)(root + field::character::postureReadiness);
+    const float balance = *(float*)(root + field::character::balance);
+    const float maximum = *(float*)(root + field::character::balanceMax);
+    return std::isfinite(readiness) && std::isfinite(balance) && std::isfinite(maximum) &&
+           double(readiness) >= .01 && double(balance) >= double(maximum) - .05;
+}
+// B7560 selects the requested posture; BEAC0 publishes it, then 169200
+// accepts it through the ordinary motion/recovery path. A manual hold supplies
+// the readiness intent otherwise inferred from a near opponent/recent combat.
+// Never change an active parry, accepted motion, equipment or physical pose.
+using CombatPosture = uint32_t (*)(uintptr_t);
+static CombatPosture originalCombatPosture;
+static uint32_t combatPosture(uintptr_t bh) {
+    const uint32_t native = originalCombatPosture(bh);
+    if (native != 3) return native;
+    __try {
+        if (!bh) return native;
+        const uintptr_t root = *(uintptr_t*)(bh + field::behaviour::character);
+        if (!root || *(uintptr_t*)(root + field::character::behaviour) != bh ||
+            defensePermission(root) != DefensePermission::held ||
+            *(unsigned char*)(root + field::character::defenseActive))
+            return native;
+        if (guardReadiness(root)) return 4;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Optional ownership/field failure leaves the native result intact.
+    }
+    return native;
+}
 static void withdrawDefense(uintptr_t root) {
     // The attack-associated route can retain an incoming motion with active=0.
     // Cleanup belongs to the native actor callback; never run it from settings,
@@ -90,7 +172,17 @@ static void withdrawDefense(uintptr_t root) {
         ++guardWithdrawals;
     }
 }
+// Stack-local physics-update ownership. Native 169200 may already run 163880
+// (including a rejected attempt); never add a second request in that case.
+struct DefenseUpdate {
+    uintptr_t root;
+    DefenseUpdate* previous;
+    bool reactiveSeen = false;
+};
+static thread_local DefenseUpdate* defenseUpdate = nullptr;
 static void defenseReactive(uintptr_t root) {
+    for (auto* update = defenseUpdate; update; update = update->previous)
+        if (update->root == root) update->reactiveSeen = true;
     if (defensePermission(root) == DefensePermission::denied) {
         withdrawDefense(root);
         ++guardDenied;
@@ -120,6 +212,42 @@ static uint64_t defenseMotionSelect(uintptr_t root, uintptr_t incoming) {
     if (defensePermission(root) == DefensePermission::denied) return 0xffffffffu;
     return originalDefenseMotionSelect(root, incoming);
 }
+// 169200 resolves native physical state, polls the player, and runs automatic
+// defense before returning. Held Manual guard supplies an explicit interception
+// request when that scheduler did not run it. 163880 owns threat validation,
+// 162F80 weapon constraint targets and 1636E0/156FB0 the defensive motion.
+// Already-active interception remains updated by the native body. Never force
+// eligibility, attack phase, accepted recovery or a defensive pose ourselves.
+static Behavior originalCombatUpdate;
+static bool manualInterceptionReady(uintptr_t root) {
+    __try {
+        if (defensePermission(root) != DefensePermission::held ||
+            !*(unsigned char*)(root + field::character::physicsLive) ||
+            *(unsigned char*)(root + field::character::defenseActive))
+            return false;
+        const unsigned state = *(unsigned*)(root + field::character::stateFlags);
+        const int motion = *(int*)(root + field::character::motion);
+        if ((state != 0 && state != 8) || (motion != 3 && motion != 4)) return false;
+        return guardReadiness(root);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+static void combatUpdate(uintptr_t root) {
+    DefenseUpdate update{root, defenseUpdate};
+    bool nestedActor = false;
+    for (auto* previous = update.previous; previous; previous = previous->previous)
+        nestedActor |= previous->root == root;
+    defenseUpdate = &update;
+    __try {
+        originalCombatUpdate(root);
+        // Recheck the current physical/input owner after native code. UI, focus,
+        // scene, actor and policy handoffs cannot carry an old hold forward.
+        if (!nestedActor && !update.reactiveSeen && manualInterceptionReady(root)) defenseReactive(root);
+    } __finally {
+        defenseUpdate = update.previous;
+    }
+}
 // Initial optional admission is complete or withheld. Once created, the hooks
 // remain registered through F7: changed entries require a restart, and their
 // removal identities must survive the failed re-arm.
@@ -146,11 +274,12 @@ static const char* manualDefenseReasonText() {
 }
 static constexpr fp::sig::Target manualDefenseTargets[] = {
     fp::sig::defenseReactive, fp::sig::defenseAttackUpdate, fp::sig::defenseMotionSelect,
-    fp::sig::defenseCleanup};
+    fp::sig::defenseCleanup,  fp::sig::combatPosture,       fp::sig::combatUpdate};
 static void withholdManualDefense(int reason) {
     manualDefenseReady = false;
     manualDefenseAvailability = reason;
     for (const auto target : manualDefenseTargets) layout.rva[target] = 0;
+    layout.rva[fp::sig::combatUpdateSlot] = 0; // read-only locator, not a hook/removal entry
 }
 static bool nativeDefenseEntryMatches(const fp::ImageView& file, uint32_t rva) {
     if (!rva || uint64_t(rva) + 16 > file.size) return false;
@@ -199,7 +328,9 @@ static bool createManualDefenseHooks() {
     const Hook hooks[] = {
         {fp::sig::defenseReactive, (void*)defenseReactive, (void**)&originalDefenseReactive},
         {fp::sig::defenseAttackUpdate, (void*)defenseAttackUpdate, (void**)&originalDefenseAttackUpdate},
-        {fp::sig::defenseMotionSelect, (void*)defenseMotionSelect, (void**)&originalDefenseMotionSelect}};
+        {fp::sig::defenseMotionSelect, (void*)defenseMotionSelect, (void**)&originalDefenseMotionSelect},
+        {fp::sig::combatPosture, (void*)combatPosture, (void**)&originalCombatPosture},
+        {fp::sig::combatUpdate, (void*)combatUpdate, (void**)&originalCombatUpdate}};
     unsigned created = 0;
     for (const Hook& hook : hooks) {
         if (MH_CreateHook((void*)gameAt(hook.target), hook.replacement, hook.original) != MH_OK) {

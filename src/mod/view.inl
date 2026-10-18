@@ -18,6 +18,58 @@ static bool readable(uintptr_t address, size_t size) {
 static const char* nodeName(uintptr_t node) {
     return readable(node, 0x2a0) ? (const char*)(node + field::sceneNode::name) : "";
 }
+// 90520 runs 90C00 AFTER our camera sampler. Its obstruction ray still uses
+// the stock controller orbit, not the published close-view camera. Keep the
+// native 90710 traversal/parent cleanup and 58CD0 fade recovery, but make its
+// two obstruction predicates miss while this controller owns a close view.
+using CameraFade = void (*)(uintptr_t);
+using FadeBounds = bool (*)(const float*, const float*, const float*);
+static CameraFade originalCameraFade; // RVA 0x90C00
+static FadeBounds originalFadeBounds; // RVA 0x7A270, shared segment/sphere predicate
+static thread_local bool clearCameraObstructions = false;
+static bool closeViewFadeOwner(uintptr_t controller) {
+    if (!controller || viewMode.load() >= 2 || !InterlockedCompareExchange(&active, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0) || !InterlockedCompareExchange(&cameraReady, 0, 0) ||
+        DWORD(InterlockedCompareExchange(&navThread, 0, 0)) != GetCurrentThreadId())
+        return false;
+    // The reviewed call follows nav, outside cameraLock. An unexpected nested
+    // sampler or concurrent restoration must not recurse/wait on that lock.
+    if (!TryAcquireSRWLockShared(&cameraLock)) return false;
+    bool owned = false;
+    __try {
+        uintptr_t view = 0, camera = 0;
+        currentCamera(view, camera);
+        owned = !park.active && !InterlockedCompareExchange(&restorationUnknown, 0, 0) &&
+                controller == savedController && sameOwner(view, camera) && savedRoot && savedScene &&
+                !identityChanged();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        owned = false;
+    }
+    ReleaseSRWLockShared(&cameraLock);
+    return owned;
+}
+static void cameraFade(uintptr_t controller) {
+    const bool previous = clearCameraObstructions;
+    // A nested, unrelated controller gets its own native policy, not the
+    // outer camera's scope. Restore even if native traversal faults.
+    clearCameraObstructions = closeViewFadeOwner(controller);
+    __try {
+        originalCameraFade(controller);
+    } __finally {
+        clearCameraObstructions = previous;
+    }
+}
+static bool fadeBoundsFor(uintptr_t caller, const float* origin, const float* segment, const float* bounds) {
+    if (clearCameraObstructions && viewMode.load() < 2 && InterlockedCompareExchange(&active, 0, 0) &&
+        !InterlockedCompareExchange(&stopping, 0, 0) &&
+        (caller == gameAt(fp::sig::fadeVerticalBoundsReturn) ||
+         caller == gameAt(fp::sig::fadeOrbitBoundsReturn)))
+        return false;
+    return originalFadeBounds(origin, segment, bounds);
+}
+static bool fadeBounds(const float* origin, const float* segment, const float* bounds) {
+    return fadeBoundsFor((uintptr_t)_ReturnAddress(), origin, segment, bounds);
+}
 // Hide list, sorted (binary search), published by the render thread, read by
 // 0x58CD0's thread. Meshes are compared, never dereferenced, unless the sector
 // being updated lists them this frame.

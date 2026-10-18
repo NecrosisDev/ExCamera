@@ -83,7 +83,20 @@ typedef enum MH_STATUS
 
     // ExCamera: a target's entry or hot-patch area changed since this hook was
     // created/enabled. No pending entries or suspended thread IPs are changed.
-    MH_ERROR_CONFLICT
+    MH_ERROR_CONFLICT,
+
+    // ExCamera: a live thread could not be opened, suspended, or resumed.
+    // A successful suspension is retained until its matching resume succeeds.
+    MH_ERROR_THREAD_SUSPEND,
+
+    // ExCamera: a thread context could not be read or safely relocated.
+    // No trampoline is released after a failed relocation. If a recovery
+    // context cannot be applied, its suspension is retained until a retry.
+    MH_ERROR_THREAD_CONTEXT,
+
+    // ExCamera: committed code could not be flushed from the instruction cache.
+    // Hook state records the committed bytes; the trampoline remains allocated.
+    MH_ERROR_MEMORY_FLUSH
 }
 MH_STATUS;
 
@@ -102,6 +115,11 @@ extern "C" {
     // Uninitialize the MinHook library. You must call this function EXACTLY
     // ONCE at the end of your program.
     MH_STATUS WINAPI MH_Uninitialize(VOID);
+
+    // ExCamera: inspect/retry retained OS cleanup without starting a new hook
+    // transaction. The caller must keep servicing recovery while it is pending.
+    BOOL WINAPI MH_HasPendingRecovery(VOID);
+    MH_STATUS WINAPI MH_Recover(VOID);
 
     // Creates a hook for the specified target function, in disabled state.
     // Parameters:
@@ -145,7 +163,9 @@ extern "C" {
     MH_STATUS WINAPI MH_CreateHookApiEx(
         LPCWSTR pszModule, LPCSTR pszProcName, LPVOID pDetour, LPVOID *ppOriginal, LPVOID *ppTarget);
 
-    // Removes an already created hook.
+    // Removes an already created hook. Published trampoline storage is retained
+    // for process lifetime: a current-RIP scan cannot exclude pending returns or
+    // caller-held original pointers. Only never-published storage is reclaimed.
     // Parameters:
     //   pTarget [in] A pointer to the target function.
     MH_STATUS WINAPI MH_RemoveHook(LPVOID pTarget);

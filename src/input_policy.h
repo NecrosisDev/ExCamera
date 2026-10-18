@@ -89,6 +89,28 @@ inline float flippedSideHeading(float aim, float body, bool wideThreshold) {
     // -> present threshold plus ten degrees, comfortably past the strict test.
     return oppositeSide(aim, body, wideThreshold) ? body : wrapHeading(body + threshold + 0.174532925f);
 }
+// Close-view swing selection follows a deliberate horizontal mouse gesture,
+// before the aim box splits that motion between aiming and camera turning.
+// A small reversal cannot change the selected side; vertical motion is neutral.
+struct SwingGesture {
+    int side = 0; // -1 left origin, +1 right origin, 0 no directional choice yet
+    float pending = 0.f;
+    void move(float dx, float dy, float width) {
+        if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(width) || !(width > 0.f)) return;
+        if (std::fabs(dy) > std::fabs(dx) * 2.f) {
+            pending = 0.f;
+            return;
+        }
+        if (!dx) return;
+        if (pending * dx < 0.f) pending = 0.f;
+        pending += dx;
+        const float threshold = std::fmax(3.f, width * .004f);
+        if (std::fabs(pending) >= threshold) {
+            side = pending < 0.f ? -1 : 1;
+            pending = 0.f;
+        }
+    }
+};
 // Attack-origin cue: where an ordinary attack would start, or the family the
 // game actually accepted. Neutral whenever that is not known with confidence.
 // Accepted motion at root+0x9B8 (set by transition 0x179EE0): 5-7 default
@@ -175,15 +197,12 @@ inline CueSide originSide(OriginCue cue, const SwingHands& s) {
     if (s.slot == 1) return s.alternate ? own : CueSide::none;
     return s.alternate ? CueSide::none : other;
 }
-// Screen side for the cue. Headings grow toward screen-left (heading 0x19F00 =
-// atan2(x,z); mouse-right lowers yaw), so the opposite request is chosen with the
-// aim left of the body. Large view roll makes screen sides disagree with actor
-// sides, so the cue goes neutral (|right.y| > 0.5).
+// originSide already resolves the accepted motion's physical hand and whether
+// this is a forehand or a backhand. Its screen side does not depend on the sign
+// of the game's heading convention. Large roll makes a lateral cue ambiguous.
 inline CueSide cueSide(CueSide origin, float cameraRightY) {
     if (!std::isfinite(cameraRightY) || std::fabs(cameraRightY) > 0.5f) return CueSide::none;
-    // Owner reports the lateral indicator reversed. Mirror presentation only; overhead/thrust
-    // and the native attack classification stay unchanged.
-    return origin == CueSide::left ? CueSide::right : origin == CueSide::right ? CueSide::left : origin;
+    return origin;
 }
 // Pick clearance. Picks unproject from the view near plane, 1
 // unit ahead of the eye. With the eye pressed into a wall that point is past

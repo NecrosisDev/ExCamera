@@ -20,6 +20,7 @@ static DWORD testWindowPid(HWND, DWORD* pid) {
 #include <vector>
 #include <random>
 #include <cassert>
+#include "test_head_render_pose.h"
 static unsigned nativeKeys = 0, nativeButtons = 0;
 static int forwarded = 0;
 static void poll() {
@@ -445,7 +446,9 @@ int main() {
         originalPartSettle = [](uintptr_t) {
             ++settled;
         };
+        const LONG keptReady = cameraReady;
         InterlockedExchange(&active, 1);
+        InterlockedExchange(&cameraReady, 1); // This fixture models an attached first-person camera.
         viewMode = 0;
         auto tilt = [&](uintptr_t p) {
             float* q = (float*)(p + 0xf0);
@@ -471,6 +474,17 @@ int main() {
         partSettle(head);
         partSettle(neck);
         assert(memcmp(before, (void*)(neck + 0xf0), 48) != 0); // out of combat the neck is steadied too
+        // Park retains the active session but restores overhead. No physical
+        // adaptation may run until a close-view camera has committed again.
+        const int settledBeforePark = settled;
+        const unsigned ticksBeforePark = steadyTicks.load();
+        InterlockedExchange(&cameraReady, 0);
+        tilt(head);
+        memcpy(before, (void*)(head + field::bodyPart::points), sizeof before);
+        partSettle(head);
+        assert(settled == settledBeforePark + 1 && steadyTicks.load() == ticksBeforePark &&
+               memcmp(before, (void*)(head + field::bodyPart::points), sizeof before) == 0);
+        InterlockedExchange(&cameraReady, 1);
         // The actual poseBuilder's scoped extra-rotation ownership, exception
         // restoration and stop race are exercised by test_pose_ownership.cpp.
         *(unsigned*)(root + 0xdf4) = 0x200;
@@ -498,13 +512,14 @@ int main() {
         partSettle(base + 0x5d0000);
         assert(memcmp(before, (void*)(base + 0x5d0000), 48) == 0); // any other body: untouched
         InterlockedExchange(&active, 0);
+        InterlockedExchange(&cameraReady, keptReady);
         *(uintptr_t*)(base + 0x4f0830) = keptRoot;
         *(uintptr_t*)(base + 0x4efdd0) = keptDrag;
         memset((void*)root, 0, 0x10000);
         headSteadyState = fp::HeadSteadyState();
         steadiedHead = steadiedRoot = steadyNeck = steadyChest = 0;
         puts("PASS: the head stabiliser hook steadies only the player's head in first person and lets go "
-             "when knocked down, in third person and (chest, neck) in combat");
+             "when parked, knocked down, in third person and (chest, neck) in combat");
     }
     { // the game's picks never meet your own body in first and third person: your meshes carry the skip bit for
         // the call only, and only the bits set here are cleared again
@@ -571,8 +586,10 @@ int main() {
                !wcscmp(fp::crouchModeText(1), L"hold"));
         // the frame step: out of combat, first and third person; talking or combat ends it
         const uintptr_t keptPlayer = *(uintptr_t*)(base + 0x4f0830), r = base + 0x5c0000;
+        const LONG keptReady = cameraReady;
         *(uintptr_t*)(base + 0x4f0830) = r;
         InterlockedExchange(&active, 1);
+        InterlockedExchange(&cameraReady, 1); // Attached close view owns the crouch request.
         viewMode = 0;
         crouchMode = 2;
         crouchState = fp::Crouch();
@@ -580,7 +597,21 @@ int main() {
         crouchFrame();
         duckKey = false;
         crouchFrame();
-        assert(crouchHeld.load());
+        assert(crouchHeld.load() && crouchAppliesTo(r));
+        // A park must reject even the last attached-frame request before the
+        // next render update can retire it, and re-arm must not replay it.
+        InterlockedExchange(&cameraReady, 0);
+        assert(!crouchAppliesTo(r));
+        crouchFrame();
+        assert(!crouchHeld.load());
+        InterlockedExchange(&cameraReady, 1);
+        crouchFrame();
+        assert(!crouchHeld.load() && !crouchAppliesTo(r));
+        duckKey = true;
+        crouchFrame();
+        duckKey = false;
+        crouchFrame();
+        assert(crouchHeld.load() && crouchAppliesTo(r));
         viewMode = 1;
         crouchFrame();
         assert(crouchHeld.load());
@@ -632,10 +663,11 @@ int main() {
         InterlockedExchange(&active, 0);
         crouchFrame();
         assert(!crouchHeld.load());
+        InterlockedExchange(&cameraReady, keptReady);
         *(uintptr_t*)(base + 0x4f0830) = keptPlayer;
         crouchState = fp::Crouch();
         puts("PASS: crouch: the game's duck key toggles or holds it out of combat; combat, talking, overhead "
-             "and a stop end it; a ceiling keeps you down");
+             "and park/stop end it; re-arm needs a fresh request; a ceiling keeps you down");
     }
     { // the game's windows free the cursor and hold look and movement (first and third person), then let go
         const uintptr_t task = base + 0x5e0000, forms = base + 0x5e1000, inv = base + 0x5e2000,
@@ -829,7 +861,7 @@ int main() {
             *(unsigned char*)gameAt(fp::sig::cameraMouseActive) = 1;
             *(unsigned char*)gameAt(fp::sig::cameraMouseTurn) = 1;
             *(unsigned*)gameAt(fp::sig::keyWord) = 0x321;
-            assert(cameraMouse() == 1 && nativeCameraCalls == 0);
+            assert(cameraMouse() == 0 && nativeCameraCalls == 0); // native main loop must poll GUI input
             const int beforeOrbit = orbitCalls, beforeZoom = zoomCalls;
             cameraOrbit(123, 2.f, -3.f, 0);
             assert(cameraZoom(123, 10) == 10 && orbitCalls == beforeOrbit && zoomCalls == beforeZoom);
@@ -837,7 +869,7 @@ int main() {
                    !*(unsigned char*)gameAt(fp::sig::cameraMouseTurn) &&
                    *(unsigned*)gameAt(fp::sig::keyWord) == 0x21);
             cursorFree = 1; // Native camera is still hidden with a free pointer.
-            assert(!controls(bh) && cameraMouse() == 1 && nativeCameraCalls == 0);
+            assert(!controls(bh) && cameraMouse() == 0 && nativeCameraCalls == 0);
             rmbFree = 1;
             inputEnabled = 0;
             forwarded = 0;
@@ -1122,6 +1154,7 @@ int main() {
     *(uintptr_t*)(head + 0x18) = mesh;
     *(uintptr_t*)(mesh + 0x160) = head;
     *(uintptr_t*)(mesh + 0x130) = scene;
+    fixtureHeadRenderSampling(head);
     auto h = (float*)(mesh + 0x40);
     h[0] = h[4] = h[8] = 1;
     float initial[12]{};
@@ -1290,6 +1323,8 @@ int main() {
             *(unsigned*)(drag + 8) = 0;
             assert(dragKind() == 0 && !dragName[0]);
             { // the four plane calls of the door and hinge handlers get the held point; any other caller the game's
+                const LONG keptFree = rmbFree;
+                rmbFree = 1; // deliberate GUI-pointer hold; reticle ownership is covered in world_interaction
                 static int native = 0;
                 static unsigned lastMessage = ~0u;
                 native = 0;
@@ -1353,7 +1388,7 @@ int main() {
                 *(uintptr_t*)(base + 0x49a980) =
                     *(uintptr_t*)(base + 0x4efc90); // the game viewport has the pointer
                 heldDoorStep();
-                assert(lastMessage == 0);
+                assert(lastMessage == ~0u); // no foreground controlled player: do not move a constraint
                 {
                     *(uintptr_t*)(base + 0x49a980) =
                         base + 0x5b3000; // another view has the pointer (a menu): no move, as 0x121AF0
@@ -1363,7 +1398,7 @@ int main() {
                     *(uintptr_t*)(base + 0x49a980) = *(uintptr_t*)(base + 0x4efc90);
                     lastMessage = ~0u;
                     heldDoorStep();
-                    assert(lastMessage == 0);
+                    assert(lastMessage == ~0u); // no foreground controlled player: do not move a constraint
                     *(uintptr_t*)(base + 0x49a980) = keptFocus;
                 }
                 InterlockedExchange(&stopping, 1);
@@ -1416,6 +1451,7 @@ int main() {
                 assert(doorDistance.load() == 0); // the drag ended: forgotten
                 *(uintptr_t*)(base + 0x49a960) = keptUi;
                 navThread = keptNav;
+                rmbFree = keptFree;
                 InterlockedExchange(&active, 0);
                 puts("PASS: doors and lids held in place: the held point on the drag's plane, only at the "
                      "handlers' calls, pivot guard, once a frame, released on stop and F6");
@@ -1465,8 +1501,10 @@ int main() {
             for (int row = 0; row < panel::ModSettings::rows; ++row)
                 assert(seen[row] == 1 && *panel::ModSettings::label(row) &&
                        panel::rowInfo(row).row == row); // the table is in row order
-            assert(!strcmp(panel::ModSettings::group(0).name, "View") && panel::ModSettings::rows == 47 &&
-                   panel::ModSettings::groupCount == 6 && panel::ModSettings::savesGroup < 0);
+            assert(!strcmp(panel::ModSettings::group(0).name, "Camera") && panel::ModSettings::rows == 49 &&
+                   panel::ModSettings::groupCount == 3 && panel::ModSettings::savesGroup < 0);
+            assert(!strcmp(panel::ModSettings::group(1).name, "Controls") &&
+                   !strcmp(panel::ModSettings::group(2).name, "Aim & combat"));
             puts("PASS: every F8 setting is on exactly one Settings page, and the row table is in row order");
         }
         { // Every row's change is seen by == (so it is applied and saved) and undone by its page's Reset page; resetting
@@ -1510,7 +1548,7 @@ int main() {
                    s.step(R::crouchMode, 0) && s.crouchMode == 2 && s.spineFollow == 60 &&
                    s.step(R::spineFollow, 1) && s.spineFollow == 70 && s.freezeWindows &&
                    s.step(R::freezeWindows, 0) && !s.freezeWindows && s.value(R::freezeWindows) == L"off" &&
-                   s.step(R::tpFov, 1) && s.tpFov == 80 && s.step(R::tpFov, -1) && s.tpFov == 75 &&
+                   s.step(R::tpFov, 1) && s.tpFov == 130 && s.step(R::tpFov, -1) && s.tpFov == 125 &&
                    s.step(R::tpLag, -10) && s.tpLag == 0 && s.step(R::tpBlockers, 0) &&
                    s.tpBlockers == fp::blockersHide && s.step(R::tpDown, 0) && !s.tpDown &&
                    panel::ModSettings().headSteady == 70);
@@ -1522,7 +1560,7 @@ int main() {
                        t.step(R::tpBlockers, 1) && t.tpBlockers == fp::blockersPush &&
                        t.step(R::tpBlockers, -1) && t.tpBlockers == fp::blockersHide);
                 assert(t.step(R::tpCombatAim, 0) && !t.tpCombatAimFree &&
-                       t.value(R::tpCombatAim) == L"held at the centre" &&
+                       t.value(R::tpCombatAim) == L"Screen centre" &&
                        *panel::ModSettings::label(R::tpCombatAim));
                 assert(t.eyeSetback == 0 && t.value(R::eyeSetback) == L"at the eyes" &&
                        t.step(R::eyeSetback, 3) && t.eyeSetback == 6 &&
@@ -1542,7 +1580,7 @@ int main() {
                    !panel::ModSettings::isNumber(R::cueThrust) && s.rmbMode == 1 && s.step(R::rmbMode, 0) &&
                    s.rmbMode == 2 && s.step(R::rmbMode, 0) && s.rmbMode == 0 &&
                    s.value(R::rmbMode) == L"off" && s.step(R::rmbMode, 0) && s.rmbMode == 1 &&
-                   !s.idleCrosshairAlways && s.value(R::idleCrosshair) == L"only with right mouse" &&
+                   !s.idleCrosshairAlways && s.value(R::idleCrosshair) == L"Hide" &&
                    s.step(R::idleCrosshair, 0) && s.idleCrosshairAlways && s.headRoll == 80 &&
                    s.step(R::headRoll, -1) && s.headRoll == 70 && s.headBob == 30 && s.step(R::headBob, 1) &&
                    s.headBob == 40 && s.value(R::headBob) == L"40%" && s.step(R::headYaw, -10) &&
@@ -1951,7 +1989,7 @@ int main() {
             puts("PASS: head stabilisation lowers the head's slack cap only inside the game's build call and "
                  "puts it back");
         }
-        // the drop-spot pick sees a short downward ray onto the hold point; grab start forgets the hold.
+        // Close-view hold points stay on the actual ray; grab start forgets the hold.
         {
             const uintptr_t player = base + 0x5b3000, pmesh = base + 0x5b4000, pscene = base + 0x5b5000;
             const uintptr_t heldRoot = *(uintptr_t*)(base + 0x4f0830);
@@ -1972,27 +2010,27 @@ int main() {
             };
             alignas(8) unsigned char o1[0x40];
             ray(o1, 900);
-            assert(dropSpot(1, (uintptr_t)o1) == 1); // far wall: hold point, ray down
+            assert(heldPointAlongView(1, (uintptr_t)o1) == 1);
             {
                 const float* p = (float*)(o1 + 8);
                 const float* d = (float*)(o1 + 0x14);
                 const float* o = (float*)(o1 + 0x20);
-                assert(p[0] == 0 && p[1] == 0 && p[2] == 100 && d[1] == -1 && d[0] == 0 && d[2] == 0 &&
-                       o[1] == 4 && o[2] == 100 && *(float*)(o1 + 0x2c) == 4);
+                assert(p[0] == 0 && p[1] == 0 && p[2] == 100 && d[1] == 0 && d[0] == 0 && d[2] == 1 &&
+                       o[0] == 0 && o[1] == 0 && o[2] == 0 && *(float*)(o1 + 0x2c) == 100);
             }
             ray(o1, 900);
-            assert(dropSpot(0, (uintptr_t)o1) == 1 && ((float*)(o1 + 8))[2] == 100); // open air: hold point
+            assert(heldPointAlongView(0, (uintptr_t)o1) == 1 && ((float*)(o1 + 8))[2] == 100);
             ray(o1, 50);
-            assert(dropSpot(1, (uintptr_t)o1) == 1 && ((float*)(o1 + 8))[2] == 50 &&
+            assert(heldPointAlongView(1, (uintptr_t)o1) == 1 && ((float*)(o1 + 8))[2] == 50 &&
                    ((float*)(o1 + 0x14))[2] == 1); // nearer surface: native
             memset(o1, 0, sizeof o1);
-            assert(dropSpot(0, (uintptr_t)o1) == 0); // off view: native
+            assert(heldPointAlongView(0, (uintptr_t)o1) == 0); // invalid view ray
             feet[2] = -200;
             ray(o1, 900);
-            dropSpot(1, (uintptr_t)o1);
+            heldPointAlongView(1, (uintptr_t)o1);
             assert(fabsf(((float*)(o1 + 8))[2] - 60) < 1e-3f);
             feet[2] = 0; // reach sphere
-            // heldDropWanted: exactly an 0x2000 drag of the remembered object, the mod owning the pointer.
+            // Query ownership gates are exercised by test_world_interaction.
             const uintptr_t drag = base + 0x5b0000, object = base + 0x5b1000;
             *(uintptr_t*)(base + 0x4efdd0) = drag;
             *(unsigned*)(drag + 8) = 0x2000;
@@ -2002,22 +2040,6 @@ int main() {
             InterlockedExchange(&stopping, 0);
             InterlockedExchange(&inputEnabled, 1);
             InterlockedExchange(&cursorFree, 0);
-            assert(heldDropWanted());
-            *(unsigned*)(drag + 8) = 0x4000;
-            assert(!heldDropWanted());
-            *(unsigned*)(drag + 8) = 0x2000; // doors: no
-            InterlockedExchange(&cursorFree, 1);
-            assert(!heldDropWanted());
-            InterlockedExchange(&cursorFree, 0); // F8: no
-            *(int*)(base + 0x499860) = 1;
-            assert(!heldDropWanted());
-            *(int*)(base + 0x499860) = 0; // a window: no
-            holdObject = base + 0x5b1100;
-            assert(!heldDropWanted());
-            holdObject = object; // another object: no
-            InterlockedExchange(&active, 0);
-            assert(!heldDropWanted());
-            InterlockedExchange(&active, 1);
             // grab start forgets the hold; 17c gate unchanged.
             ray(o1, 900);
             assert(grabPickResult(base + 0x11a79e, 1, (uintptr_t)o1) == 0 && holdObject.load() == 0);
@@ -2049,7 +2071,6 @@ int main() {
                 ray(o1, 600);
                 assert(grabPickResult(base + 0x11a79e, 1, (uintptr_t)o1) == 0); // 300 from the eye: too far
                 holdObject = object;
-                assert(heldDropWanted());
                 holdObject = 0; // third person: held too (from the eye)
                 InterlockedExchange(&stopping, 1);
                 viewMode = 0;
@@ -2090,6 +2111,14 @@ int main() {
             *(uintptr_t*)(base + 0x4efdd0) = drag;
             *(unsigned*)(drag + 8) = 0x2000;
             *(uintptr_t*)(drag + 0x10) = object;
+            const uintptr_t testView = base + 0x5b7000;
+            const uintptr_t keptMainView = *(uintptr_t*)gameAt(fp::sig::mainViewport);
+            const uintptr_t keptManager = *(uintptr_t*)gameAt(fp::sig::guiManager);
+            const LONG keptReadyForPlacement = cameraReady, keptRmbForPlacement = rmbFree;
+            *(uintptr_t*)gameAt(fp::sig::mainViewport) = testView;
+            *(uintptr_t*)gameAt(fp::sig::guiManager) = base + 0x5b8000;
+            cameraReady = 1;
+            rmbFree = 1;
             const uintptr_t heldRoot = *(uintptr_t*)(base + 0x4f0830);
             *(uintptr_t*)(base + 0x4f0830) = player;
             const uintptr_t pmesh = base + 0x5b4000, pscene = base + 0x5b5000;
@@ -2112,7 +2141,7 @@ int main() {
             };
             originalDragPlace = [](uintptr_t, uintptr_t camera, float) -> int {
                 alignas(8) unsigned char hitOut[0x40]{};
-                pickRay(camera, 0, 0, (uintptr_t)hitOut);
+                pickRayFor(gameAt(fp::sig::placementPickReturn), camera, 0, 0, (uintptr_t)hitOut);
                 placedZ = ((float*)(hitOut + 8))[2];
                 return 0;
             };
@@ -2121,28 +2150,28 @@ int main() {
             holdObject = 0;
             const unsigned placed0 = holdPlacements.load();
             grabStartDistance = 150; // the grab's own pick met the object 150 from the eye
-            dragPlace(object, 0, -100000);
+            dragPlace(object, testView, -100000);
             assert(placedZ == 150 && holdTarget.load() == 150 &&
-                   holdPlacements == placed0); // new object: the grab's distance (the game's point there)
+                   holdPlacements == placed0 + 1); // new object: the grab's distance
             holdTarget = 100;
             holdApplied = 100;
-            dragPlace(object, 0, -100000);
-            assert(placedZ == 100 && holdPlacements == placed0 + 1); // wheel-set distance
+            dragPlace(object, testView, -100000);
+            assert(placedZ == 100 && holdPlacements == placed0 + 2); // wheel-set distance
             pickDist = 80;
-            dragPlace(object, 0, -100000);
+            dragPlace(object, testView, -100000);
             assert(placedZ == 80); // a surface nearer: native
             pickDist = 1e5f;
             pickHit = 0;
-            dragPlace(object, 0, -100000);
+            dragPlace(object, testView, -100000);
             assert(placedZ == 100); // nothing hit: still held at 100
             feet[2] = -200;
             pickDist = 150;
             pickHit = 1;
-            dragPlace(object, 0, -100000);
+            dragPlace(object, testView, -100000);
             assert(fabsf(placedZ - 60) < 1e-3f); // reach sphere (260 round the feet)
             feet[2] = -1200;
             offset[2] = 1000;
-            dragPlace(object, 0, -100000);
+            dragPlace(object, testView, -100000);
             assert(fabsf(placedZ - 60) < 1e-3f); // feet are scene-local: + scene offset
             offset[2] = 0;
             feet[2] = 0;
@@ -2160,9 +2189,8 @@ int main() {
             {
                 alignas(8) unsigned char junk[0x40];
                 memset(junk, 0x7f, sizeof junk);
-                placingThread = GetCurrentThreadId();
-                assert(pickRay(0, -1, -1, (uintptr_t)junk) == 0 && ((float*)(junk + 0x14))[1] == 0);
-                placingThread = 0;
+                assert(heldPick(object, testView, -1, -1, (uintptr_t)junk) == 0 &&
+                       ((float*)(junk + 0x14))[1] == 0);
             } // pointer off view: no placement, cleared ray
             offView = false;
             // third person: the ray starts at the camera 300 behind the eye; the object sits 100 from the eye, not the camera
@@ -2172,7 +2200,7 @@ int main() {
             pickHit = 0;
             holdTarget = 100;
             holdApplied = 100;
-            dragPlace(object, 0, -100000);
+            dragPlace(object, testView, -100000);
             assert(fabsf(placedZ - 400.f) < 1e-3f);
             feet[2] = 0.f; // the character (feet under the eye) in reach
             {
@@ -2186,8 +2214,8 @@ int main() {
             pickDist = 150;
             pickHit = 1;
             grabStartDistance = 150;
-            // Rotating: the rotate key's mouse turns go to the drag's target points (the object's pose as the game drags
-            // it), about their centre, after the game's placement; without turns nothing is written, and the body never is.
+            // Rotation changes the native placement orientation. The original
+            // grab snapshot at drag+40 remains available for cancellation.
             {
                 float(*pts)[3] = (float(*)[3])(drag + 0x40);
                 const float start[4][3] = {{110, 170, 0}, {100, 180, 0}, {100, 170, 10}, {95, 165, -5}};
@@ -2195,37 +2223,43 @@ int main() {
                 const uintptr_t body = base + 0x5b6000;
                 *(uintptr_t*)(object + 0x160) = body;
                 memset((void*)body, 0x5a, 0x300);
+                *(uintptr_t*)(body + field::bodyPart::meshNode) = object;
+                *(unsigned*)(body + field::bodyPart::flags) = 0x10000000;
+                const uintptr_t parent = *(uintptr_t*)(object + field::sceneNode::parent);
+                *(uintptr_t*)(object + field::sceneNode::parent) = 0;
+                const float startPose[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 100, 170, 0};
+                memcpy((void*)(object + field::sceneNode::localTransform), startPose, 48);
+                memcpy((void*)(body + field::bodyPart::pose), startPose, 48);
+                unsigned char bodyBefore[0x300];
+                memcpy(bodyBefore, (const void*)body, sizeof bodyBefore);
+                const NodePose keptPropagator = propagateHeldPose;
+                propagateHeldPose = [](uintptr_t) {};
                 viewYaw = 0.f;
                 viewPitch = 0.f;
-                dragPlace(object, 0, -100000);
-                assert(!memcmp(pts, start, 48)); // never turned: untouched
+                heldTurnX = heldTurnY = 0.f;
+                assert(!turnHeld(object));
                 heldTurnX = 100.f;
-                dragPlace(object, 0, -100000);
+                assert(turnHeld(object));
                 assert(heldTurnX.load() == 0.f && heldTurns.load() > 0);
-                float c[3]{};
-                for (auto& v : start)
-                    for (int k = 0; k < 3; ++k) c[k] += 0.25f * v[k];
-                float axes[12];
-                fp::basis(0, 0, axes);
-                for (int p = 0; p < 4; ++p) {
-                    float want[9] = {
-                        start[p][0] - c[0], start[p][1] - c[1], start[p][2] - c[2], 0, 0, 0, 0, 0, 0};
-                    fp::rotateAxes(want, axes + 3, -100 * fp::heldRotateRadiansPerPixel);
-                    for (int k = 0; k < 3; ++k) assert(fabsf(pts[p][k] - (c[k] + want[k])) < 1e-3f);
-                }
-                float after[4][3];
-                memcpy(after, pts, 48);
-                for (int f = 0; f < 100; ++f) dragPlace(object, 0, -100000);
-                for (int p = 0; p < 4; ++p)
-                    for (int k = 0; k < 3; ++k)
-                        assert(fabsf(after[p][k] - pts[p][k]) <
-                               1e-3f); // 100 more frames: not turned again (rounding only)
+                const float* pose = (const float*)(object + field::sceneNode::localTransform);
+                assert(fabsf(pose[0] - std::cos(.6f)) < 1e-3f &&
+                       fabsf(pose[2] - std::sin(.6f)) < 1e-3f);
+                assert(!memcmp(pose + 9, startPose + 9, 12));
+                assert(!memcmp((const void*)(body + field::bodyPart::pose), pose, 48));
+                float after[12];
+                memcpy(after, pose, 48);
+                for (int f = 0; f < 100; ++f) assert(!turnHeld(object));
+                assert(!memcmp(after, pose, 48) && !memcmp(pts, start, 48));
                 for (int k = 0; k < 0x300; ++k)
-                    assert(((unsigned char*)body)[k] == 0x5a); // the physics body: never written
+                    if (k < int(field::bodyPart::pose) || k >= int(field::bodyPart::pose + 48))
+                        assert(((unsigned char*)body)[k] == bodyBefore[k]);
+                propagateHeldPose = keptPropagator;
+                *(uintptr_t*)(object + field::sceneNode::parent) = parent;
                 *(uintptr_t*)(object + 0x160) = 0;
             }
-            // Flinging: let go while the wheel pushes and the game's release (copies the target points into the body and
-            // makes its history equal: no velocity) is followed by a history for the push's speed. Not without a push.
+            // 0x119C30 is the cancellation/drop-owner path, not ordinary LMB release.
+            // Its native result stays unchanged even with a fresh push. The queued
+            // 0x117000 -> 0x116EF0 release is exercised in test_world_interaction.
             {
                 const uintptr_t body = base + 0x5b6000;
                 *(uintptr_t*)(object + 0x160) = body;
@@ -2256,21 +2290,14 @@ int main() {
                 assert(releasedDrag == drag && !memcmp((void*)(body + 0x120), (void*)(body + 0xf0), 48) &&
                        flings.load() == flung); // no push: stops
                 releaseWith(300.f);
-                const float* now = (const float*)(body + 0xf0);
-                const float* prev = (const float*)(body + 0x120);
-                const float* prev2 = (const float*)(body + 0x150);
-                for (int k = 0; k < 4; ++k) {
-                    assert(fabsf(prev[k * 3 + 2] - (now[k * 3 + 2] - 5.f)) < 1e-3f &&
-                           fabsf(prev2[k * 3 + 2] - (now[k * 3 + 2] - 10.f)) < 1e-3f &&
-                           prev[k * 3] == now[k * 3]);
-                }
-                assert(flings.load() == flung + 1);
+                assert(!memcmp((void*)(body + 0x120), (void*)(body + 0xf0), 48) &&
+                       !memcmp((void*)(body + 0x150), (void*)(body + 0xf0), 48) && flings.load() == flung);
                 pushAt = GetTickCount64() - 1000;
                 *(uintptr_t*)(drag + 0x10) = object;
                 *(unsigned*)(drag + 8) = 0x2000;
                 dragDrop(drag); // a push that ended a second ago: stops
                 assert(!memcmp((void*)(body + 0x120), (void*)(body + 0xf0), 48) &&
-                       flings.load() == flung + 1);
+                       flings.load() == flung);
                 *(uintptr_t*)(drag + 0x10) = object;
                 *(unsigned*)(drag + 8) = 0x2000;
                 pushAt = GetTickCount64();
@@ -2283,8 +2310,7 @@ int main() {
                 *(uintptr_t*)(object + 0x160) = 0;
                 physicsStep = 0.f;
                 pushSpeed = 0.f;
-                puts("PASS: letting go during a push flings at its speed (one physics step of history); "
-                     "otherwise the game's release stops it");
+                puts("PASS: native cancellation/drop-owner calls preserve their body history, including during a push");
             }
             // The rotate key (right mouse by default) is the held item's while one is held: the game and the right-mouse
             // cursor never see it; with nothing held, combat retains native right mouse.
@@ -2332,21 +2358,34 @@ int main() {
             holdTarget = 200;
             holdApplied = 200;
             *(unsigned*)(drag + 8) = 0;
-            dragPlace(object, 0, -100000);
-            assert(holdObject.load() == 0); // released: next grab starts fresh
+            dragPlace(object, testView, -100000);
+            assert(holdObject.load() == 0 && grabStartDistance.load() == 0.f);
+            // Native 11A690 makes a fresh grab-start pick before setting 0x2000.
+            // The prior hold distance was retired above; this re-grab must use
+            // the current hit, not silently inherit the previous grab's 150.
+            {
+                alignas(8) unsigned char regrab[0x40]{};
+                const char hit = originalPickRay(0, 0, 0, (uintptr_t)regrab);
+                assert(grabPickResult(gameAt(fp::sig::grabStartPickReturn), hit, (uintptr_t)regrab) == 1 &&
+                       grabStartDistance.load() == 150.f);
+            }
             *(unsigned*)(drag + 8) = 0x2000;
-            dragPlace(object, 0, -100000);
+            dragPlace(object, testView, -100000);
             assert(placedZ == 150 && holdTarget.load() == 150);
             *(unsigned*)(drag + 8) = 0x80000;
-            dragPlace(object, 0, -100000);
+            dragPlace(object, testView, -100000);
             assert(placedZ == 150); // hand grab: native
             *(unsigned*)(drag + 8) = 0x2000;
             InterlockedExchange(&active, 0);
-            dragPlace(object, 0, -100000);
+            dragPlace(object, testView, -100000);
             assert(placedZ == 150); // first person off: native
             alignas(8) unsigned char plain[0x40]{};
             pickRay(0, 0, 0, (uintptr_t)plain);
             assert(((float*)(plain + 8))[2] == 150); // other picks untouched
+            *(uintptr_t*)gameAt(fp::sig::mainViewport) = keptMainView;
+            *(uintptr_t*)gameAt(fp::sig::guiManager) = keptManager;
+            cameraReady = keptReadyForPlacement;
+            rmbFree = keptRmbForPlacement;
             static int warped = 0;
             originalCursorWarp = [](int x, int) {
                 warped = x;
@@ -2680,8 +2719,8 @@ int main() {
         c.owned = false;
         c.motion = 6;
         assert(fp::originCue(c) == fp::OriginCue::neutral);
-        assert(fp::cueSide(fp::CueSide::right, 0) == fp::CueSide::left &&
-               fp::cueSide(fp::CueSide::left, 0.2f) == fp::CueSide::right);
+        assert(fp::cueSide(fp::CueSide::right, 0) == fp::CueSide::right &&
+               fp::cueSide(fp::CueSide::left, 0.2f) == fp::CueSide::left);
         assert(fp::cueSide(fp::CueSide::top, -0.4f) == fp::CueSide::top &&
                fp::cueSide(fp::CueSide::none, 0) == fp::CueSide::none);
         assert(fp::cueSide(fp::CueSide::right, 0.6f) == fp::CueSide::none &&
@@ -2969,6 +3008,18 @@ int main() {
             publishCue(bh);
             assert(cueArcPhase == 1 && fabsf(cueArcFill.load() - 0.5f) < 1e-4f &&
                    cueArcSide == int(fp::CueSide::right));
+            // Follow the real render-side transformation too. The right-hand
+            // forehand occupies the right semicircle, with endpoints on its seam.
+            // Testing only cueArcSide missed an unconditional presentation mirror.
+            float arc[3 * 3 * 68]{}; // Three strips of (x, y, alpha) vertices.
+            int counts[3]{};
+            assert(fp::cueArc(fp::cueSide(fp::CueSide(cueArcSide.load()), 0.f),
+                              500.f, 300.f, 24.f, 100, cueArcFill.load(), arc,
+                              int(sizeof arc / sizeof(float)), counts));
+            assert(counts[0] == 66 && counts[1] > 0 && counts[2] > 0);
+            for (int vertex = 0; vertex < counts[0] + counts[1] + counts[2]; ++vertex)
+                assert(arc[vertex * 3] >= 499.99f);
+            assert(arc[32 * 3] > 501.f); // The strip's middle must be on the right.
             *(float*)(root + 0xa28) = 0.35f;
             publishCue(bh);
             assert(cueArcPhase == 2 && cueArcFill.load() == 1.f);

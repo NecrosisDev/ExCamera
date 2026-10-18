@@ -31,16 +31,51 @@ struct InputStamp {
     unsigned policyRevision = 0;
 };
 
+// GUI click/drag classification follows deliberate mouse movement, independently
+// of the rendered crosshair. Head motion must neither cancel a double-click nor
+// supply the movement needed to grab a world object.
+struct PointerGesture {
+    struct Point { double x = 0, y = 0; } current, polled;
+    InputStamp owner;
+    bool haveOwner = false, havePress = false;
+    bool ownedBy(const InputStamp& next) const {
+        return haveOwner && owner.root == next.root && owner.head == next.head && owner.scene == next.scene &&
+               owner.mode == next.mode && owner.generation == next.generation &&
+               owner.policyRevision == next.policyRevision;
+    }
+    void sync(const InputStamp& next) {
+        if (!ownedBy(next)) {
+            current = polled = {};
+            havePress = false;
+            owner = next;
+            haveOwner = true;
+        }
+    }
+    void move(float x, float y) {
+        if (!std::isfinite(x) || !std::isfinite(y)) return;
+        // Saturate long uninterrupted turns before converting to client pixels.
+        current.x = std::fmax(-1048576., std::fmin(1048576., current.x + x));
+        current.y = std::fmax(-1048576., std::fmin(1048576., current.y + y));
+    }
+    void press(Point seen) {
+        // A mouse sample arriving during native dispatch belongs to this press.
+        current.x -= seen.x;
+        current.y -= seen.y;
+        polled = {};
+        havePress = true;
+    }
+    void poll(Point seen) { polled = seen; }
+};
+
 template <size_t Bindings> struct InputContext {
     uintptr_t root = 0, head = 0, scene = 0;
     int mode = 0;
     bool combat = false, ordinary = false;
     unsigned policy = 0;
     std::array<unsigned, Bindings> bindings{};
-    bool operator==(const InputContext& other) const {
+    bool sameOwner(const InputContext& other) const {
         return root == other.root && head == other.head && scene == other.scene && mode == other.mode &&
-               combat == other.combat && ordinary == other.ordinary && policy == other.policy &&
-               bindings == other.bindings;
+               combat == other.combat && policy == other.policy && bindings == other.bindings;
     }
 };
 
@@ -136,7 +171,8 @@ template <size_t Bindings> class InputOwnership {
 
     Sample beginSample(const InputContext<Bindings>& context, bool owned, unsigned sampledNativeButtons) {
         const uint32_t nextGeneration = generation();
-        const bool changed = poll.haveContext && !(context == poll.context);
+        const bool changed = poll.haveContext && !context.sameOwner(poll.context);
+        const bool defenseChanged = poll.haveContext && context.ordinary != poll.context.ordinary;
         const bool boundary = changed || !poll.haveGeneration || nextGeneration != poll.generation;
         poll.context = context;
         poll.haveContext = poll.haveGeneration = true;
@@ -144,6 +180,11 @@ template <size_t Bindings> class InputOwnership {
         if (boundary) {
             poll.buttons.reset();
             discardButtons();
+        } else if (defenseChanged) {
+            // Native attack/interaction latches change during a physical LMB
+            // hold. Preserve that press and any queued click. RMB must still
+            // be released before a newly eligible manual guard can take it.
+            poll.buttons.blocked |= sampledNativeButtons & 2u;
         }
         const bool continuing = poll.buttons.owned;
         const unsigned acceptedButtons = poll.buttons.sample(owned, sampledNativeButtons);

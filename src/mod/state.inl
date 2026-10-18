@@ -121,10 +121,15 @@ static void readReachHead(float* head) {
 static SRWLOCK aimLock = SRWLOCK_INIT;
 struct Aim {
     uintptr_t root = 0, head = 0;
+    fp::InputStamp attentionStamp;
     float point[3]{}, origin[3]{}, anchor[3]{}, travel[3]{}, yaw = 0, pitch = 0, targetYaw = 0,
                                                              targetPitch = 0;
     float rayYaw = 0;
     bool rayValid = false;
+    fp::SwingGesture swing;
+    unsigned swingGeneration = 0, swingPolicy = 0;
+    int swingView = -1;
+    bool swingCombat = false;
     unsigned revision = 0;
     bool valid = false, travelValid = false;
 };
@@ -286,6 +291,7 @@ static std::atomic<bool> tpDownNow{false};
 static fp::AimBox tpAimBox; // aim thread
 static std::atomic<float> tpAimX{0}, tpAimY{0};
 static std::atomic<int> fpDeadzoneX{15}, fpDeadzoneY{10}, tpDeadzoneX{20}, tpDeadzoneY{20};
+static std::atomic<int> fpSwingSelection{1}, tpSwingSelection{1}; // 1 mouse direction, 0 native facing
 static void releaseInteractionInput();
 static std::atomic<bool> tpAimFree{false};
 static std::atomic<int> headSteadyRoll{80}, headSteadyPitch{70},
@@ -417,17 +423,50 @@ static std::wstring userSettingsFile(const std::wstring& moduleIni, const std::w
             FindClose(h);
         }
     }
-    return CopyFileW(source.c_str(), user.c_str(), TRUE) ||
-                   GetFileAttributesW(user.c_str()) != INVALID_FILE_ATTRIBUTES
-               ? user
-               : moduleIni;
+    if (CopyFileW(source.c_str(), user.c_str(), TRUE) ||
+        GetFileAttributesW(user.c_str()) != INVALID_FILE_ATTRIBUTES)
+        return user;
+    // An unpackaged build has no default ini. Start an empty per-user file so
+    // compiled defaults and future edits still outlive that build folder.
+    if (GetFileAttributesW(source.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        const DWORD missing = GetLastError();
+        if (missing == ERROR_FILE_NOT_FOUND || missing == ERROR_PATH_NOT_FOUND) {
+            HANDLE file = CreateFileW(user.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                      CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file != INVALID_HANDLE_VALUE) {
+                CloseHandle(file);
+                return user;
+            }
+        }
+    }
+    return moduleIni;
 }
 // The per-user settings folder: Documents\ExCamera. Releases before the ExCamera name kept settings in
 // Documents\ExaniMate; the file is copied over once (copied, not moved: the ExaniMate editor still uses that
 // folder).
-static std::wstring userSettingsDir(const std::wstring& profile) {
-    const std::wstring dir = profile + L"\\Documents\\ExCamera", file = dir + L"\\first-person.ini",
-                       old = profile + L"\\Documents\\ExaniMate\\first-person.ini";
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uuid.lib")
+static std::wstring userDocumentsDir() {
+    PWSTR folder = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &folder);
+    const std::wstring path = SUCCEEDED(result) && folder ? folder : L"";
+    if (folder) CoTaskMemFree(folder);
+    return path;
+}
+static std::wstring userSettingsDir(const std::wstring& profile, const std::wstring& documents = {}) {
+    const std::wstring parent = documents.empty() ? profile + L"\\Documents" : documents;
+    const std::wstring dir = parent + L"\\ExCamera", file = dir + L"\\first-person.ini",
+                       legacy = profile + L"\\Documents\\ExCamera\\first-person.ini";
+    std::wstring old = parent + L"\\ExaniMate\\first-person.ini";
+    if (GetFileAttributesW(old.c_str()) == INVALID_FILE_ATTRIBUTES)
+        old = profile + L"\\Documents\\ExaniMate\\first-person.ini";
+    // Previous builds used USERPROFILE\Documents even when Windows had moved
+    // Documents. Preserve that existing ExCamera file before the older brand.
+    if (file != legacy && GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES &&
+        GetFileAttributesW(legacy.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+        CopyFileW(legacy.c_str(), file.c_str(), TRUE);
+    }
     if (GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW(old.c_str()) != INVALID_FILE_ATTRIBUTES) {
         SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
@@ -436,13 +475,17 @@ static std::wstring userSettingsDir(const std::wstring& profile) {
     return dir;
 }
 static std::atomic<int> persistedFov{75}; // status reads without taking the settings lock
+static bool settingsSavePending(); // mod/settings.inl; coherent status for every saved row
+static void retrySettingsRowsLocked(unsigned budget); // mod/settings.inl; caller holds settingsLock
 static void saveFov() {
     SettingsGuard guard;
     const int value = selectedFov.load();
-    if (!settingsPath[0] || value == persistedFov.load()) return;
-    wchar_t text[16];
-    swprintf_s(text, L"%d", value);
-    if (WritePrivateProfileStringW(L"Camera", L"FOV", text, settingsPath)) persistedFov = value;
+    if (settingsPath[0] && value != persistedFov.load()) {
+        wchar_t text[16];
+        swprintf_s(text, L"%d", value);
+        if (WritePrivateProfileStringW(L"Camera", L"FOV", text, settingsPath)) persistedFov = value;
+    }
+    retrySettingsRowsLocked(4);
 }
 static unsigned inputClock = ~0u;
 static wchar_t statusPath[MAX_PATH]{}, statusTempPath[MAX_PATH]{};
@@ -612,6 +655,28 @@ static SRWLOCK cameraLock = SRWLOCK_INIT;
 static fp::NearPlane nearPlane; // dynamic near plane (cameraLock)
 static uintptr_t filterRoot = 0, filterHead = 0;
 static LARGE_INTEGER filterTime{}, frequency{};
+static fp::TurnLead cameraTurnLead;
+struct CameraFilterState {
+    fp::ThirdPerson third;
+    fp::NearPlane clipFilter;
+    fp::TurnLead lead;
+    float combat = 0.f;
+};
+// Native rendering can request the same presentation's camera at several time
+// offsets, in either order. All requests start from this immutable prior-centre
+// state; only a centre-time result becomes the next presentation's history.
+// cameraLock owns this record and the persistent filters above.
+struct CameraFrameHistory {
+    bool valid = false, centreReady = false;
+    LONG serial = 0;
+    uintptr_t view = 0, camera = 0, controller = 0, root = 0, head = 0, scene = 0;
+    int mode = 0;
+    LARGE_INTEGER time{};
+    ULONGLONG tick = 0;
+    float seconds = 1.f;
+    CameraFilterState before;
+};
+static CameraFrameHistory cameraFrame;
 static std::atomic<unsigned> walkTargets{0}, combatSteps{0}, unexpectedRelaxedSteps{0};
 using TravelTarget = void (*)(float*, const float*, const float*, float);
 static TravelTarget originalTravelTarget;
@@ -694,6 +759,8 @@ static std::atomic<float> doorCameraOffset{
     0}; // how much farther the camera is than the eye along that ray (third person)
 static uintptr_t heldDoorDrag();
 static uintptr_t lastDoorObject = 0;
+static float doorGrabPoint[3]{};
+static bool doorGrabPointValid = false;
 static void releaseHeldDoor();
 static std::atomic<unsigned> doorHolds{0}, holdNotches{0}, holdPlacements{0}, warpsSkipped{0},
     grabsRefused{0};
@@ -744,6 +811,7 @@ static std::atomic<uintptr_t> holdObject{0};
 static std::atomic<ULONGLONG> holdGeneration{0};
 static void resetHeldGrab() {
     holdObject = 0;
+    grabStartDistance = 0.f;
     pushSpeed = 0.f;
     pushAt = 0;
     heldTurnX = heldTurnY = 0.f;
@@ -755,8 +823,8 @@ static bool readable(uintptr_t address, size_t size);
 static const char* nodeName(uintptr_t node);
 static int dragKind(uintptr_t* object = nullptr);
 static int dragKind(uintptr_t* object) {
-    // 0x11F610 (the player's input step) reads the manager's flags: 0x2000 an object drag (placed by
-    // 0x1183C0), 0x4000 and 0x10000 a hinged drag it releases beyond reach (the dragged object's
+    // 0x11F610 (the player's input step) reads the manager's flags: 0x2000 an object drag (queried by
+    // 0x117AA0 and placed by 0x118000), 0x4000 and 0x10000 a hinged drag released beyond reach (the object's
     // position at +0x128), 0x80000 a hand grab (cursor state 8). Live: a closed door
     // dragged by its face reads 0x4000, a hand grab beside an open door 0x80000.
     const uintptr_t drag = *(uintptr_t*)(gameAt(fp::sig::dragManager));
@@ -769,7 +837,7 @@ static int dragKind(uintptr_t* object) {
     else
         dragName[0] = 0;
     if (flags & 0x2000) return readable(o, 0x168) ? 1 : 0;
-    if (flags & (0x4000 | 0x10000 | 0x80000)) return 2;
+    if (flags & (0x4000 | 0x10000 | 0x20000 | 0x80000)) return 2;
     return 0;
 }
 static void normalize(float* v);

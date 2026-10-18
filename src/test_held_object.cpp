@@ -45,64 +45,6 @@ int main() {
         puts("PASS: axes turn about an axis and stay orthonormal");
     }
     {
-        // The drag's target points: turned about their centre once, whether the game moves them and keeps the
-        // shape written last frame, or moves them and sets its own shape every frame.
-        const float right[3] = {1, 0, 0}, up[3] = {0, 1, 0};
-        const float shape0[4][3] = {{10, 0, 0}, {0, 10, 0}, {0, 0, 10}, {-5, -5, -5}};
-        auto at = [&](float(*p)[3], float x) {
-            for (int k = 0; k < 4; ++k) {
-                p[k][0] = shape0[k][0] + x;
-                p[k][1] = shape0[k][1] + 170;
-                p[k][2] = shape0[k][2];
-            }
-        };
-        float once[4][3];
-        { // the expected shape: the original about its centre, turned once
-            float c[3]{};
-            for (auto& v : shape0)
-                for (int i = 0; i < 3; ++i) c[i] += 0.25f * v[i];
-            float ax[12];
-            for (int k = 0; k < 4; ++k)
-                for (int i = 0; i < 3; ++i) ax[k * 3 + i] = shape0[k][i] - c[i];
-            float a3[9], b3[3];
-            std::memcpy(a3, ax, 36);
-            std::memcpy(b3, ax + 9, 12);
-            rotateAxes(a3, up, -80 * heldRotateRadiansPerPixel);
-            float tmp[9] = {b3[0], b3[1], b3[2], 0, 0, 0, 0, 0, 0};
-            rotateAxes(tmp, up, -80 * heldRotateRadiansPerPixel);
-            for (int k = 0; k < 3; ++k)
-                for (int i = 0; i < 3; ++i) once[k][i] = a3[k * 3 + i];
-            for (int i = 0; i < 3; ++i) once[3][i] = tmp[i];
-        }
-        auto shapeOf = [](float(*p)[3], float* out) {
-            float c[3]{};
-            for (int k = 0; k < 4; ++k)
-                for (int i = 0; i < 3; ++i) c[i] += 0.25f * p[k][i];
-            for (int k = 0; k < 4; ++k)
-                for (int i = 0; i < 3; ++i) out[k * 3 + i] = p[k][i] - c[i];
-        };
-        for (int mode = 0; mode < 2;
-             ++mode) { // 0: the game keeps the written shape, 1: it sets its own each frame
-            HeldRotation r;
-            float pts[4][3];
-            at(pts, 0);
-            r.turn(-80, 0, right, up);
-            for (int f = 0; f < 40; ++f) {
-                if (mode == 1)
-                    at(pts, float(f) * 3.f); // moved along with its own shape
-                else
-                    for (auto& v : pts) v[0] += 3.f; // moved, shape as written
-                r.applyPoints(pts);
-            }
-            float got[12];
-            shapeOf(pts, got);
-            for (int k = 0; k < 4; ++k)
-                for (int i = 0; i < 3; ++i) assert(near(got[k * 3 + i], once[k][i], 2e-3f));
-        }
-        puts(
-            "PASS: the drag's target points turn about their centre once, as the game moves them either way");
-    }
-    {
         PushRate r; // the wheel pushing out 150 cm/s for half a second, then stopping
         float d = 100.f;
         for (unsigned long long ms = 0; ms <= 500; ms += 16) {

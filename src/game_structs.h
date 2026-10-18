@@ -30,10 +30,12 @@ inline constexpr size_t gazeDistance = 0xCBC;   // float
 inline constexpr size_t aimDirection = 0xCC0;   // float[3]: the cursor aim's heading
 inline constexpr size_t facing = 0xCFC;         // float[3]
 inline constexpr size_t behaviour = 0xD40;      // its behaviour object (namespace behaviour)
+inline constexpr size_t postureReadiness = 0xD58; // float: native B7560 readiness gate (>= .01)
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
 inline constexpr size_t stateFlags =
     0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
 inline constexpr size_t lifeFlags = 0xDF8; // 0x100: dead
+inline constexpr size_t aimOpponent = 0xE38; // native selected combat opponent
 inline constexpr size_t contextualTarget = 0xE50;
 inline constexpr size_t handParts = 0xE78;   // [2] body parts
 inline constexpr size_t heldItems = 0xE88;   // [2] what each hand holds
@@ -94,8 +96,11 @@ inline constexpr size_t slackCap = 0x77C;      // float: how far the head target
 
 // A node in a scene tree: a mesh, a group, a placed object.
 namespace sceneNode {
+inline constexpr size_t queryFlags = 0xC;  // bit 0x200000: native held-body collision query candidate
 inline constexpr size_t transform = 0x40;  // float[12], local to its sector
 inline constexpr size_t transformOrigin = transform + 0x24;
+inline constexpr size_t localTransform = 0x70; // float[12], relative to its parent
+inline constexpr size_t renderTransform = 0xA0; // float[16]: native sampled pose, 16-byte row stride
 inline constexpr size_t passMask = 0xE0;   // which render passes and picks take it (rebuilt every frame)
 inline constexpr size_t lastChild = 0x118; // int: index of the last child
 inline constexpr size_t children = 0x120;
@@ -125,6 +130,7 @@ inline constexpr size_t nearPlane = 0x1CC;  // float
 } // namespace camera
 
 namespace viewport {
+inline constexpr size_t width = 0x19C, height = 0x1A0;
 inline constexpr size_t view = 0x1A8;
 inline constexpr size_t pickCamera = 0x1C0; // the camera the pick rays unproject through
 inline constexpr size_t sceneManager = 0x1F0;
@@ -151,12 +157,26 @@ namespace drag {
 inline constexpr size_t flags = 0x8; // all native drag contexts
 inline constexpr size_t object = 0x10;
 inline constexpr size_t targetPoints =
-    0x40; // float[4][3]: where the held object's body points go; release copies them in
+    0x40; // float[4][3]: original grab snapshot used by native recovery and release
+inline constexpr size_t viewport = 0x18;       // native drag viewport
+inline constexpr size_t planeHeight = 0xC8;    // door plane height (hinges reuse it for angle offset)
+inline constexpr size_t hingePlane = 0xE8;     // float[4], n dot p = d
+inline constexpr size_t alternatePlane = 0xF8; // second native hinge plane
 inline constexpr size_t pivot = 0xD0; // float[3]: a door's hinge
+inline constexpr size_t invalidDrop = 0x14D; // u8: release falls back to the last valid placement
 } // namespace drag
+
+// Native work item allocated by 0x117000 and consumed/freed by 0x116EF0.
+namespace heldRelease {
+inline constexpr size_t body = 0x0; // pointer, followed by the four target points
+} // namespace heldRelease
 
 // The GUI: its manager (guiManager), tasks and their forms (the game's windows).
 namespace gui {
+inline constexpr size_t pointerX = 0x18; // LONG[2]: current client X/Y
+inline constexpr size_t pressX = 0x20;   // LONG[2]: native press X/Y
+inline constexpr size_t hoverView = 0x30; // widget under the pointer
+inline constexpr size_t buttons = 0x40;  // mouse buttons and native drag-classification flags
 inline constexpr size_t capture = 0x48;    // the view holding the mouse
 inline constexpr size_t dragFormat = 0x70; // nonzero while an item is carried by the cursor
 } // namespace gui
@@ -179,4 +199,19 @@ inline constexpr size_t count = 0x10C;
 inline constexpr size_t items = 0x110;
 } // namespace list
 
+} // namespace fp::game
+
+// Backward offsets from AE2E0's RBP, recovered only from its plane argument
+// at the reviewed AE739 call. Read-only, transient; never retained after return.
+namespace fp::game {
+namespace aimFrame {
+inline constexpr size_t planeBack = 0x80;
+inline constexpr size_t unassistedBack = 0xC0;
+inline constexpr size_t unassistedInitBack = 0xC0;
+inline constexpr size_t radiusBack = 0xB4;
+inline constexpr size_t distanceBack = 0xAC;
+inline constexpr size_t selectedBack = 0x8C;
+inline constexpr size_t behaviorBack = 0x8;
+inline constexpr size_t outputBack = 0x10;
+} // namespace aimFrame
 } // namespace fp::game

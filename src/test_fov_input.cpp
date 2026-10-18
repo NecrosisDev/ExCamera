@@ -126,8 +126,8 @@ int main() {
         check(selectedFov.load() == 105, "the panel FOV control steps from the latest live value");
         headSteady = 20;
         settings.applyControl(panel::ModSettings::resetControl, 0);
-        check(selectedFov.load() == 75 && headSteady.load() == 20 && currentSettings().sensitivity == 110,
-              "Reset page preserves newer settings outside the displayed group");
+        check(selectedFov.load() == 75 && headSteady.load() == 70 && currentSettings().sensitivity == 110,
+              "Camera reset includes head settings and preserves newer Controls values");
         cursorFree = 0;
     }
     {
@@ -154,11 +154,12 @@ int main() {
         settings.changeSetting = [](int row, int delta, int group) {
             panel::ModSettings newer = currentSettings();
             newer.headSteady = 20;
+            newer.sensitivity = 130;
             makeLive(newer);
             return applySetting(row, delta, group);
         };
         settings.applyControl(panel::ModSettings::resetControl, 0);
-        check(selectedFov.load() == 75 && headSteady.load() == 20,
+        check(selectedFov.load() == 75 && headSteady.load() == 70 && currentSettings().sensitivity == 130,
               "Reset page preserves another group's update at the callback boundary");
     }
     {

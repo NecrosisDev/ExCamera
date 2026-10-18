@@ -63,6 +63,9 @@ typedef struct _MEMORY_BLOCK
 
 // First element of the memory block list.
 PMEMORY_BLOCK g_pMemoryBlocks;
+// Published trampolines can still be referenced by a caller or a return address
+// while its current RIP is elsewhere. These blocks are never reused or freed.
+PMEMORY_BLOCK g_pRetiredBlocks;
 
 //-------------------------------------------------------------------------
 VOID InitializeBuffer(VOID)
@@ -299,6 +302,27 @@ VOID FreeBuffer(LPVOID pBuffer)
 
         pPrev = pBlock;
         pBlock = pBlock->pNext;
+    }
+}
+
+// Retire the complete allocation block. Other slots in it may still be active;
+// their code stays valid, and later removal simply finds it already retired.
+// Keeping a 4KB block avoids inventing a quiescence proof from current RIPs.
+VOID RetireBuffer(LPVOID pBuffer)
+{
+    PMEMORY_BLOCK* link = &g_pMemoryBlocks;
+    ULONG_PTR address = ((ULONG_PTR)pBuffer / MEMORY_BLOCK_SIZE) * MEMORY_BLOCK_SIZE;
+    while (*link != NULL)
+    {
+        PMEMORY_BLOCK block = *link;
+        if ((ULONG_PTR)block == address)
+        {
+            *link = block->pNext;
+            block->pNext = g_pRetiredBlocks;
+            g_pRetiredBlocks = block;
+            return;
+        }
+        link = &block->pNext;
     }
 }
 

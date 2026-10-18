@@ -5,6 +5,10 @@
       "rva": "0x94720",
       "note": "camera controller's sampler; replaced through navSlot"
     },
+    "headRenderSample": {
+      "rva": "0x8b6e0",
+      "note": "controlled head render sampler; uses the camera's native sample offset and writes mesh+A0"
+    },
     "playerBehavior": {
       "rva": "0xc1cf0",
       "note": "player behaviour tick; replaced through behaviorSlot"
@@ -16,6 +20,11 @@
     "cursorAim": {
       "rva": "0xbf680",
       "hook": true
+    },
+    "combatAttention": {
+      "rva": "0xbeac0",
+      "hook": true,
+      "note": "native perceived-opponent scoring/publication; scoped close-view aim direction, native head gaze restored"
     },
     "explore": {
       "rva": "0xbfea0",
@@ -65,6 +74,20 @@
       "rva": "0x1183c0",
       "hook": true
     },
+    "dragRotate": {
+      "rva": "0x118920",
+      "hook": true,
+      "note": "held-item orientation before ordinary world placement and inventory placement"
+    },
+    "propagateNodePose": {
+      "rva": "0x50eb0",
+      "note": "native local-to-parent node propagation after held-item rotation"
+    },
+    "heldQuery": {
+      "rva": "0x117aa0",
+      "hook": true,
+      "note": "ordinary world hold query; native placement and accepted-pose storage follow this call"
+    },
     "pickRay": {
       "rva": "0x8f720",
       "hook": true
@@ -87,6 +110,22 @@
     },
     "dragDrop": {
       "rva": "0x119c30",
+      "hook": true
+    },
+    "queueWork": {
+      "rva": "0x1a890",
+      "hook": true
+    },
+    "applyHeldRelease": {
+      "rva": "0x116ef0",
+      "hook": true
+    },
+    "guiMousePress": {
+      "rva": "0x2fe40",
+      "hook": true
+    },
+    "guiMousePoll": {
+      "rva": "0x2f7e0",
       "hook": true
     },
     "hingeHandler": {
@@ -155,6 +194,61 @@
       "rva": "0x162e80",
       "optionalGroup": "manualDefense",
       "note": "Complete controlled-player manual guard capability; native eligibility and contact owners retained"
+    },
+    "constraintHandler": {
+      "rva": "0x11ba30",
+      "hook": true
+    },
+    "analogScale": {
+      "rva": "0x19240",
+      "hook": true
+    },
+    "analogAdd": {
+      "rva": "0x193d0",
+      "hook": true
+    },
+    "heldPlace": {
+      "rva": "0x118000",
+      "hook": true
+    },
+    "heldSweep": {
+      "rva": "0x1170f0",
+      "hook": true
+    },
+    "cameraFade": {
+      "rva": "0x90c00",
+      "hook": true,
+      "note": "Native controller obstruction-fade owner after camera sampling"
+    },
+    "fadeBounds": {
+      "rva": "0x7a270",
+      "hook": true,
+      "note": "Shared segment/sphere predicate: change only the two native fade callsites inside the owned camera scope"
+    },
+    "combatPosture": {
+      "rva": "0xb7560",
+      "hook": true,
+      "note": "native requested combat posture; held Manual guard requests native ready posture while preserving readiness, balance and active defense",
+      "optionalGroup": "manualDefense"
+    },
+    "combatUpdate": {
+      "rva": "0x169200",
+      "hook": true,
+      "optionalGroup": "manualDefense",
+      "note": "native character combat/physics update; held guard requests native interception after resolved rest/ready state if native scheduling made no attempt"
+    },
+    "aimWorldToLocal": {
+      "rva": "0x18960",
+      "hook": true,
+      "note": "native rigid inverse; only AE2E0 opponent projection receives sector-to-world operands"
+    },
+    "aimScreenRay": {
+      "rva": "0x8f460",
+      "note": "native near/far screen unprojection, no scene query"
+    },
+    "aimMeshRoot": {
+      "rva": "0x4fcb0",
+      "note": "native owning root for pick self exclusion"
     }
   },
   "returns": {
@@ -178,13 +272,17 @@
       "rva": "0x116aac",
       "note": "pick-up -> cursorWarp"
     },
-    "dropSpotPickReturn": {
-      "rva": "0x117b18",
-      "note": "drop-spot query -> pickRay"
-    },
     "grabStartPickReturn": {
       "rva": "0x11a79e",
       "note": "grab start -> grabPick"
+    },
+    "doubleClickPickReturn": {
+      "rva": "0x11c062",
+      "note": "world double-click -> grabPick"
+    },
+    "heldReleaseQueueReturn": {
+      "rva": "0x1170bb",
+      "note": "held item release -> queueWork"
     },
     "hoverPickReturn": {
       "rva": "0x11e76c",
@@ -205,6 +303,82 @@
     "hingePlaneReturnC": {
       "rva": "0x11bdce",
       "note": "hinge handler -> planeHit"
+    },
+    "constraintPlaneReturn": {
+      "rva": "0x11bbd4",
+      "note": "0x20000 native physical constraint fallback screen plane"
+    },
+    "placementPickReturn": {
+      "rva": "0x118440",
+      "note": "1183C0 initial placement screen pick; prepared close-view hit only at this call"
+    },
+    "controllerRightReturn": {
+      "rva": "0x22e5f7"
+    },
+    "controllerForwardReturn": {
+      "rva": "0x22e60e"
+    },
+    "xinputRightReturn": {
+      "rva": "0x22ec04"
+    },
+    "xinputForwardReturn": {
+      "rva": "0x22ec36"
+    },
+    "heldStartReturn": {
+      "rva": "0x118073",
+      "note": "Bounded close-view native held-body placement only"
+    },
+    "heldChildStartReturn": {
+      "rva": "0x1182c2",
+      "note": "Bounded close-view native held-body placement only"
+    },
+    "inventoryStartReturn": {
+      "rva": "0x118527",
+      "note": "Bounded close-view native held-body placement only"
+    },
+    "inventoryChildStartReturn": {
+      "rva": "0x1187ce",
+      "note": "Bounded close-view native held-body placement only"
+    },
+    "heldSweepReturn": {
+      "rva": "0x11834b",
+      "note": "Bounded close-view native held-body placement only"
+    },
+    "inventorySweepReturn": {
+      "rva": "0x11885c",
+      "note": "Bounded close-view native held-body placement only"
+    },
+    "fadeVerticalBoundsReturn": {
+      "rva": "0x90928",
+      "note": "90710 vertical obstruction branch -> 7A270; false takes native fade-clear path"
+    },
+    "fadeOrbitBoundsReturn": {
+      "rva": "0x90a3a",
+      "note": "90710 orbit obstruction branch -> 7A270; false takes native fade-clear path"
+    },
+    "aimPlaneReturn": {
+      "rva": "0xae73e",
+      "note": "AE2E0 native aim geometry boundary"
+    },
+    "aimPickReturn": {
+      "rva": "0xae7b6",
+      "note": "AE2E0 native aim geometry boundary"
+    },
+    "aimRootProjectReturn": {
+      "rva": "0xae3b6",
+      "note": "AE2E0 native aim geometry boundary"
+    },
+    "aimHeadProjectReturn": {
+      "rva": "0xae47b",
+      "note": "AE2E0 native aim geometry boundary"
+    },
+    "aimPrimaryProjectReturn": {
+      "rva": "0xae504",
+      "note": "AE2E0 native aim geometry boundary"
+    },
+    "aimSecondaryProjectReturn": {
+      "rva": "0xae5c2",
+      "note": "AE2E0 native aim geometry boundary"
     }
   },
   "globals": {
@@ -295,6 +469,18 @@
     },
     "cameraMouseTurn": {
       "rva": "0x4efd10"
+    },
+    "aimCursorX": {
+      "rva": "0x49ce50",
+      "refs": 2
+    },
+    "aimCursorY": {
+      "rva": "0x49ce60",
+      "refs": 2
+    },
+    "aimPickActive": {
+      "rva": "0x5b4460",
+      "refs": 2
     }
   },
   "slots": {
@@ -312,6 +498,13 @@
       "vtable": "0x309da0",
       "offset": "0x160",
       "holds": "aimPoint"
+    },
+    "combatUpdateSlot": {
+      "vtable": "0x31b4c8",
+      "offset": "0x158",
+      "holds": "combatUpdate",
+      "optionalGroup": "manualDefense",
+      "note": "independent character update vtable locator; mapped-file slot holds 169200, never replaced by this mod"
     }
   }
 }

@@ -112,7 +112,7 @@ static void bindingLifetime() {
           "a gameplay generation change disarms actions while preserving native consumption");
 }
 static void contextChanges() {
-    for (unsigned change = 0; change < 8; ++change) {
+    for (unsigned change = 0; change < 7; ++change) {
         Owner owner;
         Context context = gameplay();
         owner.beginSample(context, true, 0);
@@ -123,9 +123,8 @@ static void contextChanges() {
         case 2: ++context.scene; break;
         case 3: ++context.mode; break;
         case 4: context.combat = false; break;
-        case 5: context.ordinary = false; break;
-        case 6: owner.policyChanged(); context.policy = owner.policyRevision(); break;
-        case 7: context.bindings[9] = 'F'; break;
+        case 5: owner.policyChanged(); context.policy = owner.policyRevision(); break;
+        case 6: context.bindings[9] = 'F'; break;
         }
         const auto boundary = owner.beginSample(context, true, 3);
         const auto leftReleased = owner.beginSample(context, true, 2);
@@ -142,6 +141,51 @@ static void contextChanges() {
     owner.beginSample(context, false, 2);
     check(owner.beginSample(context, true, 2).buttons == 0,
           "returning from UI ownership cannot promote a held mouse button");
+}
+static void nativeActionTransitions() {
+    Owner owner;
+    Context context = gameplay();
+    owner.beginSample(context, true, 0);
+    owner.attackDown(false);
+    owner.buttonDown(1);
+    auto sample = owner.beginSample(context, true, 1);
+    check(owner.bufferedButtons(sample) == 1, "a fresh LMB begins the native action");
+    // The native owner raises pressBlocked/interactionLatch during a physical
+    // press. This changes defense eligibility, not ownership of the LMB hold.
+    context.ordinary = false;
+    sample = owner.beginSample(context, true, 1);
+    check(!sample.boundary && sample.continuing && owner.bufferedButtons(sample) == 1,
+          "native action eligibility cannot synthesize an LMB release halfway through its hold");
+    context.ordinary = true;
+    sample = owner.beginSample(context, true, 1);
+    check(!sample.boundary && owner.bufferedButtons(sample) == 1,
+          "native action completion preserves the same LMB press");
+    owner.beginSample(context, true, 0);
+    owner.attackDown(false);
+    owner.buttonDown(1);
+    context.ordinary = false;
+    sample = owner.beginSample(context, true, 0);
+    check(owner.bufferedButtons(sample) == 1,
+          "a complete click between polls survives a transient native action change");
+
+    context.ordinary = true;
+    owner.beginSample(context, true, 0);
+    sample = owner.beginSample(context, true, 2);
+    check(owner.combatSample(sample.buttons, 2, true, true).guard,
+          "a fresh RMB permits manual defense before an action transition");
+    context.ordinary = false;
+    sample = owner.beginSample(context, true, 3);
+    check(sample.buttons == 1 && owner.blockedButtons() == 2,
+          "leaving manual defense disarms only the held RMB, preserving LMB");
+    context.ordinary = true;
+    sample = owner.beginSample(context, true, 3);
+    check(!owner.combatSample(sample.buttons, 3, true, true).guard,
+          "held RMB cannot automatically rearm when the native action ends");
+    owner.beginSample(context, true, 0);
+    owner.combatSample(0, 0, true, true);
+    sample = owner.beginSample(context, true, 2);
+    check(owner.combatSample(sample.buttons, 2, true, true).guard,
+          "release then repress rearms manual defense after the native action");
 }
 static void attackLifetime() {
     Owner owner;
@@ -198,13 +242,59 @@ static void quiescentReset() {
     check(owner.combatSample(1, 1, false, false).buttons == 1,
           "reset cannot retain an earlier consumed combat press");
 }
+static void pointerGestures() {
+    fp::PointerGesture gesture;
+    fp::InputStamp stamp{1, 2, 3, 0, 4, 5};
+    gesture.sync(stamp);
+    gesture.press(gesture.current);
+    for (int i = 0; i < 12; ++i) {
+        gesture.move(1.f, -0.5f);
+        gesture.poll(gesture.current);
+    }
+    check(gesture.current.x == 12. && gesture.current.y == -6. && gesture.polled.x == 12.,
+          "small physical moves accumulate from the press across native polls");
+    const auto seen = gesture.current;
+    gesture.move(3.f, 2.f); // a new raw sample while the native press is being dispatched
+    gesture.press(seen);
+    check(gesture.current.x == 3. && gesture.current.y == 2. && gesture.polled.x == 0. && gesture.havePress,
+          "a press consumes only its snapshot and preserves motion arriving during dispatch");
+    gesture.sync(stamp);
+    check(gesture.havePress && gesture.current.x == 3. && gesture.current.y == 2.,
+          "rendered reticle changes cannot supply physical drag movement");
+    for (unsigned change = 0; change < 6; ++change) {
+        fp::InputStamp next = stamp;
+        switch (change) {
+        case 0: ++next.root; break;
+        case 1: ++next.head; break;
+        case 2: ++next.scene; break;
+        case 3: ++next.mode; break;
+        case 4: ++next.generation; break;
+        case 5: ++next.policyRevision; break;
+        }
+        gesture.sync(stamp);
+        gesture.move(30.f, 10.f);
+        gesture.press(gesture.current);
+        gesture.move(5.f, 6.f);
+        gesture.sync(next);
+        check(!gesture.havePress && gesture.current.x == 0. && gesture.polled.y == 0.,
+              "each pointer owner change retires the previous click and accumulated movement");
+    }
+    gesture.move(INFINITY, 1.f);
+    gesture.move(1.f, NAN);
+    check(gesture.current.x == 0. && gesture.current.y == 0., "nonfinite mouse samples cannot poison a gesture");
+    gesture.move(1e30f, -1e30f);
+    check(gesture.current.x == 1048576. && gesture.current.y == -1048576.,
+          "long uninterrupted turns saturate before conversion to client pixels");
+}
 int main() {
     windowLifetime();
     bufferedEvents();
     bindingLifetime();
     contextChanges();
+    nativeActionTransitions();
     attackLifetime();
     quiescentReset();
+    pointerGestures();
     std::printf("Input ownership: %u checks, %u failures\n", checks, failures);
     return failures ? 1 : 0;
 }
