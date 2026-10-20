@@ -165,7 +165,7 @@ class BuildPathTransportTests(unittest.TestCase):
     def capture_run(current,where):
      commands.extend(current)
      return original_run(current,where)
-    with patch.dict(os.environ,{'NoDefaultCurrentDirectoryInExePath':'1',
+    with patch.dict(os.environ,{'NODEFAULTCURRENTDIRECTORYINEXEPATH':'1',
                                 'EXCAMERA_BUILD_SOURCE':'parent value'}):
      before=dict(os.environ)
      with patch.multiple(BUILD,SRC=src,vcvars=lambda:toolchain,run=capture_run),patch.object(
@@ -178,7 +178,7 @@ class BuildPathTransportTests(unittest.TestCase):
     self.assertEqual(kwargs['env']['EXCAMERA_BUILD_SOURCE'],str(src))
     self.assertEqual(kwargs['env']['EXCAMERA_BUILD_STAGE'],str(stage))
     self.assertEqual(kwargs['env']['EXCAMERA_BUILD_VCVARS'],str(toolchain))
-    self.assertEqual(kwargs['env']['NoDefaultCurrentDirectoryInExePath'],'1')
+    self.assertEqual(kwargs['env']['NODEFAULTCURRENTDIRECTORYINEXEPATH'],'1')
     self.assertEqual({k:v for k,v in kwargs['env'].items() if not k.startswith('EXCAMERA_BUILD_')},
                      {k:v for k,v in before.items() if not k.startswith('EXCAMERA_BUILD_')})
     script=(stage/'build.cmd').read_bytes().decode('ascii').splitlines()
