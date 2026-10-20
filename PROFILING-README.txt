@@ -1,6 +1,6 @@
 ExCamera profiling comparison - 2026-10-20
 
-The checked-in candidate is 0.2.2-prof8, revision 56. Profiling defaults off.
+The checked-in candidate is 0.2.2-prof10, revision 58. Profiling defaults off.
 Build it with python -B build.py --package. No previous runtime ZIP is bundled
 in this source repository.
 
@@ -8,13 +8,13 @@ For the headwear fix, compare against pre-fix 0.2.2-prof6 (revision 54).
 For the original performance changes, the instrumented previous-release
 comparison is 0.2.1-prof1 (revision 47, d5507b7 plus profiling only).
 Use source-matched retained comparison packages; do not relabel capture JSON.
-Prof6 and prof8 both report variant optimized: verify build and revision in
+Prof6 and prof10 both report variant optimized: verify build and revision in
 status/capture metadata. The helper can warn about their variant order.
 
 Run the commands below from tools/ (python -B profile.py ...), or use
 python -B tools/profile.py ... from the repository root. Match equipment,
 settings, route and graphics conditions. New headwear_colour, headwear_draw
-and headwear_submit spans, plus their .native spans, appear in prof8; original
+and headwear_submit spans, plus their .native spans, appear in prof10; original
 metric identities are preserved. Profiler results do not establish safety or
 in-game visual acceptance.
 

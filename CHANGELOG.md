@@ -1,5 +1,18 @@
 # Changelog
 
+v0.2.3 (revision 58)
+
+- Keep ExCamera's native keyboard Controls rows reachable by preserving scrolling while the settings integration is active.
+- Make the Camera option's effect explicit: "Hide helmet and hair" toggles between hiding verified headwear and showing it when clear.
+- Retain the original native Controls scroll setting when ExCamera's settings integration retires.
+- Hide verified merged headwear from face and skin-weight ownership data alone; missing stable-display attributes no longer cause the native draw to reveal it.
+
+v0.2.2-prof10 (local headwear-hide candidate, rev58)
+
+- Separate hide-mode face classification from the extra vertex data and GPU stream used only to stabilize visible headwear.
+- Keep the native keyboard Controls pane scrollable while ExCamera rows are present, restoring the game's original scroll behavior when the custom settings view closes.
+- Label the visibility option "Hide helmet and hair" so its purpose is clear in Camera settings.
+
 v0.2.2 (revision 56)
 
 - Reduce repeated mesh, picking, collision, inactive-wear and empty throw-queue work while preserving current ownership, obstruction and lifetime checks.

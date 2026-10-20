@@ -644,7 +644,7 @@ inline const RowInfo& rowInfo(int row) {
          L"RawMouse", nullptr, nullptr,
          L"Reads mouse counts without Windows pointer acceleration. If another component owns raw input, "
          L"cursor input remains active and the requested setting is kept. Switch off and on to retry."},
-        {setting::hideHelmet, L"Helmet visibility", RowInfo::toggle, nullptr, &ModSettings::hideHelmet,
+        {setting::hideHelmet, L"Hide helmet and hair", RowInfo::toggle, nullptr, &ModSettings::hideHelmet,
          L"View", L"Helmet", iniHelmet, iniHelmetText,
          L"First person only. Show when clear keeps visible headwear unless it blocks the view or cannot be "
          L"checked. "

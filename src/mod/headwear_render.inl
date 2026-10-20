@@ -130,6 +130,7 @@ static void collectWearHints(uintptr_t root,uintptr_t head,uintptr_t sector) {
 // Complete preflight and copies happen before GL mutation. Body/neck/mixed-bone
 // faces stay native, even when they share the very same material with a helmet.
 static bool prepareWearPlan(uintptr_t node,uintptr_t material,WearPlan& plan) {
+    const bool hideAll=helmetMode.load(std::memory_order_relaxed)==fp::HelmetMode::hide;
     if(!ensureWearScratch()) return false;
     if(!wearScope.colour||!supersampleViewMatches()||viewMode.load()!=0||
        !InterlockedCompareExchange(&active,0,0)||!InterlockedCompareExchange(&cameraReady,0,0)||
@@ -141,7 +142,7 @@ static bool prepareWearPlan(uintptr_t node,uintptr_t material,WearPlan& plan) {
     if(!readable(node,0x300)||*(uintptr_t*)(node+field::sceneNode::sector)!=sector) return false;
     const uintptr_t actor=*(uintptr_t*)(root+field::character::sceneNode);
     const bool aggregate=!strncmp(nodeName(node),"_SKIN",5)&&wearAttached(node,actor,sector);
-    const bool separate=!aggregate&&node!=head&&wearBranch(node,head,root,sector,plan.bind);
+    const bool separate=!aggregate&&node!=head&&wearBranch(node,head,root,sector,hideAll?nullptr:plan.bind);
     if(!aggregate&&!separate) return false;
     const int lastMaterial=*(int*)(node+0x1c8),lastFace=*(int*)(node+0x268),
               lastVertex=*(int*)(node+0x288);
@@ -171,9 +172,14 @@ static bool prepareWearPlan(uintptr_t node,uintptr_t material,WearPlan& plan) {
     if(!readable(triangles,(size_t(lastFace)+1)*12)) return false;
     WearAttribute positions{},weights{},normals{};
     uintptr_t posIndices=0,normIndices=0,source=0,skin=0;
-    if(!wearAttribute(node,1,positions)||positions.format!=0xf30001||
-       !positions.count||positions.count>fp::wear::maxVertices||
-       !wearStream(node,positions,unsigned(lastVertex+1),posIndices)) return false;
+    // Hide mode needs only enough source data to classify the exact submitted
+    // triangles. Stable display additionally needs bind poses and vertex
+    // attributes; unavailable display data must not cancel a safe hide.
+    if(aggregate||!hideAll) {
+        if(!wearAttribute(node,1,positions)||positions.format!=0xf30001||
+           !positions.count||positions.count>fp::wear::maxVertices||
+           !wearStream(node,positions,unsigned(lastVertex+1),posIndices)) return false;
+    }
     bool headBones[fp::wear::maxBones]{};unsigned boneCount=0;
     if(aggregate) {
         skin=*(uintptr_t*)(node+0x218);
@@ -181,7 +187,7 @@ static bool prepareWearPlan(uintptr_t node,uintptr_t material,WearPlan& plan) {
         const int bones=*(int*)(skin+0x10);
         const uintptr_t boneNodes=*(uintptr_t*)(skin+0x18),inverseBind=*(uintptr_t*)(skin+0x20);
         if(bones<1||bones>int(fp::wear::maxBones)||!readable(boneNodes,size_t(bones)*8)||
-           !readable(inverseBind,size_t(bones)*48)||!wearAttribute(node,0x1000,weights)||
+           (!hideAll&&!readable(inverseBind,size_t(bones)*48))||!wearAttribute(node,0x1000,weights)||
            weights.format!=0xa41000||weights.count!=positions.count||
            !readable(weights.data,size_t(weights.count)*sizeof(fp::wear::Weights))) return false;
         boneCount=unsigned(bones);int headIndex=-1;
@@ -192,33 +198,40 @@ static bool prepareWearPlan(uintptr_t node,uintptr_t material,WearPlan& plan) {
             if(bone==head) {if(headIndex>=0) return false;headIndex=k;headBones[k]=true;}
             else headBones[k]=wearBranch(bone,head,root,sector);
         }
-        if(headIndex<0||!fp::wear::affine((const float*)(inverseBind+headIndex*48),plan.bind)) return false;
-        source=*(uintptr_t*)(skin+0x38); // Native immutable bind positions, not animated GPU data.
-    } else source=positions.data;
-    if(!readable(source,size_t(positions.count)*12)) return false;
+        if(headIndex<0) return false;
+        if(!hideAll) {
+            if(!fp::wear::affine((const float*)(inverseBind+headIndex*48),plan.bind)) return false;
+            source=*(uintptr_t*)(skin+0x38); // Native immutable bind positions, not animated GPU data.
+        }
+    } else if(!hideAll) source=positions.data;
+    if(!hideAll&&!readable(source,size_t(positions.count)*12)) return false;
     const uintptr_t tags=aggregate?*(uintptr_t*)(node+0x2f8):0;
     if(aggregate&&!readable(tags,(size_t(lastFace)+1)*4)) return false;
     const bool normal=(plan.attributes&2)!=0,tangent=(plan.attributes&8)!=0;
-    if(normal&&(!wearAttribute(node,2,normals)||normals.format!=0xf30002||
+    if(!hideAll&&normal&&(!wearAttribute(node,2,normals)||normals.format!=0xf30002||
        !normals.count||normals.count>fp::wear::maxVertices||
        !readable(normals.data,size_t(normals.count)*12)||
        !wearStream(node,normals,unsigned(lastVertex+1),normIndices))) return false;
-    const uintptr_t tangents=*(uintptr_t*)(material+0xe8);
-    if(tangent&&!readable(tangents,size_t(plan.vertices)*16)) return false;
+    const uintptr_t tangents=hideAll||!tangent?0:*(uintptr_t*)(material+0xe8);
+    if(!hideAll&&tangent&&!readable(tangents,size_t(plan.vertices)*16)) return false;
     bool any=false;
     for(unsigned f=0;f<count;++f) {
         const unsigned* tri=(const unsigned*)(triangles+(size_t(first)+f)*12);
         bool onHead=true;
         for(unsigned c=0;c<3;++c) {
             if(tri[c]<unsigned(firstVertex)||tri[c]>unsigned(endVertex)) return false;
-            const unsigned p=*(unsigned*)(posIndices+size_t(tri[c])*4);
-            if(p>=positions.count) return false;
-            if(aggregate&&!fp::wear::headVertex(((const fp::wear::Weights*)weights.data)[p],headBones,boneCount)) onHead=false;
+            if(aggregate) {
+                const unsigned p=*(unsigned*)(posIndices+size_t(tri[c])*4);
+                if(p>=positions.count) return false;
+                if(!fp::wear::headVertex(((const fp::wear::Weights*)weights.data)[p],headBones,boneCount)) onHead=false;
+            }
         }
         auto kind=onHead?(aggregate&&*(unsigned*)(tags+(size_t(first)+f)*4)==0?fp::wear::Face::head:fp::wear::Face::gear):fp::wear::Face::native;
+        if(hideAll&&kind==fp::wear::Face::gear) kind=fp::wear::Face::blocked;
         wearScratch().faces[f]=kind;wearScratch().tags[f]=aggregate?*(unsigned*)(tags+(size_t(first)+f)*4):1;
         if(kind==fp::wear::Face::native) continue;
         any=true;
+        if(hideAll) continue;
         for(unsigned c=0;c<3;++c) {
             const unsigned v=tri[c]-unsigned(firstVertex),p=*(unsigned*)(posIndices+size_t(tri[c])*4);
             if(!fp::wear::point(plan.bind,(const float*)(source+size_t(p)*12),wearScratch().vertices[v].position)) return false;
@@ -235,6 +248,8 @@ static bool prepareWearPlan(uintptr_t node,uintptr_t material,WearPlan& plan) {
         }
     }
     if(!any) return false;
+    if(hideAll) return supersampleViewMatches()&&verifiedPlayerHead(root)==head&&
+                       *(uintptr_t*)(node+field::sceneNode::sector)==sector;
     // The copied triangles test the actual stable geometry, in addition to the
     // existing native attachment rays/masks. A blocker is hidden in BOTH modes.
     unsigned blocked[fp::wear::maxGroups]{},nBlocked=0;bool overflow=false;
@@ -249,7 +264,7 @@ static bool prepareWearPlan(uintptr_t node,uintptr_t material,WearPlan& plan) {
         }
     }
     for(unsigned f=0;f<count;++f) if(wearScratch().faces[f]==fp::wear::Face::gear) {
-        bool hide=helmetMode.load()==fp::HelmetMode::hide||overflow;
+        bool hide=overflow;
         for(unsigned k=0;k<nBlocked;++k) hide=hide||blocked[k]==wearScratch().tags[f];
         if(hide) wearScratch().faces[f]=fp::wear::Face::blocked;else plan.stable=true;
     }
@@ -341,10 +356,47 @@ static void mountWearAttributes(const gl::Api& g,const WearPlan& plan,GLuint buf
 static void wearDrawRange(const WearPlan& plan,unsigned first,unsigned count) {
     glDrawElements(GL_TRIANGLES,GLsizei(count*3),plan.type,(const void*)(plan.indices+size_t(first)*3*plan.width));
 }
+using WearBindBuffer=void(APIENTRY*)(GLenum,GLuint);
+// When every verified headwear face is hidden or blocked, retain native body
+// faces without requiring the warm cue VBO owner or stable-render GL APIs.
+// The reviewed material binder still runs under cueLock/cueGlDepth, and no
+// borrowed vertex attributes, shader state or culling state are changed.
+static bool emitWearNativeOnly(const WearPlan& plan,bool bind) {
+    if(!ownedNativeSwap(cueCurrentDC())||!wearScope.colour||!supersampleViewMatches()||
+       viewMode.load()!=0||!InterlockedCompareExchange(&active,0,0)||
+       !InterlockedCompareExchange(&cameraReady,0,0)||
+       !readable(plan.node,0x2a0)||*(uintptr_t*)(plan.node+field::sceneNode::sector)!=wearScope.sector||
+       verifiedPlayerHead(wearScope.root)!=wearScope.head) return false;
+    bool emitted=false;
+    AcquireSRWLockExclusive(&cueLock);++cueGlDepth;
+    __try {
+        if(cueDeletesInFlight||cueRetiring.load()||cueBindingFailed.load()||
+           InterlockedCompareExchange(&stopping,0,0)||!ownedNativeSwap(cueCurrentDC())) return false;
+        WearBindBuffer bindBuffer=nullptr;
+        if(bind&&!loadGl(bindBuffer,"glBindBuffer")) return false;
+        if(bind) {
+            wearBind(plan.material+8);
+            bindBuffer(0x8893,plan.buffer);
+        }
+        GLint elementBuffer=0;glGetIntegerv(0x8895,&elementBuffer);
+        if(!ownedNativeSwap(cueCurrentDC())||GLuint(elementBuffer)!=plan.buffer||glGetError()!=GL_NO_ERROR)
+            return false;
+        for(unsigned f=0;f<plan.count;) {
+            const auto kind=wearScratch().faces[f];unsigned end=f+1;
+            while(end<plan.count&&wearScratch().faces[end]==kind) ++end;
+            if(kind==fp::wear::Face::native) wearDrawRange(plan,f,end-f);
+            else headwearRenderHidden.fetch_add(end-f,std::memory_order_relaxed);
+            f=end;
+        }
+        emitted=true;
+    } __finally {--cueGlDepth;ReleaseSRWLockExclusive(&cueLock);}
+    return emitted;
+}
 // Returns false only BEFORE emitting a triangle. Once drawing starts, a fault
 // propagates after finally restoration: retrying the whole native draw would
 // double-render already emitted faces (and hide a native exception).
 static bool emitWearPlan(const WearPlan& plan,bool bind) {
+    if(!plan.stable) return emitWearNativeOnly(plan,bind);
     if(!ownedNativeSwap(cueCurrentDC())) return false;
     bool emitted=false;
     AcquireSRWLockExclusive(&cueLock);++cueGlDepth;

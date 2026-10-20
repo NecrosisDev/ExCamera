@@ -59,7 +59,7 @@ const wchar_t* settingLabel(int id) {
     case setting::rmbMode: return L"RMB cursor";
     case setting::rotateHeldKey: return L"Rotate item";
     case setting::trackingKey: return L"Recenter";
-    case setting::hideHelmet: return L"Headwear";
+    case setting::hideHelmet: return L"Hide helmet and hair";
     case setting::tpTight: return L"Tight spaces";
     case setting::tpCombat: return L"Combat framing";
     case setting::tpDown: return L"Follow downed body";

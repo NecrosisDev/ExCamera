@@ -14,7 +14,7 @@ Supported `Exanima.exe` SHA-256:
 af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70
 ```
 
-Checked-in local build identity: `0.2.2-prof8` (revision 56), the headwear and performance candidate. Release builds derive their version from the Git tag; the checked-in local default does not pin future releases.
+Checked-in local build identity: `0.2.2-prof10` (revision 58), with the headwear hide and settings navigation fixes. Release builds derive their version from the Git tag; the checked-in local default does not pin future releases.
 
 ## Updating this repository
 
@@ -93,9 +93,9 @@ See [Architecture](docs/ARCHITECTURE.md) for the compilation model and native in
 ## License
 
 ExCamera is licensed under the [MIT License](LICENSE). Bundled MinHook retains its [own license](src/vendor/minhook/LICENSE.txt). Runtime packages include both licenses. No game executable or assets are distributed here.
-## Profiling candidate 0.2.2-prof8
+## Profiling candidate 0.2.2-prof10
 
-This local test build carries the performance changes plus opt-in sampled hook profiling. See [PROFILING-README.txt](PROFILING-README.txt) and [tools/profile.py](tools/profile.py) for capture controls and build-comparison guidance. Profiling defaults off; no key binding or camera setting is added. This is not a published release or evidence of an in-game FPS gain.
+This local build carries the performance changes plus opt-in sampled hook profiling. See [PROFILING-README.txt](PROFILING-README.txt) and [tools/profile.py](tools/profile.py) for capture controls and build-comparison guidance. Profiling defaults off; no key binding or camera setting is added. This is not a published release or evidence of an in-game FPS gain.
 
 ### First-person headwear in this local candidate
 

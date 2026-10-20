@@ -558,7 +558,11 @@ void NativeSettingsIntegration::rebuildControls(Table live) {
         controlsOwned=false; builtChildPage=0;
         return;
     }
-    if (page>=2) {
+    // ExCamera extends the native keyboard Controls list too. Do not rely on
+    // the game's initial scrolling flag: appended rows must remain reachable
+    // even when the stock list currently fits the pane.
+    const bool needsScrolling = page >= 2 || (page == 1 && baseCount == 44);
+    if (needsScrolling) {
         if (!scrollOwned) { originalScrolling=scrolling(children.controls); scrollOwned=true; }
         setScrolling(children.controls,true);
     } else if (scrollOwned) {
