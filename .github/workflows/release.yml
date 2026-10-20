@@ -1,0 +1,89 @@
+name: Release v0.2.0
+
+on:
+  push:
+    tags: ['v0.2.0']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: excamera-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Build and publish Windows x64
+    permissions:
+      contents: write
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      - name: Verify release version
+        shell: python
+        run: |
+          import os, re
+          from pathlib import Path
+          header = Path('src/build_identity.h').read_text()
+          version = re.search(r'^#define FP_BUILD "([^"\n]+)"$', header, re.M)
+          if os.environ.get('GITHUB_REF') != 'refs/tags/v0.2.0':
+              raise SystemExit('This workflow only publishes the v0.2.0 tag')
+          if not version or version.group(1) != '0.2.0':
+              raise SystemExit('src/build_identity.h must set FP_BUILD to 0.2.0')
+
+      # build.py locates VS 2022, initializes x64 MSVC and checks DLL exports.
+      # No development tests, tools folder or game files are required.
+      - name: Build and package
+        shell: pwsh
+        run: python build.py --package
+
+      - name: Verify release ZIP
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile
+          packages = list(Path('build').glob('ExCamera-*-minimal.zip'))
+          if not Path('build/ExCamera-0.2.0-minimal.zip').is_file():
+              raise SystemExit('Missing the v0.2.0 runtime package')
+          if len(packages) != 1:
+              raise SystemExit(f'Expected one release ZIP, found {len(packages)}')
+          expected = {'ExCamera.exe', 'ExanimaFirstPerson.dll', 'LICENSE.txt', 'LICENSE-MinHook.txt'}
+          with zipfile.ZipFile(packages[0]) as archive:
+              if len(archive.namelist()) != 4 or set(archive.namelist()) != expected:
+                  raise SystemExit('Release ZIP contains missing or unexpected files')
+              if archive.testzip() is not None:
+                  raise SystemExit('Release ZIP failed its integrity check')
+              for name in expected:
+                  if not archive.getinfo(name).file_size:
+                      raise SystemExit(f'Empty release file: {name}')
+          print(f'Ready: {packages[0]}')
+
+      - name: Upload release ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/ExCamera-*-minimal.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      # A failed compile, export check, ZIP check or artifact upload stops here.
+      # gh creates a draft, uploads this asset, then publishes. Existing releases
+      # are not overwritten. Reference: https://cli.github.com/manual/gh_release_create
+      - name: Publish v0.2.0
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" "build/ExCamera-0.2.0-minimal.zip" --repo "$env:GITHUB_REPOSITORY" --verify-tag --title "ExCamera v0.2.0" --notes "Windows x64 runtime for the supported Exanima build. Extract the ZIP and keep the launcher, DLL, and license files together."
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

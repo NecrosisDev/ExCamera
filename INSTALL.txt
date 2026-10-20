@@ -1,0 +1,15 @@
+Use with the fixes3 source and build.py.
+
+1. Copy .github/workflows/release.yml and src/build_identity.h into the repository, preserving paths. The header aligns the launcher/DLL version with v0.2.0.
+2. Commit and push these files and the complete source to main. Keep the separate Build workflow if you want ordinary CI; remove obsolete test workflows.
+3. Test the build/gameplay before tagging a public release.
+4. From your local repository, with the intended release commit checked out and a clean working tree, run:
+
+   git tag -a v0.2.0 -m "ExCamera v0.2.0"
+   git push origin v0.2.0
+
+The tag push builds that exact commit, then publishes the runtime ZIP under Releases only after success. Do not manually create the v0.2.0 release first. No personal token is required; the job uses GitHub's built-in token with contents: write.
+
+If v0.2.0 already exists, stop and inspect it rather than force-moving or overwriting it. A publish/upload failure may leave a draft; inspect the run before retrying.
+
+Local YAML/version/package checks passed, but this workflow has not been executed on GitHub or compiled with Windows/MSVC here. A successful build is not an in-game test.
