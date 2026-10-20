@@ -50,14 +50,6 @@ Camera and Combat settings are available in keyboard and controller modes. ExCam
 
 Fully exit the game before replacing a loaded DLL. Keep your existing preferences when updating; the runtime ZIP does not include an INI file.
 
-## Current limits and validation
-
-Leaning is disabled. Eye setback is fixed at 16 cm; the camera near plane adapts between 1 and 3 cm. F6–F11 are reserved mod controls.
-
-This revision corrects scroll-coordinate validation for ExCamera-owned checkboxes while retaining the game's native hit testing and activation. Vanilla controls are not wrapped.
-
-This revision has **not been built with Windows/MSVC or tested in a running game**. Source-level and portable checks do not establish in-game correctness. Settings interaction and outdoor culling/lighting changes still require in-game verification. The build script checks the DLL's required exports, but does not run a test suite; development tests are not bundled in this minimal source distribution.
-
 ## Source layout
 
 - `build.py` — Windows build and minimal runtime packaging.
