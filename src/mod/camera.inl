@@ -7,7 +7,7 @@
 // plane. Borrow zero only during this query, without rebuilding projection:
 // its far endpoint still supplies the same nonzero direction, now from the eye.
 // Ordinary interaction picks never use this adapter.
-static bool cameraPosePick(uintptr_t camera, const float* pose, float x, float y, uintptr_t out,
+static bool cameraPosePickProfileBody(uintptr_t camera, const float* pose, float x, float y, uintptr_t out,
                            uintptr_t ignoredHeld = 0) {
     const uintptr_t viewport = pickViewportForCamera(camera);
     if (!viewport || !originalPickRay) return false;
@@ -42,6 +42,10 @@ static bool cameraPosePick(uintptr_t camera, const float* pose, float x, float y
     memcpy((void*)(camera + field::camera::pose2), kept + 12, 48);
     rebuildInverse(camera + field::camera::inverse, camera + field::camera::pose);
     return got;
+}
+static bool cameraPosePick(uintptr_t camera, const float* pose, float x, float y, uintptr_t out,
+                           uintptr_t ignoredHeld = 0) {
+    return fp::profile::invoke<fp::profile::Hook::cameraPick>(cameraPosePickProfileBody, camera, pose, x, y, out, ignoredHeld);
 }
 // The near plane's other half: the level grid has walls and floors only, so a prop, door or person right in
 // front of the eye cut into view. The game's own pick at the screen centre, from this frame's pose, gives the
@@ -182,7 +186,37 @@ static bool updateCameraEntry(uintptr_t root, uintptr_t head, uintptr_t scene, u
     cameraEntry=next;
     return true;
 }
-static uintptr_t nav(void* self, float offset) {
+// Status-only geometry, on the camera owner with the current validated head.
+// The common sample pays one load; the exchange only consumes pending demand.
+static void sampleHeadDiagnostics(uintptr_t head, const float* h) {
+    if (!headDiagnosticRequested.load(std::memory_order_relaxed) ||
+        !headDiagnosticRequested.exchange(false, std::memory_order_relaxed)) return;
+    // Where the physics head's points sit in the head's own frame (the status file reports them): their middle along the
+    // up and forward axes, and how far the farthest is from it. Diagnostic: the eye setback's room.
+    if (readable(head + field::bodyPart::points, 48)) {
+        const float(*pt)[3] = (const float(*)[3])(head + field::bodyPart::points);
+        float mid[3]{};
+        for (int k = 0; k < 4; ++k)
+            for (int i = 0; i < 3; ++i) mid[i] += 0.25f * pt[k][i];
+        float reach = 0;
+        for (int k = 0; k < 4; ++k) {
+            float d = 0;
+            for (int i = 0; i < 3; ++i) d += (pt[k][i] - mid[i]) * (pt[k][i] - mid[i]);
+            reach = std::fmax(reach, std::sqrt(d));
+        }
+        float a2 = 0, a3 = 0;
+        for (int i = 0; i < 3; ++i) {
+            a2 += (mid[i] - h[9 + i]) * h[3 + i];
+            a3 += (mid[i] - h[9 + i]) * h[6 + i];
+        }
+        if (std::isfinite(a2 + a3 + reach)) {
+            headMid2 = a2;
+            headMid3 = a3;
+            headReach = reach;
+        }
+    }
+}
+static uintptr_t navProfileBody(void* self, float offset) {
     healthHit(fp::HealthHook::navSampler);
     CameraGuard guard;
     InterlockedExchange(&navThread, LONG(GetCurrentThreadId()));
@@ -198,7 +232,7 @@ static uintptr_t nav(void* self, float offset) {
         // stock fields / first-person expanded pose and projection matrices behind.
         restoreOwnedCamera(view, camera);
     }
-    uintptr_t result = originalNav(self, offset);
+    uintptr_t result = fp::profile::invoke<fp::profile::Hook::navNative>(originalNav, self, offset);
     currentCamera(view, camera);
     if (!checkSavedOwner(view, camera)) return result;
     if (!camera) {
@@ -402,30 +436,7 @@ static uintptr_t nav(void* self, float offset) {
         if (!std::isfinite(requestedTarget[i]) || !std::isfinite(body[i]) ||
             (evaluateCentre && !std::isfinite(centreTarget[i]))) return reject(6);
     }
-    // Where the physics head's points sit in the head's own frame (the status file reports them): their middle along the
-    // up and forward axes, and how far the farthest is from it. Diagnostic: the eye setback's room.
-    if (readable(head + field::bodyPart::points, 48)) {
-        const float(*pt)[3] = (const float(*)[3])(head + field::bodyPart::points);
-        float mid[3]{};
-        for (int k = 0; k < 4; ++k)
-            for (int i = 0; i < 3; ++i) mid[i] += 0.25f * pt[k][i];
-        float reach = 0;
-        for (int k = 0; k < 4; ++k) {
-            float d = 0;
-            for (int i = 0; i < 3; ++i) d += (pt[k][i] - mid[i]) * (pt[k][i] - mid[i]);
-            reach = std::fmax(reach, std::sqrt(d));
-        }
-        float a2 = 0, a3 = 0;
-        for (int i = 0; i < 3; ++i) {
-            a2 += (mid[i] - h[9 + i]) * h[3 + i];
-            a3 += (mid[i] - h[9 + i]) * h[6 + i];
-        }
-        if (std::isfinite(a2 + a3 + reach)) {
-            headMid2 = a2;
-            headMid3 = a3;
-            headReach = reach;
-        }
-    }
+    sampleHeadDiagnostics(head, h);
     // First person keeps the exact sampled physical head pose. The camera's
     // optional filters are evaluated separately below, against one frame epoch.
     if (!fp::headPose(h, requestedTarget, pose)) return reject(4);
@@ -562,14 +573,17 @@ static uintptr_t nav(void* self, float offset) {
         if (cameraFrame.tracked && mode == 0)
             fp::composeView(evaluatedPose, cameraFrame.trackingOffset, evaluatedPose);
         {
-            float clearance = viewClearance(evaluatedPose, cameraFrame.effectiveFov); // unknown (no level grid): today's 1 cm, never the lower floor
-            if (mode == 0 && clearance != 0.f) {
+            const float minimumNear = float(nearClip.load()) * 0.1f;
+            float clearance = viewClearance(evaluatedPose, cameraFrame.effectiveFov, 2.f * cameraNearMaximum);
+            // A closer prop cannot tighten an already minimum-clamped plane.
+            // Unknown level geometry still needs the native prop query.
+            if (mode == 0 && !(clearance >= 0.f && clearance <= 2.f * minimumNear)) {
                 const float prop =
                     centrePropDepth(camera, evaluatedPose, root); // props, doors and people are not in the level grid
                 if (prop > 0.f && (clearance < 0.f || prop < clearance)) clearance = prop;
             }
             evaluatedNear =
-                state.clipFilter.update(clearance < 0.f ? 2.f : clearance, dt, float(nearClip.load()) * 0.1f, 3.f);
+                state.clipFilter.update(clearance < 0.f ? 2.f : clearance, dt, minimumNear, cameraNearMaximum);
         }
         for (int i = 0; i < 12; ++i)
             if (!std::isfinite(evaluatedPose[i])) return 7;
@@ -670,6 +684,9 @@ static uintptr_t nav(void* self, float offset) {
     for (int i = 0; i < 3; i++) eyeGlobal[i] = requestedTarget[i]; // the eye (with the setback), for the hold distance
     InterlockedExchange(&cameraReady, 1);
     return result;
+}
+static uintptr_t nav(void* self, float offset) {
+    return fp::profile::invoke<fp::profile::Hook::nav>(navProfileBody, self, offset);
 }
 // Installs the hooks, dispatch slots, window procedure and optional raw mouse.
 // On failure everything installed is rolled back; reason/hooks say what to report.

@@ -131,7 +131,6 @@ writeLiveSettings(const panel::ModSettings& requested) {
     cueOpacity = s.cueOpacity;
     cueThrust = s.cueThrust;
     rmbMode = s.rmbMode;
-    if (!s.rmbMode) InterlockedExchange(&rmbFree, 0);
     windowsFreeze = s.freezeWindows;
     crouchMode = s.crouchMode;
     nearClip = s.nearClip;

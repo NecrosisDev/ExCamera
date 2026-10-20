@@ -41,10 +41,6 @@ jobs:
         shell: pwsh
         run: python tools/check_generated.py
 
-      - name: Test portable build and release tooling
-        shell: pwsh
-        run: python -m unittest discover -s tools -v
-
       # build.py initializes x64 MSVC and checks DLL exports.
       # The CI checks need only source and Python, never a game executable.
       - name: Build and package

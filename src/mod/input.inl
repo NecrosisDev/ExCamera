@@ -61,6 +61,15 @@ static int bindingMessageKey(UINT message, WPARAM wp) {
     }
     return 0;
 }
+// Native binding conversion uses MAPVK_VSC_TO_VK_EX (3), which distinguishes
+// left/right modifiers. WM_KEY messages carry the generic VK in wParam.
+static int cursorLookPhysicalKey(int key, LPARAM lp) {
+    if (key != VK_SHIFT && key != VK_CONTROL && key != VK_MENU) return key;
+    unsigned scan = unsigned((lp >> 16) & 0xff);
+    if (lp & (1LL << 24)) scan |= 0xe000;
+    const unsigned physical = MapVirtualKeyW(scan, 3);
+    return physical > 0 && physical < 256 ? int(physical) : key;
+}
 // Down (1), up (0), or a message for a different physical key (-1).
 static int rotateKeyMessage(UINT message, WPARAM wp, int key) {
     if (!key || bindingMessageKey(message, wp) != key) return -1;
@@ -72,6 +81,7 @@ static int rotateKeyMessage(UINT message, WPARAM wp, int key) {
 // A different window procedure was active while this hook session was absent:
 // it owned those releases. Ordinary input/profile handoffs keep this ledger.
 static void resetBindingWindowOwnership() {
+    rmbEvent(fp::RmbEvent::focusLost, false);
     inputOwner.newWindowSession();
 }
 // Observe only messages that survived held-item/lean ownership. Suppression
@@ -176,14 +186,23 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     const int bindingKey = bindingMessageKey(message, wp);
     if (bindingKey) {
         const int edge = rotateKeyMessage(message, wp, bindingKey);
+        const int cursorKey = cursorLookPhysicalKey(bindingKey, lp);
         const bool xbutton =
             message == WM_XBUTTONDOWN || message == WM_XBUTTONDBLCLK || message == WM_XBUTTONUP;
-        if (edge == 0 && inputOwner.windowRelease(bindingKey)) return xbutton ? TRUE : 0;
+        if (edge == 0) {
+            bool cursorUp = cursorLookMessage(cursorKey, false, false);
+            if (cursorKey != bindingKey) cursorUp |= cursorLookMessage(bindingKey, false, false);
+            const bool physicalUp = inputOwner.windowRelease(cursorKey);
+            if (inputOwner.windowRelease(bindingKey) || physicalUp || cursorUp) return xbutton ? TRUE : 0;
+        }
         if (edge == 1) {
             const bool repeat = (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) && (lp & (1LL << 30));
-            if (repeat && inputOwner.windowOwns(bindingKey)) return 0;
+            if (repeat && (inputOwner.windowOwns(bindingKey) || inputOwner.windowOwns(cursorKey))) return 0;
             // A new physical down also retires a release lost outside this window.
-            if (!repeat) inputOwner.windowBegin(bindingKey);
+            if (!repeat) {
+                inputOwner.windowBegin(bindingKey);
+                if (cursorKey != bindingKey) inputOwner.windowBegin(cursorKey);
+            }
             const bool canTake = !repeat && bindingContextNow();
             if (canTake && bindingKey == rotateHeldKey.load() && holdingItem()) {
                 inputOwner.windowClaim(bindingKey);
@@ -194,15 +213,17 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 ++trackingReset;
                 return xbutton ? TRUE : 0;
             }
+            if (canTake && cursorLookMessage(cursorKey, true, repeat)) {
+                inputOwner.windowClaim(cursorKey);
+                return xbutton ? TRUE : 0;
+            }
+            if (canTake && cursorKey != bindingKey && cursorLookMessage(bindingKey, true, repeat)) {
+                inputOwner.windowClaim(bindingKey);
+                return xbutton ? TRUE : 0;
+            }
         }
     }
     combatMouseMessage(message, wp);
-    if (message == WM_RBUTTONDOWN || message == WM_RBUTTONDBLCLK || message == WM_RBUTTONUP) {
-        bool eaten = false;
-        rmbEvent(message == WM_RBUTTONUP ? fp::RmbEvent::up : fp::RmbEvent::down,
-                 message != WM_RBUTTONUP && rmbEligible(), &eaten);
-        if (eaten) return 0;
-    }
     // Middle click in gameplay immediately shifts the requested view toward
     // today's cursor ray. Keep the corresponding up owned, even if the mode changes.
     // Native UI and any held-item rotation binding retain first refusal.
@@ -907,19 +928,13 @@ static void sampleHeldBindings(bool owned, const InputOwner::Sample& sample) {
             if (alternateBindingKey(unsigned(bound))) *(unsigned*)gameAt(fp::sig::keyWord) &= ~0x80u;
         }
 }
-static void input() {
+static void inputProfileBody() {
     healthHit(fp::HealthHook::pollInput);
-    originalInput();
+    fp::profile::invoke<fp::profile::Hook::inputNative>(originalInput);
     auto root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     auto bh = root ? *(uintptr_t*)(root + field::character::behaviour) : 0;
-    // Before ownership is decided, so a right mouse still physically held is blocked by the hand-off
-    // rather than passed to the game. A release that never reached the window (let go outside it) ends
-    // a hold too.
-    if (InterlockedCompareExchange(&rmbFree, 0, 0) &&
-        (!rmbEligible() || (rmbMode.load() == 1 && !(GetAsyncKeyState(VK_RBUTTON) & 0x8000)))) {
-        InterlockedExchange(&rmbFree, 0);
-        releaseInput();
-    }
+    // Retire a released/rebound/focus- or actor-invalidated hold before admitting input.
+    cursorLookPoll();
     const bool owned = bh && controls(bh);
     auto buttons = (unsigned*)(gameAt(fp::sig::buttonWord));
     const InputOwner::Sample sample = inputOwner.beginSample(inputContext(root, bh), owned, *buttons);
@@ -952,6 +967,9 @@ static void input() {
     combatInput(root, bh, owned, sample);
     if (owned) prepareAttackHeading(bh);
     duckKey = (*(unsigned*)gameAt(fp::sig::keyWord) & duckKeyBit) != 0;
+}
+static void input() {
+    return fp::profile::invoke<fp::profile::Hook::input>(inputProfileBody);
 }
 static void cursorAim(uintptr_t behavior) {
     Aim a;
@@ -1043,7 +1061,7 @@ static void steadyHeadAround(uintptr_t root, void (*build)(uintptr_t, float, uns
         ++steadyCalls;
     }
     __try {
-        build(root, time, mode);
+        fp::profile::invoke<fp::profile::Hook::poseNative>(build, root, time, mode);
     } __finally {
         if (cap && *cap == lowered) *cap = kept;
     }
@@ -1135,6 +1153,10 @@ static bool awaitPoseBuilders(DWORD timeout = 2000) {
     return true;
 }
 static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
+    if (root != *(uintptr_t*)gameAt(fp::sig::playerRoot)) {
+        fp::profile::invoke<fp::profile::Hook::poseNative>(originalPose, root, time, mode);
+        return;
+    }
     SpinePoseBorrow borrowed[2]{};
     uintptr_t* contextual = nullptr;
     uintptr_t savedContext = 0;
@@ -1159,7 +1181,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
         const auto bh = *(uintptr_t*)(root + field::character::behaviour);
         Aim a;
         if (!bh || !getAim(bh, a))
-            originalPose(root, time, mode);
+            fp::profile::invoke<fp::profile::Hook::poseNative>(originalPose, root, time, mode);
         else {
             contextual = (uintptr_t*)(root + field::character::contextualTarget);
             savedContext = *contextual;
@@ -1183,7 +1205,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
         }
     }
 }
-static void poseBuilder(uintptr_t root, float time, unsigned char mode) {
+static void poseBuilderProfileBody(uintptr_t root, float time, unsigned char mode) {
     InterlockedIncrement(&poseBuildsInFlight);
     __try {
         healthHit(fp::HealthHook::poseBuilder);
@@ -1191,6 +1213,9 @@ static void poseBuilder(uintptr_t root, float time, unsigned char mode) {
     } __finally {
         InterlockedDecrement(&poseBuildsInFlight);
     }
+}
+static void poseBuilder(uintptr_t root, float time, unsigned char mode) {
+    return fp::profile::invoke<fp::profile::Hook::pose>(poseBuilderProfileBody, root, time, mode);
 }
 // Active head stabiliser (fp::steadyHead): run on the physics thread for the player's head and
 // the two parts under it (neck and upper chest), after the game's constraint passes and before it builds
@@ -1269,7 +1294,7 @@ static void steadyUnderHead(uintptr_t root, int which, uintptr_t part) {
     fp::steadyBodyPart(bodySteadyState[which], (float(*)[3])(part + field::bodyPart::points),
                        (const float*)(part + field::bodyPart::poseCoefficients), headSteady.load());
 }
-static void partSettle(uintptr_t part) {
+static void partSettleProfileBody(uintptr_t part) {
     healthHit(fp::HealthHook::partSettle);
     __try {
         const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
@@ -1284,7 +1309,10 @@ static void partSettle(uintptr_t part) {
         headSteadyState = fp::HeadSteadyState();
         steadyNeck = steadyChest = 0;
     }
-    originalPartSettle(part);
+    fp::profile::invoke<fp::profile::Hook::partNative>(originalPartSettle, part);
+}
+static void partSettle(uintptr_t part) {
+    return fp::profile::invoke<fp::profile::Hook::part>(partSettleProfileBody, part);
 }
 static void step(uintptr_t bh) {
     Aim a;
@@ -1863,12 +1891,15 @@ static uintptr_t levelGrid() {
     const uintptr_t level = *(uintptr_t*)(manager + field::sceneManager::levelGrid);
     return level && readable(level, 0x28) ? level : 0;
 }
-static int levelBlocked(uintptr_t level, const float* origin, const float* dir, float length) {
+static int levelBlockedProfileBody(uintptr_t level, const float* origin, const float* dir, float length) {
     __try {
-        return levelRay(level, origin, dir, length) || levelRay2(level, origin, dir, length) ? 1 : 0;
+        return fp::profile::invoke<fp::profile::Hook::levelNative>(levelRay, level, origin, dir, length) || fp::profile::invoke<fp::profile::Hook::levelNative>(levelRay2, level, origin, dir, length) ? 1 : 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
+}
+static int levelBlocked(uintptr_t level, const float* origin, const float* dir, float length) {
+    return fp::profile::invoke<fp::profile::Hook::level>(levelBlockedProfileBody, level, origin, dir, length);
 }
 // Called with cameraLock held (lastCamera/lastHeadGlobal/renderedFov pairing).
 // Only meaningful while picks unproject from the camera first person wrote
@@ -1909,7 +1940,7 @@ static PickRay originalPickRay; // RVA 0x8F720
 static char ownedPickRay(uintptr_t viewport, float x, float y, uintptr_t out) {
     const std::uint32_t bank = fp::game::viewQueryScratchBank;
     memcpy((void*)(out + field::pick::scratchBank), &bank, sizeof bank);
-    return originalPickRay(viewport, x, y, out);
+    return fp::profile::invoke<fp::profile::Hook::pickNative>(originalPickRay, viewport, x, y, out);
 }
 // Placement scope follows the native call stack; callers on another thread cannot overwrite it.
 static thread_local DWORD placingThread = 0;
@@ -1955,6 +1986,8 @@ static HeldPlace originalHeldPlace; // RVA 0x118000
 using HeldSweep = float (*)(uintptr_t, const float*, uintptr_t, uintptr_t);
 static HeldSweep originalHeldSweep; // RVA 0x1170F0
 static unsigned walkScene(uintptr_t scene, uintptr_t* nodes, unsigned* parents, unsigned capacity);
+static unsigned walkSceneVisit(uintptr_t scene, uintptr_t* nodes, unsigned* parents, unsigned capacity,
+                               void (*visit)(uintptr_t, bool));
 static float heldSweepFor(uintptr_t caller, uintptr_t body, const float* direction, uintptr_t viewport,
                           uintptr_t pose) {
     if (!boundedPlacement.object || viewport != boundedPlacement.viewport ||
@@ -2201,8 +2234,8 @@ static float holdReachClamp(const float* origin, const float* dir, float t) {
     }
     return t;
 }
-static float levelClear(uintptr_t level, const float* origin, const float* dir, float length) {
-    const int initial = levelBlocked(level, origin, dir, length);
+static float levelClearAfterProbe(uintptr_t level, const float* origin, const float* dir, float length,
+                                 int initial) {
     if (initial < 0) return 0.f; // unknown is not clear space
     if (initial == 0) return length;
     float lo = 0, hi = length;
@@ -2217,11 +2250,16 @@ static float levelClear(uintptr_t level, const float* origin, const float* dir, 
     }
     return std::fmax(lo - 8.f, 0.f);
 }
+static float levelClear(uintptr_t level, const float* origin, const float* dir, float length) {
+    return levelClearAfterProbe(level, origin, dir, length, levelBlocked(level, origin, dir, length));
+}
 // dynamic near plane: the view depth to the nearest level geometry inside the view, from the
 // eye along the view centre and the four frustum corners (16 units, the level ray queries the
 // pick clearance uses). Every frame; -1 unknown (no level grid, a fault, a bad pose), 1e9 nothing near.
 // Level geometry only: props and characters are not in the level grid.
-static float viewClearance(const float* pose, float fov) {
+// A positive maxClearance is for a caller that saturates at that depth; it may
+// replace farther results with the cap, never a closer result or query failure.
+static float viewClearanceProfileBody(const float* pose, float fov, float maxClearance = 0.f) {
     for (int i = 0; i < 12; i++)
         if (!std::isfinite(pose[i])) return -1;
     const uintptr_t level = levelGrid();
@@ -2246,9 +2284,25 @@ static float viewClearance(const float* pose, float fov) {
         const float length = std::fmax(
             16.f,
             9.f * float(n)); // a corner ray reaches about 9 deep at any field of view (wide views slant it)
-        const int hit = levelBlocked(level, pose + 9, d, length);
+        const float depthScale = float(1.0 / n);
+        float probe = length;
+        if (std::isfinite(maxClearance) && maxClearance > 0.f && length * depthScale > maxClearance) {
+            float lo = 0.f, hi = length;
+            // Use a legacy bisection endpoint: a clear prefix then guarantees
+            // that even the quantized result saturates the caller's near plane.
+            for (int i = 0; i < 6; ++i) {
+                const float mid = (lo + hi) * .5f;
+                if (mid * depthScale >= maxClearance) hi = mid;
+                else lo = mid;
+            }
+            probe = hi;
+        }
+        const int hit = levelBlocked(level, pose + 9, d, probe);
         if (hit < 0) return -1;
-        if (hit == 0) continue;
+        if (hit == 0) {
+            if (probe < length) best = std::fmin(best, maxClearance);
+            continue;
+        }
         float lo = 0, hi = length;
         for (int i = 0; i < 6; i++) {
             const float mid = (lo + hi) * .5f;
@@ -2259,9 +2313,12 @@ static float viewClearance(const float* pose, float fov) {
             else
                 lo = mid;
         }
-        best = std::fmin(best, lo * float(1.0 / n)); // along the ray -> view depth
+        best = std::fmin(best, lo * depthScale); // along the ray -> view depth
     }
     return best;
+}
+static float viewClearance(const float* pose, float fov, float maxClearance = 0.f) {
+    return fp::profile::invoke<fp::profile::Hook::viewClearance>(viewClearanceProfileBody, pose, fov, maxClearance);
 }
 // The close-view hold is a distance from the eye along the actual pointer ray,
 // limited by the nearer hit, native level geometry and the player's reach.
@@ -2281,8 +2338,10 @@ static char heldPointAlongViewDistance(char hit, uintptr_t out, float distance) 
     if (hit) t = std::fmin(t, reached);
     const uintptr_t level = levelGrid();
     if (level) {
-        if (!levelRay || !levelRay2 || levelBlocked(level, origin, dir, t) < 0) return 0;
-        t = levelClear(level, origin, dir, t);
+        if (!levelRay || !levelRay2) return 0;
+        const int initial = levelBlocked(level, origin, dir, t);
+        if (initial < 0) return 0;
+        t = levelClearAfterProbe(level, origin, dir, t, initial);
         if (levelBlocked(level, origin, dir, t) != 0) return 0;
     }
     if (!(t >= 1.f)) return 0;
@@ -2312,42 +2371,44 @@ static bool selfPickWanted() {
 // own front every frame and pulled it toward the eye).
 static uintptr_t heldPickNodes[256];
 static unsigned heldPickParents[256];
-static void selfPickMask(uintptr_t held = 0) {
+static void maskSelfPickNode(uintptr_t node, bool treeReadable) {
+    // The walk's current range check covers flags too. A partially readable
+    // leaf retains the narrower check used by the original masking pass.
+    if (selfPickSet >= 1024 || (!treeReadable && !readable(node, 0x10))) return;
+    unsigned& flags = *(unsigned*)(node + 8);
+    if (!(flags & pickSkipBit)) {
+        flags |= pickSkipBit;
+        selfPickNodes[selfPickSet++] = node;
+    }
+}
+static void selfPickMaskProfileBody(uintptr_t held = 0) {
     selfPickSet = 0;
-    auto mask = [](uintptr_t node) {
-        if (!readable(node, 0x10) || selfPickSet >= 1024) return;
-        unsigned& flags = *(unsigned*)(node + 8);
-        if (!(flags & pickSkipBit)) {
-            flags |= pickSkipBit;
-            selfPickNodes[selfPickSet++] = node;
-        }
-    }; // compacted in place: only the ones changed here
     const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     const uintptr_t mesh = readable(root, 0x20) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
-    if (mesh) {
-        const unsigned count = walkScene(mesh, selfPickNodes, selfPickParents, 1024);
-        for (unsigned i = 0; i < count; ++i) mask(selfPickNodes[i]);
-    }
-    if (held) {
-        const unsigned count = walkScene(held, heldPickNodes, heldPickParents, 256);
-        for (unsigned i = 0; i < count; ++i) mask(heldPickNodes[i]);
-    }
+    if (mesh) walkSceneVisit(mesh, selfPickNodes, selfPickParents, 1024, maskSelfPickNode);
+    if (held) walkSceneVisit(held, heldPickNodes, heldPickParents, 256, maskSelfPickNode);
     if (selfPickSet) ++selfPicksMasked;
 }
-static void selfPickRestore() {
+static void selfPickMask(uintptr_t held = 0) {
+    return fp::profile::invoke<fp::profile::Hook::selfMask>(selfPickMaskProfileBody, held);
+}
+static void selfPickRestoreProfileBody() {
     for (unsigned i = 0; i < selfPickSet; ++i)
         if (readable(selfPickNodes[i], 0x10)) *(unsigned*)(selfPickNodes[i] + 8) &= ~pickSkipBit;
     selfPickSet = 0;
+}
+static void selfPickRestore() {
+    return fp::profile::invoke<fp::profile::Hook::selfRestore>(selfPickRestoreProfileBody);
 }
 static char pickPastSelf(PickRay pick, uintptr_t viewport, float x, float y, uintptr_t out,
                          uintptr_t held = 0) {
     if (!viewport || viewport != *(uintptr_t*)gameAt(fp::sig::mainViewport) ||
         !selfPickWanted() || selfPickSet)
-        return pick(viewport, x, y, out); // nested: the outer call already masked
+        return pick == originalPickRay ? fp::profile::invoke<fp::profile::Hook::pickNative>(pick, viewport, x, y, out) : pick(viewport, x, y, out); // nested: the outer call already masked
     char hit = 0;
     __try {
         selfPickMask(held);
-        hit = pick(viewport, x, y, out);
+        hit = pick == originalPickRay ? fp::profile::invoke<fp::profile::Hook::pickNative>(pick, viewport, x, y, out) : pick(viewport, x, y, out);
     } __finally {
         selfPickRestore();
     }

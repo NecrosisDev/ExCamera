@@ -12,7 +12,7 @@ Supported `Exanima.exe` SHA-256:
 af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70
 ```
 
-Checked-in local build identity: `0.2.0` (revision 47). Release builds derive their version from the Git tag; the checked-in local default does not pin future releases.
+Checked-in local build identity: `0.2.2-prof8` (revision 56), the headwear and performance candidate. Release builds derive their version from the Git tag; the checked-in local default does not pin future releases.
 
 ## Updating this repository
 
@@ -52,7 +52,7 @@ Accepted tags are `vX.Y.Z` with an optional SemVer prerelease suffix. Numeric co
 
 Release notes automatically list commit subjects since the prior reachable valid version tag selected by `git describe`, with commit links and a full comparison link. This uses Git's bounded candidate search, not version-number sorting or a guarantee of the globally closest tag. It includes direct commits, not only pull requests. The first tagged release lists the initial history. These are raw commit summaries, not inferred feature claims. Use clear commit subjects for useful notes.
 
-Both workflows run generated-table checks and the portable Python tooling tests before building. The tests use only the standard library and mock compiler, Git, and Windows-lock calls where needed; they do not run external gameplay or portable C++ harnesses.
+Both workflows check generated compatibility tables, build the Windows runtime, check its exports and verify the runtime ZIP. Test sources and harnesses are maintained outside this public repository. Build checks do not establish in-game camera feel, visual acceptance or FPS.
 
 Only successful source checks, tooling tests, build, export check, ZIP check, and artifact upload can reach publication. The ZIP contains exactly the two runtime binaries and two licenses. Existing releases are not overwritten. See [release installation instructions](INSTALL.txt) for tagging and failure recovery.
 
@@ -67,6 +67,7 @@ Controls:
 - **F6:** cycle first-person, third-person, and the game's overhead camera.
 - **Hold F7 for one second:** stop the mod. A short press only shows a reminder.
 - **F8 (first/third person or title screen):** open native Settings and free the cursor; press again to dismiss without applying ExCamera edits.
+- **Hold Cursor Look (vanilla Controls binding, default Space):** free the cursor in first-/third-person exploration without opening Settings. Release to resume mouse look; combat and native UI retain their controls. Rebind it in the game's existing Controls row.
 - **F9 / F10:** decrease or increase the first-person (base) FOV by 5 degrees.
 - **F11:** reset the base FOV to 75 degrees.
 
@@ -90,3 +91,20 @@ See [Architecture](docs/ARCHITECTURE.md) for the compilation model and native in
 ## License
 
 ExCamera is licensed under the [MIT License](LICENSE). Bundled MinHook retains its [own license](src/vendor/minhook/LICENSE.txt). Runtime packages include both licenses. No game executable or assets are distributed here.
+## Profiling candidate 0.2.2-prof8
+
+This local test build carries the performance changes plus opt-in sampled hook profiling. See [PROFILING-README.txt](PROFILING-README.txt) and [tools/profile.py](tools/profile.py) for capture controls and build-comparison guidance. Profiling defaults off; no key binding or camera setting is added. This is not a published release or evidence of an in-game FPS gain.
+
+### First-person headwear in this local candidate
+
+Headwear handles verified head-bound faces inside the player skin aggregate as well as separate head attachments. Hide all removes those faces. Show when clear draws supported headwear from its bind geometry, attached to the displayed camera sample, including its inside faces. Native attachment obstruction checks remain; stable triangles also receive a two-sided five-ray obstruction test. A blocking piece is hidden in either mode. Body and mixed neck faces keep their original draw.
+
+This is a render-only treatment in the owned main first-person colour traversal. Native physics, camera sampling/input/collision, other actors, third person, overhead and shadows retain their owners. The additional GPU stream belongs to the existing warm exact-context table and joins its deletion/teardown drain. No game geometry or transform is edited.
+
+The optional path requires the reviewed native source and unchanged loaded native bodies. Malformed or unsupported layouts forward to native rendering; `headwear_render_ready`, `headwear_render_draws`, `headwear_render_hidden_faces`, `headwear_render_stable_faces`, `headwear_render_fallbacks` and `headwear_render_faults` expose admission and results. The original attachment-scan counters do not count merged faces. A material first attached during a colour traversal can enter the rejection hints on the next traversal; every match is revalidated. Capacity uncertainty uses full validation.
+
+The profiler adds `headwear_colour`, `headwear_colour.native`, `headwear_draw`, `headwear_draw.native`, `headwear_submit` and `headwear_submit.native`. Use revision 54 (prof6) for the immediate comparison and revision 56 (prof8) for this candidate, matching equipped items, settings, scene and actions. Both report variant `optimized`; compare build/revision rather than relabelling captures. All existing profiler metrics retain their identities.
+
+Offline production fixtures and real hidden-window GPU pixel checks cover selective visibility, stable attachment, inside faces, restoration and context lifetime. Testing the actual helmet, hair and bevor in-game remains required.
+
+Headwear rendering also checks the actual submitted mesh instance, including material groups shared with a model source or another actor. Unknown native callers and changed ownership retain native drawing. `headwear_submit` and `headwear_submit.native` profiling spans measure this guard separately.

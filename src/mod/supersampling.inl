@@ -67,7 +67,7 @@ static bool admitSupersampleRender(uintptr_t viewport, SupersampleRenderScope& s
     return admitted;
 }
 
-static void renderViewport(uintptr_t viewport) {
+static void renderViewportProfileBody(uintptr_t viewport) {
     const SupersampleRenderScope previousRender = supersampleRenderScope;
     const SupersampleTerrainScope previousTerrain = supersampleTerrainScope;
     SupersampleRenderScope scope;
@@ -76,12 +76,15 @@ static void renderViewport(uintptr_t viewport) {
     supersampleTerrainScope = {};
     if (admitted) supersampleScopes.fetch_add(1, std::memory_order_relaxed);
     __try {
-        originalRenderViewport(viewport);
+        fp::profile::invoke<fp::profile::Hook::viewportNative>(originalRenderViewport, viewport);
     } __finally {
         supersampleTerrainScope = previousTerrain;
         supersampleRenderScope = previousRender;
         if (admitted) InterlockedDecrement(&renderScopesInFlight);
     }
+}
+static void renderViewport(uintptr_t viewport) {
+    return fp::profile::invoke<fp::profile::Hook::viewport>(renderViewportProfileBody, viewport);
 }
 
 // Called only after a render scope or exact matrix family has been identified.
@@ -173,16 +176,19 @@ static SupersampleTerrainScope captureSupersampleTerrain() {
     return terrain;
 }
 
-static uint64_t terrainPass(uintptr_t manager, uintptr_t renderer) {
+static uint64_t terrainPassProfileBody(uintptr_t manager, uintptr_t renderer) {
     const SupersampleTerrainScope previous = supersampleTerrainScope;
     supersampleTerrainScope = captureSupersampleTerrain();
     uint64_t result = 0;
     __try {
-        result = originalTerrainPass(manager, renderer);
+        result = fp::profile::invoke<fp::profile::Hook::terrainNative>(originalTerrainPass, manager, renderer);
     } __finally {
         supersampleTerrainScope = previous;
     }
     return result;
+}
+static uint64_t terrainPass(uintptr_t manager, uintptr_t renderer) {
+    return fp::profile::invoke<fp::profile::Hook::terrain>(terrainPassProfileBody, manager, renderer);
 }
 
 static bool supersampleMatrixSlot(float* output, const float* view, const float* projection,
@@ -202,7 +208,7 @@ static bool supersampleMatrixSlot(float* output, const float* view, const float*
     return true;
 }
 
-extern "C" bool excameraPrepareSampleProjection(float* output, const float* view,
+static bool excameraPrepareSampleProjectionProfileBody(float* output, const float* view,
                                                  const float* projection, float* localCopy) {
     unsigned slot = 0;
     // The shim enters preparation for every native multiplication. Unrelated
@@ -231,6 +237,10 @@ extern "C" bool excameraPrepareSampleProjection(float* output, const float* view
         changed = false;
     }
     return changed;
+}
+extern "C" bool excameraPrepareSampleProjection(float* output, const float* view,
+                                                 const float* projection, float* localCopy) {
+    return fp::profile::invoke<fp::profile::Hook::projection>(excameraPrepareSampleProjectionProfileBody, output, view, projection, localCopy);
 }
 
 [[maybe_unused]] static void multiplyMatrix(float* output, const float* view, const float* projection) {

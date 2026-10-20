@@ -18,6 +18,7 @@
 #include "supersampling_depth.h"
 #include "input_policy.h"
 #include "build_identity.h"
+#include "hook_profile.h"
 #include "native_build.h"
 #include "game_layout.h"
 #include "native_contracts.h"
@@ -36,6 +37,7 @@ namespace field = fp::game; // field::character::combatStance and so on: offsets
 #include "vendor/minhook/include/MinHook.h"
 // The mod is one translation unit; its parts are included in order (later parts use earlier ones).
 #include "mod/state.inl"
+#include "mod/profiling.inl"
 #include "mod/input.inl"
 #include "mod/combat.inl"
 #include "mod/picking.inl"
@@ -43,6 +45,7 @@ namespace field = fp::game; // field::character::combatStance and so on: offsets
 #include "mod/supersampling.inl"
 #include "mod/overlay.inl"
 #include "mod/frame.inl"
+#include "mod/headwear_render.inl"
 #include "mod/camera.inl"
 #include "mod/session.inl"
 #include "mod/settings.inl"

@@ -48,10 +48,18 @@ static bool restoreWindow() {
     return true;
 }
 static bool arm(const char*& reason, const char*& hooks) {
+    headwearRenderReady=false;
     suspendHeldThrow(); // No pending body may outlive a partial enable or rollback.
+    if (!beginCueSession()) {
+        reason = "cue_retirement_pending";
+        hooks = "retained";
+        return false;
+    }
+    healthRecording.store(true, std::memory_order_relaxed);
+    headDiagnosticRequested.store(true, std::memory_order_relaxed);
     const MH_STATUS enabled = MH_EnableHook(MH_ALL_HOOKS);
     if (enabled != MH_OK) {
-        const bool rollback = disableNativeHooks() == MH_OK;
+        const bool rollback = awaitCueRetirement() && disableNativeHooks() == MH_OK;
         reason = enabled == MH_ERROR_CONFLICT ? "hook_entry_changed"
                                              : rollback ? "hook_enable_failed" : "hook_rollback_failed";
         if (enabled == MH_ERROR_CONFLICT)
@@ -88,6 +96,7 @@ static bool arm(const char*& reason, const char*& hooks) {
     }
     rawReconcile();
     armHeldThrow(); // Both lifetime hooks and the complete session now own their callbacks.
+    headwearRenderReady=headwearHooksCreated&&headwearAdmitted;
     return true;
 }
 static fp::RawRegistration rawRegistration() {
@@ -233,7 +242,7 @@ static void waitForRearmKey() {
         Sleep(20);
         // Keep failed saves retryable while disabled, on the same writer thread.
         static unsigned saveTick = 0;
-        if (++saveTick % 5 == 0) saveFov();
+        if (++saveTick % 5 == 0) { saveFov(); profilePulse(false); }
         pumpNotice();
         if (InterlockedExchange(&rearmRequested, 0) && !InterlockedCompareExchange(&emtkOff, 0, 0))
             return; // EMTK switched the mod back on (enable)
@@ -336,7 +345,8 @@ static bool otherHooksCheck(const wchar_t* executable) {
     const bool optionalSourceVerified = fp::supportedExecutable(executable);
     if (!admitManualDefenseEntries(file) ||
         !admitAttackVariantsEntries(file, optionalSourceVerified) ||
-        !admitHeldThrowEntries(file, optionalSourceVerified)) {
+        !admitHeldThrowEntries(file, optionalSourceVerified) ||
+        !admitHeadwearRenderEntries(file, optionalSourceVerified)) {
         otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
         return false;
     }
@@ -411,9 +421,11 @@ static void hookHealthTick() {
     uint32_t hits[fp::healthHooks];
     for (unsigned k = 0; k < fp::healthHooks; ++k) hits[k] = healthHits[k].load(std::memory_order_relaxed);
     const bool inPlay = *(uintptr_t*)gameAt(fp::sig::playerRoot) != 0 && gameWindow() != nullptr;
-    if (fp::healthStep(hookHealth, inPlay, *(uint32_t*)gameAt(fp::sig::gameClock), hits) ==
-            fp::HealthVerdict::failed &&
-        (!verifiedBuild || chained)) {
+    const auto verdict = fp::healthStep(hookHealth, inPlay, *(uint32_t*)gameAt(fp::sig::gameClock), hits);
+    // A late admitted increment is harmless: totals are never reset, and the
+    // next installation takes its own start snapshot before testing progress.
+    if (hookHealth.decided) healthRecording.store(false, std::memory_order_relaxed);
+    if (verdict == fp::HealthVerdict::failed && (!verifiedBuild || chained)) {
         snprintf(faultDetail, sizeof faultDetail, "hook not firing during play: %s",
                  fp::healthHookNames[hookHealth.silent]);
         InterlockedExchange(&hookFault, 1);
@@ -536,8 +548,18 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("side_flips", sideFlips.load());
     j.str("helmet", helmetMode.load() == fp::HelmetMode::hide ? "hide" : "show");
     j.unum("head_wear_nodes", headWearNodes.load());
+    j.unum("head_wear_scan_state", headWearScanState.load());
+    j.unum("head_wear_walked", headWearWalked.load());
+    j.unum("head_wear_rejected", headWearRejected.load());
+    j.unum("head_wear_scan_limit", headWearScanLimit.load());
     j.unum("hidden_head_nodes", hiddenHeadNodes.load());
     j.unum("first_person_head_draws_skipped", firstPersonHeadDrawsSkipped.load());
+    j.boolean("headwear_render_ready",headwearRenderReady.load());
+    j.unum("headwear_render_draws",headwearRenderDraws.load());
+    j.unum("headwear_render_hidden_faces",headwearRenderHidden.load());
+    j.unum("headwear_render_stable_faces",headwearRenderStable.load());
+    j.unum("headwear_render_fallbacks",headwearRenderFallbacks.load());
+    j.unum("headwear_render_faults",headwearRenderFaults.load());
     j.unum("helmet_blocking", helmetBlocking.load());
     j.unum("helmet_unknown", helmetUnknown.load());
     j.unum("helmet_tests", helmetTests.load());
@@ -569,6 +591,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.num("cue_state", cueState.load());
     j.unum("cue_draws", cueDraws.load());
     j.num("cue_gl", cueGl.load());
+    j.boolean("cue_binding_failed", cueBindingFailed.load());
     j.unum("ui_reticle_reads", uiReticleReads.load());
     j.num("pick_camera", pickCamera.load());
     j.unum("notices", notices.load());
@@ -657,6 +680,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .real("eye_up", fp::eyeAlongAxis2, 4)
         .real("eye_forward", fp::eyeAlongAxis3, 4)
         .end();
+    headDiagnosticRequested.store(true, std::memory_order_relaxed);
     j.object("third_person")
         .real("drop", tpDrop.load(), 4)
         .boolean("down", tpDownNow.load())
@@ -870,6 +894,10 @@ static DWORD runSession() {
         reportFault("held_throw_hook_rollback_failed", "not_installed", "not_required");
         return 3;
     }
+    if(!createHeadwearRenderHooks()) {
+        MH_Uninitialize();awaitNativeHookRecovery();
+        reportFault("headwear_hook_rollback_failed","not_installed","not_required");return 3;
+    }
     {
         const char* reason = "";
         const char* hooks = "";
@@ -884,12 +912,14 @@ static DWORD runSession() {
         showNotice(FP_SHOWN_NAME L": untested Exanima version. Every game function was found; hold F7 if "
                                  L"anything looks wrong.",
                    12000);
+    profileInitialize(); // Publish only after this instance owns successfully armed hooks.
     bool viewFaultNoticed = false;
     for (;;) {
         InterlockedExchange(&active, 1);
         setActivationPhase(fp::ActivationPhase::running);
         for (int i = 0; !InterlockedCompareExchange(&stopping, 0, 0); i++) {
             Sleep(100);
+            profilePulse();
             trackingReceiver.service(trackingEnabled.load());
             saveFov();
             if (!viewFaultNoticed && viewFault.load()) {
@@ -942,10 +972,13 @@ static DWORD runSession() {
             }
         }
         InterlockedExchange(&stopping, 1);
+        profileStop("mod_stopped");
+        profilePulse(false);
         trackingReceiver.stop();
         setActivationPhase(fp::ActivationPhase::stopping);
         suspendHeldThrow(); // Cancel before either lifetime hook can be disabled.
         saveFov();
+        rmbEvent(fp::RmbEvent::lost, false); // Retire the hold before input hooks/window ownership leave.
         releaseInput();
         rawReconcileTarget(nullptr); // Begin cleanup while native owners retire.
         nativeSettingsBeforeStop();
@@ -1045,13 +1078,16 @@ static void finishSessionWorker(bool (*noticePump)() = pumpNotice) {
         // Fault notices/native retirement can remain pending indefinitely. Keep their
         // accepted edits retrying here, on the same persistence owner as runSession.
         saveFov();
+        profilePulse(false);
         const bool notice = noticePump();
-        if (!notice && !nativeHookRecoveryPending()) return;
+        if (!notice && !nativeHookRecoveryPending() && !fp::profile::engine.draining()) return;
         hookRecoveryWait(50);
     }
 }
 static DWORD WINAPI run(void*) {
     const DWORD result = runSession();
+    profileStop("session_ended");
+    profilePulse(false);
     suspendHeldThrow(); // Includes every early/fault exit with retained hooks.
     trackingReceiver.stop(); // includes early/fault exits and retained-hook sessions
     finishSessionWorker();

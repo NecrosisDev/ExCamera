@@ -587,7 +587,7 @@ static uintptr_t heldQuery(uintptr_t object, uintptr_t viewport, uintptr_t out, 
     return 1;
 }
 static char pickRay(uintptr_t viewport, float x, float y, uintptr_t out) {
-    return pickRayFor((uintptr_t)_ReturnAddress(), viewport, x, y, out);
+    return fp::profile::invoke<fp::profile::Hook::pick>(pickRayFor, (uintptr_t)_ReturnAddress(), viewport, x, y, out);
 }
 // Observe the complete native update: 11F610 validates after 118000, then either
 // publishes drag+70/+88 or restores the previous pose. Native acceptance wins.
@@ -729,7 +729,7 @@ static char grabPickFor(uintptr_t caller, uintptr_t viewport, float x, float y, 
                                caller == gameAt(fp::sig::doubleClickPickReturn);
     if (guiPointerPresentation.nativeOnly) {
         if (reticleCaller && viewport == guiPointerPresentation.viewport) return 0;
-        return originalGrabPick(viewport, x, y, out, filter);
+        return fp::profile::invoke<fp::profile::Hook::grabNative>(originalGrabPick, viewport, x, y, out, filter);
     }
     if (reticleCaller && guiPointerPresentation.active) {
         if (!guiPointerOwned() || viewport != guiPointerPresentation.viewport) return 0;
@@ -739,7 +739,7 @@ static char grabPickFor(uintptr_t caller, uintptr_t viewport, float x, float y, 
     // 8FB30 is shared by viewport widgets. Reticle, range and grab history
     // belong only to the main gameplay viewport.
     if (!viewport || viewport != *(uintptr_t*)gameAt(fp::sig::mainViewport))
-        return originalGrabPick(viewport, x, y, out, filter);
+        return fp::profile::invoke<fp::profile::Hook::grabNative>(originalGrabPick, viewport, x, y, out, filter);
     if (reticleCaller && !guiPointerPresentation.active) {
         LONG rx = 0, ry = 0;
         if (reticleForUi(&rx, &ry)) {
@@ -749,18 +749,18 @@ static char grabPickFor(uintptr_t caller, uintptr_t viewport, float x, float y, 
     }
     char hit = 0;
     if (!selfPickWanted() || selfPickSet)
-        hit = originalGrabPick(viewport, x, y, out, filter);
+        hit = fp::profile::invoke<fp::profile::Hook::grabNative>(originalGrabPick, viewport, x, y, out, filter);
     else
         __try {
             selfPickMask();
-            hit = originalGrabPick(viewport, x, y, out, filter);
+            hit = fp::profile::invoke<fp::profile::Hook::grabNative>(originalGrabPick, viewport, x, y, out, filter);
         } __finally {
             selfPickRestore();
         } // as pickPastSelf: never your own body
     return grabPickResult(caller, hit, out);
 }
 static char grabPick(uintptr_t viewport, float x, float y, uintptr_t out, void* filter) {
-    return grabPickFor((uintptr_t)_ReturnAddress(), viewport, x, y, out, filter);
+    return fp::profile::invoke<fp::profile::Hook::grabPick>(grabPickFor, (uintptr_t)_ReturnAddress(), viewport, x, y, out, filter);
 }
 // The game's cursor warp 0x22780 (client point -> SetCursorPos). Picking up an object
 // (0x11A690 -> 0x116A50, return 0x116AAC) warps the cursor onto the object; first person reads

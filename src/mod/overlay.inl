@@ -179,19 +179,106 @@ static HGLRC(WINAPI* cueCurrentContext)() = wglGetCurrentContext;
 static HDC(WINAPI* cueCurrentDC)() = wglGetCurrentDC;
 static BOOL(WINAPI* originalCueMakeCurrent)(HDC, HGLRC) = wglMakeCurrent;
 static BOOL(WINAPI* originalCueDeleteContext)(HGLRC) = wglDeleteContext;
+static PROC(WINAPI* cueWglProc)(LPCSTR) = wglGetProcAddress;
 static bool (*cueApiLoader)(gl::Api&) = loadCueApi;
 struct CueContext {
     HGLRC context = nullptr;
+    HDC dc = nullptr; // Only a candidate for native binding, never proof of current ownership.
     gl::Api api{};
     fp::CueResources resources{};
     bool attempted = false, failed = false;
 };
-// A core WGL switch retires before unbinding. Only simultaneously current
-// contexts need slots; excess contexts omit the optional cue.
+// Bounded, context-local owners; a full table omits the optional cue.
 static CueContext cueContexts[8];
 static SRWLOCK cueLock = SRWLOCK_INIT;
+static SRWLOCK cueWglLock = SRWLOCK_INIT;
 static unsigned cueDeletesInFlight = 0; // cueLock; blocks handle reuse during native deletion
 static volatile LONG cueCallsInFlight = 0;
+static std::atomic<bool> cueRetiring{false}, cueBindingFailed{false};
+static thread_local unsigned cueWglDepth = 0, cueGlDepth = 0;
+struct CueBindingReservation {
+    HGLRC previous = nullptr, target = nullptr;
+    CueBindingReservation* outer = nullptr;
+};
+static thread_local CueBindingReservation* cueBindingReservation = nullptr;
+static bool cueContextReserved(HGLRC context) {
+    if (context)
+        for (auto* at = cueBindingReservation; at; at = at->outer)
+            if (context == at->previous || context == at->target) return true;
+    return false;
+}
+static bool enterCueWgl() {
+    // A driver callback cannot change context in the middle of our GL work.
+    if (cueGlDepth || cueWglDepth >= 8) {
+        SetLastError(ERROR_BUSY);
+        return false;
+    }
+    if (!cueWglDepth) AcquireSRWLockExclusive(&cueWglLock);
+    ++cueWglDepth;
+    return true;
+}
+static void leaveCueWgl() {
+    if (!--cueWglDepth) ReleaseSRWLockExclusive(&cueWglLock);
+}
+using CueGetReadDC = HDC(WINAPI*)();
+using CueMakeReadCurrent = BOOL(WINAPI*)(HDC, HDC, HGLRC);
+struct CueSavedBinding {
+    HGLRC context = nullptr;
+    HDC draw = nullptr, read = nullptr;
+    CueGetReadDC getRead = nullptr;
+    CueMakeReadCurrent makeRead = nullptr;
+};
+template<class T> static bool loadCueWglProc(T& function, const char* name) {
+    function = (T)cueWglProc(name);
+    if (function && (uintptr_t)function > 3 && (intptr_t)function != -1) return true;
+    function = nullptr;
+    return false;
+}
+static bool captureCueBinding(CueSavedBinding& binding, HDC dc, HGLRC context) {
+    binding = {context, dc, dc, nullptr, nullptr};
+    if (!context) return true;
+    const char* getters[] = {"wglGetCurrentReadDCARB", "wglGetCurrentReadDCEXT"};
+    const char* setters[] = {"wglMakeContextCurrentARB", "wglMakeContextCurrentEXT"};
+    bool separateRead = false;
+    for (unsigned i = 0; i < 2; ++i) {
+        CueGetReadDC getter = nullptr;
+        if (!loadCueWglProc(getter, getters[i])) continue;
+        binding.getRead = getter;
+        binding.read = getter();
+        if (!binding.read) return false;
+        if (binding.read == dc) return true;
+        separateRead = true;
+        if (loadCueWglProc(binding.makeRead, setters[i])) return true;
+    }
+    return !separateRead;
+}
+static bool cueBindingMatches(const CueSavedBinding& binding) {
+    return cueCurrentContext() == binding.context &&
+           (!binding.context || (cueCurrentDC() == binding.draw &&
+            (!binding.getRead || binding.getRead() == binding.read)));
+}
+static bool restoreCueBinding(const CueSavedBinding& binding) {
+    bool restoredBinding = false;
+    __try {
+        if (cueBindingMatches(binding))
+            restoredBinding = true;
+        else {
+            // Select the caller's ICD before using its context-specific extension entry.
+            bool selected = originalCueMakeCurrent(binding.draw, binding.context) &&
+                            cueCurrentContext() == binding.context &&
+                            (!binding.context || cueCurrentDC() == binding.draw);
+            if (selected && binding.makeRead)
+                selected = binding.makeRead(binding.draw, binding.read, binding.context) != FALSE;
+            restoredBinding = selected && cueBindingMatches(binding);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (!restoredBinding) {
+        cueBindingFailed = true;
+        cueRetiring = true;
+        InterlockedExchange(&stopping, 1);
+    }
+    return restoredBinding;
+}
 static CueContext* findCueContext(HGLRC context) {
     if (context)
         for (auto& owner : cueContexts)
@@ -199,14 +286,19 @@ static CueContext* findCueContext(HGLRC context) {
     return nullptr;
 }
 static bool retireCueContext(CueContext& owner) {
+    if (!owner.context || owner.context != cueCurrentContext() || !cueCurrentDC()) return false;
+    bool retiredResources = false;
+    ++cueGlDepth;
     __try {
-        if (owner.resources.live()) owner.resources.retire(owner.api);
-        owner = CueContext{};
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        owner.failed = true;
-        return false; // Keep incomplete ownership visible to the stop drain.
-    }
+        __try {
+            if (owner.resources.live()) owner.resources.retire(owner.api);
+            owner = CueContext{};
+            retiredResources = true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            owner.failed = true; // Keep incomplete ownership visible to the stop drain.
+        }
+    } __finally { --cueGlDepth; }
+    return retiredResources;
 }
 static bool retireCurrentCue() {
     bool resourcesRetired = true;
@@ -225,6 +317,7 @@ static void failCurrentCue() {
         if (auto* owner = findCueContext(context)) {
             retireCueContext(*owner);
             owner->context = context;
+            owner->dc = cueCurrentDC();
             owner->attempted = owner->failed = true;
         }
     } __finally {
@@ -232,11 +325,13 @@ static void failCurrentCue() {
     }
 }
 static bool awaitCueRetirement(DWORD timeout = 2000) {
+    cueRetiring = true; // Close allocation before observing an empty table.
     const ULONGLONG started = GetTickCount64();
     for (;;) {
         bool pending = true;
         if (TryAcquireSRWLockExclusive(&cueLock)) {
-            pending = cueDeletesInFlight != 0 || InterlockedCompareExchange(&cueCallsInFlight, 0, 0) != 0;
+            pending = cueBindingFailed.load() || cueDeletesInFlight != 0 ||
+                      InterlockedCompareExchange(&cueCallsInFlight, 0, 0) != 0;
             for (const auto& owner : cueContexts) pending = pending || owner.resources.live();
             if (!pending)
                 for (auto& owner : cueContexts) owner = CueContext{};
@@ -247,46 +342,144 @@ static bool awaitCueRetirement(DWORD timeout = 2000) {
         Sleep(1); // Render/WGL callbacks retain exclusive responsibility for GL deletion.
     }
 }
+static bool beginCueSession() {
+    if (!TryAcquireSRWLockExclusive(&cueWglLock)) return false;
+    AcquireSRWLockExclusive(&cueLock);
+    bool clean = !cueBindingFailed.load() && !cueDeletesInFlight &&
+                 !InterlockedCompareExchange(&cueCallsInFlight, 0, 0);
+    for (const auto& owner : cueContexts) clean = clean && !owner.resources.live();
+    if (clean) {
+        for (auto& owner : cueContexts) owner = CueContext{};
+        cueRetiring = false;
+    }
+    ReleaseSRWLockExclusive(&cueLock);
+    ReleaseSRWLockExclusive(&cueWglLock);
+    return clean;
+}
+static bool cueMustRetireCurrent() {
+    if (cueRetiring.load() || InterlockedCompareExchange(&stopping, 0, 0)) return true;
+    bool incomplete = false;
+    AcquireSRWLockExclusive(&cueLock);
+    __try {
+        if (auto* owner = findCueContext(cueCurrentContext()))
+            incomplete = owner->failed || (owner->resources.live() && !owner->resources.ready());
+    } __finally { ReleaseSRWLockExclusive(&cueLock); }
+    return incomplete;
+}
 static BOOL WINAPI cueMakeCurrent(HDC dc, HGLRC context) {
     InterlockedIncrement(&cueCallsInFlight);
+    bool entered = false;
+    BOOL result = FALSE;
     __try {
-        const HGLRC before = cueCurrentContext();
-        if (before && (before != context || cueCurrentDC() != dc ||
-                       InterlockedCompareExchange(&stopping, 0, 0)))
-            retireCurrentCue();
-        return originalCueMakeCurrent(dc, context);
+        entered = enterCueWgl();
+        if (entered) {
+            if (cueMustRetireCurrent() && !retireCurrentCue()) SetLastError(ERROR_GEN_FAILURE);
+            else {
+                result = originalCueMakeCurrent(dc, context);
+                const DWORD error = GetLastError();
+                if (result) {
+                    AcquireSRWLockExclusive(&cueLock);
+                    __try {
+                        if (auto* owner = findCueContext(cueCurrentContext())) owner->dc = cueCurrentDC();
+                    } __finally { ReleaseSRWLockExclusive(&cueLock); }
+                }
+                // Stop can begin while the native switch is in progress.
+                if (result && (cueRetiring.load() || InterlockedCompareExchange(&stopping, 0, 0)))
+                    retireCurrentCue();
+                SetLastError(error);
+            }
+        }
     } __finally {
+        if (entered) leaveCueWgl();
         InterlockedDecrement(&cueCallsInFlight);
     }
+    return result;
 }
 static BOOL WINAPI cueDeleteContext(HGLRC context) {
     InterlockedIncrement(&cueCallsInFlight);
-    AcquireSRWLockExclusive(&cueLock);
-    ++cueDeletesInFlight;
-    if (context && context == cueCurrentContext())
-        if (auto* owner = findCueContext(context)) retireCueContext(*owner);
-    ReleaseSRWLockExclusive(&cueLock);
+    bool entered = false, deleting = false, borrowed = false;
+    HGLRC previous = nullptr;
+    HDC previousDC = nullptr;
+    CueSavedBinding savedBinding{};
+    CueBindingReservation reservation{};
     BOOL deleted = FALSE;
     DWORD error = 0;
     __try {
-        deleted = originalCueDeleteContext(context);
-        error = GetLastError();
-        return deleted;
+        if (cueContextReserved(context)) error = ERROR_BUSY;
+        else if (!(entered = enterCueWgl())) error = GetLastError();
+        else {
+            previous = cueCurrentContext();
+            previousDC = cueCurrentDC();
+            HDC targetDC = nullptr;
+            bool needsCleanup = false;
+            AcquireSRWLockExclusive(&cueLock);
+            ++cueDeletesInFlight;
+            deleting = true;
+            if (auto* owner = findCueContext(context)) {
+                needsCleanup = owner->resources.live();
+                targetDC = owner->dc;
+            }
+            ReleaseSRWLockExclusive(&cueLock);
+            bool ready = true;
+            if (needsCleanup && context != previous) {
+                ready = false;
+                error = ERROR_INVALID_HANDLE;
+                if (targetDC && !captureCueBinding(savedBinding, previousDC, previous))
+                    error = ERROR_NOT_SUPPORTED;
+                else if (targetDC) {
+                    reservation = {previous, context, cueBindingReservation};
+                    cueBindingReservation = &reservation;
+                    borrowed = true; // A failed native bind also unbinds the previous context.
+                    const BOOL bound = originalCueMakeCurrent(targetDC, context);
+                    const DWORD bindError = GetLastError();
+                    ready = bound && cueCurrentContext() == context && cueCurrentDC() == targetDC;
+                    if (!ready) error = bound ? ERROR_INVALID_HANDLE : bindError ? bindError : ERROR_BUSY;
+                }
+            }
+            if (ready && needsCleanup) {
+                AcquireSRWLockExclusive(&cueLock);
+                __try {
+                    if (auto* owner = findCueContext(context)) ready = retireCueContext(*owner);
+                } __finally { ReleaseSRWLockExclusive(&cueLock); }
+                if (!ready) error = ERROR_GEN_FAILURE;
+            }
+            // Restore before deletion: a failed restore must not report native deletion success.
+            if (borrowed && !restoreCueBinding(savedBinding)) {
+                ready = false;
+                error = ERROR_GEN_FAILURE;
+            }
+            if (ready) {
+                error = 0;
+                deleted = originalCueDeleteContext(context);
+                error = GetLastError();
+            }
+        }
     } __finally {
-        AcquireSRWLockExclusive(&cueLock);
-        // A successful native deletion ends this context's identity. No GL
-        // entry point may use its record after the numeric HGLRC is reused.
-        if (deleted)
-            if (auto* owner = findCueContext(context)) *owner = CueContext{};
-        --cueDeletesInFlight;
-        ReleaseSRWLockExclusive(&cueLock);
+        if (deleting) {
+            AcquireSRWLockExclusive(&cueLock);
+            // End this identity before releasing admission, including numeric HGLRC reuse.
+            if (deleted)
+                if (auto* owner = findCueContext(context)) *owner = CueContext{};
+            ReleaseSRWLockExclusive(&cueLock);
+            if (borrowed) {
+                restoreCueBinding(savedBinding);
+                cueBindingReservation = reservation.outer;
+            }
+            AcquireSRWLockExclusive(&cueLock);
+            --cueDeletesInFlight;
+            ReleaseSRWLockExclusive(&cueLock);
+        }
+        if (entered) leaveCueWgl();
         InterlockedDecrement(&cueCallsInFlight);
         SetLastError(error);
     }
+    return deleted;
 }
 static CueContext* prepareCue() { // cueLock held by the draw
     const HGLRC context = cueCurrentContext();
-    if (!context || cueDeletesInFlight || InterlockedCompareExchange(&stopping, 0, 0)) return nullptr;
+    const HDC dc = cueCurrentDC();
+    if (!context || !dc || cueDeletesInFlight || cueRetiring.load() || cueBindingFailed.load() ||
+        InterlockedCompareExchange(&stopping, 0, 0)) return nullptr;
     auto* owner = findCueContext(context);
     if (!owner)
         for (auto& slot : cueContexts)
@@ -296,6 +489,7 @@ static CueContext* prepareCue() { // cueLock held by the draw
                 break;
             }
     if (!owner) return nullptr;
+    owner->dc = dc;
     if (!owner->attempted) {
         owner->attempted = true;
         owner->failed = !cueApiLoader(owner->api);
@@ -322,7 +516,7 @@ static bool cueOutputReady(const gl::Api& g) {
 // The game's "CursorCom" option (the player's combat cursor colour) is stored here as RGBA bytes; its
 // setter is 0x12B830 and the cursor draw 0x13E9C0 tints the combat crosshair with it.
 // Returns false when the cue cannot be drawn on this context.
-static bool drawCueOwned(fp::CueSide side, float x, float y, float fill, float alpha, int width, int height) {
+static bool drawCueOwnedProfileBody(fp::CueSide side, float x, float y, float fill, float alpha, int width, int height) {
     const int built =
         *(int*)(gameAt(fp::sig::cursorTextureSize)); // the size 0x13E740 last built the cursor texture for
     const float cursorPx = float(built >= 8 && built <= 256 ? built : fp::defaultCursorPx);
@@ -390,27 +584,28 @@ static bool drawCueOwned(fp::CueSide side, float x, float y, float fill, float a
         const float a = alpha * float(cueOpacity.load()) / 100.f;
         const unsigned char* colour = (const unsigned char*)(gameAt(fp::sig::combatCursorColour));
         const float tint[3] = {float(colour[0]) / 255.f, float(colour[1]) / 255.f, float(colour[2]) / 255.f};
-        {
-            static float shifted[3 * 3 * 68];
-            const float ox = 2.f / float(width), oy = 2.f / float(height);
-            const float off[4][2] = {{-ox, 0}, {ox, 0}, {0, -oy}, {0, oy}};
-            g.uniform4f(resources.color, 0, 0, 0, a * a);
-            for (const auto& o : off) {
-                for (int i = 0; i < total; ++i) {
-                    shifted[i * 3] = arc[i * 3] + o[0];
-                    shifted[i * 3 + 1] = arc[i * 3 + 1] + o[1];
-                    shifted[i * 3 + 2] = arc[i * 3 + 2];
-                }
-                g.bufferData(0x8892, ptrdiff_t(sizeof(float) * 3 * total), shifted, 0x88E8);
-                glDrawArrays(GL_TRIANGLE_STRIP, 0, counts[0]);
-                if (counts[2]) glDrawArrays(GL_TRIANGLE_STRIP, counts[0] + counts[1], counts[2]);
+        float batch[5 * 3 * 3 * 68];
+        const float ox = 2.f / float(width), oy = 2.f / float(height);
+        const float off[4][2] = {{-ox, 0}, {ox, 0}, {0, -oy}, {0, oy}};
+        for (unsigned shadow = 0; shadow < 4; ++shadow)
+            for (int i = 0; i < total; ++i) {
+                const unsigned at = (shadow * total + i) * 3;
+                batch[at] = arc[i * 3] + off[shadow][0];
+                batch[at + 1] = arc[i * 3 + 1] + off[shadow][1];
+                batch[at + 2] = arc[i * 3 + 2];
             }
+        memcpy(batch + 4 * total * 3, arc, size_t(total) * 3 * sizeof(float));
+        g.bufferData(0x8892, ptrdiff_t(sizeof(float) * 3 * total * 5), batch, 0x88E8);
+        g.uniform4f(resources.color, 0, 0, 0, a * a);
+        for (int shadow = 0; shadow < 4; ++shadow) {
+            const int first = shadow * total;
+            glDrawArrays(GL_TRIANGLE_STRIP, first, counts[0]);
+            if (counts[2]) glDrawArrays(GL_TRIANGLE_STRIP, first + counts[0] + counts[1], counts[2]);
         }
-        g.bufferData(0x8892, ptrdiff_t(sizeof(float) * 3 * total), arc, 0x88E8);
         g.uniform4f(resources.color, tint[0], tint[1], tint[2], a);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, counts[0]);
-        if (counts[1]) glDrawArrays(GL_TRIANGLE_STRIP, counts[0], counts[1]);
-        if (counts[2]) glDrawArrays(GL_TRIANGLE_STRIP, counts[0] + counts[1], counts[2]);
+        glDrawArrays(GL_TRIANGLE_STRIP, 4 * total, counts[0]);
+        if (counts[1]) glDrawArrays(GL_TRIANGLE_STRIP, 4 * total + counts[0], counts[1]);
+        if (counts[2]) glDrawArrays(GL_TRIANGLE_STRIP, 4 * total + counts[0] + counts[1], counts[2]);
         ok = glGetError() == GL_NO_ERROR;
     } __finally {
         g.useProgram(GLuint(program));
@@ -434,11 +629,16 @@ static bool drawCueOwned(fp::CueSide side, float x, float y, float fill, float a
     if (ok) ++cueDraws;
     return ok;
 }
+static bool drawCueOwned(fp::CueSide side, float x, float y, float fill, float alpha, int width, int height) {
+    return fp::profile::invoke<fp::profile::Hook::cue>(drawCueOwnedProfileBody, side, x, y, fill, alpha, width, height);
+}
 static bool drawCue(fp::CueSide side, float x, float y, float fill, float alpha, int width, int height) {
     bool ok = false;
     AcquireSRWLockExclusive(&cueLock);
+    ++cueGlDepth;
     __try {
-        if (!InterlockedCompareExchange(&stopping, 0, 0)) {
+        if (cueDeletesInFlight) ok = true; // Temporary admission closure is not a failed GL owner.
+        else if (!cueRetiring.load() && !cueBindingFailed.load() && !InterlockedCompareExchange(&stopping, 0, 0)) {
             ok = drawCueOwned(side, x, y, fill, alpha, width, height);
             if (!ok)
                 if (auto* owner = findCueContext(cueCurrentContext())) {
@@ -447,12 +647,13 @@ static bool drawCue(fp::CueSide side, float x, float y, float fill, float alpha,
                 }
         }
     } __finally {
+        --cueGlDepth;
         ReleaseSRWLockExclusive(&cueLock);
     }
     return ok;
 }
 static void presentCue(fp::CueSide side, LONG x, LONG y, float fill, float alpha) {
-    if (InterlockedCompareExchange(&stopping, 0, 0)) {
+    if (cueRetiring.load() || InterlockedCompareExchange(&stopping, 0, 0)) {
         retireCurrentCue(); // Also runs on cue-free frames while the worker waits.
         cueGl = 0;
         return;

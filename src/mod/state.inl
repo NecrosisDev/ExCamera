@@ -18,12 +18,16 @@
 // cameraLock or settingsLock -> TrackingUdp's sample lock (copy-only leaf).
 // worldPointerLock and handNamesLock are leaf publication locks: no nested locks or native calls.
 // reachHeadLock, crouchLock and guardLock only copy publications; no other lock or native call is entered under them.
+// cursorHoldLock serializes pointer-hold edges; it may take reticleLock,
+// heldThrowLock and rawLock through offset/input retirement, never cameraLock.
 // heldThrowLock owns gesture/ticket cancellation and the final staged history delta. Native queue,
 // release, integration and destruction calls run after releasing it; it takes no other mod lock.
 // settingsLock serializes UI actions, FOV keys and persistence acknowledgements. Apart from the
 // tracking sample copy, it does not nest these locks; raw registration and waits occur after release.
-// cueLock owns overlay resources and retirement; it never nests game-state locks.
-// Native WGL context switches/deletion run after releasing it.
+// cueWglLock serializes core WGL binding/deletion and scoped deletion borrows; it may take cueLock.
+// Same-thread WGL nesting uses cueWglDepth rather than recursively acquiring the SRW lock.
+// cueLock owns resources and retirement; it never takes game-state locks or cueWglLock.
+// Native WGL calls run after releasing cueLock. cueGlDepth rejects WGL reentry from our GL work.
 // cameraLock (CameraGuard) guards camera publication, saved stock values and restoration, including
 // the reviewed native sampler/math calls. Retirement polling releases owner locks before sleeping:
 // awaitRestore uses TryAcquire for its snapshot, and pose/cue waits run outside cameraLock.
@@ -40,8 +44,12 @@ static uintptr_t gameAt(fp::sig::Target t) {
 }
 // Calls into the hooks every game tick reaches (fp::HookHealth): the live check that they work.
 static std::atomic<uint32_t> healthHits[fp::healthHooks]{};
+// Only the worker decides the verdict. Counters remain enabled through menus,
+// paused clocks and interrupted windows, and reopen before any hook is re-armed.
+static std::atomic<bool> healthRecording{true};
 static void healthHit(fp::HealthHook h) {
-    healthHits[unsigned(h)].fetch_add(1, std::memory_order_relaxed);
+    if (healthRecording.load(std::memory_order_relaxed))
+        healthHits[unsigned(h)].fetch_add(1, std::memory_order_relaxed);
 }
 static HMODULE module;
 using Nav = uintptr_t (*)(void*, float);
@@ -155,9 +163,9 @@ static fp::TrackingSample readTrackingSample() { return trackingReceiver.snapsho
 static fp::TrackingSample (*trackingSnapshot)() = readTrackingSample;
 static volatile LONG mouseCaptured = 0;
 static volatile LONG cursorFree = 0;
-// Right mouse frees the cursor in first and third person, but only out of combat: in combat, holding it
-// walks toward the aim, and the overhead view uses it for walking. Gameplay treats it like F8's free
-// cursor without opening the panel. rmbMode: 0 off, 1 hold, 2 toggle.
+// Native Controls > Cursor Look frees the cursor while held in close-view exploration.
+// Keep the legacy publication name: world grabbing already distinguishes this
+// deliberate pointer from Settings/window handoffs. The obsolete RMB option stays off.
 static volatile LONG rmbFree = 0;
 static std::atomic<int> rmbMode{0}; // obsolete RMB free-cursor mode is fixed off
 // The inventory, an item's description, a container or a corpse's loot, or the arena's end-of-match menu
@@ -303,6 +311,9 @@ static std::atomic<bool> tpCombatAimFree{true};
 static std::atomic<int> eyeSetback{0};
 // The physics head's points in its own frame (status: where its middle is and how far its points reach), cm.
 static std::atomic<float> headMid2{0}, headMid3{0}, headReach{0};
+// Coalesced status demand, consumed only after the native callback's current
+// head/scene/pose checks. No game pointer or readability result crosses samples.
+static std::atomic<bool> headDiagnosticRequested{true};
 static std::atomic<float> tpDrop{0}, tpCeilingRoom{-1}, tpLostHeight{0}, tpPivotPulled{0}, tpAllowed{0};
 static std::atomic<bool> tpDownNow{false};
 // The free combat crosshair: its offset from the window centre (px; aim thread writes, render thread reads) and
@@ -706,6 +717,7 @@ static float readRenderedNearStatus() {
     return value;
 }
 static fp::NearPlane nearPlane; // dynamic near plane (cameraLock)
+static constexpr float cameraNearMaximum = 3.f;
 static uintptr_t filterRoot = 0, filterHead = 0;
 static LARGE_INTEGER filterTime{}, frequency{};
 struct CameraFilterState {
@@ -749,7 +761,7 @@ static WalkGait originalWalkGait;
 static thread_local uintptr_t exploringRoot = 0;
 static thread_local float exploringDirection[3]{};
 struct CameraGuard {
-    CameraGuard() { AcquireSRWLockExclusive(&cameraLock); }
+    CameraGuard() { fp::profile::invoke<fp::profile::Hook::cameraLock>(AcquireSRWLockExclusive, &cameraLock); }
     ~CameraGuard() { ReleaseSRWLockExclusive(&cameraLock); }
 };
 // While look owns the mouse, the OS cursor is
@@ -904,12 +916,12 @@ static int dragKind(uintptr_t* object) {
 }
 static void normalize(float* v);
 static bool playerContext(uintptr_t behavior);
-// Right mouse may free the cursor only while the player is in play under the mod's own view (not the
-// overhead blend, no game screen such as the inventory or the K/P screens, not dead), F8 is closed,
-// nothing is held or dragged, and the player is out of combat. root+0xDF4 == 0x20 is a state where the
-// game itself acts on right mouse (0xC1CF0), so it is left alone there too.
+// Preserve the old free-pointer exploration safety: close-view gameplay only,
+// no Settings/native window, combat, special native RMB state or unsafe drag.
+// The binding comes from reviewed native slot 8 (Controls > Cursor Look).
 static bool rmbEligible() {
-    if (viewMode.load() >= 2 || InterlockedCompareExchange(&cursorFree, 0, 0)) return false;
+    if (viewMode.load() >= 2 || InterlockedCompareExchange(&cursorFree, 0, 0) ||
+        InterlockedCompareExchange(&windowFree, 0, 0)) return false;
     const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     if (!readable(root, 0x1300)) return false;
     const uintptr_t behavior = *(uintptr_t*)(root + field::character::behaviour);
@@ -925,14 +937,28 @@ static bool rmbEligible() {
         return false;
     }
     if (kind == 1)
-        return rotateHeldKey.load() != VK_RBUTTON; // an item held in place; right mouse may be the rotate key
+        return rotateHeldKey.load() != int(nativeBinding(8)); // held-item rotation has priority
     if (kind == 2)
         return doorDistance.load() > 0 &&
                heldDoorDrag(); // a door or lid held in place, never a locked door's rattle
     return kind == 0;
 }
-static fp::RightMouseFree rmbState; // window thread only; rmbFree mirrors .on for the other threads
-// Something grabbed with the cursor freed keeps its place on screen when right mouse is let go: the
+// Serialize the window edge and native poll retirement; no camera/aim lock is held.
+static SRWLOCK cursorHoldLock = SRWLOCK_INIT;
+static fp::RightMouseFree rmbState;
+static int cursorHoldKey = 0;
+static fp::InputStamp cursorHoldOwner;
+static fp::InputStamp cursorHoldStamp() {
+    fp::InputStamp s;
+    s.root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
+    s.head = s.root ? *(uintptr_t*)(s.root + field::character::headPart) : 0;
+    s.scene = *(uintptr_t*)gameAt(fp::sig::currentScene);
+    s.mode = viewMode.load();
+    s.generation = inputOwner.generation();
+    s.policyRevision = inputOwner.policyRevision();
+    return s;
+}
+// Something grabbed with the cursor freed keeps its place on screen when Cursor Look is let go: the
 // pointer stays as far from the crosshair as the cursor was, for as long as that same thing is held, and
 // freeing the cursor again puts it back there.
 static HWND gameWindow();
@@ -972,16 +998,68 @@ static void keepHeldOffset(bool nowFree) {
     }
     heldOffsetObject = 0;
 }
-static void rmbEvent(fp::RmbEvent e, bool eligible, bool* swallow = nullptr) {
-    rmbState.on = InterlockedCompareExchange(&rmbFree, 0, 0) != 0; // the game thread may have ended it
+// Caller owns cursorHoldLock. Native Cursor Look uses the held-key high bit,
+// not a toggle. releaseInput resets raw deltas/capture, never the camera pose.
+static bool cursorHoldEvent(fp::RmbEvent e, bool eligible, int key = 0) {
     bool changed = false;
-    const bool eaten = fp::rmbStep(rmbState, rmbMode.load(), e, eligible, changed);
+    const bool eaten = fp::rmbStep(rmbState, 1, e, eligible, changed);
     if (changed) {
         keepHeldOffset(rmbState.on);
         InterlockedExchange(&rmbFree, rmbState.on ? 1 : 0);
         releaseInput();
-    } // releaseInput: no view jump on the way back
+        if (rmbState.on) {
+            cursorHoldKey = key;
+            cursorHoldOwner = cursorHoldStamp();
+        }
+    }
+    return eaten;
+}
+static void rmbEvent(fp::RmbEvent e, bool eligible, bool* swallow = nullptr) {
+    AcquireSRWLockExclusive(&cursorHoldLock);
+    bool eaten = false;
+    __try { eaten = cursorHoldEvent(e, eligible); }
+    __finally { ReleaseSRWLockExclusive(&cursorHoldLock); }
     if (swallow) *swallow = eaten;
+}
+static bool cursorLookMessage(int key, bool down, bool repeat) {
+    AcquireSRWLockExclusive(&cursorHoldLock);
+    bool eaten = false;
+    __try {
+        __try {
+            if (!down && key == cursorHoldKey) {
+                eaten = cursorHoldEvent(fp::RmbEvent::up, false);
+            } else if (down && !repeat && key == int(nativeBinding(8))) {
+                // Reserved shortcuts and other mod binding owners get first refusal.
+                if (key != VK_F6 && key != VK_F7 && key != VK_F8 && key != VK_F9 &&
+                    key != VK_F10 && key != VK_F11 && key != VK_ESCAPE)
+                    eaten = cursorHoldEvent(fp::RmbEvent::down, rmbEligible(), key);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            cursorHoldEvent(fp::RmbEvent::lost, false);
+        }
+    } __finally { ReleaseSRWLockExclusive(&cursorHoldLock); }
+    return eaten;
+}
+static void cursorLookPoll() {
+    // No held state to retire: retain the previous input hook's cheap idle gate.
+    if (!InterlockedCompareExchange(&rmbFree, 0, 0)) return;
+    AcquireSRWLockExclusive(&cursorHoldLock);
+    __try {
+        __try {
+            if (rmbState.on) {
+                const fp::InputStamp now = cursorHoldStamp();
+                if (!rmbEligible() || cursorHoldKey != int(nativeBinding(8)) ||
+                    !(keyState(cursorHoldKey) & 0x8000) ||
+                    now.root != cursorHoldOwner.root || now.head != cursorHoldOwner.head ||
+                    now.scene != cursorHoldOwner.scene || now.mode != cursorHoldOwner.mode ||
+                    now.generation != cursorHoldOwner.generation ||
+                    now.policyRevision != cursorHoldOwner.policyRevision)
+                    cursorHoldEvent(fp::RmbEvent::lost, false);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            cursorHoldEvent(fp::RmbEvent::lost, false);
+        }
+    } __finally { ReleaseSRWLockExclusive(&cursorHoldLock); }
 }
 
 // Native settings are serviced only by their native GUI maintenance callback.

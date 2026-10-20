@@ -27,14 +27,31 @@ struct QueuedFling {
 // All metadata AND the final12-float write share heldThrowLock with cancellation.
 // No native callback is ever made while that lock is held.
 static std::array<QueuedFling, 8> queuedFlings;
+// Admission hint only. Publish every table mutation under heldThrowLock; a true
+// reader still takes that lock and revalidates the complete current ticket.
+static std::atomic<bool> queuedFlingsPresent{false};
+static void publishQueuedFlingsLocked() {
+    for (const auto& entry : queuedFlings)
+        if (entry.phase != FlingPhase::empty) {
+            queuedFlingsPresent.store(true, std::memory_order_release);
+            return;
+        }
+    queuedFlingsPresent.store(false, std::memory_order_release);
+}
 static ULONGLONG flingSequence = 0, flingLifetimeEpoch = 0;
 static thread_local unsigned heldBodyIntegrationDepth = 0;
 static void cancelQueuedHeldThrowsLocked() {
     for (auto& entry : queuedFlings) entry = {};
+    queuedFlingsPresent.store(false, std::memory_order_release);
 }
 static void cancelBodyFlingsLocked(uintptr_t body) {
+    bool changed = false;
     for (auto& entry : queuedFlings)
-        if (entry.body == body) entry = {};
+        if (entry.body == body) {
+            changed = changed || entry.phase != FlingPhase::empty;
+            entry = {};
+        }
+    if (changed) publishQueuedFlingsLocked();
 }
 static QueuedFling* findFlingLocked(ULONGLONG sequence) {
     if (sequence)
@@ -176,6 +193,7 @@ static uintptr_t queueWorkFor(uintptr_t caller, uintptr_t queue, uintptr_t callb
                     }
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) { }
+        publishQueuedFlingsLocked();
         ReleaseSRWLockExclusive(&heldThrowLock);
     }
     return originalQueueWork(queue, callback, payload);
@@ -198,6 +216,7 @@ static uintptr_t applyHeldRelease(uintptr_t payload) {
         } __except (EXCEPTION_EXECUTE_HANDLER) { entry = {}; }
         break;
     }
+    publishQueuedFlingsLocked();
     ReleaseSRWLockExclusive(&heldThrowLock);
     uintptr_t result = 0;
     bool completed = false;
@@ -219,37 +238,44 @@ static uintptr_t applyHeldRelease(uintptr_t payload) {
                 } else *entry = {};
             } __except (EXCEPTION_EXECUTE_HANDLER) { *entry = {}; }
         }
+        publishQueuedFlingsLocked();
         ReleaseSRWLockExclusive(&heldThrowLock);
     }
     return result;
 }
-static void heldBodyIntegrate(uintptr_t body) {
+static void heldBodyIntegrateProfileBody(uintptr_t body) {
     ++heldBodyIntegrationDepth;
-    AcquireSRWLockExclusive(&heldThrowLock);
-    for (auto& entry : queuedFlings) {
-        if (entry.phase == FlingPhase::empty || entry.body != body) continue;
-        __try {
-            const bool valid = heldBodyIntegrationDepth == 1 && entry.phase == FlingPhase::settling &&
-                heldThrowOwnerLocked(entry) && heldThrowBodyIdentity(entry) && heldThrowWorker(entry, true) &&
-                (*(unsigned*)(body + field::bodyPart::motionFlags) & 0x1000u) &&
-                *(int*)(body + field::bodyPart::releaseSettling) == entry.expectedSettling;
-            if (!valid) entry = {};
-            else if (entry.expectedSettling > 0) --entry.expectedSettling;
-            else {
-                // Same lock as clearHeldThrow/new-grab/destructor invalidation.
-                // Staged helper changes only12 older-history floats, all or none.
-                const bool applied = heldThrowOwnerLocked(entry) &&
-                    fp::addFlingHistoryDelta(entry.velocity, entry.step,
-                    (float(*)[3])(body + field::bodyPart::history2));
-                entry = {};
-                if (applied) ++flings;
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) { entry = {}; }
-        break;
+    // An empty observation linearizes before a concurrent enqueue. Keep depth
+    // tracking, native forwarding and unconditional fault cancellation outside
+    // the gate: a native call may enqueue before it faults or recursively calls us.
+    if (queuedFlingsPresent.load(std::memory_order_acquire)) {
+        AcquireSRWLockExclusive(&heldThrowLock);
+        for (auto& entry : queuedFlings) {
+            if (entry.phase == FlingPhase::empty || entry.body != body) continue;
+            __try {
+                const bool valid = heldBodyIntegrationDepth == 1 && entry.phase == FlingPhase::settling &&
+                    heldThrowOwnerLocked(entry) && heldThrowBodyIdentity(entry) && heldThrowWorker(entry, true) &&
+                    (*(unsigned*)(body + field::bodyPart::motionFlags) & 0x1000u) &&
+                    *(int*)(body + field::bodyPart::releaseSettling) == entry.expectedSettling;
+                if (!valid) entry = {};
+                else if (entry.expectedSettling > 0) --entry.expectedSettling;
+                else {
+                    // Same lock as clearHeldThrow/new-grab/destructor invalidation.
+                    // Staged helper changes only12 older-history floats, all or none.
+                    const bool applied = heldThrowOwnerLocked(entry) &&
+                        fp::addFlingHistoryDelta(entry.velocity, entry.step,
+                        (float(*)[3])(body + field::bodyPart::history2));
+                    entry = {};
+                    if (applied) ++flings;
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) { entry = {}; }
+            publishQueuedFlingsLocked();
+            break;
+        }
+        ReleaseSRWLockExclusive(&heldThrowLock);
     }
-    ReleaseSRWLockExclusive(&heldThrowLock);
     bool completed = false;
-    __try { originalHeldBodyIntegrate(body); completed = true; }
+    __try { fp::profile::invoke<fp::profile::Hook::heldNative>(originalHeldBodyIntegrate, body); completed = true; }
     __finally {
         if (!completed) {
             AcquireSRWLockExclusive(&heldThrowLock);
@@ -258,6 +284,9 @@ static void heldBodyIntegrate(uintptr_t body) {
         }
         --heldBodyIntegrationDepth;
     }
+}
+static void heldBodyIntegrate(uintptr_t body) {
+    return fp::profile::invoke<fp::profile::Hook::heldIntegrate>(heldBodyIntegrateProfileBody, body);
 }
 static void heldBodyDestroy(uintptr_t body, intptr_t deleting) {
     AcquireSRWLockExclusive(&heldThrowLock);

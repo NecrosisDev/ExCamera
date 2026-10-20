@@ -9,11 +9,25 @@
 // after 0x58CD0 returns for its sector, the value of a mesh outside the view (fp::hiddenPassMask).
 // No persistent mask is stored: the next native update recomputes it, so leaving the hide list, F6, F7 or a
 // scene change show it again with no undo.
-static bool readable(uintptr_t address, size_t size) {
+static bool readableRegionContains(const MEMORY_BASIC_INFORMATION& region, uintptr_t address, size_t size) {
+    const uintptr_t begin = (uintptr_t)region.BaseAddress;
+    return region.State == MEM_COMMIT && !(region.Protect & (PAGE_NOACCESS | PAGE_GUARD)) &&
+           address >= 0x10000 && address >= begin && address - begin <= region.RegionSize &&
+           size <= region.RegionSize - (address - begin);
+}
+static bool readableProfileBody(uintptr_t address, size_t size, MEMORY_BASIC_INFORMATION* region) {
     MEMORY_BASIC_INFORMATION m;
-    if (address < 0x10000 || VirtualQuery((void*)address, &m, sizeof(m)) != sizeof(m)) return false;
-    if (m.State != MEM_COMMIT || (m.Protect & (PAGE_NOACCESS | PAGE_GUARD))) return false;
-    return address + size <= (uintptr_t)m.BaseAddress + m.RegionSize;
+    if (address < 0x10000 || VirtualQuery((void*)address, &m, sizeof(m)) != sizeof(m) ||
+        !readableRegionContains(m, address, size)) return false;
+    if (region) *region = m;
+    return true;
+}
+static bool readable(uintptr_t address, size_t size) {
+    return fp::profile::invoke<fp::profile::Hook::memoryQuery>(readableProfileBody, address, size,
+                                                            (MEMORY_BASIC_INFORMATION*)nullptr);
+}
+static bool readable(uintptr_t address, size_t size, MEMORY_BASIC_INFORMATION& region) {
+    return fp::profile::invoke<fp::profile::Hook::memoryQuery>(readableProfileBody, address, size, &region);
 }
 static const char* nodeName(uintptr_t node) {
     return readable(node, 0x2a0) ? (const char*)(node + field::sceneNode::name) : "";
@@ -133,6 +147,10 @@ struct HiddenTpProps {
     uintptr_t root = 0, scene = 0, tops[16]{};
     unsigned count = 0, meshCount = 0;
     Entry meshes[16 * 256]{};
+    void reset() {
+        root = scene = 0;
+        count = meshCount = 0;
+    }
 };
 static HiddenTpProps pendingTpProps, publishedTpProps;
 static bool tpPropMaskCurrent(uintptr_t node, uintptr_t sector, signed char (&verdicts)[16]);
@@ -189,8 +207,13 @@ static void hidePublish() {
         else pendingTpProps.meshes[unique++] = entry;
     }
     pendingTpProps.meshCount = unique;
-    publishedTpProps = pendingTpProps;
-    pendingTpProps = {};
+    publishedTpProps.root = pendingTpProps.root;
+    publishedTpProps.scene = pendingTpProps.scene;
+    publishedTpProps.count = pendingTpProps.count;
+    publishedTpProps.meshCount = pendingTpProps.meshCount;
+    memcpy(publishedTpProps.tops, pendingTpProps.tops, pendingTpProps.count * sizeof(uintptr_t));
+    memcpy(publishedTpProps.meshes, pendingTpProps.meshes, pendingTpProps.meshCount * sizeof(HiddenTpProps::Entry));
+    pendingTpProps.reset();
     publishedPlayerHead = pendingPlayerHead;
     pendingPlayerHead = {};
     publishedHeadWear = pendingHeadWear;
@@ -218,8 +241,8 @@ static void maskSector(uintptr_t sector) {
         }
     }
 }
-static uintptr_t sectorUpdate(uintptr_t sector) {
-    const uintptr_t result = originalSectorUpdate(sector);
+static uintptr_t sectorUpdateProfileBody(uintptr_t sector) {
+    const uintptr_t result = fp::profile::invoke<fp::profile::Hook::sectorNative>(originalSectorUpdate, sector);
     InterlockedExchange(&sectorThread, LONG(GetCurrentThreadId()));
     bool fault = false;
     AcquireSRWLockShared(&hideLock);
@@ -239,8 +262,12 @@ static uintptr_t sectorUpdate(uintptr_t sector) {
     }
     return result;
 }
+static uintptr_t sectorUpdate(uintptr_t sector) {
+    return fp::profile::invoke<fp::profile::Hook::sector>(sectorUpdateProfileBody, sector);
+}
 // Breadth-first scene walk into a flat list. Returns node count.
-static unsigned walkScene(uintptr_t scene, uintptr_t* nodes, unsigned* parents, unsigned capacity) {
+static unsigned walkSceneVisitProfileBody(uintptr_t scene, uintptr_t* nodes, unsigned* parents, unsigned capacity,
+                               void (*visit)(uintptr_t, bool)) {
     if (!readable(scene, 0x2a0)) return 0;
     thread_local fp::PointerSet seen; // the render thread and the game's pick thread both walk
     seen.reset(capacity);
@@ -251,7 +278,11 @@ static unsigned walkScene(uintptr_t scene, uintptr_t* nodes, unsigned* parents, 
     while (next < count) {
         uintptr_t node = nodes[next];
         unsigned index = next++;
-        if (!readable(node, 0x2a0)) continue;
+        const bool valid = readable(node, 0x2a0);
+        // A visitor may compact already-consumed queue entries, never unread
+        // ones. No native callback runs between validation and the flags edit.
+        if (visit) visit(node, valid);
+        if (!valid) continue;
         int last = *(int*)(node + field::sceneNode::lastChild);
         uintptr_t list = *(uintptr_t*)(node + field::sceneNode::children);
         if (last < 0 || last >= 6000 || !readable(list, (last + 1) * 8)) continue;
@@ -266,14 +297,21 @@ static unsigned walkScene(uintptr_t scene, uintptr_t* nodes, unsigned* parents, 
     }
     return count;
 }
+static unsigned walkSceneVisit(uintptr_t scene, uintptr_t* nodes, unsigned* parents, unsigned capacity,
+                               void (*visit)(uintptr_t, bool)) {
+    return fp::profile::invoke<fp::profile::Hook::sceneWalk>(walkSceneVisitProfileBody, scene, nodes, parents, capacity, visit);
+}
+static unsigned walkScene(uintptr_t scene, uintptr_t* nodes, unsigned* parents, unsigned capacity) {
+    return walkSceneVisit(scene, nodes, parents, capacity, nullptr);
+}
 static uintptr_t nodes[8192];
 static unsigned parents[8192];
 // The level being played: the scene object's name (base+0x4F0BD0, +0x140).
 // Head wear: equipment is parented under
 // body-part nodes (a sword under 17RHand), so anything under the controlled
 // character's 10Head node (root+0x11E0 -> +0x18) is head wear. [View] Helmet=show
-// (default) draws it from the inside with the game's own lighting; Helmet=hide hides
-// it as before meant to. The separate verified 10Head drawable is hidden
+// (default) retains native rendering, animation and face culling; Helmet=hide hides
+// verified head attachments. The separate verified 10Head drawable is hidden
 // independently above; the shared _SKIN node is never hidden. A worn mesh that covers the view
 // centre is hidden in either mode: rays from the eye along the view axis and four
 // directions fp::helmetConeDegrees around it, fp::helmetProbeLength long, through
@@ -291,6 +329,10 @@ static uintptr_t headScene = 0;
 static std::atomic<unsigned> hiddenHeadNodes{0}, headWearNodes{0}, helmetBlocking{0}, helmetUnknown{0},
     helmetTests{0};
 static std::atomic<fp::HelmetMode> helmetMode{fp::HelmetMode::show}; // [View] Helmet; F8 settings page
+// Latest scan, not lifetime counters. Independent status atomics: no snapshot guarantee.
+// 0 inactive, 1 camera owner mismatch, 2 unverified head, 3 no sector, 4 scanned, 5 fault.
+static std::atomic<unsigned> headWearScanState{0}, headWearWalked{0}, headWearRejected{0},
+    headWearScanLimit{0}; // flags 1: walk bound reached; 2: accepted-candidate bound reached
 using RayQuery = fp::game::MeshRayQuery;
 using MeshRay = int (*)(uintptr_t, RayQuery*);
 static int callMeshRay(uintptr_t ray, uintptr_t context, RayQuery* q) {
@@ -438,10 +480,28 @@ static bool headWearMaskCurrent(uintptr_t node, uintptr_t sector) {
 static void updateHeadWear(bool live) {
     const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
+    headWearWalked.store(0, std::memory_order_relaxed);
+    headWearRejected.store(0, std::memory_order_relaxed);
+    headWearScanLimit.store(0, std::memory_order_relaxed);
+    headWearScanState.store(!live ? 0 : (root != savedRoot || scene != savedScene) ? 1 : 2,
+                            std::memory_order_relaxed);
     live = live && root == savedRoot && scene == savedScene;
-    const uintptr_t headMesh = verifiedPlayerHead(root);
     pendingHeadWear = {};
-    if (!live || !readable(headMesh, 0x2a0) || !*(uintptr_t*)(headMesh + field::sceneNode::sector) ||
+    if (!live) {
+        headWearCount = 0;
+        headScene = scene;
+        hiddenHeadNodes = 0;
+        headWearNodes = 0;
+        helmetBlocking = 0;
+        helmetUnknown = 0;
+        return;
+    }
+    const uintptr_t headMesh = verifiedPlayerHead(root);
+    const bool headReadable = readable(headMesh, 0x2a0);
+    if (headReadable)
+        headWearScanState.store(*(uintptr_t*)(headMesh + field::sceneNode::sector) ? 4 : 3,
+                                std::memory_order_relaxed);
+    if (!headReadable || !*(uintptr_t*)(headMesh + field::sceneNode::sector) ||
         scene != headScene) {
         headWearCount = 0;
         headScene = scene;
@@ -449,17 +509,17 @@ static void updateHeadWear(bool live) {
         headWearNodes = 0;
         helmetBlocking = 0;
         helmetUnknown = 0;
-        if (!live || !readable(headMesh, 0x2a0) || !*(uintptr_t*)(headMesh + field::sceneNode::sector))
-            return;
+        if (!readable(headMesh, 0x2a0) || !*(uintptr_t*)(headMesh + field::sceneNode::sector)) return;
     }
     pendingHeadWear.root = root;
     pendingHeadWear.head = headMesh;
     pendingHeadWear.scene = scene;
     const unsigned count = walkScene(headMesh, nodes, parents, 256);
+    headWearWalked.store(count, std::memory_order_relaxed);
     HeadWear next[64];
-    unsigned n = 0;
+    unsigned n = 0, rejected = 0;
     for (unsigned j = 1; j < count && n < 64; ++j) {
-        if (!headWearBranch(j, count, root)) continue;
+        if (!headWearBranch(j, count, root)) { ++rejected; continue; }
         HeadWear w{nodes[j], -2, 0};
         for (unsigned k = 0; k < headWearCount; ++k)
             if (headWear[k].node == w.node) {
@@ -468,6 +528,8 @@ static void updateHeadWear(bool live) {
             }
         next[n++] = w;
     }
+    headWearRejected.store(rejected, std::memory_order_relaxed);
+    headWearScanLimit.store((count == 256 ? 1u : 0u) | (n == 64 ? 2u : 0u), std::memory_order_relaxed);
     unsigned hidden = 0, blocking = 0, unknown = 0;
     // Tested when it appears, every 30 frames (the head pose relative to the eye moves with animation), and at
     // once when the view has turned fp::helmetRetestCos (8 degrees) since the last test: a fast look no longer
@@ -525,13 +587,20 @@ static void updateBodyWear(bool live) {
     const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
     live = live && root == savedRoot && scene == savedScene;
-    const uintptr_t rootMesh = readable(root, 0x1200) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
-    if (!live || !readable(rootMesh, 0x2a0) || scene != bodyScene) {
+    if (!live) {
         bodyWearCount = 0;
         bodyScene = scene;
         bodyWearNodes = 0;
         hiddenBodyNodes = 0;
-        if (!live || !readable(rootMesh, 0x2a0)) return;
+        return;
+    }
+    const uintptr_t rootMesh = readable(root, 0x1200) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
+    if (!readable(rootMesh, 0x2a0) || scene != bodyScene) {
+        bodyWearCount = 0;
+        bodyScene = scene;
+        bodyWearNodes = 0;
+        hiddenBodyNodes = 0;
+        if (!readable(rootMesh, 0x2a0)) return;
     }
     pendingBodyWear.root = root;
     pendingBodyWear.mesh = rootMesh;
@@ -579,14 +648,14 @@ static void updateBodyWear(bool live) {
 }
 // Called from swap under cameraLock. live: a first-person frame is published.
 static void tpHideAdd();
-static void viewFeatures(bool live) {
+static void viewFeaturesProfileBody(bool live) {
     const bool ownView =
         live; // Both owned camera modes may hide obstructions; wear hiding is first-person only.
     live = live && viewMode.load() == 0;
     pendingPlayerHead = {};
     pendingHeadWear = {};
     pendingBodyWear = {};
-    pendingTpProps = {};
+    pendingTpProps.reset();
     __try {
         if (live && !viewFault.load()) {
             const uintptr_t root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
@@ -606,6 +675,7 @@ static void viewFeatures(bool live) {
             tpHideAdd(); // also through the blend to overhead // what stands between the camera and the player
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         viewFault = 1;
+        headWearScanState.store(5, std::memory_order_relaxed);
         headWearCount = 0;
     }
     // Body wear in its own scope: a fault there stops only body-wear hiding, never the helmet logic.
@@ -617,4 +687,7 @@ static void viewFeatures(bool live) {
     }
     // After a view fault head wear is never hidden again.
     hidePublish();
+}
+static void viewFeatures(bool live) {
+    return fp::profile::invoke<fp::profile::Hook::viewFeatures>(viewFeaturesProfileBody, live);
 }

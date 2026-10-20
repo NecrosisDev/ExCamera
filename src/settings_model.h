@@ -551,7 +551,8 @@ struct RowInfo {
     const wchar_t* tip;
     SettingRange range{};
     bool editable() const { return row >= 0 && !fixedSetting(row); }
-    bool checkbox() const { return editable() && (flag || row == setting::crouchMode); }
+    // Headwear uses explicit Show / Hide choices, not an ambiguous negative checkbox.
+    bool checkbox() const { return editable() && row != setting::hideHelmet && (flag || row == setting::crouchMode); }
 };
 inline const RowInfo& rowInfo(int row) {
     static const RowInfo table[setting::count] = {
@@ -574,11 +575,13 @@ inline const RowInfo& rowInfo(int row) {
          L"RawMouse", nullptr, nullptr,
          L"Reads mouse counts without Windows pointer acceleration. If another component owns raw input, "
          L"cursor input remains active and the requested setting is kept. Switch off and on to retry."},
-        {setting::hideHelmet, L"Helmet visibility", RowInfo::toggle, nullptr, &ModSettings::hideHelmet,
+        {setting::hideHelmet, L"Headwear", RowInfo::toggle, nullptr, &ModSettings::hideHelmet,
          L"View", L"Helmet", iniHelmet, iniHelmetText,
          L"First person only. Show when clear keeps visible headwear unless it blocks the view or cannot be "
          L"checked. "
-         L"Hide all always hides headwear. Shadows remain. Moving the eye farther back can make more "
+         L"Hide all hides verified headwear, including hair. Supported visible headwear stays attached to "
+         L"your view and draws its inside faces. Shadows and other camera views keep native animation. "
+         L"Moving the eye farther back can make more "
          L"headwear block the view."},
         {setting::grabRange, L"Grab range", RowInfo::number, &ModSettings::grabRange, nullptr, L"Input",
          L"GrabRange", nullptr, nullptr,

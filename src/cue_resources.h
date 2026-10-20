@@ -5,13 +5,16 @@ namespace fp {
 // caller keeps its context current until prepare/retire has finished.
 struct CueResources {
     unsigned program = 0, vao = 0, vbo = 0;
+    // Optional first-person headwear vertex stream. Same exact context owner,
+    // deletion admission and stop drain; never shared with the arc's upload.
+    unsigned headwearVbo = 0;
     int color = -1;
     unsigned vertex = 0, fragment = 0;
     bool vertexAttached = false, fragmentAttached = false;
     int savedVao = 0, savedBuffer = 0;
     bool borrowedBindings = false;
 
-    bool live() const { return program || vao || vbo || vertex || fragment || borrowedBindings; }
+    bool live() const { return program || vao || vbo || headwearVbo || vertex || fragment || borrowedBindings; }
     bool ready() const { return program && vao && vbo && color >= 0 && !borrowedBindings; }
 
     template <class Api> static void drain(Api& g) {
@@ -40,6 +43,8 @@ struct CueResources {
         vao = 0;
         if (vbo) g.deleteBuffers(1, &vbo);
         vbo = 0;
+        if (headwearVbo) g.deleteBuffers(1, &headwearVbo);
+        headwearVbo = 0;
         if (program) g.deleteProgram(program);
         program = 0;
         color = -1;

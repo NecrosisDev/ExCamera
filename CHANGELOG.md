@@ -1,5 +1,62 @@
 # Changelog
 
+v0.2.2-prof8 (local headwear/profiling candidate, rev56)
+
+- Bind headwear classification to the actual submitted mesh instance and material index, including shared material groups. Revalidate the current table and physical ownership before drawing.
+- Use exact reviewed native callers, a consumed single-sample ticket and scoped multisample provenance; retire state on nesting, exceptions and colour-pass exit.
+- Reject unrelated mesh submissions with bounded hints before native-memory queries. Add headwear_submit profiling spans and shared-instance/lifetime regressions.
+
+v0.2.2-prof7 (local headwear/profiling candidate, rev55)
+
+- Filter head-bound faces in the controlled actor's merged skin at its first-person colour draw, preserving body/neck faces sharing the material, shadows and other views.
+- Render verified visible headwear from copied bind geometry attached to the exact displayed camera sample; include inside faces. Retain native attachment rays and add two-sided obstruction tests of the stable geometry. Physics and camera algorithms are unchanged.
+- Keep the optional vertex stream warm in the existing exact-context lifetime owner, including guarded context deletion and stop drain. Add four profiler spans and render-path status counters.
+- Add owned Windows regression and real hidden-window WGL pixel checks. These do not establish acceptance for a player's equipped item or an in-game FPS gain.
+
+v0.2.2-prof6 (local handoff/profiling candidate, rev54)
+
+- Merge Cursor Look restoration from the supplied d39eff0 source handoff through the existing native Controls binding. Retain exploration-only ownership, release/rebind/focus/scene retirement, rotation priority and accepted held offsets.
+- Guard the new held-state lock through SEH, retain cheap idle polling and retire active holds before stop removes input owners. Add no binding or setting and preserve all prof5 performance/lifetime work.
+- Add latest headwear scan state/walk/rejection/bound diagnostics without extra memory queries; show explicit Show when clear / Hide all choices with unchanged saved semantics.
+- Headwear visibility, hair, jiggle and backface issues remain unresolved; no classification, culling, physics or camera shortcut is included. Add Windows production callback and native Settings fixtures; gameplay acceptance remains outstanding.
+
+v0.2.2-prof5 (local profiling candidate, rev53)
+
+- Skip the throw table lock/scan for ordinary-body integration when the published queue is empty. Publish all queue mutations under the existing lock; nonempty callbacks retain every current-ticket check.
+- Keep integration depth, native forwarding/fault cancellation, destruction lifetime invalidation, settle timing and history writes unchanged.
+- Add full prof4 throw-owner parity, empty operation counts, cancellation/fault and controlled cross-thread lifetime/publication regressions. Profiling stays off by default; in-game FPS and throw feel remain unverified.
+
+v0.2.2-prof4 (local profiling candidate, rev52)
+
+- Stop hot health-counter increments after the existing verdict; reopen before each fresh hook arm without changing the game-clock health window or failure policy.
+- Gather status-only head geometry on demand at running-status cadence, on the existing admitted native camera callback. Keep current pointer/range/finite checks and all camera samples.
+- Clear inactive wear publications before early return; avoid head validation and body-root queries when wear cannot act. Preserve every active-path and application-time ownership check.
+- Add frozen-prof3 parity/lifecycle regressions and diagnostic-demand camera integration. Keep profiling off by default and prof3 intact for in-game comparison. Offline checks do not establish FPS or camera feel.
+
+v0.2.2-prof3 (local profiling candidate, rev51)
+
+- Keep complete per-context cue resources warm across ordinary WGL switches and NULL unbinds; refresh actual DC bindings and retain the bounded cache.
+- Retire unbound warm contexts through verified caller-thread bindings before deletion, restoring the caller first. Guard shared objects, handle reuse, nesting, faults and foreign-thread ownership.
+- Close cue admission and drain owners before removing lifecycle hooks; block re-arm and retain pending teardown when ownership or restoration cannot be established. The worker performs no GL operations.
+- Add modeled lifecycle regressions and an optional isolated native-driver WGL fixture. Camera algorithms, collision checks, cue geometry/state restoration and opt-in profiling boundaries remain unchanged.
+
+v0.2.2-prof2 (local profiling candidate, rev50)
+
+- Reuse one fresh protection-region query within eligible mesh callbacks when it fully covers the current head; keep live identity checks and separate-region fallback.
+- Forward foreign pose builds before player window/input work, retaining native profiling and outer in-flight cleanup.
+- Upload cue geometry once instead of five times, preserving vertex streams, draw order, state checks and restoration.
+- Copy and reset only active TP-prop publication data, retaining lock coverage and current ownership validation.
+- Return from WGL wrappers after their finally cleanup. Cue resource lifetime and cold re-creation behavior are unchanged.
+- Keep opt-in profiling off by default and the previous profiling builds intact for comparison. Offline regressions do not establish in-game FPS or camera feel.
+
+v0.2.2-perf1 (local candidate)
+
+- Reject unrelated mesh submissions before head drawable validation, retaining current root/head checks and immediate replacement handling.
+- Fuse self-pick masking with scene discovery's current range checks; preserve membership, pre-existing flags, nested calls and fault restoration.
+- Limit near-plane searches once the original quantized result would saturate the same filter; retain closer-hit refinement and per-sample geometry queries. Skip prop queries only when they cannot tighten the minimum plane.
+- Remove a duplicate held-placement predicate while retaining final obstruction validation.
+- Add native performance regressions against the pinned original solver and retain focused camera, picking and render-boundary suites. Measured reductions are offline evidence; in-game FPS and feel remain unverified.
+
 v0.2.1
 
 ### Input and native Settings

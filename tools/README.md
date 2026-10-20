@@ -8,7 +8,6 @@ hand-edit `src/game_signatures.h` or `src/game_contracts.h`.
 Python 3.8 or newer, standard library only:
 
     python tools/check_generated.py
-    python -m unittest discover -s tools -v
 
 The consistency check covers declared offsets, witness ownership, target coverage,
 optional groups, signature metadata, enum ordering, slot checks, and exact generated
@@ -47,6 +46,6 @@ fixed branch displacements, rather than automatically weakening their masks.
 
 For native changes, review and update the JSON evidence and provenance, regenerate
 against its identified executable, inspect the generated diff, and run both native
-checks and the executable-free tests. Passing byte checks establishes only the
+checks. Verification fixtures are maintained outside this repository. Passing byte checks establishes only the
 recorded instruction/target contracts, not object lifetimes, every caller, or
 in-game behavior on an untested build.

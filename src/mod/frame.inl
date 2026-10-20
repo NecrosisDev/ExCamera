@@ -17,23 +17,27 @@ static bool shouldSkipPlayerHeadDraw(bool mainColorCall, bool ownFirstPerson,
     return mainColorCall && ownFirstPerson && identityVerified &&
            submission && submission==headNode;
 }
-__declspec(noinline) static void meshQueue(uintptr_t node, int material, unsigned short flags) {
+static void meshQueueProfileBody(uintptr_t caller, uintptr_t node, int material, unsigned short flags) {
     // This shared queue has multiple submission callsites.
     // Check the *specific* native callsite before touching player
     // state; all other paths are forwarded byte-for-byte.
-    const bool mainColorCall=(uintptr_t)_ReturnAddress()==gameAt(fp::sig::mainMeshQueueReturn);
+    const bool mainColorCall=caller==gameAt(fp::sig::mainMeshQueueReturn);
     if (mainColorCall && viewMode.load()==0 && supersampleRenderScope.owned) {
         bool skip=false;
         __try {
             if (supersampleViewMatches()) {
                 const uintptr_t root=supersampleRenderScope.root;
-                if (readable(root,field::character::headPart+sizeof(uintptr_t))) {
+                MEMORY_BASIC_INFORMATION region{};
+                if (readable(root,field::character::headPart+sizeof(uintptr_t),region)) {
                     const uintptr_t head=*(uintptr_t*)(root+field::character::headPart);
-                    if (readable(head,field::bodyPart::meshNode+sizeof(uintptr_t))) {
+                    // Reuse only this live query's complete protection range.
+                    if (readableRegionContains(region,head,field::bodyPart::meshNode+sizeof(uintptr_t)) ||
+                        readable(head,field::bodyPart::meshNode+sizeof(uintptr_t))) {
                         const uintptr_t headNode=*(uintptr_t*)(head+field::bodyPart::meshNode);
                         // A dedicated physical head drawable, NOT a generic
                         // skinned body mesh. A pointer mismatch fails open.
                         const bool headValid =
+                            node == headNode &&
                             readable(headNode,field::sceneNode::bodyPart+sizeof(uintptr_t)) &&
                             *(uintptr_t*)(headNode+field::sceneNode::bodyPart)==head &&
                             fp::bodyPartNumber(nodeName(headNode))==10;
@@ -49,7 +53,11 @@ __declspec(noinline) static void meshQueue(uintptr_t node, int material, unsigne
             return;
         }
     }
-    originalMeshQueue(node,material,flags);
+    fp::profile::invoke<fp::profile::Hook::meshNative>(originalMeshQueue, node, material, flags);
+}
+__declspec(noinline) static void meshQueue(uintptr_t node, int material, unsigned short flags) {
+    const uintptr_t caller = (uintptr_t)_ReturnAddress();
+    return fp::profile::invoke<fp::profile::Hook::meshQueue>(meshQueueProfileBody, caller, node, material, flags);
 }
 // Only the native presentation pair owns frame bookkeeping and cue resources.
 // Teardown leaves the native globals stale, so current WGL ownership is required too.
@@ -68,8 +76,9 @@ static bool ownedNativeSwap(HDC dc) {
         return false;
     }
 }
-static BOOL WINAPI swap(HDC dc) {
-    if (!ownedNativeSwap(dc)) return originalSwap(dc);
+static BOOL WINAPI swapProfileBody(HDC dc) {
+    if (!ownedNativeSwap(dc)) return fp::profile::invoke<fp::profile::Hook::swapNative>(originalSwap, dc);
+    fp::profile::engine.present(InterlockedCompareExchange(&cameraReady, 0, 0) && InterlockedCompareExchange(&active, 0, 0) ? unsigned(viewMode.load()) : 3u);
     fp::CueSide cueSideNow = fp::CueSide::none;
     LONG cueX = 0, cueY = 0;
     float cueFillNow = 0, cueAlphaNow = 0;
@@ -122,8 +131,11 @@ static BOOL WINAPI swap(HDC dc) {
     heldDoorStep();
     f8MouseStep(); // the panel gets the mouse at the title too
     presentCue(cueSideNow, cueX, cueY, cueFillNow, cueAlphaNow);
-    const BOOL presented = originalSwap(dc);
+    const BOOL presented = fp::profile::invoke<fp::profile::Hook::swapNative>(originalSwap, dc);
     return presented;
+}
+static BOOL WINAPI swap(HDC dc) {
+    return fp::profile::invoke<fp::profile::Hook::swap>(swapProfileBody, dc);
 }
 // The native GUI owns its cursor and capture; there is no second settings HWND.
 static void f8MouseStep() {}
@@ -186,6 +198,8 @@ static bool rollbackDispatch(bool installedNav, bool installedPoint, bool instal
     if (installedPoint) ok = replace(gameAt(fp::sig::pointSlot), (void*)point, (void*)originalPoint) && ok;
     if (installedBehavior)
         ok = replace(gameAt(fp::sig::behaviorSlot), (void*)behavior, (void*)originalBehavior) && ok;
+    // Warm dormant contexts still need the WGL adapters to retire on their owner.
+    if (!awaitCueRetirement()) return false;
     const bool unhooked = disableNativeHooks() == MH_OK;
     // Hook removal does not drain already-entered pose callbacks. They restore
     // their own scoped borrows; the worker never writes physics part fields.
@@ -227,7 +241,7 @@ static bool tpAncestry(uintptr_t node, uintptr_t world, uintptr_t* ancestors, un
 }
 // 1: verified hideable prop; 2: own tree / loose item ignored; 0: pull in.
 // Also called before retaining or publishing a hide, since ownership may change.
-static int tpHideCandidate(uintptr_t hitNode, uintptr_t root, bool hideObjects, uintptr_t& target) {
+static int tpHideCandidateProfileBody(uintptr_t hitNode, uintptr_t root, bool hideObjects, uintptr_t& target) {
     target = 0;
     const uintptr_t world = *(uintptr_t*)(gameAt(fp::sig::world));
     if (!readable(root, field::character::sceneNode + sizeof(uintptr_t))) return 0;
@@ -283,6 +297,9 @@ static int tpHideCandidate(uintptr_t hitNode, uintptr_t root, bool hideObjects, 
     }
     if (loose) return 2;
     return target && hideObjects ? 1 : 0;
+}
+static int tpHideCandidate(uintptr_t hitNode, uintptr_t root, bool hideObjects, uintptr_t& target) {
+    return fp::profile::invoke<fp::profile::Hook::tpHide>(tpHideCandidateProfileBody, hitNode, root, hideObjects, target);
 }
 // hideLock is already shared by maskSector. Never acquire tpHideLock or cameraLock here.
 static bool tpPropMaskCurrent(uintptr_t node, uintptr_t sector, signed char (&verdicts)[16]) {
@@ -434,7 +451,7 @@ static void tpHideAdd() {
 // Third-person physical head gaze still needs world depth. Combat targeting
 // belongs to AE2E0; this sample is not another opponent/weapon target selector.
 // Reuse the native pick's near origin and direction for both aim-box modes.
-static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye, uintptr_t scene,
+static void thirdPersonAimProfileBody(uintptr_t camera, const float* pose, const float* eye, uintptr_t scene,
                            const TpAimRequest& request) {
     // A tracked free-look view must never feed its cursor hit back into weapon/head aim.
     // Keep the existing finite input ray while tracking or its release fade is active.
@@ -517,4 +534,8 @@ static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye
     } else if (sameTpAimRequest(tpAimSample, request))
         tpAimSet = false;
     ReleaseSRWLockExclusive(&aimLock);
+}
+static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye, uintptr_t scene,
+                           const TpAimRequest& request) {
+    return fp::profile::invoke<fp::profile::Hook::tpAim>(thirdPersonAimProfileBody, camera, pose, eye, scene, request);
 }

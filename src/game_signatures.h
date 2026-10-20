@@ -191,6 +191,16 @@ enum Target : uint16_t {
     applyHeldReleaseWithoutPose,
     heldReleaseWithoutPoseQueueReturn,
     heldBodyMetadata,
+    headwearColourPass,
+    headwearDraw,
+    headwearDrawBound,
+    headwearBind,
+    headwearWorldRenderer,
+    headwearSubmit,
+    headwearSubmitSingleReturn,
+    headwearSubmitSamplesReturn,
+    headwearDrawReturn,
+    headwearDrawBoundReturn,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -379,6 +389,16 @@ inline constexpr const char* targetNames[targetCount] = {
     "applyHeldReleaseWithoutPose",
     "heldReleaseWithoutPoseQueueReturn",
     "heldBodyMetadata",
+    "headwearColourPass",
+    "headwearDraw",
+    "headwearDrawBound",
+    "headwearBind",
+    "headwearWorldRenderer",
+    "headwearSubmit",
+    "headwearSubmitSingleReturn",
+    "headwearSubmitSamplesReturn",
+    "headwearDrawReturn",
+    "headwearDrawBoundReturn",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -567,6 +587,16 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "heldThrow",
     "heldThrow",
     "heldThrow",
+    "headwearRender",
+    "headwearRender",
+    "headwearRender",
+    "headwearRender",
+    "headwearRender",
+    "headwearRender",
+    "headwearRender",
+    "headwearRender",
+    "headwearRender",
+    "headwearRender",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
 // reference to a global or a vtable, or a call to the function).
@@ -1251,6 +1281,16 @@ inline constexpr Signature signatures[] = {
     {heldBodyMetadata, Kind::Relative, false, false, 3, 7, 0, 0x301C28, "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 74 60 F3 0F 10 43 40 0F 2F 05 ?? ?? ?? ??"},
     {heldBodyMetadata, Kind::Relative, false, false, 3, 7, 0, 0x301C28, "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? 48 8B 45 F8"},
     {heldBodyMetadata, Kind::Relative, false, false, 3, 7, 0, 0x301C28, "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? 48 8B 83 28 01 00 00"},
+    {headwearColourPass, Kind::Code, true, true, 0, 0, 0, 0x4E610, "55 48 89 E5 48 8D A4 24 70 FF FF FF 48 89 5D 98 48 89 7D A0 48 89 75 A8 4C 89 65 B0 4C 89 6D B8 48 89 4D F8"},
+    {headwearDraw, Kind::Code, true, true, 0, 0, 0, 0x6B8B0, "55 48 89 E5 48 8D 64 24 A0 48 89 5D C0 48 89 75 C8 48 89 4D F8 90 48 8B 45 F8 48 8D 48 08 E8 ?? ?? ?? ??"},
+    {headwearDrawBound, Kind::Code, true, true, 0, 0, 0, 0x6B7F0, "53 57 56 41 54 41 55 48 8D 64 24 E0 48 8B 41 68 8B 40 04 83 F8 01 72 1C 83 E8 01 74 07 83 E8 01"},
+    {headwearBind, Kind::Code, false, true, 0, 0, 0, 0x6AB40, "53 48 8D 64 24 E0 48 89 CB 48 3B 1D ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 66 90 48 85 DB 75 2A 83 3D ?? ?? ?? ?? 00"},
+    {headwearWorldRenderer, Kind::Relative, false, false, 3, 7, 0, 0x5B1E10, "48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? EB 12 41 89 F0 48 89 DA"},
+    {headwearSubmit, Kind::Code, true, true, 0, 0, 0, 0x201630, "53 56 48 8D 64 24 D8 48 89 CB 89 D6 83 3D ?? ?? ?? ?? 00 7E 14 41 89 F0 48 89 DA 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? EB 12 41 89 F0 48 89 DA 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8D 64 24 28 5E 5B C3"},
+    {headwearSubmitSingleReturn, Kind::Code, false, false, 20, 0, 0, 0x26F56C, "48 8B 45 F0 48 8B 08 48 8B 05 ?? ?? ?? ?? FF 90 80 00 00 00 48 8B 45 F0 48 89 C2 48 8B 0A 48 8B 89 D0 01 00 00 48 63 52 08 48 8B 14 D1 48 8B 8A 98 00 00 00"},
+    {headwearSubmitSamplesReturn, Kind::Code, false, false, 20, 0, 0, 0x26F618, "48 8B 45 F0 48 8B 08 48 8B 05 ?? ?? ?? ?? FF 90 80 00 00 00 48 8B 45 F0 48 83 78 10 00 75 14 48 8B 45 F0 48 8B 08 E8 ?? ?? ?? ?? 89 05 ?? ?? ?? ??"},
+    {headwearDrawReturn, Kind::Code, false, false, 21, 0, 0, 0x26F5A4, "48 8B 92 D0 01 00 00 48 63 40 08 48 8B 04 C2 FF 90 90 00 00 00 E9 ?? ?? ?? ?? 48 8B 45 F0 8B 40 0E 25 00 10 00 00 48 63 C0 0F B7 55 EC 48 39 D0"},
+    {headwearDrawBoundReturn, Kind::Code, false, false, 22, 0, 0, 0x20053D, "49 8B 97 D0 01 00 00 48 63 44 24 40 48 8B 04 C2 FF 90 A0 00 00 00 8B 44 24 38 39 C3 0F 8F ?? ?? ?? ?? 0F 1F 00 41 8B 84 24 F0 00 00 00 83 E0 20 0F 86 ?? ?? ?? ??"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {
