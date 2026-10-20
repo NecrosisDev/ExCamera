@@ -1,6 +1,6 @@
 Install this complete source tree, retaining its paths (including tools/ and .github/workflows/). When overlaying the 0.2.0 source baseline, follow README.md's repository-update instructions for the three obsolete headers; preserve .git and your local edits.
 
-1. Commit and push the source to main. Build runs on relevant main/PR changes; Release runs only on v* tag pushes. Both check generated tables and run the portable Python tooling tests using only the standard library, without a game executable. These tests mock compiler, Git, and Windows-lock calls where needed; external gameplay and portable C++ harnesses are not run by CI.
+1. Commit and push the source to main. Build runs on relevant main/PR changes; Release runs only on v* tag pushes. Both check generated compatibility tables, compile the Windows runtime, check DLL exports and validate the runtime ZIP without a game executable. Test sources and test-running steps are not included in this repository.
 2. Test the Windows build and gameplay before tagging a public release.
 3. With the intended release commit checked out and a clean working tree, choose a NEW version, for example:
 
@@ -13,7 +13,7 @@ The workflow checks out and verifies the exact tag commit. It derives FP_BUILD f
 
 Release notes are generated automatically from Git commit subjects since the prior reachable valid version tag selected by git describe, including direct commits and merges, with links to commits and a full comparison. Selection uses Git's bounded candidate search, not version-number sorting or a guarantee of the globally closest tag. The first release lists the initial history. Write meaningful commit subjects; this is a commit changelog, not a claim that changes were gameplay-tested. No manual release-note editing or pull request is required. The supplied CHANGELOG.md separately describes the explicit 0.2.0 source-baseline comparison; the workflow does not copy that document into generated release notes.
 
-Publication happens only after generated-table validation, portable tooling tests, compilation, DLL export checks, exact four-file ZIP validation, and artifact upload succeed. Do not manually create the release first. No personal token is required; the release job uses GitHub's built-in token with contents: write. The ordinary Build workflow has read-only permissions.
+Publication happens only after generated-table validation, compilation, DLL export checks, exact four-file ZIP validation, and artifact upload succeed. Do not manually create the release first. No personal token is required; the release job uses GitHub's built-in token with contents: write. The ordinary Build workflow has read-only permissions.
 
 If a tag or release already exists, stop and inspect it rather than force-moving or overwriting it. Failed checks before publication can be rerun normally from Actions once their cause is understood; source fixes require a new commit and new tag. A publish/upload failure may leave a draft or published release: inspect Releases and the Actions log before retrying. The workflow never overwrites an existing release and does not force-create missing tags.
 

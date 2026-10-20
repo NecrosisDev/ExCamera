@@ -2,6 +2,8 @@
 
 First- and third-person camera mod for the Windows x64 version of Exanima, with settings integrated into the game's native Settings window.
 
+Download the prebuilt Windows runtime from [Releases](https://github.com/NecrosisDev/ExCamera/releases/latest). Choose `ExCamera-<version>-minimal.zip`, extract it, and keep the launcher, DLL and licenses together. The automatically generated Source code downloads are for developers.
+
 ## Compatibility
 
 This source targets **Exanima 0.9.5.2g, Steam build 25803178**. The launcher checks the game executable; other builds are not supported by this distribution.

@@ -1,5 +1,16 @@
 # Changelog
 
+v0.2.2 (revision 56)
+
+- Reduce repeated mesh, picking, collision, inactive-wear and empty throw-queue work while preserving current ownership, obstruction and lifetime checks.
+- Keep cue and headwear GPU resources warm across context switches, with explicit owner-context deletion and safe teardown.
+- Fix first-person helmet, hair and face-covering visibility inside merged character meshes. Stabilize supported visible headwear against the displayed camera sample and render inside faces.
+- Validate the actual submitted mesh instance, including shared materials, so player headwear handling does not affect other actors.
+- Restore exploration Cursor Look through the game's existing Controls binding.
+- Add opt-in hook profiling and render diagnostics; profiling remains off by default.
+- Keep public test sources and CI test steps out of the repository. Compatibility-table, build/export and ZIP checks remain.
+- Verified with MSVC, native contract checks and offline GPU fixtures. Actual equipment coverage, gameplay feel and FPS gains remain subject to in-game validation.
+
 v0.2.2-prof8 (local headwear/profiling candidate, rev56)
 
 - Bind headwear classification to the actual submitted mesh instance and material index, including shared material groups. Revalidate the current table and physical ownership before drawing.
