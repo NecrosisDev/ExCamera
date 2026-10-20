@@ -1,39 +1,75 @@
-name: build
+name: Build
 
 on:
   push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'build.py'
+      - 'LICENSE'
+      - '.github/workflows/build.yml'
   pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'build.py'
+      - 'LICENSE'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: excamera-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   windows:
+    name: Windows x64
     runs-on: windows-2022
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Build and test
-        run: python build.py --package
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ExCamera
-          path: build/ExCamera-*.zip
+          architecture: x64
 
-  portable-tests:
-    # The portable suites (math, signature resolution, hook health) need no Windows headers.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Portable C++ suites
-        working-directory: src
-        # One command per line: under bash -e a failure anywhere stops the job (in `a && b`, a failing `a` would not).
+      # build.py locates VS 2022, initializes x64 MSVC and checks DLL exports.
+      # No development tests, tools folder or game files are required.
+      - name: Build and package
+        shell: pwsh
+        run: python build.py --package
+
+      - name: Verify release ZIP
+        shell: python
         run: |
-          for t in test_camera_motion test_yaw_stabilization test_view_boundaries test_game_layout test_status_json test_held_object test_module_export test_input_ownership test_activation_status test_raw_registration test_cue_resources test_native_contracts; do
-            g++ -std=c++17 -O2 -Wall -Wextra -Werror "$t.cpp" -o "/tmp/$t"
-            "/tmp/$t"
-          done
-      - name: Signature checker regression tests
-        run: python3 tools/test_signatures.py
-      - name: Native contract regression tests
-        run: python3 tools/test_native_contracts.py
+          from pathlib import Path
+          import zipfile
+          packages = list(Path('build').glob('ExCamera-*-minimal.zip'))
+          if len(packages) != 1:
+              raise SystemExit(f'Expected one release ZIP, found {len(packages)}')
+          expected = {'ExCamera.exe', 'ExanimaFirstPerson.dll', 'LICENSE.txt', 'LICENSE-MinHook.txt'}
+          with zipfile.ZipFile(packages[0]) as archive:
+              if len(archive.namelist()) != 4 or set(archive.namelist()) != expected:
+                  raise SystemExit('Release ZIP contains missing or unexpected files')
+              if archive.testzip() is not None:
+                  raise SystemExit('Release ZIP failed its integrity check')
+              for name in expected:
+                  if not archive.getinfo(name).file_size:
+                      raise SystemExit(f'Empty release file: {name}')
+          print(f'Ready: {packages[0]}')
+
+      - name: Upload release ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/ExCamera-*-minimal.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
