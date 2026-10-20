@@ -4,6 +4,7 @@
 // these declarations at compile time. Both activation paths also validate the reviewed instruction
 // windows in the executable file before using these layouts. See README, "Game versions".
 #include <cstddef>
+#include <cstdint>
 
 namespace fp::game {
 
@@ -127,6 +128,8 @@ inline constexpr size_t dirty = 0xE4;       // 1: the projection is rebuilt
 inline constexpr size_t controller = 0x160; // the sampler object driving it (navSlot's owner)
 inline constexpr size_t fov = 0x1C8;        // float, degrees
 inline constexpr size_t nearPlane = 0x1CC;  // float
+inline constexpr size_t farPlane = 0x1D0;   // float; 0 selects the native infinite-far projection
+inline constexpr size_t target = 0x1D8;     // native camera target node, terrain blend distance reference
 } // namespace camera
 
 namespace viewport {
@@ -148,7 +151,47 @@ namespace pick {
 inline constexpr size_t direction = 0x14; // float[3], unit
 inline constexpr size_t origin = 0x20;    // float[3]
 inline constexpr size_t distance = 0x2C;  // float, along direction
+inline constexpr size_t scratchBank = 0x34; // u32 input: 0x8F720 saves this before clearing the result
+inline constexpr size_t requiredSize = scratchBank + 4;
 } // namespace pick
+
+// Ordinary mesh ray at +3B0: 0x26A6C0 binds 0x26A910 with context +3B8.
+// The first twelve bytes are traversal state, not a returned hit point.
+namespace meshRayQuery {
+inline constexpr size_t node = 0x0;              // u64: current BVH node, written by the backend
+inline constexpr size_t minDistance = 0x8;       // float: traversal interval start
+inline constexpr size_t distance = 0xC;          // float: caller limit, then closest hit distance
+inline constexpr size_t origin = 0x10;           // float[3], mesh-local
+inline constexpr size_t direction = 0x20;        // float[3], mesh-local
+inline constexpr size_t inverseDirection = 0x30; // float[3], written by the backend
+inline constexpr size_t traversalStack = 0x3C;   // u64: packed pointer, written by the backend
+inline constexpr size_t scratchBank = 0x44;      // u32 input: selects the native traversal scratch
+inline constexpr size_t requiredSize = scratchBank + 4;
+} // namespace meshRayQuery
+
+// Native held pick 0x117AE6 supplies 1 at result+34; 0x8F720 transfers it to
+// query+44. The ray backend uses this bank separately from physics bank 0.
+inline constexpr std::uint32_t viewQueryScratchBank = 1;
+#pragma pack(push, 4)
+struct alignas(8) MeshRayQuery {
+    std::uint64_t node;
+    float minDistance, distance;
+    float origin[3], padOrigin;
+    float direction[3], padDirection;
+    float inverseDirection[3];
+    std::uint64_t traversalStack;
+    std::uint32_t scratchBank;
+};
+#pragma pack(pop)
+static_assert(offsetof(MeshRayQuery, node) == meshRayQuery::node);
+static_assert(offsetof(MeshRayQuery, minDistance) == meshRayQuery::minDistance);
+static_assert(offsetof(MeshRayQuery, distance) == meshRayQuery::distance);
+static_assert(offsetof(MeshRayQuery, origin) == meshRayQuery::origin);
+static_assert(offsetof(MeshRayQuery, direction) == meshRayQuery::direction);
+static_assert(offsetof(MeshRayQuery, inverseDirection) == meshRayQuery::inverseDirection);
+static_assert(offsetof(MeshRayQuery, traversalStack) == meshRayQuery::traversalStack);
+static_assert(offsetof(MeshRayQuery, scratchBank) == meshRayQuery::scratchBank);
+static_assert(sizeof(MeshRayQuery) == meshRayQuery::requiredSize);
 
 // The object the drag manager holds (drag::object) is a scene node; its physics body is sceneNode::bodyPart.
 
@@ -189,6 +232,31 @@ inline constexpr size_t visible = 0x79;  // u8
 inline constexpr size_t kind = 0xB8;     // the game's window tag (windowInventory, ...)
 inline constexpr size_t closing = 0x11B; // u8
 } // namespace form
+
+// Native generic GUI form. Constructor/layout/close witnesses are in the native settings review.
+namespace nativeForm {
+inline constexpr size_t contentLeft=0x30, contentTop=0x40, contentRight=0x44, contentBottom=0x3C;
+inline constexpr size_t contentWidth=0x48, horizontalScroll=0xD8, verticalScroll=0xDC;
+inline constexpr size_t scrollExtent = 0x4C;
+inline constexpr size_t behaviorFlags = 0x68, skin = 0x130;
+inline constexpr size_t stateFlags = 0x60;
+inline constexpr size_t elementLast = 0x90, elements = 0x98;
+inline constexpr size_t x=0x20, y=0x24, width=0x28, height=0x2C;
+inline constexpr size_t layoutFlags=0x5C, frameFlags=0x64, title=0x80;
+} // namespace nativeForm
+namespace optionsForm {
+inline constexpr size_t graphicsPane = 0x158, controlsPane = 0x160, controllerPane = 0x170, applied = 0x138;
+}
+
+// Native element and literal-string ABI consumed by native form/button code.
+namespace nativeElement {
+inline constexpr size_t stride=0x68, x=4, y=6, width=8, height=0xA, style=0xC;
+inline constexpr size_t group=0xE, text=0x10, appearance=0x18, flags=0x1C;
+inline constexpr size_t owner=0x20, action=0x28, handler=0x30, help=0x40;
+}
+namespace nativeString {
+inline constexpr size_t referenceHeader=0x10, lengthHeader=8;
+}
 
 // The world (the scene object, world global): its characters, the dead too.
 namespace worldObject {

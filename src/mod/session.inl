@@ -449,12 +449,19 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
     j.num("fov", selectedFov.load());
     j.boolean("settings_saved", !settingsSavePending());
+    j.boolean("tracking_requested", trackingEnabled.load());
+    j.num("tracking_transport", int(trackingReceiver.status()));
+    const auto tracker = trackingReceiver.snapshot();
+    const auto trackingNow = GetTickCount64();
+    j.boolean("tracking_fresh", tracker.valid && trackingNow >= tracker.received &&
+                               trackingNow - tracker.received <= fp::trackingStaleMs);
     j.num("cursor_free", InterlockedCompareExchange(&cursorFree, 0, 0));
     j.num("raw_mouse", InterlockedCompareExchange(&rawRegistered, 0, 0));
     j.unum("side_flips", sideFlips.load());
     j.str("helmet", helmetMode.load() == fp::HelmetMode::hide ? "hide" : "show");
     j.unum("head_wear_nodes", headWearNodes.load());
     j.unum("hidden_head_nodes", hiddenHeadNodes.load());
+    j.unum("first_person_head_draws_skipped", firstPersonHeadDrawsSkipped.load());
     j.unum("helmet_blocking", helmetBlocking.load());
     j.unum("helmet_unknown", helmetUnknown.load());
     j.unum("helmet_tests", helmetTests.load());
@@ -526,6 +533,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("swing_hides", swingHides.load());
     j.str("look", "head");
     j.real("near", double(renderedNear), 3);
+    j.object("supersampling")
+        .unum("scopes", supersampleScopes.load())
+        .num("in_flight", InterlockedCompareExchange(&renderScopesInFlight, 0, 0))
+        .unum("matrices", supersampleCorrections.load())
+        .unum("terrain_matrices", supersampleTerrainCorrections.load())
+        .unum("faults", supersampleFaults.load())
+        .end();
     j.unum("body_wear", bodyWearNodes.load());
     j.unum("hidden_body", hiddenBodyNodes.load());
     j.str("view", viewMode.load() == 1 ? "third" : viewMode.load() == 2 ? "to-overhead" : "first");
@@ -538,6 +552,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         j.str("other_hooks", hooks);
     }
     j.str("signatures_degraded", degradedTargets);
+    writeNativeCheckboxStatus(j);
     j.unum("native_fields_checked", nativeContracts.checked);
     j.unum("native_fields_withheld", nativeContracts.optionalFailures);
     j.str("native_field_issue", nativeContracts.firstOptional ? nativeContracts.firstOptional : "none");
@@ -625,7 +640,6 @@ static DWORD runSession() {
         }
         loadSettings(settingsPath);
         persistedFov = selectedFov.load();
-        invertY = GetPrivateProfileIntW(L"Input", L"InvertY", 0, settingsPath) != 0;
         attackSideKey = GetPrivateProfileIntW(L"Input", L"AttackSideKey", 0, settingsPath);
         {
             wchar_t oh[16];
@@ -671,6 +685,8 @@ static DWORD runSession() {
                       (void**)&originalCameraMouse) != MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::aimWorldToLocal), (void*)aimWorldToLocal,
                       (void**)&originalAimWorldToLocal) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::guiMaintenance), (void*)nativeSettingsMaintenance,
+                      (void**)&originalGuiMaintenance) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::cursorAim)), (void*)cursorAim, (void**)&originalCursor) !=
             MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::combatAttention), (void*)combatAttention,
@@ -698,6 +714,14 @@ static DWORD runSession() {
             MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::fadeBounds), (void*)fadeBounds, (void**)&originalFadeBounds) !=
             MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::meshQueue), (void*)meshQueue,
+                      (void**)&originalMeshQueue) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::renderViewport), (void*)renderViewport,
+                      (void**)&originalRenderViewport) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::terrainPass), (void*)terrainPass,
+                      (void**)&originalTerrainPass) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::multiplyMatrix), (void*)excameraMultiplyMatrixHook,
+                      (void**)&excameraOriginalMultiplyMatrix) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::coverPass)), (void*)coverPass, (void**)&originalCoverPass) !=
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::coverDepth)), (void*)coverDepth, (void**)&originalCoverDepth) !=
@@ -768,6 +792,7 @@ static DWORD runSession() {
         setActivationPhase(fp::ActivationPhase::running);
         for (int i = 0; !InterlockedCompareExchange(&stopping, 0, 0); i++) {
             Sleep(100);
+            trackingReceiver.service(trackingEnabled.load());
             saveFov();
             if (!viewFaultNoticed && viewFault.load()) {
                 viewFaultNoticed = true;
@@ -819,10 +844,16 @@ static DWORD runSession() {
             }
         }
         InterlockedExchange(&stopping, 1);
+        trackingReceiver.stop();
         setActivationPhase(fp::ActivationPhase::stopping);
         saveFov();
         releaseInput();
         const bool rawRetired = rawReconcileTarget(nullptr);
+        nativeSettingsBeforeStop();
+        if (!awaitNativeSettings()) {
+            reportFault("native_settings_retirement_pending", "retained", "pending");
+            return 7;
+        }
         // Missing/minimized/teardown callbacks cannot make shutdown wait forever.
         // A timed-out module stays mapped with pass-through adapters and restoration
         // callbacks intact. Never free a trampoline another thread can still reach.
@@ -841,9 +872,6 @@ static DWORD runSession() {
             return 7;
         }
         bool ok = rollbackDispatch(true, true, true);
-        // Ceilings=1: lids built into this level cannot be unbuilt, so the per-sector
-        // update hook alone stays on with every built slab hidden (overhead shows no
-        // lid) until the scene changes (maskSector ignores other scenes).
         if (hookedWindow && originalWindowProc &&
             IsWindow(hookedWindow)) { // a destroyed window holds no subclass
             const auto current = (WNDPROC)GetWindowLongPtrW(hookedWindow, GWLP_WNDPROC);
@@ -928,6 +956,7 @@ static void finishSessionWorker(bool (*noticePump)() = pumpNotice) {
 }
 static DWORD WINAPI run(void*) {
     const DWORD result = runSession();
+    trackingReceiver.stop(); // includes early/fault exits and retained-hook sessions
     finishSessionWorker();
     return result;
 }

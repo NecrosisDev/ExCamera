@@ -240,6 +240,10 @@ static void combatUpdate(uintptr_t root) {
         nestedActor |= previous->root == root;
     defenseUpdate = &update;
     __try {
+        // Native 169200 consumes the next attack inside this call. Withdraw a
+        // released manual request BEFORE that admission, not in its later
+        // reactive-defense callback after the first attack was already rejected.
+        if (defensePermission(root)==DefensePermission::denied) withdrawDefense(root);
         originalCombatUpdate(root);
         // Recheck the current physical/input owner after native code. UI, focus,
         // scene, actor and policy handoffs cannot carry an old hold forward.

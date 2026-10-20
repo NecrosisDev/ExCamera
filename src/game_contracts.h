@@ -43,6 +43,23 @@ inline constexpr ContractOwner owners[] = {
     {"combatAttention", sig::combatAttention, "55 48 89 E5 48 8D A4 24 70 FF FF FF 48 89 5D A0 48 89 75 A8 48 89 4D F8 48 C7 45 C0 00 00 00 00 48 C7 45 C8 00 00 00 00 90 48 8B 45 F8 48 8B 40 28", 0},
     {"combatPosture", sig::combatPosture, "4C 8B 41 28 41 80 B8 F3 12 00 00 00 74 08 41 8B 80 B0 0E 00 00 C3 F3 41 0F 5A 80 58 0D 00 00", 0},
     {"aimUnproject", sig::targetCount, "48 8D 64 24 E8 48 89 C8 49 8B 08 48 89 0C 24 41 8B 48 08 89 4C 24 08 48 89 E1", 0},
+    {"terrainPass", sig::terrainPass, "53 57 56 41 54 41 55 41 56 41 57 48 8D A4 24 90 FE FF FF 66 0F 7F B4 24 50 01 00 00 66 44 0F 7F 84 24 60 01 00 00 48 89 4C 24 30", 0},
+    {"meshRay", sig::targetCount, "0F 28 F1 0F 2F 35 ?? ?? ?? ?? 7A 07 0F 82 ?? ?? ?? ?? 90 4C 8B 43 10 48 8D 4C 24 44", -929},
+    {"guiFormCreate", sig::targetCount, "55 48 89 E5 48 8D 64 24 C0 48 89 4D E8 48 89 55 F0 4C 89 45 F8 48 83 7D F0 01 75 14 48 8B 45 E8 48 8B 55 E8 48 89 C1 FF 52 68 48 89 45 E8 66 90 48 83 7D E8 00 0F 84 ?? ?? ?? ?? 90 90 48 C7 45 E0 FF FF FF FF 48 8B 4D E8 31 D2 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 55 E8", 0},
+    {"guiFormLayoutFlags", sig::targetCount, "53 57 56 48 8D 64 24 E0 48 89 CB 8B 43 60 25 00 20 00 00 3D 00 20 00 00", 0},
+    {"guiSettingsConstructor", sig::targetCount, "55 48 89 E5 48 8D 64 24 B0 48 89 5D D8 48 89 7D E0 48 89 75 E8 48 C7 45 F0 00 00 00 00", 0},
+    {"guiElementLayout", sig::targetCount, "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 D0 48 89 4C 24 20 41 89 D6 44 89 F7 85 FF 0F 8C ?? ?? ?? ??", 0},
+    {"guiElementAppend", sig::targetCount, "53 57 56 41 54 41 55 41 56 48 8D 64 24 D8 48 89 CB 89 D6 4C 89 C7 4D 89 CC", 0},
+    {"guiButton", sig::targetCount, "53 57 56 48 8D 64 24 D0 48 89 CB 44 89 44 24 20 44 89 4C 24 28 BE 00 00 00 00 83 FA 01 0F 82 ?? ?? ?? ?? 83 EA 01 74 38 83 EA 01 74 53 83 EA 1E", 0},
+    {"guiActivate", sig::targetCount, "53 57 56 41 54 41 55 41 56 48 8D 64 24 D8 48 89 CB BF 83 00 00 00 48 89 DE", 0},
+    {"guiLiteral", sig::targetCount, "53 56 48 8D 64 24 D8 48 89 CB 48 89 D6 48 3B 33 74 25 66 90 48 85 F6 74 13", 0},
+    {"guiFormElements", sig::guiFormElements, "53 57 56 41 54 48 8D 64 24 D8 48 89 CB 48 89 D6 44 89 C7 45 88 CC 80 BB 18 01 00 00 00", 0},
+    {"nativeSettingsCreate", sig::targetCount, "55 48 89 E5 48 8D 64 24 B0 48 89 5D D8 48 89 7D E0 48 89 75 E8 48 C7 45 F0 00 00 00 00", 0},
+    {"guiOptionsCancel", sig::guiOptionsCancel, "53 48 8D 64 24 E0 48 89 CB E8 ?? ?? ?? ?? 48 89 D8 48 8B 50 20 C7 82 38 01 00 00 00 00 00 00", 0},
+    {"guiCheckboxHandler", sig::guiCheckboxHandler, "53 57 56 48 8D 64 24 D0 48 89 CB 44 89 44 24 20 44 89 4C 24 28 BE 00 00 00 00 83 FA 01 0F 82 B5 02 00 00", 0},
+    {"guiViewportToContent", sig::targetCount, "48 89 C8 4C 63 1A 48 63 48 30 49 29 CB 4C 63 48 48 4C 63 50 44 49 29 CA 4D 29 D1 F3 49 0F 2A C1 F3 0F 59", 0},
+    {"guiContentHitConversion", sig::targetCount, "48 89 C8 4C 63 0A 48 63 48 30 4D 8D 1C 09 4C 63 50 48 4C 63 48 44 49 29 C9 4D 29 CA F3 49 0F 2A C2 F3 0F", 0},
+    {"guiCheckboxHitTest", sig::targetCount, "53 56 48 8D 64 24 B8 48 89 CB 89 54 24 28 44 89 44 24 30 31 F6 4C 8D 44 24 30 48 8D 54 24 28 48 89 D9 E8 29 F5 FF FF", 0},
 };
 inline constexpr FieldContract fields[] = {
     {"character::sceneNode", 9, 0x3F9, "89 44 24 40 48 8B 73 28 48 8B 46 18 48 8B 80 30 01 00 00 48 8D 50 64 48 8D 4C 24 38", nullptr},
@@ -175,6 +192,51 @@ inline constexpr FieldContract fields[] = {
     {"aimFrame::outputBack", 0, 0xC, "48 89 9D 18 FF FF FF 48 89 4D F8 48 89 55 F0 90 C6 85 40 FF FF FF 01 48 8B 05 ?? ?? ?? ??", nullptr},
     {"viewport::width", 39, 0x13, "89 4C 24 08 48 89 E1 F3 0F 2A 80 9C 01 00 00 F3 0F 10 1D ?? ?? ?? ?? 0F 28 C8", nullptr},
     {"viewport::height", 39, 0x59, "F3 0F 11 12 48 89 E1 F3 0F 2A 80 A0 01 00 00 F3 0F 10 1D ?? ?? ?? ?? 0F 28 C8", nullptr},
+    {"camera::farPlane", 33, 0x8B, "F3 0F 59 43 20 F3 0F 11 83 24 01 00 00 8B 86 D0 01 00 00 89 44 24 30 8B 86 CC 01 00 00", nullptr},
+    {"camera::target", 40, 0x2E, "48 8B 05 ?? ?? ?? ?? 48 8B 40 50 48 8B 80 D8 01 00 00 48 8D 50 64 48 8B 05 ?? ?? ?? ??", nullptr},
+    {"pick::scratchBank", 27, 0x86, "66 90 48 8B 84 24 A0 00 00 00 8B 50 34 89 94 24 94 00 00 00 48 8B 8C 24 A0 00 00 00", nullptr},
+    {"meshRayQuery::node", 41, 0x2BA, "48 8B 44 24 58 4C 8B 40 08 4C 89 01 8B 41 44 48 C1 E0 0B 4C 8D 05 ?? ?? ?? ??", nullptr},
+    {"meshRayQuery::minDistance", 41, 0x39, "48 89 D1 8B 05 ?? ?? ?? ?? 89 41 08 41 BF FF FF FF FF 0F 1F 44 00 00 41 83 C7 01", nullptr},
+    {"meshRayQuery::distance", 41, 0x79, "45 89 F9 F3 42 0F 10 44 88 20 F3 0F 59 40 0C F3 42 0F 58 44 80 10 0F 28 D0", nullptr},
+    {"meshRayQuery::origin", 41, 0x5D, "F3 42 0F 10 44 88 20 F3 0F 59 40 08 F3 42 0F 58 44 80 10 0F 28 C8 48 89 C8", nullptr},
+    {"meshRayQuery::direction", 41, 0x57, "45 89 F8 45 89 F9 F3 42 0F 10 44 88 20 F3 0F 59 40 08 F3 42 0F 58 44 80 10", nullptr},
+    {"meshRayQuery::inverseDirection", 41, 0xCF, "F3 0F 5E 44 81 20 44 89 F8 F3 0F 11 44 81 30 45 89 F8 48 8B 44 24 58 42 0F 2F 54 80 4C", nullptr},
+    {"meshRayQuery::traversalStack", 41, 0x2CD, "4C 8D 05 ?? ?? ?? ?? 4C 01 C0 48 89 41 3C 49 89 C6 49 89 D5 4C 89 EF 0F 1F 40 00", nullptr},
+    {"meshRayQuery::scratchBank", 41, 0x2BF, "4C 8B 40 08 4C 89 01 8B 41 44 48 C1 E0 0B 4C 8D 05 ?? ?? ?? ?? 4C 01 C0", nullptr},
+    {"nativeForm::x", 42, 0x170, "C7 40 60 00 30 00 00 48 8B 45 E8 C7 40 20 4F 97 21 C5 48 8B 45 E8 C7 40 24 4F 97 21 C5", nullptr},
+    {"nativeForm::y", 42, 0x17B, "C7 40 20 4F 97 21 C5 48 8B 45 E8 C7 40 24 4F 97 21 C5 48 C7 45 E0 01 00 00 00", nullptr},
+    {"nativeForm::width", 42, 0xDA, "C7 80 00 01 00 00 FF FF FF FF 48 8B 45 E8 C7 40 28 2E 01 00 00 48 8B 45 E8", nullptr},
+    {"nativeForm::height", 42, 0xE8, "C7 40 28 2E 01 00 00 48 8B 45 E8 C7 40 2C 92 01 00 00 48 8B 45 E8 C7 40 48 2C 01 00 00", nullptr},
+    {"nativeForm::layoutFlags", 43, 0x18, "75 12 44 8B 43 64 8B 53 5C 48 89 D9 E8 ?? ?? ?? ?? 0F 1F 00 48 8B 83 A0 00 00 00", nullptr},
+    {"nativeForm::frameFlags", 42, 0x15A, "C6 80 19 01 00 00 01 48 8B 45 E8 C7 40 64 22 00 03 00 48 8B 45 E8 C7 40 60 00 30 00 00", nullptr},
+    {"nativeForm::title", 44, 0x41, "C7 43 28 B2 01 00 00 C7 43 2C 18 02 00 00 48 8D 8B 80 00 00 00 48 8D 15 ?? ?? ?? ??", nullptr},
+    {"nativeElement::stride", 46, 0x5D, "49 63 04 24 48 6B C0 68 48 8D 4C 01 68 45 31 C0 E8 ?? ?? ?? ?? 41 89 F5", nullptr},
+    {"nativeElement::x", 45, 0x1A4, "67 8D 04 19 66 89 42 06 66 8B 42 04 66 3D 00 80 74 62 66 3D 01 80 0F 84 ?? ?? ?? ??", nullptr},
+    {"nativeElement::y", 45, 0xB4, "45 85 FF 0F 8E ?? ?? ?? ?? 66 81 7A 06 00 00 0F 8D ?? ?? ?? ?? 66 8B 42 06", nullptr},
+    {"nativeElement::width", 45, 0x240, "48 8D 4C 08 98 44 0F BF 41 04 0F BF 41 08 44 01 C0 66 89 42 04 E9 ?? ?? ?? ??", nullptr},
+    {"nativeElement::height", 45, 0x4F8, "66 8B 46 18 66 89 42 08 66 81 7A 0A 00 00 75 08 66 8B 46 1A 66 89 42 0A", nullptr},
+    {"nativeElement::style", 45, 0x536, "89 42 18 0F 1F 00 66 81 7A 0C 00 00 75 08 66 8B 46 1C 66 89 42 0C 48 8B 46 08", nullptr},
+    {"nativeElement::group", 48, 0x11, "BF 83 00 00 00 48 89 DE 66 81 7E 0E 00 00 0F 86 ?? ?? ?? ?? 8B 46 1C 83 E0 20", nullptr},
+    {"nativeElement::text", 47, 0xE0, "81 FA 00 00 01 00 75 21 48 8B 40 10 48 85 C0 74 04 48 8B 40 F8 48 85 C0", nullptr},
+    {"nativeElement::appearance", 47, 0x7A, "E9 ?? ?? ?? ?? 90 8B 43 18 25 00 00 10 00 76 0E 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ??", nullptr},
+    {"nativeElement::flags", 48, 0x19, "66 81 7E 0E 00 00 0F 86 ?? ?? ?? ?? 8B 46 1C 83 E0 20 83 F8 20 75 1D 8B 46 18", nullptr},
+    {"nativeElement::owner", 48, 0x44, "83 66 1C DF E9 ?? ?? ?? ?? 4C 8B 76 20 45 8B A6 90 00 00 00 45 85 E4 0F 8C ?? ?? ?? ??", nullptr},
+    {"nativeElement::action", 48, 0x107, "89 43 1C BF 83 00 00 00 48 83 7B 28 00 74 06 FF 53 28 0F 1F 00 81 63 1C FF FF EF FF", nullptr},
+    {"nativeElement::handler", 47, 0x168, "45 31 C9 BA 30 00 00 00 FF 53 30 83 C8 05 89 C6 EB 5E 66 90 81 7C 24 20 00 01 00 00", nullptr},
+    {"nativeElement::help", 47, 0xC4, "48 89 D8 BE 03 00 00 00 48 83 78 40 00 0F 84 ?? ?? ?? ?? 8B 50 1C 81 E2 00 00 0F 00", nullptr},
+    {"nativeString::referenceHeader", 49, 0x14, "48 85 F6 74 13 48 83 7E F0 00 7E 0C 48 8D 4E F0 E8 ?? ?? ?? ?? 0F 1F 00", nullptr},
+    {"nativeString::lengthHeader", 47, 0xEC, "48 85 C0 74 04 48 8B 40 F8 48 85 C0 0F 8E ?? ?? ?? ?? 81 CE 00 01 00 00", nullptr},
+    {"nativeForm::elementLast", 50, 0x1F, "48 83 BB 98 00 00 00 00 74 13 8B 93 90 00 00 00 48 8D 8B 98 00 00 00 E8 ?? ?? ?? ??", nullptr},
+    {"nativeForm::elements", 50, 0x16, "80 BB 18 01 00 00 00 74 1D 48 83 BB 98 00 00 00 00 74 13 8B 93 90 00 00 00", nullptr},
+    {"nativeForm::stateFlags", 50, 0x132, "48 8B 8B 98 00 00 00 E8 ?? ?? ?? ?? 8B 43 60 25 00 40 00 00 76 10 48 89 D9", nullptr},
+    {"nativeForm::skin", 51, 0x5D, "E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89 83 30 01 00 00 81 4B 64 00 10 00 00", nullptr},
+    {"nativeForm::behaviorFlags", 51, 0x7F, "83 C8 20 0D 00 01 00 00 89 43 68 48 8D 15 ?? ?? ?? ?? 48 89 D9 45 30 C9", nullptr},
+    {"optionsForm::graphicsPane", 44, 0xC3, "E8 ?? ?? ?? ?? 48 89 C6 48 89 B3 58 01 00 00 48 8B 86 A0 00 00 00 8B 40 28", nullptr},
+    {"optionsForm::controlsPane", 44, 0x1D4, "E8 ?? ?? ?? ?? 48 89 C6 48 89 B3 60 01 00 00 C7 46 30 00 00 00 00 48 8B 86 A0 00 00 00", nullptr},
+    // Native fixes: constructor 0xA94D0 + 0x2A7 installs the controller list pane.
+    {"optionsForm::controllerPane", 44, 0x2A7, "E8 ?? ?? ?? ?? 48 89 83 70 01 00 00 48 89 C6 C7 46 5C 02 00 00 00", nullptr},
+    {"nativeForm::scrollExtent", 44, 0x229, "0D 80 00 00 00 89 46 64 C7 46 4C A4 02 00 00 48 8D 15 ?? ?? ?? ?? 48 89 F1", nullptr},
+    {"optionsForm::applied", 52, 0xE, "48 89 D8 48 8B 50 20 C7 82 38 01 00 00 00 00 00 00 48 8B 48 20 48 89 C2", nullptr},
     {"bindings::slot0", 29, 0x7E, "EB 0A C7 05 ?? ?? ?? ?? 00 00 00 00 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 85 C0", nullptr, sig::movementKeys, 14, 18, 0, 4},
     {"bindings::slot1", 29, 0xC1, "EB 07 83 25 ?? ?? ?? ?? FB 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 85 C0 7D 09", nullptr, sig::movementKeys, 11, 15, 16, 4},
     {"bindings::slot2", 29, 0xA1, "EB 07 83 25 ?? ?? ?? ?? FE 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 85 C0 7D 09", nullptr, sig::movementKeys, 11, 15, 32, 4},
@@ -185,6 +247,10 @@ inline constexpr FieldContract fields[] = {
     {"bindings::slot7", 2, 0x21, "E9 ?? ?? ?? ?? 66 90 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 85 C0 7D 0C 81 0D ?? ?? ?? ?? 00 01 00 00", nullptr, sig::movementKeys, 9, 13, 112, 4},
     {"bindings::slot8", 2, 0x42, "EB 0A 81 25 ?? ?? ?? ?? FF FE FF FF 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 85 C0", nullptr, sig::movementKeys, 14, 18, 128, 4},
     {"bindings::slot9", 23, 0x1E1, "80 B8 6F 09 00 00 00 75 1E 0F B7 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 85 C0", nullptr, sig::movementKeys, 12, 16, 144, 2},
+    {"nativeCheckbox::coordinateEvents", 53, 0x1e8, "44 0F BF 44 24 22 0F BF 54 24 20 48 89 D9 E8 65 F8 FF FF 89 C6 E9 D6 00 00 00 66 90 31 F6 8B 43 1C 83 E0 10 83 F8 10 0F 84 C3 00 00 00 0F 1F 00 8B 44 24 20 83 E0 07 83 F8 01 0F 85 B0 00 00 00 44 8B 44 24 28 48 89 D9 45 31 C9 BA 30 00 00 00 FF 53 30 83 C8 05 89 C6 E9 93 00 00 00 0F 1F 00 48 89 DF 8B 44 24 20 25 00 00 01 00 0F 86 7E 00 00 00 44 0F BF 44 24 2A 0F BF 54 24 28 48 8B 4F 20 E8 D2 A6 FF FF 48 39 D8 0F 85 61 00 00 00 8B 44 24 20 83 E0 07 0B 47 1C 89 47 1C 8B 47 18 25 00 00 00 10 76 0C 48 89 D9 E8 EA FC FF FF 89 C6 EB 0A 48 89 D9 E8 7E F6 FF FF 89 C6 83 67 1C F8", nullptr},
+    {"nativeForm::scrollCoordinateLayout", 54, 0x0, "48 89 C8 4C 63 1A 48 63 48 30 49 29 CB 4C 63 48 48 4C 63 50 44 49 29 CA 4D 29 D1 F3 49 0F 2A C1 F3 0F 59 80 D8 00 00 00 F3 48 0F 2D C8 4C 01 D9 89 0A 4D 63 10 48 63 50 40 49 29 D2 4C 63 48 4C 48 63 48 3C 48 29 D1 49 29 C9 F3 49 0F 2A C1 F3 0F 59 80 DC 00 00 00 F3 48 0F 2D C0 4C 01 D0 41 89 00 C3", nullptr},
+    {"nativeForm::scrollHitConversion", 55, 0x0, "48 89 C8 4C 63 0A 48 63 48 30 4D 8D 1C 09 4C 63 50 48 4C 63 48 44 49 29 C9 4D 29 CA F3 49 0F 2A C2 F3 0F 59 80 D8 00 00 00 F3 48 0F 2D C8 4C 01 D9 89 0A 49 63 08 48 63 50 40 4C 8D 14 11 4C 63 48 4C 48 63 48 3C 48 29 D1 49 29 C9 F3 49 0F 2A C1 F3 0F 59 80 DC 00 00 00 F3 48 0F 2D C0 4C 01 D0 41 89 00 C3", nullptr},
+    {"nativeCheckbox::ownerHitConversion", 56, 0x0, "53 56 48 8D 64 24 B8 48 89 CB 89 54 24 28 44 89 44 24 30 31 F6 4C 8D 44 24 30 48 8D 54 24 28 48 89 D9 E8 29 F5 FF FF 48 8D 44 24 40 48 89 44 24 20 4C 8D 4C 24 38 44 8B 44 24 30 8B 54 24 28 48 89 D9 48 8B 03 FF 90 20 01 00 00 25 FF FF 00 00 83 E8 01 48 3B 5C 24 38 75 1E 85 C0 7C 1A 3B 83 90 00 00 00 7F 12 48 8B 93 98 00 00 00 21 C0 48 6B C0 68 48 8D 34 02 90 48 89 F0 90 48 8D 64 24 48 5E 5B C3", nullptr},
 };
 static_assert(game::character::sceneNode == 0x18, "Review native contract after changing character::sceneNode");
 static_assert(game::character::physicsLive == 0x4C8, "Review native contract after changing character::physicsLive");
@@ -316,9 +382,62 @@ static_assert(game::aimFrame::behaviorBack == 0x8, "Review native contract after
 static_assert(game::aimFrame::outputBack == 0x10, "Review native contract after changing aimFrame::outputBack");
 static_assert(game::viewport::width == 0x19C, "Review native contract after changing viewport::width");
 static_assert(game::viewport::height == 0x1A0, "Review native contract after changing viewport::height");
+static_assert(game::camera::farPlane == 0x1D0, "Review native contract after changing camera::farPlane");
+static_assert(game::camera::target == 0x1D8, "Review native contract after changing camera::target");
+static_assert(game::pick::scratchBank == 0x34, "Review native contract after changing pick::scratchBank");
+static_assert(game::meshRayQuery::node == 0x0, "Review native contract after changing meshRayQuery::node");
+static_assert(game::meshRayQuery::minDistance == 0x8, "Review native contract after changing meshRayQuery::minDistance");
+static_assert(game::meshRayQuery::distance == 0xC, "Review native contract after changing meshRayQuery::distance");
+static_assert(game::meshRayQuery::origin == 0x10, "Review native contract after changing meshRayQuery::origin");
+static_assert(game::meshRayQuery::direction == 0x20, "Review native contract after changing meshRayQuery::direction");
+static_assert(game::meshRayQuery::inverseDirection == 0x30, "Review native contract after changing meshRayQuery::inverseDirection");
+static_assert(game::meshRayQuery::traversalStack == 0x3C, "Review native contract after changing meshRayQuery::traversalStack");
+static_assert(game::meshRayQuery::scratchBank == 0x44, "Review native contract after changing meshRayQuery::scratchBank");
+static_assert(game::nativeForm::x == 0x20, "Review native contract after changing nativeForm::x");
+static_assert(game::nativeForm::y == 0x24, "Review native contract after changing nativeForm::y");
+static_assert(game::nativeForm::width == 0x28, "Review native contract after changing nativeForm::width");
+static_assert(game::nativeForm::height == 0x2C, "Review native contract after changing nativeForm::height");
+static_assert(game::nativeForm::layoutFlags == 0x5C, "Review native contract after changing nativeForm::layoutFlags");
+static_assert(game::nativeForm::frameFlags == 0x64, "Review native contract after changing nativeForm::frameFlags");
+static_assert(game::nativeForm::title == 0x80, "Review native contract after changing nativeForm::title");
+static_assert(game::nativeElement::stride == 0x68, "Review native contract after changing nativeElement::stride");
+static_assert(game::nativeElement::x == 0x4, "Review native contract after changing nativeElement::x");
+static_assert(game::nativeElement::y == 0x6, "Review native contract after changing nativeElement::y");
+static_assert(game::nativeElement::width == 0x8, "Review native contract after changing nativeElement::width");
+static_assert(game::nativeElement::height == 0xA, "Review native contract after changing nativeElement::height");
+static_assert(game::nativeElement::style == 0xC, "Review native contract after changing nativeElement::style");
+static_assert(game::nativeElement::group == 0xE, "Review native contract after changing nativeElement::group");
+static_assert(game::nativeElement::text == 0x10, "Review native contract after changing nativeElement::text");
+static_assert(game::nativeElement::appearance == 0x18, "Review native contract after changing nativeElement::appearance");
+static_assert(game::nativeElement::flags == 0x1C, "Review native contract after changing nativeElement::flags");
+static_assert(game::nativeElement::owner == 0x20, "Review native contract after changing nativeElement::owner");
+static_assert(game::nativeElement::action == 0x28, "Review native contract after changing nativeElement::action");
+static_assert(game::nativeElement::handler == 0x30, "Review native contract after changing nativeElement::handler");
+static_assert(game::nativeElement::help == 0x40, "Review native contract after changing nativeElement::help");
+static_assert(game::nativeString::referenceHeader == 0x10, "Review native contract after changing nativeString::referenceHeader");
+static_assert(game::nativeString::lengthHeader == 0x8, "Review native contract after changing nativeString::lengthHeader");
+static_assert(game::nativeForm::elementLast == 0x90, "Review native contract after changing nativeForm::elementLast");
+static_assert(game::nativeForm::elements == 0x98, "Review native contract after changing nativeForm::elements");
+static_assert(game::nativeForm::stateFlags == 0x60, "Review native contract after changing nativeForm::stateFlags");
+static_assert(game::nativeForm::skin == 0x130, "Review native contract after changing nativeForm::skin");
+static_assert(game::nativeForm::behaviorFlags == 0x68, "Review native contract after changing nativeForm::behaviorFlags");
+static_assert(game::optionsForm::graphicsPane == 0x158, "Review native contract after changing optionsForm::graphicsPane");
+static_assert(game::optionsForm::controlsPane == 0x160, "Review native contract after changing optionsForm::controlsPane");
+static_assert(game::optionsForm::controllerPane == 0x170, "Review native contract after changing optionsForm::controllerPane");
+static_assert(game::nativeForm::scrollExtent == 0x4C, "Review native contract after changing nativeForm::scrollExtent");
+static_assert(game::optionsForm::applied == 0x138, "Review native contract after changing optionsForm::applied");
 static_assert(game::bodyPart::poseForward == 0x2B8, "Review native contract after changing bodyPart::poseForward");
 static_assert(game::bodyPart::poseOrigin == 0x2C4, "Review native contract after changing bodyPart::poseOrigin");
 static_assert(game::bindings::stride == 0x10, "Review native contract after changing bindings::stride");
 static_assert(game::bindings::interact == 0x90, "Review native contract after changing bindings::interact");
+static_assert(game::pick::requiredSize == 0x38, "Review native contract after changing pick::requiredSize");
+static_assert(game::meshRayQuery::requiredSize == 0x48, "Review native contract after changing meshRayQuery::requiredSize");
 static_assert(game::bindings::count == 0xA, "Review native contract after changing bindings::count");
+static_assert(game::nativeForm::contentLeft == 0x30, "Review native checkbox scroll contract");
+static_assert(game::nativeForm::contentTop == 0x40, "Review native checkbox scroll contract");
+static_assert(game::nativeForm::contentRight == 0x44, "Review native checkbox scroll contract");
+static_assert(game::nativeForm::contentBottom == 0x3c, "Review native checkbox scroll contract");
+static_assert(game::nativeForm::contentWidth == 0x48, "Review native checkbox scroll contract");
+static_assert(game::nativeForm::horizontalScroll == 0xd8, "Review native checkbox scroll contract");
+static_assert(game::nativeForm::verticalScroll == 0xdc, "Review native checkbox scroll contract");
 } // namespace fp::contract

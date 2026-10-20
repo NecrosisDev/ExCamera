@@ -54,6 +54,9 @@ struct RawLook {
     bool relative = false;
     void reset() { dx = dy = 0; }
     void event(bool absolute, long x, long y, bool owns) {
+        // Never carry relative counts across an absolute-device/cursor fallback.
+        // Reset before adding the first fresh relative packet on a handoff.
+        if (relative == absolute) reset();
         relative = !absolute;
         if (!absolute && owns) {
             dx += x;

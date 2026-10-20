@@ -9,7 +9,7 @@
 // - input: input (polling), behavior and its cursorAim/explore/combatStep (the player's behaviour tick);
 // - window thread: windowProc (keys, mouse, focus);
 // - this mod's worker: runSession (activation, F7/F6, notices, the status file, the hook health check);
-// - the F8 window's own thread (settings_window.h).
+// - native GUI maintenance: native settings create/update/retirement on the game GUI owner.
 // Values one thread writes and others read are atomics or Interlocked, or sit behind a lock below; the
 // rest is used by one thread (most of it says which in its comment).
 // Locks (SRW, never recursive). Nested only in this order (every function that takes one was read for it):
@@ -44,6 +44,8 @@ static Nav originalNav;
 static uintptr_t nav(void*, float);
 static volatile LONG stopping = 0, restored = 0;
 static volatile LONG pendingRestore = 0;
+// Admitted viewport presentations finish their sampled projections before hook removal.
+static volatile LONG renderScopesInFlight = 0;
 static volatile LONG active = 0;
 static volatile LONG protectionFailure = 0;
 static uintptr_t savedCamera = 0, savedView = 0, savedController = 0;
@@ -131,16 +133,28 @@ struct Aim {
     int swingView = -1;
     bool swingCombat = false;
     unsigned revision = 0;
+    float entryYaw = 0.f; // aimLock: one spawn seed shared with the input owner
+    bool entryPending = false;
     bool valid = false, travelValid = false;
 };
 static Aim aim;
+// Optional external viewing input; never written into Aim or native physics.
+static fp::TrackingUdp trackingReceiver;
+static std::atomic<bool> trackingEnabled{false};
+static std::atomic<int> trackingRecenterKey{0};
+static std::atomic<unsigned> trackingReset{0};
+static std::atomic<ULONGLONG> trackingAcceptAfter{0};
+static fp::TrackingView trackingView; // cameraLock
+static bool trackingPresented = false; // cameraLock: includes loss/disable fade-out
+static fp::TrackingSample readTrackingSample() { return trackingReceiver.snapshot(); }
+static fp::TrackingSample (*trackingSnapshot)() = readTrackingSample;
 static volatile LONG mouseCaptured = 0;
 static volatile LONG cursorFree = 0;
 // Right mouse frees the cursor in first and third person, but only out of combat: in combat, holding it
 // walks toward the aim, and the overhead view uses it for walking. Gameplay treats it like F8's free
 // cursor without opening the panel. rmbMode: 0 off, 1 hold, 2 toggle.
 static volatile LONG rmbFree = 0;
-static std::atomic<int> rmbMode{1};
+static std::atomic<int> rmbMode{0}; // obsolete RMB free-cursor mode is fixed off
 // The inventory, an item's description, a container or a corpse's loot, or the arena's end-of-match menu
 // (NEXT FIGHT) on screen frees the cursor and holds look and movement, in first and third person, as F8
 // does ([View] FreezeForWindows, F8 Controls). Set once a frame on the game's thread (windowFreeStep).
@@ -290,15 +304,19 @@ static std::atomic<bool> tpDownNow{false};
 // whether it is in use.
 static fp::AimBox tpAimBox; // aim thread
 static std::atomic<float> tpAimX{0}, tpAimY{0};
-static std::atomic<int> fpDeadzoneX{15}, fpDeadzoneY{10}, tpDeadzoneX{20}, tpDeadzoneY{20};
+static std::atomic<int> fpDeadzoneX{25}, fpDeadzoneY{25}, tpDeadzoneX{25}, tpDeadzoneY{25};
+static std::atomic<int> aimEdgeSoftness{fp::defaultAimEdgeSoftness};
+static std::atomic<bool> aimAutoRecenter{true};
+// Message thread queues a one-shot click; the game input tick consumes it.
+static std::atomic<unsigned> recenterClicks{0};
 static std::atomic<int> fpSwingSelection{1}, tpSwingSelection{1}; // 1 mouse direction, 0 native facing
 static void releaseInteractionInput();
 static std::atomic<bool> tpAimFree{false};
-static std::atomic<int> headSteadyRoll{80}, headSteadyPitch{70},
+static std::atomic<int> headSteadyRoll{100}, headSteadyPitch{100},
     headSteadyYaw{
-        50}; // [Camera] HeadRoll/HeadPitch/HeadYaw 0..100: per-axis neck stiffening (fp::wobbleSlackScale) and the stabiliser's damping (fp::steadyHead)
+        100};
 static std::atomic<int> headSteady{
-    70}; // [Camera] HeadStabilisation 0..100; default 70: all steadying is on the head
+    100};
 static std::atomic<bool> swinging{false}; // an ordinary attack the game accepted is under way (publishCue)
 static std::atomic<unsigned> swingHides{0};
 static std::atomic<unsigned> headRejects
@@ -306,7 +324,8 @@ static std::atomic<unsigned> headRejects
 static std::atomic<bool> rawWanted{
     false};                      // [Input] RawMouse; the worker registers / removes raw input to match
 static HWND rawTarget = nullptr; // the window raw input is registered for (worker thread)
-static bool invertY = false;
+static std::atomic<bool> invertY{false};
+static std::atomic<int> aimIndicator{1};
 // [Input] RawMouse=1 opts into relative WM_INPUT counts (no pointer acceleration).
 // Default off: the cursor-delta path is the accepted feel,
 // and raw counts changed effective turn rate enough to upset head stabilization.
@@ -655,11 +674,9 @@ static SRWLOCK cameraLock = SRWLOCK_INIT;
 static fp::NearPlane nearPlane; // dynamic near plane (cameraLock)
 static uintptr_t filterRoot = 0, filterHead = 0;
 static LARGE_INTEGER filterTime{}, frequency{};
-static fp::TurnLead cameraTurnLead;
 struct CameraFilterState {
     fp::ThirdPerson third;
     fp::NearPlane clipFilter;
-    fp::TurnLead lead;
     float combat = 0.f;
 };
 // Native rendering can request the same presentation's camera at several time
@@ -674,9 +691,22 @@ struct CameraFrameHistory {
     LARGE_INTEGER time{};
     ULONGLONG tick = 0;
     float seconds = 1.f;
+    float effectiveFov = 75.f; // One projection for clearance and every sample in this epoch.
     CameraFilterState before;
+    float trackingOffset[12]{};
+    bool tracked = false;
+    bool eyeLookValid = false;
+    float eyeYaw = 0.f, eyePitch = 0.f;
 };
 static CameraFrameHistory cameraFrame;
+// cameraLock: an arena spawn may reuse every native pointer. Keep a world-space
+// body anchor as well as identities; temporal head samples are not spawn motion.
+struct CameraEntryState {
+    uintptr_t root=0, head=0, scene=0;
+    float body[3]{}, yaw=0.f;
+    bool valid=false, menuSeen=false, requested=false, pending=false;
+};
+static CameraEntryState cameraEntry;
 static std::atomic<unsigned> walkTargets{0}, combatSteps{0}, unexpectedRelaxedSteps{0};
 using TravelTarget = void (*)(float*, const float*, const float*, float);
 static TravelTarget originalTravelTarget;
@@ -695,14 +725,17 @@ static volatile LONG cursorClipped = 0;
 static void releaseInput() {
     releaseInteractionInput();
     if (InterlockedExchange(&cursorClipped, 0)) ClipCursor(nullptr);
-    if (InterlockedExchange(&inputEnabled, 0))
+    if (InterlockedExchange(&inputEnabled, 0)) {
         inputOwner.releaseGameplay();
-    else
+        trackingAcceptAfter = GetTickCount64();
+        ++trackingReset;
+    } else
         inputOwner.clearTransient();
     AcquireSRWLockExclusive(&rawLock);
     rawLook.reset();
     ReleaseSRWLockExclusive(&rawLock);
     InterlockedExchange(&mouseCaptured, 0);
+    recenterClicks.store(0);
 }
 static volatile LONG swapCalls = 0, nativeCursorUpdates = 0;
 using Behavior = void (*)(uintptr_t);
@@ -718,6 +751,7 @@ static Behavior originalBehavior, originalCursor, originalExplore;
 static Point originalPoint;
 static Swap originalSwap;
 using Projection = void (*)(uintptr_t);
+// Legacy name: native 1CEB0 expands the 12-float affine pose into a 4x4 matrix; it does not invert it.
 using Inverse = void (*)(uintptr_t, uintptr_t);
 static Projection rebuildProjection;
 static Inverse rebuildInverse;
@@ -738,7 +772,8 @@ static bool awaitRestore(DWORD timeout = 2000) {
                     *(uintptr_t*)(gameAt(fp::sig::currentScene)) == r.scene)
                     InterlockedExchange(&restorationUnknown, 1);
             const bool unknown = InterlockedCompareExchange(&restorationUnknown, 0, 0) != 0;
-            const bool ready = !unknown && !savedCamera && !InterlockedCompareExchange(&pendingRestore, 0, 0);
+            const bool ready = !unknown && !savedCamera && !InterlockedCompareExchange(&pendingRestore, 0, 0) &&
+                               !InterlockedCompareExchange(&renderScopesInFlight, 0, 0);
             if (ready) InterlockedExchange(&cameraReady, 0);
             ReleaseSRWLockExclusive(&cameraLock);
             if (unknown) return false;
@@ -764,8 +799,7 @@ static bool doorGrabPointValid = false;
 static void releaseHeldDoor();
 static std::atomic<unsigned> doorHolds{0}, holdNotches{0}, holdPlacements{0}, warpsSkipped{0},
     grabsRefused{0};
-static std::atomic<int> grabRange{
-    fp::grabRangeDefault}; // [Input] GrabRange, cm from the eye (fp::clampGrabRange)
+static std::atomic<int> grabRange{300}; // [Input] GrabRange, cm from the eye (fp::clampGrabRange)
 static std::atomic<float> holdTarget{0}, holdApplied{0};
 // Holding an object (held_object.h). The eye the hold distance is measured from (global; the camera thread
 // publishes it with the view), the grab's distance from it, the rotate key ([Input] RotateHeldKey, default
@@ -776,12 +810,13 @@ static std::atomic<float> grabStartDistance{0};
 static std::atomic<bool> hoverOutOfRange{false};
 static std::atomic<ULONGLONG> hoverRangeAt{0};
 static std::atomic<int> rotateHeldKey{0x02};
-// [Input] LeanKey (F8 Mouse and keys; default Alt, 0 unbound): held, the mouse leans the upper body (fp::Lean)
-// instead of turning the view, in first and third person. The mouse is gathered here (input thread) and
-// used by the physics thread (spineBendStep).
+// Temporarily disabled by owner request. Keep legacy preference fields for
+// a future redesign, but never claim their physical keys or change torso pose.
+// Manual RMB guard and held-item rotation retain their existing priority.
+static constexpr bool explicitLeanEnabled = false;
 static std::atomic<int> leanKey{0x12};
-// [Camera] HoldHeading / TurnLead (F8 View): first person only (fp::holdHeading, fp::TurnLead; camera thread).
-static std::atomic<bool> holdHeadingOn{true}, turnLeadOn{false};
+// Heading correction modifies the native head's achieved pose; no synthetic camera turn lead.
+static std::atomic<bool> holdHeadingOn{true};
 static std::atomic<float> headingTurn{0};
 static std::atomic<bool> leaning{false}, leanKeysMode{false};
 static std::atomic<int> leanLeftKey{0}, leanRightKey{0}, leanKeySide{0};
@@ -798,6 +833,7 @@ static void releaseInteractionInput() {
     heldRotating = false;
     leanKeySide = 0;
     leanMouseX = leanMouseY = heldTurnX = heldTurnY = 0.f;
+    leanSideNow = leanForwardNow = 0.f;
 }
 // The fling (fp::flingHistory): the push the placement measured (its outward speed, cm/s, when, and along which
 // ray), the physics step measured from the player's pose builds (s; 0 until known), and how many flung.
@@ -921,3 +957,10 @@ static void rmbEvent(fp::RmbEvent e, bool eligible, bool* swallow = nullptr) {
     } // releaseInput: no view jump on the way back
     if (swallow) *swallow = eaten;
 }
+
+// Native settings are serviced only by their native GUI maintenance callback.
+static void nativeSettingsMaintenance(uintptr_t);
+static void (*originalGuiMaintenance)(uintptr_t)=nullptr;
+static bool awaitNativeSettings(DWORD timeout=2000);
+static void nativeSettingsBeforeStop();
+static void writeNativeCheckboxStatus(fp::JsonOut&);

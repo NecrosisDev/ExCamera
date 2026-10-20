@@ -1,5 +1,6 @@
 // Reversible camera adapter with native instruction contracts. Physics and head pose remain authoritative.
 #define WIN32_LEAN_AND_MEAN
+#include "tracking_udp.h"
 #include <windows.h>
 #include <GL/gl.h>
 #include <cmath>
@@ -7,12 +8,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
+#include <limits>
 #include <atomic>
 #include <map>
 #include <array>
 #include <cstdarg>
 #include <intrin.h>
 #include "camera_motion.h"
+#include "supersampling_depth.h"
 #include "input_policy.h"
 #include "build_identity.h"
 #include "native_build.h"
@@ -37,6 +40,7 @@ namespace field = fp::game; // field::character::combatStance and so on: offsets
 #include "mod/combat.inl"
 #include "mod/picking.inl"
 #include "mod/view.inl"
+#include "mod/supersampling.inl"
 #include "mod/overlay.inl"
 #include "mod/frame.inl"
 #include "mod/camera.inl"

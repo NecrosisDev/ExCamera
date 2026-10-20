@@ -201,19 +201,19 @@ inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& 
             miss = Unresolved::badPattern;
         else if (const unsigned n = findPattern(v, p, v.textBegin, v.textEnd, &at); n != 1)
             miss = n ? Unresolved::ambiguous : Unresolved::notFound;
-        uint64_t value = 0;
+        int64_t value = 0;
         if (miss == Unresolved::none) {
             if (s.kind == sig::Kind::Code)
-                value = uint64_t(at) + s.offset;
+                value = int64_t(at) + s.offset + s.addend;
             else if (size_t(at) + s.offset > v.size || v.size - (size_t(at) + s.offset) < 4) {
                 miss = Unresolved::outside;
             } else {
                 int32_t disp;
                 memcpy(&disp, v.data + at + s.offset, 4);
-                value = uint64_t(int64_t(at) + s.insnEnd + disp + s.addend);
+                value = int64_t(at) + s.insnEnd + disp + s.addend;
             }
-            // Zero is the withheld-address sentinel for optional capabilities.
-            if (value >= v.size || (!value && sig::targetOptionalGroups[s.target]))
+            // Zero is the withheld-address sentinel; all accepted RVAs fit the image and table type.
+            if (value <= 0 || uint64_t(value) >= v.size || uint64_t(value) > UINT32_MAX)
                 miss = Unresolved::outside;
         }
         if (miss != Unresolved::none) {

@@ -1,5 +1,54 @@
 // The frame hook (wglSwapBuffers), the dispatch slots' install and rollback, third-person hiding and aim.
 // Part of first_person.cpp (one translation unit): included there, in order.
+// View-scoped head draw suppression. Exanima's shared _SKIN node is a sibling
+// of 10Head. Never mask _SKIN: that would remove the rest of the character.
+// Instead do NOT enqueue only the player's separate 10Head drawable for the
+// first-person MAIN colour pass (4E610 -> 26F230, call return 4E720).
+// Other submission callsites, including 4EE10 -> 26F230 (return 4EF9E), continue unchanged.
+// Native collision/body-part data and scene passMask are never modified.
+using MeshQueue = void (*)(uintptr_t, int, unsigned short);
+static MeshQueue originalMeshQueue = nullptr;
+static std::atomic<unsigned> firstPersonHeadDrawsSkipped{0};
+static bool shouldSkipPlayerHeadDraw(bool mainColorCall, bool ownFirstPerson,
+                                     bool identityVerified, uintptr_t submission,
+                                     uintptr_t headNode) {
+    return mainColorCall && ownFirstPerson && identityVerified &&
+           submission && submission==headNode;
+}
+__declspec(noinline) static void meshQueue(uintptr_t node, int material, unsigned short flags) {
+    // This shared queue has multiple submission callsites.
+    // Check the *specific* native callsite before touching player
+    // state; all other paths are forwarded byte-for-byte.
+    const bool mainColorCall=(uintptr_t)_ReturnAddress()==gameAt(fp::sig::mainMeshQueueReturn);
+    if (mainColorCall && viewMode.load()==0 && supersampleRenderScope.owned) {
+        bool skip=false;
+        __try {
+            if (supersampleViewMatches()) {
+                const uintptr_t root=supersampleRenderScope.root;
+                if (readable(root,field::character::headPart+sizeof(uintptr_t))) {
+                    const uintptr_t head=*(uintptr_t*)(root+field::character::headPart);
+                    if (readable(head,field::bodyPart::meshNode+sizeof(uintptr_t))) {
+                        const uintptr_t headNode=*(uintptr_t*)(head+field::bodyPart::meshNode);
+                        // A dedicated physical head drawable, NOT a generic
+                        // skinned body mesh. A pointer mismatch fails open.
+                        const bool headValid =
+                            readable(headNode,field::sceneNode::bodyPart+sizeof(uintptr_t)) &&
+                            *(uintptr_t*)(headNode+field::sceneNode::bodyPart)==head &&
+                            fp::bodyPartNumber(nodeName(headNode))==10;
+                        skip=shouldSkipPlayerHeadDraw(true,true,headValid,node,headNode);
+                    }
+                }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            skip=false; // Uncertain ownership: preserve native rendering.
+        }
+        if (skip) {
+            firstPersonHeadDrawsSkipped.fetch_add(1,std::memory_order_relaxed);
+            return;
+        }
+    }
+    originalMeshQueue(node,material,flags);
+}
 static BOOL WINAPI swap(HDC dc) {
     fp::CueSide cueSideNow = fp::CueSide::none;
     LONG cueX = 0, cueY = 0;
@@ -56,40 +105,8 @@ static BOOL WINAPI swap(HDC dc) {
     const BOOL presented = originalSwap(dc);
     return presented;
 }
-// while the
-// panel is open, the game's window must not hold the mouse. The title menu keeps it captured
-// (SetCapture) or clipped after a click, so every move and click went to the game, not the panel. On
-// the game's own thread (capture belongs to it), between frames; each change is logged once.
-// gameCursorIndex: the game's chosen cursor (-1: hidden); gameCursorTable: its HCURSOR table (filled by 0x24810).
-static void f8MouseStep() {
-    // Over the game's window the cursor is the game's own choice, set every frame so a pointer the panel
-    // showed never stays behind: its cursor at the title, in menus and in the overhead view (the game sets
-    // it only when the mouse moves), and none while it draws its own crosshair.
-    {
-        POINT at{};
-        HWND under = GetCursorPos(&at) ? WindowFromPoint(at) : nullptr;
-        DWORD pid = 0;
-        if (under) GetWindowThreadProcessId(under, &pid);
-        DWORD owner = 0;
-        const bool overGame = under && pid == GetCurrentProcessId() &&
-                              GetWindowThreadProcessId(under, &owner) == GetCurrentThreadId();
-        if (overGame) {
-            const int slot = fp::gameCursorSlot(*(int*)gameAt(fp::sig::gameCursorIndex));
-            SetCursor(slot >= 0 ? ((HCURSOR*)gameAt(fp::sig::gameCursorTable))[slot] : nullptr);
-        }
-    }
-    if (!InterlockedCompareExchange(&cursorFree, 0, 0) || !gameWindow()) return;
-    const HWND cap = GetCapture();
-    if (cap && cap == hookedWindow) {
-        ReleaseCapture();
-    }
-    RECT clip{}, screen{0, 0, GetSystemMetrics(SM_CXVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN)};
-    if (GetClipCursor(&clip) &&
-        (clip.right - clip.left < screen.right || clip.bottom - clip.top < screen.bottom)) {
-        ClipCursor(nullptr);
-        InterlockedExchange(&cursorClipped, 0);
-    }
-}
+// The native GUI owns its cursor and capture; there is no second settings HWND.
+static void f8MouseStep() {}
 static bool replace(uintptr_t address, void* expected, void* value) {
     DWORD old, tmp;
     if (!VirtualProtect((void*)address, 8, PAGE_READWRITE, &old)) return false;
@@ -318,6 +335,14 @@ static void tpHideAdd() {
 // Reuse the native pick's near origin and direction for both aim-box modes.
 static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye, uintptr_t scene,
                            const TpAimRequest& request) {
+    // A tracked free-look view must never feed its cursor hit back into weapon/head aim.
+    // Keep the existing finite input ray while tracking or its release fade is active.
+    if (trackingEnabled.load() || trackingPresented) {
+        AcquireSRWLockExclusive(&aimLock);
+        tpAimSet = false;
+        ReleaseSRWLockExclusive(&aimLock);
+        return;
+    }
     // Keep matching depth available during a valid refresh; only a failed
     // query retires it so input can fall back without reusing a stale owner.
     auto discard = [&]() {
@@ -341,7 +366,7 @@ static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye
     alignas(8) unsigned char hit[0x40]{};
     bool got = false;
     __try {
-        got = originalPickRay(viewport, x, y, (uintptr_t)hit) != 0;
+        got = ownedPickRay(viewport, x, y, (uintptr_t)hit) != 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return discard();
     }

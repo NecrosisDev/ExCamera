@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <type_traits>
 #include <cstring>
@@ -14,6 +15,11 @@ inline int clampRange(int v, int lo, int hi) {
 }
 inline int clampFov(int degrees) {
     return degrees < fovMin ? fovMin : (degrees > fovMax ? fovMax : degrees);
+}
+// Capture once per FP/TP camera epoch; zero TP override inherits the selected FOV.
+// Blend/hold paths retain their own explicit FOV rather than resolving settings again.
+inline float resolveCameraFov(int mode, float selected, float thirdPerson) {
+    return mode == 1 && thirdPerson > 0.f && std::isfinite(thirdPerson) ? thirdPerson : selected;
 }
 inline float projectionScale(float height, float degrees) {
     return height * 0.5f / std::tan(degrees * 3.14159265359f / 360.f);
@@ -76,7 +82,7 @@ inline constexpr float eyeAlongAxis2 = 9.60687065f, eyeAlongAxis3 = 16.5f;
 // The eye in the frame a 3x4 pose (three axes, then the origin) is given in.
 // [Camera] EyeSetback: cm the viewpoint (and the aim's origin with it) sits behind the eyes, along the head's
 // forward axis, toward the head's middle where its collision keeps arms, weapons and walls furthest away. Your
-// own head is drawn single-sided skin, unseen from inside; anything worn on it is hidden by the helmet test (and
+// head is handled separately by camera-only render filtering; the camera stays at the centered head mount (and
 // a hidden mesh still casts its shadow: the shadow maps choose casters by their own flag, not the pass mask).
 // At most eyeAlongAxis3: never behind the head part's origin.
 inline constexpr int eyeSetbackMax = 16;
@@ -142,42 +148,6 @@ inline float holdHeading(float* pose, float aimYaw) {
     } // about +y, as basis turns yaw
     return turn;
 }
-// Turn lead ([Camera] TurnLead): the view follows the head, which the game turns in its physics step, so in a
-// fast mouse turn it trails by about a frame. The lead turns the view ahead by its measured turning rate times
-// `leadSeconds` (one frame), at most 3 degrees, only while it turns fast. Off by default.
-struct TurnLead {
-    float lastYaw = 0, rate = 0;
-    bool valid = false;
-    float step(float* pose, float seconds) {
-        const float yaw = std::atan2(-pose[6], -pose[8]);
-        if (!valid || !std::isfinite(seconds) || seconds <= 0.f || seconds > 0.1f ||
-            std::fabs(pose[7]) > 0.97f) {
-            lastYaw = yaw;
-            rate = 0;
-            valid = true;
-            return 0.f;
-        }
-        const float d = wrapPi(yaw - lastYaw);
-        lastYaw = yaw;
-        const float now = d / seconds;
-        rate += (now - rate) * 0.5f;           // half the jitter of one frame's rate
-        if (std::fabs(rate) < 1.f) return 0.f; // under about 57 degrees a second: no lead
-        float turn = rate * seconds;
-        turn = turn > 0.052f ? 0.052f : (turn < -0.052f ? -0.052f : turn);
-        const float c = std::cos(turn), s = std::sin(turn);
-        for (int r = 0; r < 3; ++r) {
-            float* v = pose + 3 * r;
-            const float x = v[0], z = v[2];
-            v[0] = c * x + s * z;
-            v[2] = -s * x + c * z;
-        }
-        return turn;
-    }
-    void reset() {
-        valid = false;
-        rate = 0;
-    }
-};
 // The horizontal field of view a vertical one gives at an aspect (width / height).
 inline float horizontalFov(float verticalDegrees, float aspect) {
     return 2.f * std::atan(std::tan(verticalDegrees * 3.14159265f / 360.f) * aspect) * 360.f / 6.2831853f;
@@ -232,13 +202,13 @@ inline void quaternionAxes(const float* q, float* p) {
 // Third person -> overhead keeps the existing smoothstep timing and position
 // lerp. Blend orientation on the shortest quaternion arc: lerping camera axes
 // makes up/back parallel halfway through a 180-degree heading change.
-inline void blendPose(const float* from, const float* to, float t, float* out) {
+inline void blendPose(const float* from, const float* to, float t, float* out, bool ease = true) {
     t = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
     if (t == 0.f || t == 1.f) {
         std::memcpy(out, t == 0.f ? from : to, 48);
         return;
     }
-    t = t * t * (3.f - 2.f * t);
+    if (ease) t = t * t * (3.f - 2.f * t);
     float a[4], b[4], q[4];
     if (poseQuaternion(from, a) && poseQuaternion(to, b)) {
         float dot = 0.f;
@@ -266,6 +236,22 @@ inline void blendPose(const float* from, const float* to, float t, float* out) {
         std::memcpy(out, from, 36); // Keep the last good view if a native frame is unusable.
     for (int i = 9; i < 12; ++i) out[i] = from[i] + (to[i] - from[i]) * t;
 }
+// Eyes compensate ordinary simulated head motion without relocating the physical
+// eye or turning large knockdowns into a detached camera. Stateless rotation
+// composition keeps all temporal samples on the same mouse intent and adds no lag.
+inline constexpr float eyeCompensationLimit = 0.5235987756f; // thirty degrees
+inline void stabilizeEyeRotation(float* physical, float yaw, float pitch) {
+    if (!std::isfinite(yaw) || !std::isfinite(pitch)) return;
+    float desired[12], a[4], b[4];
+    basis(yaw, pitch, desired);
+    for (int i = 9; i < 12; ++i) desired[i] = physical[i];
+    if (!poseQuaternion(physical, a) || !poseQuaternion(desired, b)) return;
+    float dot = 0.f;
+    for (int i = 0; i < 4; ++i) dot += a[i] * b[i];
+    const float angle = 2.f * std::acos(std::clamp(std::fabs(dot), 0.f, 1.f));
+    const float share = angle <= eyeCompensationLimit ? 1.f : eyeCompensationLimit / angle;
+    blendPose(physical, desired, share, physical, false);
+}
 inline constexpr float tpPivotMargin =
     20.f; // cm the pivot keeps from a ceiling or floor above or below the eye
 // [ThirdPerson] Blockers: what the camera does about props and people between it and the player. Walls and floors
@@ -287,26 +273,86 @@ inline int blockersFromText(const wchar_t* t) {
 inline const wchar_t* blockersText(int mode) {
     return mode == blockersHide ? L"hide" : mode == blockersPush ? L"push" : L"smart";
 }
-// Free aim in third-person combat ([ThirdPerson] CombatAim=free): the crosshair moves inside a box around the screen
-// centre, and only what pushes it past the box's edge turns the view. Exanima's combat reads where the cursor is
-// relative to the character; a crosshair held at the centre threw that away. halfWidth/halfHeight: the box, px.
-// The mouse step (dx, dy, px) is split: the crosshair takes what fits, (dx, dy) keep the rest for the view.
-inline constexpr float aimBoxShare = 0.2f; // the box's half-size as a share of the window (40% of it across)
+// The free-aim region is an ellipse (or circle when both screen-space radii match).
+// Mouse motion below the soft-edge band goes to the cursor. In the outer band,
+// the *outward radial component* is progressively shared with camera turning.
+// The tangential component keeps the cursor free to slide around the ellipse;
+// we do not add a camera velocity filter, stored pressure, or drift after release.
+inline constexpr float aimBoxShare = 0.2f;
+inline constexpr int defaultAimEdgeSoftness = 100;
+inline constexpr int fixedAimHalfExtent = 25, fixedHeadStabilization = 100;
 struct AimBox {
     float x = 0.f, y = 0.f;
 };
-inline void aimBoxStep(AimBox& box, float& dx, float& dy, float halfWidth, float halfHeight) {
-    auto axis = [](float& at, float& d, float half) {
-        if (!(half > 0.f) || !std::isfinite(d)) {
-            at = 0.f;
-            return;
+inline void aimBoxStep(AimBox& box, float& dx, float& dy, float halfWidth, float halfHeight,
+                       int edgeSoftness = 0) {
+    if (!std::isfinite(dx)) {
+        dx = 0.f;
+        box.x = 0.f;
+    }
+    if (!std::isfinite(dy)) {
+        dy = 0.f;
+        box.y = 0.f;
+    }
+    const bool useX = std::isfinite(halfWidth) && halfWidth > 0.f;
+    const bool useY = std::isfinite(halfHeight) && halfHeight > 0.f;
+    const float previousX = useX && std::isfinite(box.x) ? box.x : 0.f;
+    const float previousY = useY && std::isfinite(box.y) ? box.y : 0.f;
+    const float wantX = previousX + dx, wantY = previousY + dy;
+    float keptX = useX ? std::clamp(wantX, -halfWidth, halfWidth) : 0.f;
+    float keptY = useY ? std::clamp(wantY, -halfHeight, halfHeight) : 0.f;
+    const int softness = std::clamp(edgeSoftness, 0, 100);
+    if (!softness) {
+        // Exactly the input21 projection. Zero softness is an exact recovery mode.
+        if (useX && useY) {
+            const double r = std::hypot(double(wantX) / double(halfWidth),
+                                        double(wantY) / double(halfHeight));
+            if (r > 1.) {
+                keptX = float(double(wantX) / r);
+                keptY = float(double(wantY) / r);
+            }
         }
-        const float want = at + d, kept = std::fmax(-half, std::fmin(half, want));
-        d = want - kept;
-        at = kept;
-    };
-    axis(box.x, dx, halfWidth);
-    axis(box.y, dy, halfHeight);
+    } else if (useX || useY) {
+        // Normalized radii also handle a zero-sized axis: that axis turns
+        // directly, while the other gets a one-dimensional soft shoulder.
+        const double x = useX ? double(previousX) / double(halfWidth) : 0.;
+        const double y = useY ? double(previousY) / double(halfHeight) : 0.;
+        const double vx = useX ? double(dx) / double(halfWidth) : 0.;
+        const double vy = useY ? double(dy) / double(halfHeight) : 0.;
+        const double length = std::hypot(x, y);
+        const double deltaLength = std::hypot(vx, vy);
+        const double rx = length > 1.e-8 ? x / length : (deltaLength > 0. ? vx / deltaLength : 0.);
+        const double ry = length > 1.e-8 ? y / length : (deltaLength > 0. ? vy / deltaLength : 0.);
+        const double outward = vx * rx + vy * ry;
+        double keepOutward = outward;
+        const double band = double(softness) * 0.01;
+        const double start = 1. - band;
+        if (outward > 0. && length >= 0. && length < 1.) {
+            if (length < start && length + outward > start) {
+                const double past = outward - (start - length);
+                keepOutward = (start - length) + band * (-std::expm1(-past / band));
+            } else if (length >= start) {
+                keepOutward = (1. - length) * (-std::expm1(-outward / band));
+            }
+        } else if (outward > 0. && length >= 1.) {
+            keepOutward = 0.; // already at the rim: outward input goes to the view
+        }
+        // A radial shoulder only: tangential movement still traces the oval
+        // instead of getting eaten by the camera when it reaches the rim.
+        double nx = x + vx + (keepOutward - outward) * rx;
+        double ny = y + vy + (keepOutward - outward) * ry;
+        const double r = std::hypot(nx, ny);
+        if (r > 1.) {
+            nx /= r;
+            ny /= r;
+        }
+        keptX = useX ? float(nx * double(halfWidth)) : 0.f;
+        keptY = useY ? float(ny * double(halfHeight)) : 0.f;
+    }
+    dx = wantX - keptX;
+    dy = wantY - keptY;
+    box.x = keptX;
+    box.y = keptY;
 }
 // A screen offset unprojected through a view orientation. No hit depth or camera/body parallax:
 // looking at nearby ground cannot reverse the horizontal heading.
@@ -325,6 +371,41 @@ inline float cursorHeading(const float* pose, const float* ray) {
 }
 inline int clampDeadzone(int share) {
     return clampRange(share, 0, 40);
+}
+// Move the *camera's desired direction* toward the cursor's world-space ray, then
+// reproject that SAME ray to the new screen offset. A snap (middle click) skips
+// the easing; continuous follow is frame-time independent. No new physics camera
+// transform is manufactured: first-person still follows the real head.
+inline bool recenterAimOnCursor(AimBox& box, float& yaw, float& pitch,
+                               float width, float height, float fov, float dt, bool snap) {
+    if (!std::isfinite(yaw) || !std::isfinite(pitch) ||
+        !std::isfinite(box.x) || !std::isfinite(box.y) ||
+        !(width > 40.f && height > 40.f) || !std::isfinite(fov) ||
+        fov < 1.f || fov > 170.f || (std::fabs(box.x) < 1e-4f && std::fabs(box.y) < 1e-4f))
+        return false;
+    float pose[12]{}, ray[3];
+    basis(yaw, pitch, pose);
+    cursorRay(pose, box.x, box.y, height, fov, ray);
+    const float desiredYaw = cursorHeading(pose, ray);
+    const float desiredPitch = std::atan2(ray[1], std::hypot(ray[0], ray[2]));
+    const float k = snap ? 1.f : (std::isfinite(dt) && dt > 0.f
+                                     ? 1.f - std::exp(-(std::min)(dt, 0.1f) / 0.75f)
+                                     : 0.f);
+    if (!(k > 0.f)) return false;
+    const float ny = wrapPi(yaw + wrapPi(desiredYaw - yaw) * k);
+    const float np = std::clamp(pitch + (desiredPitch - pitch) * k, -1.15f, 1.15f);
+    if (std::fabs(wrapPi(ny - yaw)) < 1e-6f && std::fabs(np - pitch) < 1e-6f)
+        return false; // pitched against the native head limit
+    float newPose[12]{}, px = 0.f, py = 0.f;
+    basis(ny, np, newPose);
+    if (!projectCursor(ray, newPose, width, height, fov, px, py)) return false;
+    yaw = ny;
+    pitch = np;
+    box.x = px - width * .5f;
+    box.y = py - height * .5f;
+    if (std::fabs(box.x) < 0.0005f) box.x = 0.f;
+    if (std::fabs(box.y) < 0.0005f) box.y = 0.f;
+    return true;
 }
 // The body's heading toward what the free crosshair is over (positions in one frame), level; straight along yaw
 // when the point is nearer than minDistance (it is then the body itself, or right under it).
@@ -438,8 +519,12 @@ struct ThirdPerson {
     }
     template <class Clear>
     void update(const float* eye, float yaw, float pitch, float want, float shoulder, float height,
-                float seconds, Clear clear, float* pose, bool tight = false) {
-        basis(yaw, pitch, pose);
+                float seconds, Clear clear, float* pose, bool tight = false,
+                const float* orientation = nullptr) {
+        if (orientation)
+            std::memcpy(pose, orientation, 9 * sizeof(float));
+        else
+            basis(yaw, pitch, pose);
         const bool fresh = !valid || !std::isfinite(seconds) || seconds < 0.f || seconds > 0.5f;
         const float ease = fresh ? 1.f : 1.f - std::exp(-seconds / 0.35f);
         const float chosen = shoulder < 0.f ? -1.f : 1.f;

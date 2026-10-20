@@ -218,9 +218,7 @@ static uintptr_t headScene = 0;
 static std::atomic<unsigned> hiddenHeadNodes{0}, headWearNodes{0}, helmetBlocking{0}, helmetUnknown{0},
     helmetTests{0};
 static std::atomic<fp::HelmetMode> helmetMode{fp::HelmetMode::show}; // [View] Helmet; F8 settings page
-struct RayQuery {
-    float hit[3], distance, origin[3], pad0, direction[3], pad1;
-}; // 0x8F720 stack layout
+using RayQuery = fp::game::MeshRayQuery;
 using MeshRay = int (*)(uintptr_t, RayQuery*);
 static int callMeshRay(uintptr_t ray, uintptr_t context, RayQuery* q) {
     return ((MeshRay)ray)(context, q);
@@ -244,6 +242,7 @@ static fp::HelmetVerdict helmetVerdict(uintptr_t node, float length = fp::helmet
     const float* m = (const float*)(node + field::sceneNode::transform);
     for (const auto& d : directions) {
         RayQuery q{};
+        q.scratchBank = fp::game::viewQueryScratchBank;
         q.distance = length;
         fp::worldToLocalPoint(m, eye, q.origin);
         fp::worldToLocalDirection(m, d, q.direction);
@@ -253,6 +252,19 @@ static fp::HelmetVerdict helmetVerdict(uintptr_t node, float length = fp::helmet
     return fp::HelmetVerdict::clear;
 }
 static std::atomic<unsigned> helmetTurnRetests{0};
+// Equipment mounted below the head may share a tree with the character's skinned
+// geometry. Never classify the model's own skin or body-part mesh as a helmet:
+// suppressing their render-pass mask can make the WHOLE player appear transparent.
+static bool headWearCandidate(uintptr_t node, uintptr_t controlledRoot) {
+    if (!readable(node, field::sceneNode::bodyPart + sizeof(uintptr_t))) return false;
+    const char* name=nodeName(node);
+    if (!strncmp(name, "_SKIN", 5) || fp::bodyPartNumber(name)>=0) return false;
+    const uintptr_t part=*(uintptr_t*)(node+field::sceneNode::bodyPart);
+    if (part && readable(part, field::bodyPart::character+sizeof(uintptr_t)) &&
+        *(uintptr_t*)(part+field::bodyPart::character)==controlledRoot)
+        return false;
+    return true;
+}
 static void updateHeadWear(bool live) {
     const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
@@ -273,6 +285,7 @@ static void updateHeadWear(bool live) {
     HeadWear next[64];
     unsigned n = 0;
     for (unsigned j = 1; j < count && n < 64; ++j) {
+        if (!headWearCandidate(nodes[j],root)) continue;
         HeadWear w{nodes[j], -2, 0};
         for (unsigned k = 0; k < headWearCount; ++k)
             if (headWear[k].node == w.node) {
@@ -345,7 +358,8 @@ static void updateBodyWear(bool live) {
     BodyWear next[96];
     unsigned n = 0;
     for (unsigned j = 1; j < count && n < 96; ++j) {
-        if (fp::bodyPartNumber(nodeName(nodes[j])) >= 0) continue; // a body part itself
+        // The character's own skinned torso, hands and head are never clothing.
+        if (!headWearCandidate(nodes[j],root)) continue;
         int part = -1;
         for (unsigned a = parents[j], guard = 0; a < count && guard < 64; a = parents[a], ++guard) {
             const int p = fp::bodyPartNumber(nodeName(nodes[a]));
@@ -387,10 +401,8 @@ static void viewFeatures(bool live) {
         live &&
         coversHiddenInFirstPerson.load(); // first and third person both skip the tile covers (darkening)
     const bool ownView =
-        live; // ceilings: either own view; helmet and body wear: first person only (third person shows the whole character)
+        live; // Both owned camera modes may hide obstructions; wear hiding is first-person only.
     live = live && viewMode.load() == 0;
-    // A ceiling fault stops conversions of later levels too, and keeps every slab
-    // it built hidden, so no view is left under a lid the mod no longer manages.
     __try {
         if (!viewFault.load()) updateHeadWear(live);
         if (ownView && viewMode.load() != 0 && !viewFault.load())
@@ -406,6 +418,6 @@ static void viewFeatures(bool live) {
         bodyFault = 1;
         bodyWearCount = 0;
     }
-    // After a view fault head wear is never hidden again (only built ceilings are).
+    // After a view fault head wear is never hidden again.
     hidePublish();
 }

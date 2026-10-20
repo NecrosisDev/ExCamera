@@ -17,19 +17,62 @@ static uintptr_t pickViewportForCamera(uintptr_t camera) {
                ? viewport
                : 0;
 }
+static bool sceneNodeWorldOrigin(uintptr_t node, float* point);
+// Read-only manipulation resistance, sampled before input takes aimLock.
+// No temporal cache: release, a new grab or a view handoff cannot retain drag.
+static float heldAimGain(uintptr_t root, float width, float height) {
+    if (!root || width <= 40.f || height <= 40.f || !closeViewContext() ||
+        !TryAcquireSRWLockShared(&cameraLock)) return 1.f;
+    float gain = 1.f;
+    __try {
+        const uintptr_t viewport = pickViewportForCamera(savedCamera);
+        const uintptr_t drag = *(uintptr_t*)gameAt(fp::sig::dragManager);
+        if (viewport && savedRoot == root && savedScene == *(uintptr_t*)gameAt(fp::sig::currentScene) &&
+            *(uintptr_t*)(viewport + field::viewport::view) == savedView && !park.active &&
+            readable(drag, field::drag::viewport + sizeof(uintptr_t)) &&
+            *(uintptr_t*)(drag + field::drag::viewport) == viewport &&
+            (*(unsigned*)(drag + field::drag::flags) & (0x2000 | 0x4000 | 0x10000 | 0x20000))) {
+            const uintptr_t object = *(uintptr_t*)(drag + field::drag::object);
+            float world[3];
+            if (object && sceneNodeWorldOrigin(object, world)) {
+                float delta[3];
+                for (int i = 0; i < 3; ++i) delta[i] = world[i] - lastCamera[9 + i];
+                float x = 0, y = 0;
+                if (fp::projectCursor(delta, lastCamera, width, height, renderedFov, x, y)) {
+                    const float nx = (x - width * .5f) / (width * .5f);
+                    const float ny = (y - height * .5f) / (height * .5f);
+                    const float radius = std::clamp(std::sqrt(nx * nx + ny * ny), 0.f, 1.f);
+                    const float resistance = radius * radius * (3.f - 2.f * radius);
+                    gain = 1.f - .8f * resistance;
+                } else {
+                    // A finite object behind the achieved camera remains resistant.
+                    const float back = delta[0] * lastCamera[6] + delta[1] * lastCamera[7] +
+                                       delta[2] * lastCamera[8];
+                    if (std::isfinite(back) && back >= -.01f) gain = .2f;
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        gain = 1.f;
+    }
+    ReleaseSRWLockShared(&cameraLock);
+    return gain;
+}
 // Native target selection and the drawn reticle share one screen projection.
 // Smoothing, visibility and interaction clearance belong only to presentation.
 static bool aimCursorPosition(const Aim& a, int mode, const float* pose, float width, float height, float fov,
                               float& x, float& y) {
-    if (mode == 1) {
+    if (mode == 1 && !trackingPresented) {
         const bool free = tpAimFree.load();
         x = width * .5f + (free ? tpAimX.load() : 0.f);
         y = height * .5f + (free ? tpAimY.load() : 0.f);
         return std::isfinite(x) && std::isfinite(y);
     }
-    if (mode != 0) return false;
+    if (mode != 0 && mode != 1) return false;
     float direction[3];
-    for (int i = 0; i < 3; ++i) direction[i] = a.point[i] - a.origin[i];
+    for (int i = 0; i < 3; ++i)
+        direction[i] = a.point[i] - a.origin[i] +
+                       (mode == 1 ? eyeGlobal[i].load() - pose[9 + i] : 0.f);
     return fp::projectCursor(direction, pose, width, height, fov, x, y) && std::isfinite(x) &&
            std::isfinite(y);
 }
@@ -290,7 +333,7 @@ static uintptr_t heldNode() {
     const uintptr_t object = readable(drag, 0x20) ? *(uintptr_t*)(drag + field::drag::object) : 0;
     return readable(object, 0x2a0) ? object : 0;
 }
-static char heldPick(uintptr_t object, uintptr_t camera, float x, float y, uintptr_t out,
+static char heldPick(uintptr_t object, uintptr_t viewport, float x, float y, uintptr_t out,
                      bool gameplay = false) {
     const auto sampledGeneration = holdGeneration.load();
     const int mode = viewMode.load();
@@ -298,11 +341,11 @@ static char heldPick(uintptr_t object, uintptr_t camera, float x, float y, uintp
     // Native unprojection leaves out untouched off the viewport. Clear it so
     // a blocked reticle cannot reuse a previous valid direction or hit.
     memset((void*)out, 0, 0x34);
-    const char hit = pickPastSelf(originalPickRay, camera, x, y, out, object);
+    const char hit = pickPastSelf(ownedPickRay, viewport, x, y, out, object);
     if (holdGeneration.load() != sampledGeneration || viewMode.load() != mode ||
         root != *(uintptr_t*)gameAt(fp::sig::playerRoot) || !InterlockedCompareExchange(&active, 0, 0) ||
         InterlockedCompareExchange(&stopping, 0, 0) || !InterlockedCompareExchange(&cameraReady, 0, 0) ||
-        (gameplay && gameplayHeldObject(camera) != object))
+        (gameplay && gameplayHeldObject(viewport) != object))
         return 0;
     const float* dir = (const float*)(out + field::pick::direction);
     const float* origin = (const float*)(out + field::pick::origin);
@@ -344,7 +387,7 @@ static char heldPick(uintptr_t object, uintptr_t camera, float x, float y, uintp
     ++holdPlacements;
     return 1;
 }
-static bool prepareHeldPlacement(uintptr_t object, uintptr_t camera, float height, unsigned char* ray) {
+static bool prepareHeldPlacement(uintptr_t object, uintptr_t viewport, float height, unsigned char* ray) {
     const int mode = viewMode.load();
     const auto generation = holdGeneration.load();
     const uintptr_t root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
@@ -355,25 +398,25 @@ static bool prepareHeldPlacement(uintptr_t object, uintptr_t camera, float heigh
         x = *(LONG*)(gui + field::gui::pointerX);
         y = ((LONG*)(gui + field::gui::pointerX))[1];
     }
-    if (!heldPick(object, camera, float(x), float(y), (uintptr_t)ray)) return false;
+    if (!heldPick(object, viewport, float(x), float(y), (uintptr_t)ray)) return false;
     // Native 1183C0 must take its hit branch, never its ray/height fallback.
     const uintptr_t drag = *(uintptr_t*)gameAt(fp::sig::dragManager);
     return viewMode.load() == mode && holdGeneration.load() == generation &&
            InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
            InterlockedCompareExchange(&cameraReady, 0, 0) &&
            root == *(uintptr_t*)gameAt(fp::sig::playerRoot) &&
-           camera == *(uintptr_t*)gameAt(fp::sig::mainViewport) && readable(drag, 0x20) &&
+           viewport == *(uintptr_t*)gameAt(fp::sig::mainViewport) && readable(drag, 0x20) &&
            *(uintptr_t*)(drag + field::drag::object) == object && std::isfinite(height) &&
            ((float*)(ray + 8))[1] >= height;
 }
-static char pickRayFor(uintptr_t caller, uintptr_t camera, float x, float y, uintptr_t out) {
-    if (out && placingThread == GetCurrentThreadId() && placingReady && camera == placingViewport &&
+static char pickRayFor(uintptr_t caller, uintptr_t viewport, float x, float y, uintptr_t out) {
+    if (out && placingThread == GetCurrentThreadId() && placingReady && viewport == placingViewport &&
         caller == gameAt(fp::sig::placementPickReturn)) {
         memcpy((void*)out, placingRay, sizeof placingRay);
         return 1;
     }
-    const char hit = pickPastSelf(originalPickRay, camera, x, y, out);
-    nativeAimPick(caller, camera, hit, out);
+    const char hit = pickPastSelf(originalPickRay, viewport, x, y, out);
+    nativeAimPick(caller, viewport, hit, out);
     return hit;
 }
 static uintptr_t heldQuery(uintptr_t object, uintptr_t viewport, uintptr_t out, float height) {
@@ -415,12 +458,12 @@ static uintptr_t heldQuery(uintptr_t object, uintptr_t viewport, uintptr_t out, 
     ++dropSpots;
     return 1;
 }
-static char pickRay(uintptr_t camera, float x, float y, uintptr_t out) {
-    return pickRayFor((uintptr_t)_ReturnAddress(), camera, x, y, out);
+static char pickRay(uintptr_t viewport, float x, float y, uintptr_t out) {
+    return pickRayFor((uintptr_t)_ReturnAddress(), viewport, x, y, out);
 }
 // Grab reach. 0x11A690 starts every grab (items 0x2000, doors 0x4000/0x10000,
 // free constraints 0x20000, locked-door rattle 0x80000, ...) from the pick
-// 0x8FB30(camera, x, y, out, filter) returning to 0x11A79E; the
+// 0x8FB30(viewport, x, y, out, filter) returning to 0x11A79E; the
 // hover check 0x11E6F0 (cursor "can use" state) uses the same pick, returning to 0x11E76C. out
 // has 0x8F720's layout (+0x2C distance along the unit ray from the eye). In first person a hit
 // beyond the grab range (F8) counts as nothing hit at those two sites: the click does nothing (no grab,
@@ -481,7 +524,11 @@ static char grabPickResult(uintptr_t caller, char hit, uintptr_t out) {
     }
     return hit;
 }
-static char grabPickFor(uintptr_t caller, uintptr_t camera, float x, float y, uintptr_t out, void* filter) {
+static char grabPickFor(uintptr_t caller, uintptr_t viewport, float x, float y, uintptr_t out, void* filter) {
+    // 8FB30 is shared by viewport widgets. Reticle, range and grab history
+    // belong only to the main gameplay viewport.
+    if (!viewport || viewport != *(uintptr_t*)gameAt(fp::sig::mainViewport))
+        return originalGrabPick(viewport, x, y, out, filter);
     if (caller == gameAt(fp::sig::grabStartPickReturn) || caller == gameAt(fp::sig::hoverPickReturn) ||
         caller == gameAt(fp::sig::doubleClickPickReturn)) {
         LONG rx = 0, ry = 0;
@@ -492,18 +539,18 @@ static char grabPickFor(uintptr_t caller, uintptr_t camera, float x, float y, ui
     }
     char hit = 0;
     if (!selfPickWanted() || selfPickSet)
-        hit = originalGrabPick(camera, x, y, out, filter);
+        hit = originalGrabPick(viewport, x, y, out, filter);
     else
         __try {
             selfPickMask();
-            hit = originalGrabPick(camera, x, y, out, filter);
+            hit = originalGrabPick(viewport, x, y, out, filter);
         } __finally {
             selfPickRestore();
         } // as pickPastSelf: never your own body
     return grabPickResult(caller, hit, out);
 }
-static char grabPick(uintptr_t camera, float x, float y, uintptr_t out, void* filter) {
-    return grabPickFor((uintptr_t)_ReturnAddress(), camera, x, y, out, filter);
+static char grabPick(uintptr_t viewport, float x, float y, uintptr_t out, void* filter) {
+    return grabPickFor((uintptr_t)_ReturnAddress(), viewport, x, y, out, filter);
 }
 // The game's cursor warp 0x22780 (client point -> SetCursorPos). Picking up an object
 // (0x11A690 -> 0x116A50, return 0x116AAC) warps the cursor onto the object; first person reads
@@ -579,8 +626,14 @@ static bool projectHeldSeed(const float* plane, float* out) {
     }
     return true;
 }
-static bool heldPlanePoint(int slot, uintptr_t drag, uintptr_t camera, int x, int y, const float* plane,
+static bool heldViewportMatches(uintptr_t drag, uintptr_t viewport) {
+    return viewport && viewport == *(uintptr_t*)gameAt(fp::sig::mainViewport) &&
+           readable(drag, field::drag::viewport + sizeof(uintptr_t)) &&
+           *(uintptr_t*)(drag + field::drag::viewport) == viewport;
+}
+static bool heldPlanePoint(int slot, uintptr_t drag, uintptr_t viewport, int x, int y, const float* plane,
                            float* out) {
+    if (!heldViewportMatches(drag, viewport)) return false;
     const uintptr_t object = *(uintptr_t*)(drag + field::drag::object);
     const int mode = viewMode.load();
     const auto generation = holdGeneration.load();
@@ -598,9 +651,10 @@ static bool heldPlanePoint(int slot, uintptr_t drag, uintptr_t camera, int x, in
     // A stale reticle otherwise freezes the last accepted constraint target.
     const bool pointer = reticle || InterlockedCompareExchange(&rmbFree, 0, 0);
     alignas(8) unsigned char ray[0x40]{};
-    if (pointer) originalPickRay(camera, float(x), float(y), (uintptr_t)ray);
+    if (pointer) ownedPickRay(viewport, float(x), float(y), (uintptr_t)ray);
     if (viewMode.load() != mode || holdGeneration.load() != generation || !heldDoorLive() ||
-        heldDoorDrag() != drag || *(uintptr_t*)(drag + field::drag::object) != object)
+        heldDoorDrag() != drag || !heldViewportMatches(drag, viewport) ||
+        *(uintptr_t*)(drag + field::drag::object) != object)
         return false;
     float p[3]{};
     bool ok = pointer && fp::heldPointOnPlane((const float*)(ray + field::pick::origin),
@@ -659,19 +713,19 @@ struct HeldPlanePresentation {
     float points[4][3]{};
 };
 static thread_local HeldPlanePresentation heldPlanePresentation;
-static void planeHitFor(uintptr_t caller, float* out, uintptr_t camera, int x, int y, const float* plane) {
-    if (nativeAimPlane(caller, out, camera, x, y, plane)) return;
+static void planeHitFor(uintptr_t caller, float* out, uintptr_t viewport, int x, int y, const float* plane) {
+    if (nativeAimPlane(caller, out, viewport, x, y, plane)) return;
     const int slot = heldPlaneSlot(caller);
     const uintptr_t drag = slot >= 0 && heldDoorLive() ? heldDoorDrag() : 0;
-    if (!drag) {
-        originalPlaneHit(out, camera, x, y, plane);
+    if (!drag || !heldViewportMatches(drag, viewport)) {
+        originalPlaneHit(out, viewport, x, y, plane);
         return;
     }
     if (heldPlanePresentation.drag == drag && heldPlanePresentation.valid[slot]) {
         memcpy(out, heldPlanePresentation.points[slot], 12);
         return;
     }
-    if (heldPlanePoint(slot, drag, camera, x, y, plane, out)) return;
+    if (heldPlanePoint(slot, drag, viewport, x, y, plane, out)) return;
     // Handler updates are preflighted below. The remaining direct caller is
     // hinge initialization, immediately after a finite grab: seed its physical
     // plane from that grab rather than invoking an unbounded screen intersection.
@@ -682,6 +736,8 @@ static void planeHitFor(uintptr_t caller, float* out, uintptr_t camera, int x, i
 }
 static unsigned long long constrainedHandler(DragHandler native, uintptr_t drag, uintptr_t ui, int message) {
     if (message == 0x80 || !heldDoorLive() || heldDoorDrag() != drag) return native(drag, ui, message);
+    const uintptr_t viewport = *(uintptr_t*)(drag + field::drag::viewport);
+    if (!heldViewportMatches(drag, viewport)) return native(drag, ui, message);
     if (!closeViewContext() || InterlockedCompareExchange(&cursorFree, 0, 0) ||
         InterlockedCompareExchange(&windowFree, 0, 0))
         return 3;
@@ -700,29 +756,28 @@ static unsigned long long constrainedHandler(DragHandler native, uintptr_t drag,
         memcpy(heldPlanes, previousPlanes, sizeof heldPlanes);
         lastDoorObject = previousObject;
     };
-    const uintptr_t camera = *(uintptr_t*)(drag + field::drag::viewport);
     const int x = *(int*)(ui + field::gui::pointerX), y = ((int*)(ui + field::gui::pointerX))[1];
     HeldPlanePresentation current;
     current.drag = drag;
     if (*(unsigned*)(drag + field::drag::flags) & 0x4000) {
         const float plane[4] = {0, 1, 0, *(float*)(drag + field::drag::planeHeight)};
-        current.valid[0] = heldPlanePoint(0, drag, camera, x, y, plane, current.points[0]);
+        current.valid[0] = heldPlanePoint(0, drag, viewport, x, y, plane, current.points[0]);
         if (!current.valid[0]) {
             rollback();
             return 3;
         }
     } else if (*(unsigned*)(drag + field::drag::flags) & 0x20000) {
-        current.valid[3] = heldPlanePoint(3, drag, camera, x, y,
+        current.valid[3] = heldPlanePoint(3, drag, viewport, x, y,
                                           (const float*)(drag + field::drag::hingePlane), current.points[3]);
         if (!current.valid[3]) {
             rollback();
             return 3;
         }
     } else {
-        current.valid[1] = heldPlanePoint(1, drag, camera, x, y,
+        current.valid[1] = heldPlanePoint(1, drag, viewport, x, y,
                                           (const float*)(drag + field::drag::hingePlane), current.points[1]);
         current.valid[2] = heldPlanePoint(
-            2, drag, camera, x, y, (const float*)(drag + field::drag::alternatePlane), current.points[2]);
+            2, drag, viewport, x, y, (const float*)(drag + field::drag::alternatePlane), current.points[2]);
         if (!current.valid[1] || !current.valid[2]) {
             rollback();
             return 3;
@@ -747,8 +802,8 @@ static unsigned long long constrainedHandler(DragHandler native, uintptr_t drag,
     }
     return result;
 }
-static void planeHit(float* out, uintptr_t camera, int x, int y, const float* plane) {
-    planeHitFor((uintptr_t)_ReturnAddress(), out, camera, x, y, plane);
+static void planeHit(float* out, uintptr_t viewport, int x, int y, const float* plane) {
+    planeHitFor((uintptr_t)_ReturnAddress(), out, viewport, x, y, plane);
 }
 static bool onGameThread() {
     const LONG game = InterlockedCompareExchange(&navThread, 0, 0);
@@ -789,7 +844,8 @@ static void heldDoorStep() {
         sendDoorMessage(drag, 0x80);
         return;
     }
-    if (!heldDoorLive() || !gameViewportFocused()) return;
+    if (!heldDoorLive() || !gameViewportFocused() ||
+        !heldViewportMatches(drag, *(uintptr_t*)(drag + field::drag::viewport))) return;
     sendDoorMessage(drag, 0);
 }
 // Let go of a held door, as the game does when the button comes up: now on the game's thread, else at its
@@ -991,12 +1047,14 @@ static void cursorPositionFor(uintptr_t caller, LONG* x, LONG* y) {
     }
     CameraGuard guard;
     HWND window = gameWindow();
-    RECT rect;
+    RECT rect{};
     Aim a;
     AcquireSRWLockShared(&aimLock);
     a = aim;
     ReleaseSRWLockShared(&aimLock);
-    if (window && savedCamera && a.valid && a.root == filterRoot && a.head == filterHead &&
+    const uintptr_t viewport = pickViewportForCamera(savedCamera);
+    const bool currentCamera = viewport && *(uintptr_t*)(viewport + field::viewport::view) == savedView;
+    if (window && currentCamera && a.valid && a.root == filterRoot && a.head == filterHead &&
         a.root == *(uintptr_t*)(gameAt(fp::sig::playerRoot)) && GetClientRect(window, &rect) &&
         rect.right > 40 && rect.bottom > 40) {
         auto mesh = *(uintptr_t*)(a.root + field::character::sceneNode),
@@ -1079,11 +1137,12 @@ static void cursorPositionFor(uintptr_t caller, LONG* x, LONG* y) {
                     markerShown = aimMarker.load() && viewMode.load() == 0 &&
                                   fp::aimMarkerStep(markerShown, std::acos(std::clamp(c, -1.f, 1.f)));
                 }
-                if (viewMode.load() < 2 &&
+                if (aimIndicator.load() == 0 || (aimIndicator.load() == 1 && !combat) ||
+                    (trackingPresented && !inside) || (viewMode.load() < 2 &&
                     !fp::crosshairDrawn(combat, swinging.load(), hideSwingCrosshair.load(),
                                         idleCrosshairAlways.load(), markerShown,
                                         hoverOutOfRange.load() &&
-                                            GetTickCount64() - hoverRangeAt.load() <= reticleFreshMs)) {
+                                            GetTickCount64() - hoverRangeAt.load() <= reticleFreshMs))) {
                     *x = rect.right + 256;
                     *y = rect.bottom + 256;
                     if (swinging.load()) ++swingHides;
@@ -1095,8 +1154,15 @@ static void cursorPositionFor(uintptr_t caller, LONG* x, LONG* y) {
     AcquireSRWLockExclusive(&reticleLock);
     reticleFrame = -1;
     ReleaseSRWLockExclusive(&reticleLock);
+    if (trackingPresented && currentCamera && rect.right > 40 && rect.bottom > 40 &&
+        a.valid && a.root == filterRoot && a.head == filterHead &&
+        closeViewContext()) {
+        *x = rect.right + 256;
+        *y = rect.bottom + 256;
+        return;
+    }
     originalCursorPosition(x, y);
-    if (hideSwingCrosshair.load() && swinging.load() && savedCamera && a.valid &&
+    if (hideSwingCrosshair.load() && swinging.load() && currentCamera && a.valid &&
         a.root == filterRoot && a.head == filterHead &&
         a.root == *(uintptr_t*)gameAt(fp::sig::playerRoot) && closeViewContext()) {
         HWND w = gameWindow();
@@ -1119,12 +1185,17 @@ static void currentCamera(uintptr_t& view, uintptr_t& camera) {
     camera = view ? *(uintptr_t*)(view + field::view::camera) : 0;
 }
 static void resetViewHistory() {
+    cameraEntry = {};
+    trackingView.clear();
+    trackingPresented = false;
+    cameraFrame.valid = false;
     InterlockedExchange(&cameraReady, 0);
     nearPlane.reset();
     filterRoot = filterHead = 0;
     releaseInput();
     AcquireSRWLockExclusive(&aimLock);
     aim.valid = false;
+    aim.entryPending = false;
     ReleaseSRWLockExclusive(&aimLock);
 }
 static bool sameOwner(uintptr_t view, uintptr_t camera) {

@@ -13,7 +13,7 @@ static bool cameraPosePick(uintptr_t camera, const float* pose, float x, float y
     rebuildInverse(camera + field::camera::inverse, camera + field::camera::pose);
     bool got = false;
     __try {
-        got = originalPickRay(viewport, x, y, out) != 0;
+        got = ownedPickRay(viewport, x, y, out) != 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         got = false;
     }
@@ -81,6 +81,84 @@ static bool sampleHeadRenderPose(uintptr_t head, uintptr_t mesh, float offset, f
         return false;
     }
 }
+// Uses only already-reviewed character/sector fields and the native selected
+// opponent. No target selection, native pose write or additional hook is added.
+static bool cameraEntryYaw(uintptr_t root, uintptr_t sector, float& yaw) {
+    __try {
+        const auto* position=(const float*)(root+field::character::position);
+        const auto* origin=(const float*)(sector+field::sector::origin);
+        const uintptr_t opponent=*(uintptr_t*)(root+field::character::aimOpponent);
+        if (opponent && opponent!=root && readable(opponent,field::character::lifeFlags+4) &&
+            !(*(unsigned*)(opponent+field::character::lifeFlags)&0x100)) {
+            const uintptr_t otherSector=aimSector(opponent);
+            if (readable(otherSector,field::sector::origin+12)) {
+                const auto* other=(const float*)(opponent+field::character::position);
+                const auto* otherOrigin=(const float*)(otherSector+field::sector::origin);
+                const float x=(other[0]+otherOrigin[0])-(position[0]+origin[0]);
+                const float z=(other[2]+otherOrigin[2])-(position[2]+origin[2]);
+                if (std::isfinite(x) && std::isfinite(z) && x*x+z*z>1.f) {
+                    yaw=std::atan2(x,z);
+                    return true;
+                }
+            }
+        }
+        const auto* direction=(const float*)(root+field::character::facing);
+        if (!std::isfinite(direction[0]) || !std::isfinite(direction[2]) ||
+            direction[0]*direction[0]+direction[2]*direction[2]<1.e-6f) return false;
+        yaw=std::atan2(direction[0],direction[2]);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+static bool updateCameraEntry(uintptr_t root, uintptr_t head, uintptr_t scene, uintptr_t sector) {
+    CameraEntryState next=cameraEntry;
+    const auto* position=(const float*)(root+field::character::position);
+    const auto* origin=(const float*)(sector+field::sector::origin);
+    float body[3], distance2=0.f;
+    for (int axis=0;axis<3;++axis) {
+        body[axis]=position[axis]+origin[axis];
+        if (!std::isfinite(body[axis])) return false;
+        const float delta=body[axis]-next.body[axis];
+        distance2+=delta*delta;
+    }
+    const bool menu=formShown(*(uintptr_t*)gameAt(fp::sig::endMatchMenu));
+    // Five metres between camera samples is a relocation, not normal footwork.
+    // Comparing world positions avoids false handoffs at sector boundaries.
+    const bool arenaStart=next.menuSeen && !menu;
+    const bool entry=!next.valid || next.root!=root || next.head!=head || next.scene!=scene ||
+                     distance2>500.f*500.f || arenaStart;
+    const bool hadHistory=next.valid;
+    const bool combat=*(unsigned char*)(root+field::character::combatStance)!=0;
+    next.root=root; next.head=head; next.scene=scene;
+    memcpy(next.body,body,sizeof body);
+    next.valid=true; next.menuSeen=menu;
+    if (entry) {
+        next.requested=combat || arenaStart;
+        next.pending=false;
+    }
+    cameraEntry=next;
+    if (!next.requested || menu || !combat) return false;
+    // An input sample already established on initial attachment is authoritative.
+    // Retained history on a later spawn must not override the new native facing.
+    AcquireSRWLockShared(&aimLock);
+    const bool established=!hadHistory && aim.valid && aim.root==root && aim.head==head;
+    ReleaseSRWLockShared(&aimLock);
+    if (established) { cameraEntry.requested=false; return false; }
+    float yaw=0.f;
+    if (!cameraEntryYaw(root,sector,yaw)) return false; // native spawn not ready yet
+    resetViewHistory();
+    AcquireSRWLockExclusive(&aimLock);
+    aim.valid=false;
+    aim.root=root; aim.head=head;
+    aim.entryPending=true; aim.entryYaw=yaw;
+    ReleaseSRWLockExclusive(&aimLock);
+    thirdPerson.reset();
+    tpCombatK=0.f;
+    fp::holdEnd(headHold);
+    publishHold();
+    next.requested=false; next.pending=true; next.yaw=yaw;
+    cameraEntry=next;
+    return true;
+}
 static uintptr_t nav(void* self, float offset) {
     healthHit(fp::HealthHook::navSampler);
     CameraGuard guard;
@@ -94,7 +172,7 @@ static uintptr_t nav(void* self, float offset) {
         hadOwned = true;
         // Restore ALL stock fields and derived matrices before the native sampler.
         // A stationary sampler or any later rejected source must not leave mixed
-        // stock fields / first-person inverse and projection matrices behind.
+        // stock fields / first-person expanded pose and projection matrices behind.
         restoreOwnedCamera(view, camera);
     }
     uintptr_t result = originalNav(self, offset);
@@ -128,7 +206,7 @@ static uintptr_t nav(void* self, float offset) {
         resetViewHistory();
         return nativeReturn();
     }
-    const bool wasLive = hadOwned && filterRoot == root && filterHead;
+    bool wasLive = hadOwned && filterRoot == root && filterHead;
     LARGE_INTEGER now;
     // Publishes pose (a filtered head pose, or the last one while holding) exactly
     // as every first-person frame: stock captured from the native sampler first.
@@ -208,6 +286,7 @@ static uintptr_t nav(void* self, float offset) {
     const auto scene = *(uintptr_t*)(mesh + field::sceneNode::sector);
     if (!scene) return reject(5);
     const uintptr_t worldScene = *(uintptr_t*)gameAt(fp::sig::currentScene);
+    if (viewMode.load()<2 && updateCameraEntry(root,head,worldScene,scene)) wasLive=false;
     const int mode = viewMode.load();
     const LONG serial = InterlockedCompareExchange(&swapCalls, 0, 0);
     const bool sameLifetime = filterRoot == root && filterHead == head &&
@@ -216,7 +295,7 @@ static uintptr_t nav(void* self, float offset) {
                               cameraFrame.head == head && cameraFrame.scene == worldScene && cameraFrame.mode == mode;
     if (!cameraFrame.valid || !sameLifetime || cameraFrame.serial != serial) {
         const CameraFilterState before = sameLifetime
-                                             ? CameraFilterState{thirdPerson, nearPlane, cameraTurnLead, tpCombatK}
+                                             ? CameraFilterState{thirdPerson, nearPlane, tpCombatK}
                                              : CameraFilterState{};
         QueryPerformanceCounter(&now);
         cameraFrame = {};
@@ -229,12 +308,44 @@ static uintptr_t nav(void* self, float offset) {
         cameraFrame.head = head;
         cameraFrame.scene = worldScene;
         cameraFrame.mode = mode;
+        cameraFrame.effectiveFov = fp::resolveCameraFov(mode, float(selectedFov.load()), float(tpFov.load()));
         cameraFrame.time = now;
         cameraFrame.tick = GetTickCount64();
         cameraFrame.seconds = sameLifetime && frequency.QuadPart
                                   ? float(double(now.QuadPart - filterTime.QuadPart) / double(frequency.QuadPart))
                                   : 1.f;
         cameraFrame.before = before;
+        AcquireSRWLockShared(&aimLock);
+        if (aim.valid && aim.root == root && aim.head == head &&
+            std::isfinite(aim.yaw) && std::isfinite(aim.pitch)) {
+            cameraFrame.eyeLookValid = true;
+            cameraFrame.eyeYaw = aim.yaw;
+            cameraFrame.eyePitch = aim.pitch;
+            cameraEntry.pending=false;
+        } else if (cameraEntry.pending && cameraEntry.root==root &&
+                   cameraEntry.head==head && cameraEntry.scene==worldScene) {
+            // Hold the entry orientation until the input owner has consumed this
+            // displayed view. A physics head pose can still be settling at spawn.
+            cameraFrame.eyeLookValid=true;
+            cameraFrame.eyeYaw=cameraEntry.yaw;
+            cameraFrame.eyePitch=0.f;
+        }
+        ReleaseSRWLockShared(&aimLock);
+        if (!sameLifetime) trackingView.clear();
+        auto tracked = trackingSnapshot();
+        if (tracked.received <= trackingAcceptAfter.load()) tracked.valid = false;
+        const bool acceptTracking = trackingEnabled.load() && mode < 2 &&
+                                    InterlockedCompareExchange(&inputEnabled, 0, 0) && !cursorFreeNow();
+        trackingView.update(tracked, cameraFrame.tick, cameraFrame.seconds, acceptTracking,
+                            trackingReset.load());
+        memcpy(cameraFrame.trackingOffset, trackingView.shown, sizeof cameraFrame.trackingOffset);
+        // Keep final-view aim reprojection active until the offset has faded completely.
+        cameraFrame.tracked = false;
+        float identity[12]{};
+        fp::basis(0, 0, identity);
+        for (int i = 0; i < 9; ++i)
+            cameraFrame.tracked = cameraFrame.tracked ||
+                                  std::fabs(identity[i] - cameraFrame.trackingOffset[i]) > 1.e-5f;
     }
     // The normal draw has a zero-offset camera update before its temporal
     // samples. A nonzero first request also works: establish the centre, then
@@ -331,15 +442,19 @@ static uintptr_t nav(void* self, float offset) {
                         CameraFilterState& state, float* evaluatedPose, float& evaluatedNear,
                         TpAimRequest& request) {
         if (!fp::headPose(sampledHead, target, evaluatedPose)) return 4;
-        if (mode == 0 && turnLeadOn.load())
-            state.lead.step(evaluatedPose, dt);
-        else
-            state.lead.reset();
+        if (cameraFrame.eyeLookValid)
+            fp::stabilizeEyeRotation(evaluatedPose, cameraFrame.eyeYaw, cameraFrame.eyePitch);
         if (mode == 1) {
             float yaw = std::atan2(-evaluatedPose[6], -evaluatedPose[8]),
                   pitch =
                       std::asin(std::fmax(-1.f, std::fmin(1.f, -evaluatedPose[7]))); // no aim yet: where the head faces
             request = captureTpAimRequest(root, head, scene, yaw, pitch);
+            if (cameraFrame.eyeLookValid) { yaw = cameraFrame.eyeYaw; pitch = cameraFrame.eyePitch; }
+            float trackedFacing[12]{};
+            if (cameraFrame.tracked) {
+                fp::basis(yaw, pitch, trackedFacing);
+                fp::composeView(trackedFacing, cameraFrame.trackingOffset, trackedFacing);
+            }
             const uintptr_t level = levelGrid();
             RECT client{};
             const bool sized =
@@ -413,13 +528,18 @@ static uintptr_t nav(void* self, float offset) {
             }
             state.third.update(target, yaw, pitch, float(tpDistance.load()) * (1.f - 0.2f * state.combat),
                                float(tpShoulder.load()) * (1.f - 0.7f * state.combat), float(tpHeight.load()), dt,
-                               clear, evaluatedPose, tpTight.load());
+                               clear, evaluatedPose, tpTight.load(),
+                               cameraFrame.tracked ? trackedFacing : nullptr);
         } else {
             state.third.reset();
             state.combat = 0.f;
         } // back in first person: no third-person state left
+        // TP already used the complete rotation frame for boom and collision: no
+        // Euler decomposition/heading flip at a vertical pole and no post-collision orbit.
+        if (cameraFrame.tracked && mode == 0)
+            fp::composeView(evaluatedPose, cameraFrame.trackingOffset, evaluatedPose);
         {
-            float clearance = viewClearance(evaluatedPose); // unknown (no level grid): today's 1 cm, never the lower floor
+            float clearance = viewClearance(evaluatedPose, cameraFrame.effectiveFov); // unknown (no level grid): today's 1 cm, never the lower floor
             if (mode == 0 && clearance != 0.f) {
                 const float prop =
                     centrePropDepth(camera, evaluatedPose, root); // props, doors and people are not in the level grid
@@ -467,11 +587,10 @@ static uintptr_t nav(void* self, float offset) {
         return nativeReturn();
     }
     // Sampling writes the requested pose, but only the centre result owns
-    // persistent spring, velocity, turn-lead and near-plane history.
+    // persistent spring, velocity and near-plane history.
     if (evaluateCentre) {
         thirdPerson = centre.third;
         nearPlane = centre.clipFilter;
-        cameraTurnLead = centre.lead;
         tpCombatK = centre.combat;
         cameraFrame.centreReady = true;
         filterTime = cameraFrame.time;
@@ -485,8 +604,7 @@ static uintptr_t nav(void* self, float offset) {
         tpAllowed = shown.third.lastAllowed;
         tpDownNow = shown.third.down;
     }
-    commit(pose, viewMode.load() == 1 && tpFov.load() > 0 ? float(tpFov.load())
-                                                          : -1.f); // third person's own field of view
+    commit(pose, cameraFrame.effectiveFov); // Exactly the FOV used by this epoch's clearance rays.
     if (viewMode.load() == 1 && tpBlockers.load() != fp::blockersPush)
         tpHideKeep(pose + 9, shown.third.pivot, savedScene); // Hide ownership is the world scene, not the head's sector.
     else if (tpHiddenCount)
@@ -506,9 +624,22 @@ static uintptr_t nav(void* self, float offset) {
     filterHead = head;
     memcpy(lastHead, h, 48);
     memcpy(lastCamera, pose, 48);
+    trackingPresented = cameraFrame.tracked;
     ++samples;
-    viewYaw = std::atan2(-pose[6], -pose[8]);
-    viewPitch = std::asin(std::fmax(-1.f, std::fmin(1.f, -pose[7])));
+    // These feed mouse-aim initialization and held-item fallback, not presentation.
+    float untracked[12];
+    if (!cameraFrame.tracked)
+        memcpy(untracked, pose, sizeof untracked);
+    else if (mode == 1) {
+        float yaw = 0, pitch = 0;
+        captureTpAimRequest(root, head, scene, yaw, pitch);
+        fp::basis(yaw, pitch, untracked);
+    } else {
+        if (!fp::headPose(h, requestedTarget, untracked)) return reject(4);
+        if (cameraFrame.eyeLookValid) fp::stabilizeEyeRotation(untracked, cameraFrame.eyeYaw, cameraFrame.eyePitch);
+    }
+    viewYaw = std::atan2(-untracked[6], -untracked[8]);
+    viewPitch = std::asin(std::clamp(-untracked[7], -1.f, 1.f));
     viewRoot = root;
     for (int i = 0; i < 3; i++)
         lastHeadGlobal[i] = h[9 + i] + *(float*)(scene + field::sector::origin + i * 4);

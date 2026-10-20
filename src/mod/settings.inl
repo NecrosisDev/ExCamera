@@ -1,6 +1,6 @@
 // F8 settings: read and applied live, saved to first-person.ini.
 // Part of first_person.cpp (one translation unit): included there, in order.
-#include "../settings_window.h"
+#include "../settings_model.h"
 // The F8 settings live in the atomics the threads read; panel::ModSettings is their value as a whole, and
 // panel::rowInfo says, per row, which field and which [section] key in first-person.ini. Reading, writing
 // and comparing go through that table: a setting is described once.
@@ -19,6 +19,8 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     panel::ModSettings s;
     s.fov = selectedFov.load();
     s.sensitivity = int(std::lround(sensitivity.load() / 0.0025f * 100.f));
+    s.invertY = invertY.load();
+    s.indicator = aimIndicator.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
     s.rawMouseFallback = rawMouse && !rawWanted.load();
@@ -68,7 +70,17 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.rotateHeldKey = rotateHeldKey.load();
     s.leanKey = leanKey.load();
     s.holdHeading = holdHeadingOn.load();
-    s.turnLead = turnLeadOn.load();
+    s.autoRecenter = aimAutoRecenter.load();
+    s.edgeSoftness = aimEdgeSoftness.load();
+    s.tracking = trackingEnabled.load();
+    s.trackingKey = trackingRecenterKey.load();
+    s.trackingStatus = int(trackingReceiver.status());
+    if (s.trackingStatus == 2) {
+        const auto sample = trackingReceiver.snapshot();
+        const auto now = GetTickCount64();
+        if (!sample.valid || now < sample.received || now - sample.received > fp::trackingStaleMs)
+            s.trackingStatus = 1;
+    }
     return s;
 }
 static panel::ModSettings currentSettings() { // a coherent display snapshot (any thread)
@@ -76,7 +88,9 @@ static panel::ModSettings currentSettings() { // a coherent display snapshot (an
     return readLiveSettings();
 }
 static void
-writeLiveSettings(const panel::ModSettings& s) { // caller holds settingsLock; s is normalized
+writeLiveSettings(const panel::ModSettings& requested) {
+    auto s = requested;
+    s.normalize(); // also enforced for bulk/internal callers, not just UI and INI loading
     const bool policyChanged = fpManualGuard.load() != s.fpDefense || tpManualGuard.load() != s.tpDefense ||
                                rmbMode.load() != s.rmbMode || rotateHeldKey.load() != s.rotateHeldKey ||
                                leanKey.load() != s.leanKey || leanKeysMode.load() != s.leanKeysMode ||
@@ -90,6 +104,8 @@ writeLiveSettings(const panel::ModSettings& s) { // caller holds settingsLock; s
     tpSwingSelection = s.tpSwingSelection;
     selectedFov.store(s.fov);
     sensitivity = 0.0025f * float(s.sensitivity) / 100.f;
+    invertY = s.invertY;
+    aimIndicator = s.indicator;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;
     rawMouse = s.rawMouse;
@@ -134,7 +150,13 @@ writeLiveSettings(const panel::ModSettings& s) { // caller holds settingsLock; s
     rotateHeldKey = s.rotateHeldKey;
     leanKey = s.leanKey;
     holdHeadingOn = s.holdHeading;
-    turnLeadOn = s.turnLead;
+    aimAutoRecenter = s.autoRecenter;
+    aimEdgeSoftness = s.edgeSoftness;
+    if (trackingEnabled.exchange(s.tracking) != s.tracking) {
+        trackingAcceptAfter = GetTickCount64();
+        ++trackingReset;
+    }
+    trackingRecenterKey = s.trackingKey;
     if (policyChanged) inputOwner.policyChanged();
 }
 static void makeLive(const panel::ModSettings& s) {
@@ -172,6 +194,24 @@ static panel::ModSettings readSettings(const wchar_t* path) {
                                  path); // before Blockers: HideBlockers, 1 hide, 0 pull in
         const int legacy = GetPrivateProfileIntW(L"ThirdPerson", L"HideBlockers", -1, path);
         if (!t[0] && legacy >= 0) s.tpBlockers = legacy ? fp::blockersHide : fp::blockersPush;
+    }
+    wchar_t indicatorText[24]{};
+    GetPrivateProfileStringW(L"View", L"AimIndicator", L"", indicatorText, 24, path);
+    if (!indicatorText[0]) {
+        wchar_t legacy[24]{};
+        GetPrivateProfileStringW(L"View", L"IdleCrosshair", L"", legacy, 24, path);
+        s.indicator = panel::iniIs(legacy, L"always") ? 2 :
+                      GetPrivateProfileIntW(L"Input", L"AimMarker", 1, path) ? 1 : 0;
+    }
+    // Prefer the FP policy when a legacy profile split the views; use TP only if FP is absent.
+    for (const auto key : {L"Defense", L"SwingSelection"}) {
+        wchar_t value[32]{};
+        GetPrivateProfileStringW(L"FirstPerson", key, L"", value, 32, path);
+        if (value[0]) continue;
+        GetPrivateProfileStringW(L"ThirdPerson", key, L"", value, 32, path);
+        if (!value[0]) continue;
+        if (key[0] == L'D') s.fpDefense = fp::defenseModeFromText(value);
+        else s.fpSwingSelection = panel::iniSwingSelection(value);
     }
     s.normalize();
     return s;
@@ -225,6 +265,24 @@ static void awaitRawRegistration(bool enabling) {
          ++i)
         Sleep(25); // the worker registers within 100 ms
 }
+// Native Apply owns a draft. Merge only edited rows into the latest state so a
+// menu opened before a FOV key or raw-input fallback cannot overwrite that work.
+static void commitSettingsDraft(const panel::ModSettings& initial, const panel::ModSettings& draft) {
+    SettingsGuard guard;
+    const auto live = readLiveSettings();
+    auto merged = live;
+    for (int row = 0; row < panel::setting::count; ++row) {
+        if (panel::sameRow(row, initial, draft)) continue;
+        const auto& info = panel::rowInfo(row);
+        if (!info.key) continue;
+        if (info.value) merged.*info.value = draft.*info.value;
+        if (info.flag) merged.*info.flag = draft.*info.flag;
+    }
+    merged.normalize();
+    commitSettings(merged, live);
+    // Registration remains asynchronous on its existing worker. GUI maintenance
+    // must never wait for that worker while it owns the native Settings task.
+}
 // Bulk configuration remains available to the owned tests and explicit callers.
 // Interactive controls use applySetting below, which never accepts a stale image.
 [[maybe_unused]] static panel::ModSettings applySettings(const panel::ModSettings& want) {
@@ -242,7 +300,7 @@ static void awaitRawRegistration(bool enabling) {
 }
 // From the F8 window: choose the latest state and apply one row action while the
 // same lock excludes FOV keys, bulk changes, raw fallback, and persistence.
-static panel::SettingsChange applySetting(int row, int delta, int group) {
+[[maybe_unused]] static panel::SettingsChange applySetting(int row, int delta, int group) {
     panel::SettingsChange result;
     bool enablingRaw = false;
     {
