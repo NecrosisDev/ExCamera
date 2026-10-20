@@ -1,9 +1,54 @@
 // The session: installing the hooks, the game build and other mods' hooks, F7/F6, the status file, the worker loop, the DLL's exports.
 // Part of first_person.cpp (one translation unit): included there, in order.
+#include "held_throw_admission.inl"
 static void loadSettings(const wchar_t* path); // mod/settings.inl: every F8 setting from first-person.ini
 #include "../raw_registration.h"
 static void rawReconcile();
+// Stage a predecessor before the switch: a callback may arrive immediately.
+// The query/switch is not atomic against unrelated concurrent subclass installers.
+static bool installWindow(HWND w) {
+    const auto current = (WNDPROC)GetWindowLongPtrW(w, GWLP_WNDPROC);
+    if (!current || current == windowProc) return false;
+    AcquireSRWLockExclusive(&windowInstallationLock);
+    const uint64_t generation = windowInstallation.generation + 1;
+    windowInstallation = WindowInstallation{w, current, generation, false};
+    ReleaseSRWLockExclusive(&windowInstallationLock);
+    resetBindingWindowOwnership();
+    SetLastError(0);
+    const auto previous = (WNDPROC)SetWindowLongPtrW(w, GWLP_WNDPROC, (LONG_PTR)windowProc);
+    const bool installed = previous || GetLastError() == 0;
+    AcquireSRWLockExclusive(&windowInstallationLock);
+    const bool same = windowInstallation.window == w && windowInstallation.generation == generation;
+    if (same) {
+        if (installed) windowInstallation.previous = previous ? previous : current;
+        else windowInstallation.retired = true;
+    }
+    const bool live = same && installed && !windowInstallation.retired;
+    ReleaseSRWLockExclusive(&windowInstallationLock);
+    if (live) hookedWindow = w;
+    else if (hookedWindow == w) hookedWindow = nullptr;
+    return live;
+}
+static bool restoreWindow() {
+    const WindowInstallation owner = windowInstallationSnapshot();
+    if (!owner.previous || owner.retired || !IsWindow(owner.window)) return true;
+    const auto current = (WNDPROC)GetWindowLongPtrW(owner.window, GWLP_WNDPROC);
+    // Native destruction can run during the query. Do not restore its predecessor
+    // onto a newly recycled HWND. Query/switch still cannot serialize other installers.
+    const WindowInstallation checked = windowInstallationSnapshot();
+    if (checked.window != owner.window || checked.generation != owner.generation) return false;
+    if (checked.retired) return true;
+    if (current == windowProc) {
+        SetLastError(0);
+        const auto previous = SetWindowLongPtrW(owner.window, GWLP_WNDPROC, (LONG_PTR)owner.previous);
+        if (!previous && GetLastError()) return false;
+    } else if (current != owner.previous)
+        return false; // A later subclass can still hold our callback in its chain.
+    retireWindowInstallation(owner);
+    return true;
+}
 static bool arm(const char*& reason, const char*& hooks) {
+    suspendHeldThrow(); // No pending body may outlive a partial enable or rollback.
     const MH_STATUS enabled = MH_EnableHook(MH_ALL_HOOKS);
     if (enabled != MH_OK) {
         const bool rollback = disableNativeHooks() == MH_OK;
@@ -31,21 +76,7 @@ static bool arm(const char*& reason, const char*& hooks) {
         hookedWindow = nullptr;
         EnumWindows(findWindow, (LPARAM)&hookedWindow);
     }
-    originalWindowProc = nullptr;
-    if (hookedWindow) {
-        const auto current = (WNDPROC)GetWindowLongPtrW(hookedWindow, GWLP_WNDPROC);
-        if (current && current != windowProc) {
-            resetBindingWindowOwnership();
-            originalWindowProc =
-                current; // in place before the switch: a message arriving at once is forwarded
-            SetLastError(0);
-            const auto previous =
-                (WNDPROC)SetWindowLongPtrW(hookedWindow, GWLP_WNDPROC, (LONG_PTR)windowProc);
-            originalWindowProc =
-                previous ? previous : (GetLastError() ? nullptr : current); // whoever was there at the switch
-        }
-    }
-    if (!originalWindowProc) {
+    if (!hookedWindow || !installWindow(hookedWindow)) {
         const bool rollback = rollbackDispatch(true, true, true);
         reason = rollback ? "window_install_failed" : "window_rollback_failed";
         hooks = rollback ? "removed" : "unknown";
@@ -56,6 +87,7 @@ static bool arm(const char*& reason, const char*& hooks) {
         rawWanted = rawMouse;
     }
     rawReconcile();
+    armHeldThrow(); // Both lifetime hooks and the complete session now own their callbacks.
     return true;
 }
 static fp::RawRegistration rawRegistration() {
@@ -100,34 +132,57 @@ static bool rawReconcileTarget(HWND desired) {
     rawTarget = HWND(target);
     return ok;
 }
-// Recheck even while active: another component's later registration replaces ours.
-// Loss clears the relative-device latch so cursor deltas resume on the next sample.
+// Each raw registration belongs to a managed window generation, not just an HWND.
+// Retire before reusing the same numeric target; failed cleanup retries next tick.
+static uint64_t rawWindowGeneration = 0;
 static void rawReconcile() {
-    const bool want = rawWanted.load() && hookedWindow && IsWindow(hookedWindow);
-    if (!rawReconcileTarget(want ? hookedWindow : nullptr) && want) {
+    const WindowInstallation owner = windowInstallationSnapshot();
+    const bool live = owner.previous && !owner.retired && owner.window == hookedWindow &&
+                      IsWindow(owner.window);
+    const uint64_t generation = live ? owner.generation : 0;
+    if (rawWindowGeneration != generation) {
+        if (!rawReconcileTarget(nullptr)) return;
+        rawWindowGeneration = generation;
+    }
+    const bool want = rawWanted.load() && live;
+    const bool reconciled = rawReconcileTarget(want ? owner.window : nullptr);
+    const WindowInstallation checked = windowInstallationSnapshot();
+    if (checked.generation != owner.generation || checked.window != owner.window ||
+        checked.retired != owner.retired) {
+        // A query/registration may overlap native destruction. This is cleanup
+        // uncertainty, not evidence that the user's raw preference is unavailable.
+        if (rawReconcileTarget(nullptr)) rawWindowGeneration = 0;
+        return;
+    }
+    if (!reconciled && want) {
         SettingsGuard guard;
         rawWanted = false; // The settings page reports the effective fallback immediately.
     }
 }
-// If Exanima destroys its window (display mode
-// or resolution change) and makes a new one, the new one is subclassed so F6-F11,
-// F8 and focus release keep working. A window that still exists is never touched.
+// Worker only: fresh ownership observations, no gameplay locks held while waiting.
+static bool awaitRawRetirement() {
+    const ULONGLONG start = GetTickCount64();
+    for (;;) {
+        if (rawReconcileTarget(nullptr)) {
+            rawWindowGeneration = 0;
+            return true;
+        }
+        if (GetTickCount64() - start >= 1000) return false;
+        Sleep(50);
+    }
+}
+// Destruction is recorded by the callback, so a recycled HWND cannot hide it.
+// A live installation is left alone even when a later subclass chains through it.
 static std::atomic<unsigned> windowRehooks{0};
 static fp::SwapWatch swapWatch;
 static void rehookWindow() {
-    if (!originalWindowProc || (hookedWindow && IsWindow(hookedWindow))) return;
+    const WindowInstallation owner = windowInstallationSnapshot();
+    if (!owner.generation) return;
+    if (!owner.retired && owner.previous && IsWindow(owner.window)) return;
+    if (hookedWindow == owner.window) hookedWindow = nullptr;
     HWND w = nullptr;
     EnumWindows(findWindow, (LPARAM)&w);
-    if (!w) return;
-    const auto current = (WNDPROC)GetWindowLongPtrW(w, GWLP_WNDPROC);
-    if (current && current != windowProc) {
-        resetBindingWindowOwnership();
-        originalWindowProc = current; // the new window's chain (the old one is gone)
-        if (SetWindowLongPtrW(w, GWLP_WNDPROC, (LONG_PTR)windowProc)) {
-            hookedWindow = w;
-            ++windowRehooks;
-        }
-    }
+    if (w && installWindow(w)) ++windowRehooks;
 }
 // Worker thread: F7 stops only when held (fp::stopKeyStep); a short press shows
 // a hint instead. Clearing compares against the press it decided on.
@@ -176,6 +231,9 @@ static void waitForRearmKey() {
     bool wasDown = true;
     for (;;) {
         Sleep(20);
+        // Keep failed saves retryable while disabled, on the same writer thread.
+        static unsigned saveTick = 0;
+        if (++saveTick % 5 == 0) saveFov();
         pumpNotice();
         if (InterlockedExchange(&rearmRequested, 0) && !InterlockedCompareExchange(&emtkOff, 0, 0))
             return; // EMTK switched the mod back on (enable)
@@ -229,7 +287,7 @@ static bool resolveGame(const wchar_t* executable) {
             return false;
         }
         layout = candidate;
-        manualDefenseFieldMismatch = nativeContracts.optionalFailures != 0;
+        manualDefenseFieldMismatch = optionalContractFailed("manualDefense");
         int at = 0;
         degradedTargets[0] = 0;
         for (unsigned t = 0; t < fp::sig::targetCount && at >= 0 && at < int(sizeof degradedTargets); ++t)
@@ -272,7 +330,13 @@ static bool otherHooksCheck(const wchar_t* executable) {
         snprintf(faultDetail, sizeof faultDetail, "Exanima.exe could not be read");
         return false;
     }
-    if (!admitManualDefenseEntries(file)) {
+    // This optional closure proof is source-bound, unlike the core compatible
+    // build path. Recheck the established hash on initial install and F7/F6,
+    // alongside this freshly read file, rather than trusting cached startup status.
+    const bool optionalSourceVerified = fp::supportedExecutable(executable);
+    if (!admitManualDefenseEntries(file) ||
+        !admitAttackVariantsEntries(file, optionalSourceVerified) ||
+        !admitHeldThrowEntries(file, optionalSourceVerified)) {
         otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
         return false;
     }
@@ -421,6 +485,11 @@ static bool waitForGame() {
 }
 // The worker's running snapshot includes the shared activation acknowledgement.
 static void writeRunningStatus(FILE* f, const Aim& a) {
+    const auto names = readHandNamesStatus();
+    const float nearStatus = readRenderedNearStatus();
+    char dragName[17]{};
+    const unsigned dragFlags = dragFlagsStatus.load(std::memory_order_relaxed);
+    if (dragFlags) snprintf(dragName, sizeof dragName, "0x%x", dragFlags);
     fp::JsonOut j(f);
     writeActivationStatus(j);
     j.boolean("installed", true);
@@ -444,6 +513,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.str("tp_defense_requested", tpManualGuard.load() ? "manual" : "automatic");
     j.str("fp_defense_effective", manualDefenseReady.load() && fpManualGuard.load() ? "manual" : "automatic");
     j.str("tp_defense_effective", manualDefenseReady.load() && tpManualGuard.load() ? "manual" : "automatic");
+    j.str("attack_variant_capability", attackVariantsReasonText());
+    j.unum("attack_variant_admissions", attackVariantAdmissions.load());
+    j.unum("attack_variant_withdrawals", attackVariantWithdrawals.load());
+    j.unum("attack_variant_owner_faults", attackVariantOwnerFaults.load());
+    j.unum("attack_variant_handoffs", attackVariantHandoffs.load());
+    j.str("held_throw_capability", heldThrowReasonText());
+    j.boolean("held_throw_ready", heldThrowReady.load());
     j.unum("guard_denied", guardDenied.load());
     j.unum("guard_withdrawals", guardWithdrawals.load());
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
@@ -512,8 +588,8 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .num("expected", handExpected.load())
         .num("side", handSideSeen.load())
         .array("names")
-        .str(nullptr, handNames[0], 15)
-        .str(nullptr, handNames[1], 15)
+        .str(nullptr, names.names[0], 15)
+        .str(nullptr, names.names[1], 15)
         .end()
         .end();
     j.unum("pick_checks", pickChecks.load());
@@ -532,7 +608,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.end();
     j.unum("swing_hides", swingHides.load());
     j.str("look", "head");
-    j.real("near", double(renderedNear), 3);
+    j.real("near", double(nearStatus), 3);
     j.object("supersampling")
         .unum("scopes", supersampleScopes.load())
         .num("in_flight", InterlockedCompareExchange(&renderScopesInFlight, 0, 0))
@@ -569,9 +645,9 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.real("heading_turn", double(headingTurn.load()) * 57.29578, 2);
     j.unum("overhead_inputs_held", overheadInputsHeld.load());
     j.object("lean")
-        .boolean("held", leaning.load())
-        .real("side", leanSideNow.load(), 3)
-        .real("forward", leanForwardNow.load(), 3)
+        .boolean("held", false)
+        .real("side", 0., 3)
+        .real("forward", 0., 3)
         .end();
     j.object("head")
         .num("eye_setback", eyeSetback.load())
@@ -726,7 +802,17 @@ static DWORD runSession() {
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::coverDepth)), (void*)coverDepth, (void**)&originalCoverDepth) !=
             MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::resourceQueue), (void*)resourceQueue,
+                      (void**)&originalResourceQueue) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::inventoryComplete), (void*)inventoryComplete,
+                      (void**)&originalInventoryComplete) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::inventoryCommit), (void*)inventoryCommit,
+                      (void**)&originalInventoryCommit) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::inventoryAdmission), (void*)inventoryAdmission,
+                      (void**)&originalInventoryAdmission) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::dragPlace)), (void*)dragPlace, (void**)&originalDragPlace) !=
+            MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::heldUpdate), (void*)heldUpdate, (void**)&originalHeldUpdate) !=
             MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::heldQuery), (void*)heldQuery, (void**)&originalHeldQuery) !=
             MH_OK ||
@@ -770,6 +856,18 @@ static DWORD runSession() {
         MH_Uninitialize();
         awaitNativeHookRecovery();
         reportFault("manual_hook_rollback_failed", "not_installed", "not_required");
+        return 3;
+    }
+    if (!createAttackVariantsHooks()) {
+        MH_Uninitialize();
+        awaitNativeHookRecovery();
+        reportFault("attack_variant_hook_rollback_failed", "not_installed", "not_required");
+        return 3;
+    }
+    if (!createHeldThrowHooks()) {
+        MH_Uninitialize();
+        awaitNativeHookRecovery();
+        reportFault("held_throw_hook_rollback_failed", "not_installed", "not_required");
         return 3;
     }
     {
@@ -817,9 +915,9 @@ static DWORD runSession() {
                     aim.valid = false;
                     ReleaseSRWLockExclusive(&aimLock);
                 } // no nav frame ended the blend (parked, loading): end it as F6 did
-                f8WindowTick(InterlockedCompareExchange(&cursorFree, 0, 0) && gameWindow() != nullptr &&
+                f8WindowTick(InterlockedCompareExchange(&cursorFree, 0, 0) &&
                                  (InterlockedCompareExchange(&active, 0, 0) || title),
-                             title);
+                             gameWindow() != nullptr);
             }
             rehookWindow();
             rawReconcile();
@@ -846,14 +944,18 @@ static DWORD runSession() {
         InterlockedExchange(&stopping, 1);
         trackingReceiver.stop();
         setActivationPhase(fp::ActivationPhase::stopping);
+        suspendHeldThrow(); // Cancel before either lifetime hook can be disabled.
         saveFov();
         releaseInput();
-        const bool rawRetired = rawReconcileTarget(nullptr);
+        rawReconcileTarget(nullptr); // Begin cleanup while native owners retire.
         nativeSettingsBeforeStop();
         if (!awaitNativeSettings()) {
             reportFault("native_settings_retirement_pending", "retained", "pending");
             return 7;
         }
+        // Native Apply has retired: include its final accepted edits in the stop flush.
+        // Failed rows stay pending and retry while waiting for re-arm.
+        flushSettings();
         // Missing/minimized/teardown callbacks cannot make shutdown wait forever.
         // A timed-out module stays mapped with pass-through adapters and restoration
         // callbacks intact. Never free a trampoline another thread can still reach.
@@ -863,7 +965,7 @@ static DWORD runSession() {
                         unknown ? "unknown" : "pending");
             return 7;
         }
-        if (!rawRetired && rawTarget) {
+        if (!awaitRawRetirement()) {
             reportFault("raw_retirement_pending", "retained", "restored");
             return 7;
         }
@@ -872,17 +974,7 @@ static DWORD runSession() {
             return 7;
         }
         bool ok = rollbackDispatch(true, true, true);
-        if (hookedWindow && originalWindowProc &&
-            IsWindow(hookedWindow)) { // a destroyed window holds no subclass
-            const auto current = (WNDPROC)GetWindowLongPtrW(hookedWindow, GWLP_WNDPROC);
-            if (current == windowProc) {
-                SetLastError(0);
-                const auto previous =
-                    SetWindowLongPtrW(hookedWindow, GWLP_WNDPROC, (LONG_PTR)originalWindowProc);
-                ok = (previous != 0 || GetLastError() == 0) && ok;
-            } else if (current != originalWindowProc)
-                ok = false; // Another subclass still owns a callback chain.
-        }
+        ok = restoreWindow() && ok;
         InterlockedExchange(&restored, ok);
         if (!ok) {
             reportFault("stop_rollback_failed", "unknown", "restored");
@@ -949,6 +1041,10 @@ static DWORD runSession() {
 static void finishSessionWorker(bool (*noticePump)() = pumpNotice) {
     for (;;) {
         awaitNativeHookRecovery();
+        // Suspension debt must clear first: a suspended callback may own settingsLock.
+        // Fault notices/native retirement can remain pending indefinitely. Keep their
+        // accepted edits retrying here, on the same persistence owner as runSession.
+        saveFov();
         const bool notice = noticePump();
         if (!notice && !nativeHookRecoveryPending()) return;
         hookRecoveryWait(50);
@@ -956,8 +1052,10 @@ static void finishSessionWorker(bool (*noticePump)() = pumpNotice) {
 }
 static DWORD WINAPI run(void*) {
     const DWORD result = runSession();
+    suspendHeldThrow(); // Includes every early/fault exit with retained hooks.
     trackingReceiver.stop(); // includes early/fault exits and retained-hook sessions
     finishSessionWorker();
+    flushSettings(); // final best-effort pass, still on the sole persistence owner
     return result;
 }
 // Started only by `enable` (our launcher calls it right after loading the DLL; EMTK's native plugin loader

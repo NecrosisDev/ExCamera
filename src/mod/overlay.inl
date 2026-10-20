@@ -30,7 +30,22 @@ using VertexAttribPointer = void(APIENTRY*)(GLuint, GLint, GLenum, GLboolean, GL
 using EnableVertexAttribArray = void(APIENTRY*)(GLuint);
 using BlendFuncSeparate = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
 using BlendEquationSeparate = void(APIENTRY*)(GLenum, GLenum);
+using GetStringi = const GLubyte*(APIENTRY*)(GLenum, GLuint);
+using ColorMaskIndexed = void(APIENTRY*)(GLuint, GLboolean, GLboolean, GLboolean, GLboolean);
+using EnableIndexed = void(APIENTRY*)(GLenum, GLuint);
+using BlendFuncSeparateIndexed = void(APIENTRY*)(GLuint, GLenum, GLenum, GLenum, GLenum);
+using BlendEquationSeparateIndexed = void(APIENTRY*)(GLuint, GLenum, GLenum);
+using ViewportIndexed = void(APIENTRY*)(GLuint, GLfloat, GLfloat, GLfloat, GLfloat);
+using BindFragDataLocation = void(APIENTRY*)(GLuint, GLuint, const GLchar*);
 struct Api {
+    bool indexedMasks = false, indexedBlend = false, viewportArrays = false, modernShaders = false;
+    GLint maxDrawBuffers = 0;
+    ColorMaskIndexed colorMaskIndexed = nullptr;
+    EnableIndexed enableIndexed = nullptr, disableIndexed = nullptr;
+    BlendFuncSeparateIndexed blendFuncIndexed = nullptr;
+    BlendEquationSeparateIndexed blendEquationIndexed = nullptr;
+    ViewportIndexed viewportIndexed = nullptr;
+    BindFragDataLocation bindFragDataLocation = nullptr;
     CreateShader createShader;
     ShaderSource shaderSource;
     CompileShader compileShader;
@@ -68,7 +83,80 @@ template <class T> static bool loadGl(T& f, const char* name) {
     f = (T)wglGetProcAddress(name);
     return f && (uintptr_t)f > 3 && (intptr_t)f != -1;
 }
+// Capabilities belong to the current context. A missing advertised entry point
+// omits this optional cue; it must never turn an indexed family into broadcast writes.
+static bool loadCueStateApi(gl::Api& g) {
+    drainGl();
+    const char* version = (const char*)glGetString(GL_VERSION);
+    if (!version || version[0] < '0' || version[0] > '9') return false; // Not desktop GL.
+    char* end = nullptr;
+    const long major = std::strtol(version, &end, 10);
+    if (*end != '.' || end[1] < '0' || end[1] > '9') return false;
+    const long minor = std::strtol(end + 1, &end, 10);
+    if (major < 2 || major > 99 || minor < 0 || minor > 99 ||
+        (*end && *end != '.' && *end != ' ')) return false;
+    if (*end == '.') {
+        ++end;
+        if (*end < '0' || *end > '9') return false;
+        while (*end >= '0' && *end <= '9') ++end;
+        if (*end && *end != ' ') return false;
+    }
+    const auto atLeast = [=](int a, int b) { return major > a || (major == a && minor >= b); };
+    bool masks = false, blend = false, amdBlend = false, viewports = false;
+    const auto extension = [&](const char* name, size_t size) {
+        const auto is = [&](const char* wanted) {
+            return std::strlen(wanted) == size && std::memcmp(name, wanted, size) == 0;
+        };
+        masks = masks || is("GL_EXT_draw_buffers2");
+        blend = blend || is("GL_ARB_draw_buffers_blend");
+        amdBlend = amdBlend || is("GL_AMD_draw_buffers_blend");
+        viewports = viewports || is("GL_ARB_viewport_array");
+    };
+    if (atLeast(3, 0)) {
+        gl::GetStringi getStringi = nullptr;
+        GLint count = -1;
+        if (!loadGl(getStringi, "glGetStringi")) return false;
+        glGetIntegerv(0x821D /*NUM_EXTENSIONS*/, &count);
+        if (count < 0 || count > 65536 || glGetError() != GL_NO_ERROR) return false;
+        for (GLint i = 0; i < count; ++i) {
+            const char* name = (const char*)getStringi(GL_EXTENSIONS, GLuint(i));
+            if (!name || !*name || std::strpbrk(name, " \t\r\n")) return false;
+            extension(name, std::strlen(name));
+        }
+    } else {
+        const char* names = (const char*)glGetString(GL_EXTENSIONS);
+        if (!names || std::strpbrk(names, "\t\r\n")) return false;
+        while (*names) {
+            while (*names == ' ') ++names;
+            const char* first = names;
+            while (*names && *names != ' ') ++names;
+            if (names != first) extension(first, size_t(names - first));
+        }
+    }
+    g.modernShaders = atLeast(3, 0);
+    g.indexedMasks = g.modernShaders || masks;
+    g.indexedBlend = atLeast(4, 0) || blend || amdBlend;
+    g.viewportArrays = atLeast(4, 1) || viewports;
+    if (g.indexedBlend && !g.indexedMasks) return false; // Inconsistent extension inventory.
+    if (g.indexedMasks &&
+        !loadGl(g.colorMaskIndexed, g.modernShaders ? "glColorMaski" : "glColorMaskIndexedEXT")) return false;
+    if ((g.indexedMasks || g.viewportArrays) &&
+        (!loadGl(g.enableIndexed, g.modernShaders ? "glEnablei" : "glEnableIndexedEXT") ||
+         !loadGl(g.disableIndexed, g.modernShaders ? "glDisablei" : "glDisableIndexedEXT"))) return false;
+    if (g.indexedBlend) {
+        const char* function = atLeast(4, 0) ? "glBlendFuncSeparatei" :
+                               blend ? "glBlendFuncSeparateiARB" : "glBlendFuncSeparateIndexedAMD";
+        const char* equation = atLeast(4, 0) ? "glBlendEquationSeparatei" :
+                               blend ? "glBlendEquationSeparateiARB" : "glBlendEquationSeparateIndexedAMD";
+        if (!loadGl(g.blendFuncIndexed, function) || !loadGl(g.blendEquationIndexed, equation)) return false;
+    }
+    if (g.viewportArrays && !loadGl(g.viewportIndexed, "glViewportIndexedf")) return false;
+    if (g.modernShaders && !loadGl(g.bindFragDataLocation, "glBindFragDataLocation")) return false;
+    glGetIntegerv(0x8824 /*MAX_DRAW_BUFFERS*/, &g.maxDrawBuffers);
+    return g.maxDrawBuffers > 0 && g.maxDrawBuffers <= 64 && glGetError() == GL_NO_ERROR;
+}
 static bool loadCueApi(gl::Api& g) {
+    if (!loadCueStateApi(g)) return false;
     g.getIntegerv = glGetIntegerv;
     g.getError = glGetError;
     return loadGl(g.createShader, "glCreateShader") && loadGl(g.shaderSource, "glShaderSource") &&
@@ -210,9 +298,26 @@ static CueContext* prepareCue() { // cueLock held by the draw
     if (!owner) return nullptr;
     if (!owner->attempted) {
         owner->attempted = true;
-        owner->failed = !cueApiLoader(owner->api) || !owner->resources.prepare(owner->api);
+        owner->failed = !cueApiLoader(owner->api);
     }
     return owner->failed ? nullptr : owner;
+}
+static void cueEnable(const gl::Api& g, GLenum cap, bool enabled) {
+    if ((cap == GL_BLEND && g.indexedMasks) || (cap == GL_SCISSOR_TEST && g.viewportArrays))
+        (enabled ? g.enableIndexed : g.disableIndexed)(cap, 0);
+    else
+        (enabled ? glEnable : glDisable)(cap);
+}
+// Only output zero may be active. This is a temporary frame omission, not an
+// API failure: the next native swap can have different framebuffer routing.
+static bool cueOutputReady(const gl::Api& g) {
+    drainGl();
+    for (GLint i = 0; i < g.maxDrawBuffers; ++i) {
+        GLint destination = -1;
+        glGetIntegerv(0x8825 /*DRAW_BUFFER0*/ + GLenum(i), &destination);
+        if (destination < 0 || (i == 0 ? destination == GL_NONE : destination != GL_NONE)) return false;
+    }
+    return glGetError() == GL_NO_ERROR;
 }
 // The game's "CursorCom" option (the player's combat cursor colour) is stored here as RGBA bytes; its
 // setter is 0x12B830 and the cursor draw 0x13E9C0 tints the combat crosshair with it.
@@ -226,19 +331,24 @@ static bool drawCueOwned(fp::CueSide side, float x, float y, float fill, float a
     if (!(alpha > 0) ||
         !fp::cueArc(side, x, y, cursorPx, cueSize.load(), fill, arc, int(sizeof arc / sizeof(float)), counts))
         return true;
+    GLint framebuffer = 0;
+    drainGl();
+    glGetIntegerv(0x8CA6, &framebuffer);
+    if (framebuffer != 0 || glGetError() != GL_NO_ERROR) return true; // Not the presented image.
     auto* owner = prepareCue();
     if (!owner) return false;
-    auto& resources = owner->resources;
-    GLint framebuffer = 0;
-    glGetIntegerv(0x8CA6, &framebuffer);
-    if (framebuffer != 0) return true; // Not the presented image.
     auto& g = owner->api;
+    if (!cueOutputReady(g)) return true;
+    auto& resources = owner->resources;
+    if (!resources.ready() && !resources.prepare(g)) return false;
     GLint program = 0, vao = 0, buffer = 0, viewport[4]{}, src[2]{}, dst[2]{}, eq[2]{};
+    GLfloat viewportFloat[4]{};
     GLboolean mask[4]{};
     glGetIntegerv(0x8B8D, &program);
     glGetIntegerv(0x85B5, &vao);
     glGetIntegerv(0x8894, &buffer);
-    glGetIntegerv(GL_VIEWPORT, viewport);
+    if (g.viewportArrays) glGetFloatv(GL_VIEWPORT, viewportFloat);
+    else glGetIntegerv(GL_VIEWPORT, viewport);
     glGetIntegerv(0x80C9, &src[0]);
     glGetIntegerv(0x80CB, &src[1]);
     glGetIntegerv(0x80C8, &dst[0]);
@@ -251,15 +361,22 @@ static bool drawCueOwned(fp::CueSide side, float x, float y, float fill, float a
                            0x8C89 /*RASTERIZER_DISCARD*/};
     GLboolean enabled[7];
     for (int i = 0; i < 7; ++i) enabled[i] = glIsEnabled(caps[i]);
-    drainGl();
+    if (glGetError() != GL_NO_ERROR) return true; // Never restore an incomplete snapshot.
     bool ok = false;
     __try {
-        glViewport(0, 0, width, height);
-        for (int i = 1; i < 7; ++i) glDisable(caps[i]);
-        glEnable(GL_BLEND);
-        g.blendEquationSeparate(0x8006, 0x8006);
-        g.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        glColorMask(1, 1, 1, 1);
+        if (g.viewportArrays) g.viewportIndexed(0, 0, 0, float(width), float(height));
+        else glViewport(0, 0, width, height);
+        for (int i = 1; i < 7; ++i) cueEnable(g, caps[i], false);
+        cueEnable(g, GL_BLEND, true);
+        if (g.indexedBlend) {
+            g.blendEquationIndexed(0, 0x8006, 0x8006);
+            g.blendFuncIndexed(0, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        } else {
+            g.blendEquationSeparate(0x8006, 0x8006);
+            g.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        }
+        if (g.indexedMasks) g.colorMaskIndexed(0, 1, 1, 1, 1);
+        else glColorMask(1, 1, 1, 1);
         g.useProgram(resources.program);
         g.bindVertexArray(resources.vao);
         g.bindBuffer(0x8892, resources.vbo);
@@ -299,11 +416,19 @@ static bool drawCueOwned(fp::CueSide side, float x, float y, float fill, float a
         g.useProgram(GLuint(program));
         g.bindVertexArray(GLuint(vao));
         g.bindBuffer(0x8892, GLuint(buffer));
-        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-        g.blendFuncSeparate(src[0], dst[0], src[1], dst[1]);
-        g.blendEquationSeparate(eq[0], eq[1]);
-        glColorMask(mask[0], mask[1], mask[2], mask[3]);
-        for (int i = 0; i < 7; ++i) (enabled[i] ? glEnable : glDisable)(caps[i]);
+        if (g.viewportArrays)
+            g.viewportIndexed(0, viewportFloat[0], viewportFloat[1], viewportFloat[2], viewportFloat[3]);
+        else glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        if (g.indexedBlend) {
+            g.blendFuncIndexed(0, src[0], dst[0], src[1], dst[1]);
+            g.blendEquationIndexed(0, eq[0], eq[1]);
+        } else {
+            g.blendFuncSeparate(src[0], dst[0], src[1], dst[1]);
+            g.blendEquationSeparate(eq[0], eq[1]);
+        }
+        if (g.indexedMasks) g.colorMaskIndexed(0, mask[0], mask[1], mask[2], mask[3]);
+        else glColorMask(mask[0], mask[1], mask[2], mask[3]);
+        for (int i = 0; i < 7; ++i) cueEnable(g, caps[i], enabled[i] != 0);
         drainGl();
     }
     if (ok) ++cueDraws;
@@ -350,6 +475,10 @@ static constexpr unsigned windowInventory = 0xCE1C2010, windowLoot = 0xCE1C2040,
                           windowDescription = 0xCE1C2012;
 static constexpr unsigned windowShop = 0xCE1C2023,
                           windowArsenal = 0xCE1C2024; // the arena merchant and its arsenal
+// Native arena forms: 194CD0, 19A370, 198AF0 and 198E40 respectively.
+// Their visible lifetime, not the hovered child row, owns the free cursor.
+static constexpr unsigned windowMatches = 0xCE10AE10, windowCompany = 0xCE10AE20,
+                          windowCompanyRecords = 0xCE10AE21, windowCompanyStatus = 0xCE10AE22;
 // dialogueActive: a u8 flag; dialogueChoices: the choices form (both sit on the game's view, not in a window list).
 static bool formShown(uintptr_t f) {
     return readable(f, 0x120) && *(unsigned char*)(f + field::form::visible) &&
@@ -372,7 +501,8 @@ static unsigned taskShowsWindow(uintptr_t task) {
         if (!formShown(f)) continue;
         const unsigned kind = *(unsigned*)(f + field::form::kind);
         if (kind == windowInventory || kind == windowLoot || kind == windowContainer || kind == windowShop ||
-            kind == windowArsenal)
+            kind == windowArsenal || kind == windowMatches || kind == windowCompany ||
+            kind == windowCompanyRecords || kind == windowCompanyStatus)
             shown |= 1;
         else if (kind == windowDescription)
             shown |= 2;
@@ -384,6 +514,10 @@ static unsigned gameWindowOpen() {
                     activeTask = *(uintptr_t*)(gameAt(fp::sig::activeGuiTask)),
                     desktop = *(uintptr_t*)(gameAt(fp::sig::guiDesktop));
     unsigned shown = taskShowsWindow(inGame);
+    // Native 139430 visits both owners: arena windows can be children of the
+    // desktop even while the in-game task is active. Omitting it lets look
+    // recapture at a form's empty margins as native hover returns to the world.
+    if (desktop != inGame) shown |= taskShowsWindow(desktop);
     if (activeTask != inGame && activeTask != desktop) shown |= taskShowsWindow(activeTask);
     const uintptr_t endMenu = *(uintptr_t*)(gameAt(fp::sig::endMatchMenu));
     if (endMenu && formShown(endMenu)) shown |= 1;

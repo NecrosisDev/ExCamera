@@ -12,17 +12,22 @@
 // - native GUI maintenance: native settings create/update/retirement on the game GUI owner.
 // Values one thread writes and others read are atomics or Interlocked, or sit behind a lock below; the
 // rest is used by one thread (most of it says which in its comment).
-// Locks (SRW, never recursive). Nested only in this order (every function that takes one was read for it):
-// cameraLock -> aimLock -> rawLock
-// cameraLock -> reticleLock, hideLock, tpHideLock, reachHeadLock, crouchLock
+// Reviewed nested acquisitions (SRW, never recursive):
+// cameraLock -> aimLock; aimLock -> rawLock, worldPointerLock
+// cameraLock -> reticleLock, hideLock, tpHideLock, reachHeadLock, crouchLock, heldThrowLock, rawLock
+// cameraLock or settingsLock -> TrackingUdp's sample lock (copy-only leaf).
+// worldPointerLock and handNamesLock are leaf publication locks: no nested locks or native calls.
 // reachHeadLock, crouchLock and guardLock only copy publications; no other lock or native call is entered under them.
-// settingsLock serializes UI actions, FOV keys and INI writes. It is not nested
-// with these locks, and is released before waiting for the worker's raw registration.
+// heldThrowLock owns gesture/ticket cancellation and the final staged history delta. Native queue,
+// release, integration and destruction calls run after releasing it; it takes no other mod lock.
+// settingsLock serializes UI actions, FOV keys and persistence acknowledgements. Apart from the
+// tracking sample copy, it does not nest these locks; raw registration and waits occur after release.
 // cueLock owns overlay resources and retirement; it never nests game-state locks.
 // Native WGL context switches/deletion run after releasing it.
-// cameraLock (CameraGuard) guards the camera publication: what nav writes into the game's camera, the saved
-// stock values and their restoration. Nothing waits while holding it: awaitRestore polls with
-// TryAcquire and sleeps without it, so a stop can never deadlock against a frame in progress.
+// cameraLock (CameraGuard) guards camera publication, saved stock values and restoration, including
+// the reviewed native sampler/math calls. Retirement polling releases owner locks before sleeping:
+// awaitRestore uses TryAcquire for its snapshot, and pose/cue waits run outside cameraLock.
+// The session worker drains native hook suspension debt before cancellation or callback-retirement waits.
 static uintptr_t base;
 // Where each game target is in this game build (game_layout.h). Until activation resolves it, the
 // source build's addresses, which the offline suites' fake memory is laid out by.
@@ -347,7 +352,23 @@ static std::atomic<int> cueOrigin{0}; // fp::CueSide before roll, from the swing
 // Last hand resolution (diagnostic): slot, hand, expected hand, hand side, grip class.
 static std::atomic<int> handSlot{-1}, handIndex{-1}, handExpected{-1}, handSideSeen{0}, handGrip{-1},
     handCount{-1};
-static char handNames[2][16]{}; // Hand part mesh names; written by the game thread, read for status only.
+// Hand mesh names are published together after native reads and sanitization finish.
+struct HandNamesStatus {
+    char names[2][16]{};
+};
+static SRWLOCK handNamesLock = SRWLOCK_INIT;
+static HandNamesStatus handNamesStatus;
+static void publishHandNames(const HandNamesStatus& names) {
+    AcquireSRWLockExclusive(&handNamesLock);
+    handNamesStatus = names;
+    ReleaseSRWLockExclusive(&handNamesLock);
+}
+static HandNamesStatus readHandNamesStatus() {
+    AcquireSRWLockShared(&handNamesLock);
+    const auto names = handNamesStatus;
+    ReleaseSRWLockShared(&handNamesLock);
+    return names;
+}
 static std::atomic<unsigned> cueDraws{0}, uiReticleReads{0};
 // Diagnostic: does the pick ray's camera (viewport+0x1C0, read by 0x8F460 for
 // near/pose) equal the camera first person writes? -1 unknown, 0 no, 1 yes.
@@ -370,11 +391,20 @@ static LevelRay levelRay, levelRay2;
 static volatile LONG rawRegistered = 0;
 static fp::RawLook rawLook; // Guarded by rawLock.
 static SRWLOCK rawLock = SRWLOCK_INIT;
-static WNDPROC originalWindowProc;
+// One managed subclass installation. Callback-local copies survive retirement/replacement.
+// Never hold this lock across a window API or a native procedure call.
+struct WindowInstallation {
+    HWND window = nullptr;
+    WNDPROC previous = nullptr;
+    uint64_t generation = 0;
+    bool retired = false;
+};
+static SRWLOCK windowInstallationLock = SRWLOCK_INIT;
+static WindowInstallation windowInstallation;
 static HWND hookedWindow;
 static float stockPose[12]{}, stockFov = 30;
 static std::atomic<int> selectedFov{75};
-// UI actions, FOV keys, and INI persistence share one settings owner. This lock
+// UI actions and FOV keys publish under one settings lock. Disk I/O never owns it. This lock
 // is never nested with camera/input locks or held while waiting for raw input.
 static SRWLOCK settingsLock = SRWLOCK_INIT;
 struct SettingsGuard {
@@ -383,9 +413,14 @@ struct SettingsGuard {
     SettingsGuard(const SettingsGuard&) = delete;
     SettingsGuard& operator=(const SettingsGuard&) = delete;
 };
+static void queueFovSaveLocked(); // mod/settings.inl; caller owns settingsLock
 static void adjustFov(int delta, bool reset = false) {
     SettingsGuard guard;
-    selectedFov = reset ? 75 : fp::clampFov(selectedFov.load() + delta);
+    const int value = reset ? 75 : fp::clampFov(selectedFov.load() + delta);
+    if (value != selectedFov.load()) {
+        selectedFov = value;
+        queueFovSaveLocked();
+    }
 }
 static std::atomic<int> nearClip{
     fp::nearClipDefaultTenths};  // [Camera] NearClip: the dynamic near plane's floor, tenths of a cm
@@ -495,17 +530,9 @@ static std::wstring userSettingsDir(const std::wstring& profile, const std::wstr
 }
 static std::atomic<int> persistedFov{75}; // status reads without taking the settings lock
 static bool settingsSavePending(); // mod/settings.inl; coherent status for every saved row
-static void retrySettingsRowsLocked(unsigned budget); // mod/settings.inl; caller holds settingsLock
-static void saveFov() {
-    SettingsGuard guard;
-    const int value = selectedFov.load();
-    if (settingsPath[0] && value != persistedFov.load()) {
-        wchar_t text[16];
-        swprintf_s(text, L"%d", value);
-        if (WritePrivateProfileStringW(L"Camera", L"FOV", text, settingsPath)) persistedFov = value;
-    }
-    retrySettingsRowsLocked(4);
-}
+static void persistSettingsRows(unsigned budget); // mod/settings.inl; session worker only
+static void flushSettings(); // same owner, one full pass after native Apply retires
+static void saveFov() { persistSettingsRows(4); }
 static unsigned inputClock = ~0u;
 static wchar_t statusPath[MAX_PATH]{}, statusTempPath[MAX_PATH]{};
 static FILE* openStatus() {
@@ -671,6 +698,13 @@ static std::atomic<unsigned> controlCalls{0}, pointCalls{0}, relaxedSteps{0};
 static volatile LONG navThread = 0, swapThread = 0;
 static HANDLE instanceMutex;
 static SRWLOCK cameraLock = SRWLOCK_INIT;
+// Worker-only snapshot: release the owner lock before formatting or writing status.
+static float readRenderedNearStatus() {
+    AcquireSRWLockShared(&cameraLock);
+    const float value = renderedNear;
+    ReleaseSRWLockShared(&cameraLock);
+    return value;
+}
 static fp::NearPlane nearPlane; // dynamic near plane (cameraLock)
 static uintptr_t filterRoot = 0, filterHead = 0;
 static LARGE_INTEGER filterTime{}, frequency{};
@@ -810,51 +844,46 @@ static std::atomic<float> grabStartDistance{0};
 static std::atomic<bool> hoverOutOfRange{false};
 static std::atomic<ULONGLONG> hoverRangeAt{0};
 static std::atomic<int> rotateHeldKey{0x02};
-// Temporarily disabled by owner request. Keep legacy preference fields for
-// a future redesign, but never claim their physical keys or change torso pose.
-// Manual RMB guard and held-item rotation retain their existing priority.
-static constexpr bool explicitLeanEnabled = false;
+// Preserve legacy INI preferences only. Explicit leaning is disabled; these
+// values never claim input or change torso pose.
 static std::atomic<int> leanKey{0x12};
 // Heading correction modifies the native head's achieved pose; no synthetic camera turn lead.
 static std::atomic<bool> holdHeadingOn{true};
 static std::atomic<float> headingTurn{0};
-static std::atomic<bool> leaning{false}, leanKeysMode{false};
-static std::atomic<int> leanLeftKey{0}, leanRightKey{0}, leanKeySide{0};
+static std::atomic<bool> leanKeysMode{false};
+static std::atomic<int> leanLeftKey{0}, leanRightKey{0};
 // Overhead controls kept from the game while the mod owns the camera: the wheel's zoom (status).
 static std::atomic<unsigned> overheadInputsHeld{0};
-static std::atomic<float> leanMouseX{0}, leanMouseY{0}, leanSideNow{0}, leanForwardNow{0};
 static std::atomic<bool> heldRotating{false};
 static std::atomic<float> heldTurnX{0}, heldTurnY{0};
 static std::atomic<unsigned> heldTurns{0};
+static void clearHeldThrow(bool cancelQueued = true);
 static void releaseInteractionInput() {
+    clearHeldThrow();
     hoverOutOfRange = false;
     hoverRangeAt = 0;
-    leaning = false;
     heldRotating = false;
-    leanKeySide = 0;
-    leanMouseX = leanMouseY = heldTurnX = heldTurnY = 0.f;
-    leanSideNow = leanForwardNow = 0.f;
+    heldTurnX = heldTurnY = 0.f;
 }
-// The fling (fp::flingHistory): the push the placement measured (its outward speed, cm/s, when, and along which
-// ray), the physics step measured from the player's pose builds (s; 0 until known), and how many flung.
-static std::atomic<float> pushSpeed{0}, pushDir[3]{};
-static std::atomic<ULONGLONG> pushAt{0};
+// Pose cadence is a legacy diagnostic only, never release physics timing.
 static std::atomic<unsigned> playerSteps{0}, flings{0};
 static std::atomic<float> physicsStep{0};
 static std::atomic<uintptr_t> holdObject{0};
 // A scene-node address can be grabbed repeatedly. Placement caches belong to a grab, not an address;
 // the grab-start hook invalidates them even if no idle placement ran between release and re-grab.
+// Metadata-only epoch: view/focus/session boundaries cannot revive an inventory preview verdict.
+static std::atomic<ULONGLONG> inventoryOwnerEpoch{0};
 static std::atomic<ULONGLONG> holdGeneration{0};
 static void resetHeldGrab() {
+    // Cancel under the final throw-commit lock before changing the grab generation.
+    clearHeldThrow();
     holdObject = 0;
     grabStartDistance = 0.f;
-    pushSpeed = 0.f;
-    pushAt = 0;
     heldTurnX = heldTurnY = 0.f;
     ++holdGeneration;
 }
 static ULONGLONG holdTick = 0;
-static char dragName[17]{}; // status: the drag manager's flags while a drag is on
+static std::atomic<unsigned> dragFlagsStatus{0}; // diagnostic mirror; formatted only by the worker
 static bool readable(uintptr_t address, size_t size);
 static const char* nodeName(uintptr_t node);
 static int dragKind(uintptr_t* object = nullptr);
@@ -868,10 +897,7 @@ static int dragKind(uintptr_t* object) {
     const unsigned flags = *(unsigned*)(drag + 8);
     const uintptr_t o = *(uintptr_t*)(drag + field::drag::object);
     if (object) *object = o;
-    if (flags)
-        snprintf(dragName, sizeof dragName, "0x%x", flags);
-    else
-        dragName[0] = 0;
+    dragFlagsStatus.store(flags, std::memory_order_relaxed);
     if (flags & 0x2000) return readable(o, 0x168) ? 1 : 0;
     if (flags & (0x4000 | 0x10000 | 0x20000 | 0x80000)) return 2;
     return 0;

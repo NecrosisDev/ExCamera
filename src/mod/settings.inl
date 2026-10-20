@@ -4,12 +4,13 @@
 // The F8 settings live in the atomics the threads read; panel::ModSettings is their value as a whole, and
 // panel::rowInfo says, per row, which field and which [section] key in first-person.ini. Reading, writing
 // and comparing go through that table: a setting is described once.
-// Only row identities are queued: every retry reads the latest live value under
-// settingsLock, so an older failed save cannot overwrite a newer edit.
-static std::array<bool, panel::setting::count> pendingSettingsRows{};
+// Revisions belong to settingsLock. Only the session worker writes INI rows;
+// it snapshots one revision, releases the lock for disk I/O, then acknowledges
+// that revision. An edit accepted during an old write remains pending.
+static std::array<uint64_t, panel::setting::count> settingsRevision{}, savedSettingsRevision{};
+static void queueFovSaveLocked() { ++settingsRevision[panel::setting::fov]; }
 static bool settingsSavePendingLocked() {
-    return selectedFov.load() != persistedFov.load() ||
-           std::any_of(pendingSettingsRows.begin(), pendingSettingsRows.end(), [](bool dirty) { return dirty; });
+    return settingsRevision != savedSettingsRevision;
 }
 static bool settingsSavePending() {
     SettingsGuard guard;
@@ -231,35 +232,50 @@ static bool saveRow(int r, const panel::ModSettings& s) {
     swprintf_s(t, L"%d", v);
     return saveSetting(i.section, i.key, t);
 }
-// Caller holds settingsLock through persistence and publication. A worker save
-// must never finish after a newer panel write and mark the older FOV as saved.
+// Caller owns settingsLock. Publish accepted state immediately; never perform
+// disk I/O or wait for the session worker from a settings callback.
 static bool commitSettings(const panel::ModSettings& s, const panel::ModSettings& was) {
-    bool saved = true;
-    for (int r = 0; r < panel::setting::count; ++r)
-        if (!panel::sameRow(r, s, was) || pendingSettingsRows[r]) {
-            const bool written = saveRow(r, s);
-            saved = written && saved;
-            if (r == panel::setting::fov && written) persistedFov = s.fov;
-            if (r != panel::setting::fov) pendingSettingsRows[r] = !written;
-        }
     writeLiveSettings(s);
-    return saved;
+    for (int r = 0; r < panel::setting::count; ++r)
+        if (panel::rowInfo(r).key && !panel::sameRow(r, s, was)) ++settingsRevision[r];
+    return !settingsSavePendingLocked();
 }
-// The worker retries at most `budget` rows per tick, in round-robin order. FOV
-// keeps its existing selected/persisted marker and is saved by saveFov itself.
-static void retrySettingsRowsLocked(unsigned budget) {
+// Session worker only: the one persistence owner, including shutdown flushes.
+// Never call this from Apply or from a second background writer.
+static void persistSettingsRow(unsigned row) {
+    panel::ModSettings snapshot;
+    uint64_t revision;
+    {
+        SettingsGuard guard;
+        revision = settingsRevision[row];
+        if (revision == savedSettingsRevision[row]) return;
+        snapshot = readLiveSettings();
+    }
+    const bool written = saveRow(int(row), snapshot); // no runtime lock across disk I/O
+    if (written) {
+        SettingsGuard guard;
+        savedSettingsRevision[row] = revision; // not the potentially newer live revision
+        if (row == panel::setting::fov) persistedFov = snapshot.fov;
+    }
+}
+static void persistSettingsRows(unsigned budget) {
     if (!settingsPath[0] || !budget) return;
-    static unsigned next = 0;
-    const panel::ModSettings current = readLiveSettings();
+    persistSettingsRow(panel::setting::fov); // preserve prompt FOV hotkey persistence
+    static unsigned next = 0; // worker-owned round-robin cursor
     unsigned attempted = 0;
     for (unsigned scanned = 0; scanned < panel::setting::count && attempted < budget; ++scanned) {
         const unsigned row = next;
         next = (next + 1) % panel::setting::count;
-        if (!pendingSettingsRows[row]) continue;
+        if (row == panel::setting::fov) continue;
+        {
+            SettingsGuard guard;
+            if (settingsRevision[row] == savedSettingsRevision[row]) continue;
+        }
         ++attempted;
-        if (saveRow(int(row), current)) pendingSettingsRows[row] = false;
+        persistSettingsRow(row);
     }
 }
+static void flushSettings() { persistSettingsRows(panel::setting::count); }
 static void awaitRawRegistration(bool enabling) {
     for (int i = 0; i < 20 && enabling && !InterlockedCompareExchange(&rawRegistered, 0, 0) && rawWanted.load();
          ++i)
@@ -299,7 +315,7 @@ static void commitSettingsDraft(const panel::ModSettings& initial, const panel::
     return currentSettings();
 }
 // From the F8 window: choose the latest state and apply one row action while the
-// same lock excludes FOV keys, bulk changes, raw fallback, and persistence.
+// same lock excludes FOV keys, bulk changes, and raw fallback.
 [[maybe_unused]] static panel::SettingsChange applySetting(int row, int delta, int group) {
     panel::SettingsChange result;
     bool enablingRaw = false;

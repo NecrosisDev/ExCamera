@@ -1,67 +1,239 @@
 """Build the ExCamera runtime from repository root on Windows x64.
-Requires Python 3, Visual Studio 2022 C++ Build Tools, and the Windows SDK.
+Requires Python 3.8 or newer, Visual Studio 2022 C++ Build Tools, and the Windows SDK.
 No game executable or research files are distributed or needed to compile.
 """
 from pathlib import Path
-import argparse, os, subprocess, sys, hashlib, zipfile, shutil, re
-ROOT=Path(__file__).resolve().parent
-SRC=ROOT/'src'
-OUT=ROOT/'build'
-MINHOOK=['vendor/minhook/src/buffer.c','vendor/minhook/src/hook.c',
-         'vendor/minhook/src/trampoline.c','vendor/minhook/src/hde/hde64.c']
-CL='cl /nologo /MT /O2 /std:c++17 /EHsc /fp:strict /W4 /Brepro'
-MINHOOK_CL='cl /nologo /MT /O2 /W1 /Brepro /c'
-LIBS='user32.lib gdi32.lib opengl32.lib'
+import argparse, os, subprocess, sys, zipfile, shutil, re, tempfile
+from contextlib import contextmanager
+
+ROOT = Path(__file__).resolve().parent
+SRC = ROOT / 'src'
+OUT = ROOT / 'build'
+MINHOOK = [
+    'vendor/minhook/src/buffer.c',
+    'vendor/minhook/src/hook.c',
+    'vendor/minhook/src/trampoline.c',
+    'vendor/minhook/src/hde/hde64.c',
+]
+CL = 'cl /nologo /MT /O2 /std:c++17 /EHsc /fp:strict /W4 /Brepro'
+MINHOOK_CL = 'cl /nologo /MT /O2 /W1 /Brepro /c'
+LIBS = 'user32.lib gdi32.lib opengl32.lib'
+
 
 def vcvars():
-    v=Path(os.environ.get('ProgramFiles(x86)',r'C:\Program Files (x86)'))/'Microsoft Visual Studio/Installer/vswhere.exe'
-    path=subprocess.check_output([str(v),'-latest','-products','*','-requires',
-        'Microsoft.VisualStudio.Component.VC.Tools.x86.x64','-property','installationPath'],text=True).strip()
-    bat=Path(path)/'VC/Auxiliary/Build/vcvars64.bat'
-    if not bat.is_file():raise SystemExit('MSVC x64 C++ toolchain not found')
+    v = (
+        Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'))
+        / 'Microsoft Visual Studio/Installer/vswhere.exe'
+    )
+    path = subprocess.check_output(
+        [
+            str(v), '-latest', '-products', '*', '-requires',
+            'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+            '-property', 'installationPath', '-utf8',
+        ],
+        text=True,
+        encoding='utf-8-sig',
+    ).strip()
+    bat = Path(path) / 'VC/Auxiliary/Build/vcvars64.bat'
+    if not bat.is_file():
+        raise SystemExit('MSVC x64 C++ toolchain not found')
     return bat
 
-def run(commands):
-    lines=['@echo off',f'call "{vcvars()}" >nul',f'cd /d "{SRC}"']
-    for c in commands:lines.extend([c,'if %errorlevel% neq 0 exit /b 1'])
-    script=OUT/'build.cmd'
-    script.write_text('\n'.join(lines)+'\n',encoding='utf-8')
-    if subprocess.run(['cmd.exe','/d','/c',str(script)]).returncode:
+
+def run(commands, stage):
+    environment = os.environ.copy()
+    environment.update(
+        EXCAMERA_BUILD_SOURCE=str(SRC),
+        EXCAMERA_BUILD_STAGE=str(stage),
+        EXCAMERA_BUILD_VCVARS=str(vcvars()),
+    )
+    # Keep path bytes out of the batch file and cmd's command string. CALL's
+    # handling of unusual percent-containing toolchain paths is not guaranteed.
+    lines = [
+        '@echo off',
+        'setlocal DisableDelayedExpansion',
+        'call "%EXCAMERA_BUILD_VCVARS%" >nul || exit /b 1',
+        'setlocal DisableDelayedExpansion',
+        'cd /d "%EXCAMERA_BUILD_SOURCE%" || exit /b 1',
+    ]
+    prefix = '"' + str(stage) + os.sep
+    for c in commands:
+        lines.append(c.replace(prefix, '"%EXCAMERA_BUILD_STAGE%' + os.sep) + ' || exit /b 1')
+    lines.append('exit /b 0')
+    script = stage / 'build.cmd'
+    script.write_text('\n'.join(lines) + '\n', encoding='ascii')
+    if subprocess.run(
+        ['cmd.exe', '/d', '/v:off', '/c', r'.\build.cmd'], cwd=stage, env=environment
+    ).returncode:
         raise SystemExit('Runtime build failed')
 
-def main():
-    p=argparse.ArgumentParser()
-    p.add_argument('--package',action='store_true',help='Build and create minimal release ZIP')
-    args=p.parse_args()
-    ver=re.search(r'^#define FP_BUILD "([\w.-]+)"$',(SRC/'build_identity.h').read_text(encoding='utf-8'),re.M).group(1)
-    OUT.mkdir(exist_ok=True)
-    obj=OUT/'obj';obj.mkdir(exist_ok=True)
-    cl=f'{CL} /Fo:"{obj}\\\\" '
-    minhook=' '.join(f'"{obj/Path(f).with_suffix(".obj").name}"' for f in MINHOOK)
-    shim=obj/'supersampling_shim.obj'
-    settings_objects=' '.join(f'"{obj/(name+".obj")}"' for name in ("native_settings","settings_presentation"))
-    commands=[
+
+@contextmanager
+def build_lock(out):
+    import msvcrt
+
+    # Persistent coordination file, not a sentinel. Never unlink it: another
+    # process must lock the same file, not a newly recreated path.
+    with (Path(out) / '.build.lock').open('a+b') as stream:
+        os.set_inheritable(stream.fileno(), False)
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            try:
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            except OSError as error:
+                cleanup_warning("explicit lock release failed; closing its handle: " + str(error))
+
+
+def cleanup_warning(message):
+    try:
+        print("WARNING: " + message, file=sys.stderr)
+    except OSError:
+        pass
+
+
+def staged_publish(out, names, build, replace=os.replace):
+    out = Path(out)
+    out.mkdir(exist_ok=True)
+    with build_lock(out):
+        _publish_locked(out, names, build, replace)
+
+
+def _publish_locked(out, names, build, replace):
+    stage = None
+    keep = False
+    try:
+        stage = Path(tempfile.mkdtemp(prefix='.stage-', dir=out))
+        build(stage)  # All compiler/export/ZIP validation happens before publishing anything.
+        previous = stage / 'previous'
+        previous.mkdir()
+        for name in names:
+            target = out / name
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise ValueError("Refusing non-file or symlink publication target: " + str(target))
+            if not (stage / name).is_file() or not (stage / name).stat().st_size:
+                raise ValueError('Missing or empty staged artifact: ' + name)
+            if (out / name).exists():
+                shutil.copy2(out / name, previous / name)
+        attempted = []
+        try:
+            for name in names:  # DLL, EXE, and ZIP last; replacements individually atomic.
+                attempted.append(name)  # Cover handled interruption immediately after replacement.
+                replace(stage / name, out / name)
+        except BaseException:
+            keep = True  # A second interruption during rollback must not discard recovery files.
+            failed = []
+            for name in reversed(attempted):
+                try:
+                    if (previous / name).exists():
+                        # A locked-target replace can fail before changing anything.
+                        # Prove its bytes unchanged before deciding a restore is needed.
+                        if (
+                            not (out / name).exists()
+                            or (out / name).read_bytes() != (previous / name).read_bytes()
+                        ):
+                            replace(previous / name, out / name)
+                    else:
+                        (out / name).unlink(missing_ok=True)
+                except BaseException as error:
+                    failed.append(name + ': ' + type(error).__name__ + ': ' + str(error))
+            if failed:
+                raise RuntimeError(
+                    'Publication incomplete. Do not use build outputs. Recovery files: '
+                    + str(stage) + '; ' + ', '.join(failed)
+                )
+            keep = False
+            raise
+    except BaseException as error:
+        if keep:
+            raise
+        raise RuntimeError(
+            'Build/publication failed; previous published outputs were retained, not rebuilt: '
+            + str(error)
+        ) from error
+    finally:
+        if not keep and stage is not None:
+            try:
+                shutil.rmtree(stage)
+            except OSError as error:
+                cleanup_warning(
+                    "staging cleanup failed; files retained at " + str(stage) + ": " + str(error)
+                )
+
+
+def build_runtime(stage, ver, package):
+    obj = stage / 'obj'
+    obj.mkdir(exist_ok=True)
+    cl = f'{CL} /Fo:"{obj}\\\\" '
+    minhook = ' '.join(f'"{obj / Path(f).with_suffix(".obj").name}"' for f in MINHOOK)
+    shim = obj / 'supersampling_shim.obj'
+    settings_objects = ' '.join(
+        f'"{obj / (name + ".obj")}"' for name in ("native_settings", "settings_presentation")
+    )
+    commands = [
         f'{cl}/c native_settings.cpp settings_presentation.cpp',
         f'{MINHOOK_CL} {" ".join(MINHOOK)} /Fo:"{obj}\\\\"',
         f'ml64 /nologo /c /Fo"{shim}" supersampling_shim.asm',
-        f'{cl}/LD first_person.cpp {minhook} "{shim}" {settings_objects} {LIBS} /Fe:"{OUT/"ExanimaFirstPerson.dll"}" /link /INCREMENTAL:NO /Brepro',
-        f'{cl}launcher.cpp user32.lib /Fe:"{OUT/"ExCamera.exe"}" /link /SUBSYSTEM:WINDOWS /INCREMENTAL:NO /Brepro',
-        f'dumpbin /nologo /exports "{OUT/"ExanimaFirstPerson.dll"}" > "{obj/"exports.txt"}"',
+        (
+            f'{cl}/LD first_person.cpp {minhook} "{shim}" {settings_objects} {LIBS} '
+            f'/Fe:"{stage / "ExanimaFirstPerson.dll"}" /link /INCREMENTAL:NO /Brepro'
+        ),
+        (
+            f'{cl}launcher.cpp user32.lib /Fe:"{stage / "ExCamera.exe"}" '
+            f'/link /SUBSYSTEM:WINDOWS /INCREMENTAL:NO /Brepro'
+        ),
+        f'dumpbin /nologo /exports "{stage / "ExanimaFirstPerson.dll"}" > "{obj / "exports.txt"}"',
     ]
-    for symbol in ('enable','disable','allowOtherHooks','enableWithStatus'):
-        commands.append(f'findstr /r /c:" {symbol}$" "{obj/"exports.txt"}" >nul')
-    run(commands)
-    print('BUILT',ver,OUT/'ExanimaFirstPerson.dll',OUT/'ExCamera.exe')
-    if args.package:
-        path=OUT/f'ExCamera-{ver}-minimal.zip'
-        entries={
-          'ExanimaFirstPerson.dll':(OUT/'ExanimaFirstPerson.dll').read_bytes(),
-          'ExCamera.exe':(OUT/'ExCamera.exe').read_bytes(),
-          'LICENSE.txt':(ROOT/'LICENSE').read_bytes(),
-          'LICENSE-MinHook.txt':(SRC/'vendor/minhook/LICENSE.txt').read_bytes(),
+    for symbol in ('enable', 'disable', 'allowOtherHooks', 'enableWithStatus'):
+        commands.append(f'findstr /r /c:" {symbol}$" "{obj / "exports.txt"}" >nul')
+    run(commands, stage)
+    if package:
+        path = stage / f'ExCamera-{ver}-minimal.zip'
+        entries = {
+            'ExanimaFirstPerson.dll': (stage / 'ExanimaFirstPerson.dll').read_bytes(),
+            'ExCamera.exe': (stage / 'ExCamera.exe').read_bytes(),
+            'LICENSE.txt': (ROOT / 'LICENSE').read_bytes(),
+            'LICENSE-MinHook.txt': (SRC / 'vendor/minhook/LICENSE.txt').read_bytes(),
         }
-        with zipfile.ZipFile(path,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
-            for name,data in entries.items():z.writestr(name,data)
-        print('PACKAGE',path)
+        with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+            for name, data in entries.items():
+                z.writestr(name, data)
+        with zipfile.ZipFile(path) as z:
+            if (
+                len(z.namelist()) != 4
+                or set(z.namelist()) != set(entries)
+                or z.testzip() is not None
+            ):
+                raise ValueError('Staged runtime ZIP failed validation')
+            if any(not z.getinfo(name).file_size for name in entries):
+                raise ValueError('Staged runtime ZIP contains an empty file')
 
-if __name__=='__main__':main()
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--package', action='store_true', help='Build and create minimal release ZIP')
+    args = p.parse_args()
+    ver = re.search(
+        r'^#define FP_BUILD "([\w.-]+)"$',
+        (SRC / 'build_identity.h').read_text(encoding='utf-8'),
+        re.M,
+    ).group(1)
+    names = ['ExanimaFirstPerson.dll', 'ExCamera.exe']
+    if args.package:
+        names.append(f'ExCamera-{ver}-minimal.zip')
+    staged_publish(OUT, names, lambda stage: build_runtime(stage, ver, args.package))
+    print('BUILT', ver, OUT / 'ExanimaFirstPerson.dll', OUT / 'ExCamera.exe')
+    if args.package:
+        print('PACKAGE', OUT / names[-1])
+    else:
+        print('No ZIP was refreshed; any existing package is from a previous build.')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SystemExit(str(error))

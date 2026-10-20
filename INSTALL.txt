@@ -1,15 +1,22 @@
-Use with the fixes3 source and build.py.
+Install this complete source tree, retaining its paths (including tools/ and .github/workflows/). When overlaying the 0.2.0 source baseline, follow README.md's repository-update instructions for the three obsolete headers; preserve .git and your local edits.
 
-1. Copy .github/workflows/release.yml and src/build_identity.h into the repository, preserving paths. The header aligns the launcher/DLL version with v0.2.0.
-2. Commit and push these files and the complete source to main. Keep the separate Build workflow if you want ordinary CI; remove obsolete test workflows.
-3. Test the build/gameplay before tagging a public release.
-4. From your local repository, with the intended release commit checked out and a clean working tree, run:
+1. Commit and push the source to main. Build runs on relevant main/PR changes; Release runs only on v* tag pushes. Both check generated tables and run the portable Python tooling tests using only the standard library, without a game executable. These tests mock compiler, Git, and Windows-lock calls where needed; external gameplay and portable C++ harnesses are not run by CI.
+2. Test the Windows build and gameplay before tagging a public release.
+3. With the intended release commit checked out and a clean working tree, choose a NEW version, for example:
 
-   git tag -a v0.2.0 -m "ExCamera v0.2.0"
-   git push origin v0.2.0
+   git tag -a v0.2.1 -m "ExCamera v0.2.1"
+   git push origin v0.2.1
 
-The tag push builds that exact commit, then publishes the runtime ZIP under Releases only after success. Do not manually create the v0.2.0 release first. No personal token is required; the job uses GitHub's built-in token with contents: write.
+Use your chosen version in both commands. Future tags can be v0.2.2, v0.3.0, v1.0.0, etc.; releases are not fixed at 0.2.0. Valid tags are vX.Y.Z with an optional SemVer prerelease suffix (for example v0.3.0-rc.1). Numeric version/prerelease identifiers cannot have leading zeros. Build metadata (+...) is intentionally unsupported. Prerelease tags create GitHub prereleases.
 
-If v0.2.0 already exists, stop and inspect it rather than force-moving or overwriting it. A publish/upload failure may leave a draft; inspect the run before retrying.
+The workflow checks out and verifies the exact tag commit. It derives FP_BUILD from the tag before compiling the launcher and DLL, preserving FP_REVISION. This edits only the ephemeral CI checkout, not your committed header. Local builds still use the checked-in FP_BUILD. The release title and ZIP filename follow the tag version. Immediately before publication, an authenticated read rechecks the remote tag commit against the built commit and stops on a mismatch or API error. This narrows the tag-movement race; keep release tags immutable.
 
-Local YAML/version/package checks passed, but this workflow has not been executed on GitHub or compiled with Windows/MSVC here. A successful build is not an in-game test.
+Release notes are generated automatically from Git commit subjects since the prior reachable valid version tag selected by git describe, including direct commits and merges, with links to commits and a full comparison. Selection uses Git's bounded candidate search, not version-number sorting or a guarantee of the globally closest tag. The first release lists the initial history. Write meaningful commit subjects; this is a commit changelog, not a claim that changes were gameplay-tested. No manual release-note editing or pull request is required. The supplied CHANGELOG.md separately describes the explicit 0.2.0 source-baseline comparison; the workflow does not copy that document into generated release notes.
+
+Publication happens only after generated-table validation, portable tooling tests, compilation, DLL export checks, exact four-file ZIP validation, and artifact upload succeed. Do not manually create the release first. No personal token is required; the release job uses GitHub's built-in token with contents: write. The ordinary Build workflow has read-only permissions.
+
+If a tag or release already exists, stop and inspect it rather than force-moving or overwriting it. Failed checks before publication can be rerun normally from Actions once their cause is understood; source fixes require a new commit and new tag. A publish/upload failure may leave a draft or published release: inspect Releases and the Actions log before retrying. The workflow never overwrites an existing release and does not force-create missing tags.
+
+Local script/package-fixture checks do not validate Windows/MSVC or gameplay. This workflow must still be exercised on GitHub and the resulting binaries tested in the supported game.
+
+Local builds stage and validate before publishing. A failed build normally retains the previous outputs; those files are not evidence that the latest build succeeded. Close the game/launcher before rebuilding. If publication rollback fails, keep the recovery directory named in the error and do not use the incomplete outputs. Runtime-file publication is not crash-atomic; the ZIP is replaced individually only after it is complete. Building without --package does not refresh an existing ZIP. Package verification checks integrity and contents, not latest-attempt freshness.

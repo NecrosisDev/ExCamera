@@ -2,11 +2,20 @@
 #include "../native_settings.h"
 // Cross WndProc/GUI-thread key-capture mailbox. -2=no result, -1=cancel,
  // 0=unbind, positive=virtual-key code. All UI mutations remain on GUI thread.
-static std::atomic<int> nativeBindingArmed{0}, nativeBindingResult{-2},
-                        nativeBindingOwedUp{0};
-static bool nativeSettingsBindingInput(UINT message, WPARAM wp, LPARAM) {
+static std::atomic<int> nativeBindingArmed{0}, nativeBindingResult{-2};
+// WndProc owns each consumed press until its matching release, including repeats.
+static std::array<std::atomic<bool>, 256> nativeBindingOwned{};
+static void clearNativeBindingPresses() {
+    for (auto& owned : nativeBindingOwned) owned = false;
+}
+static bool nativeSettingsBindingInput(UINT message, WPARAM wp, LPARAM lp) {
+    if (message == WM_KILLFOCUS || message == WM_CANCELMODE || (message == WM_ACTIVATEAPP && !wp)) {
+        clearNativeBindingPresses();
+        if (nativeBindingArmed.exchange(0)) nativeBindingResult = -1;
+        return false; // Native focus cleanup must run too.
+    }
     const int key=bindingMessageKey(message,wp);
-    if (!key) return false;
+    if (key <= 0 || key >= int(nativeBindingOwned.size())) return false;
     const bool down=message==WM_KEYDOWN || message==WM_SYSKEYDOWN ||
                     message==WM_LBUTTONDOWN || message==WM_LBUTTONDBLCLK ||
                     message==WM_RBUTTONDOWN || message==WM_RBUTTONDBLCLK ||
@@ -15,14 +24,16 @@ static bool nativeSettingsBindingInput(UINT message, WPARAM wp, LPARAM) {
     const bool up=message==WM_KEYUP || message==WM_SYSKEYUP ||
                   message==WM_LBUTTONUP || message==WM_RBUTTONUP ||
                   message==WM_MBUTTONUP || message==WM_XBUTTONUP;
-    if (up && nativeBindingOwedUp.load()==key) {
-        nativeBindingOwedUp=0;
-        return true;
-    }
+    const bool repeat = (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) && (lp & (1LL << 30));
+    if (up && nativeBindingOwned[size_t(key)].exchange(false)) return true;
+    if (down && repeat && nativeBindingOwned[size_t(key)].load()) return true;
+    // A fresh press retires a release lost while another window had focus.
+    if (down && !repeat) nativeBindingOwned[size_t(key)] = false;
     if (!nativeBindingArmed.load() || !down) return false;
-    // An unmatched physical release must not become a new rebind. Only a
-    // fresh down publishes a result, and the following up remains swallowed.
-    nativeBindingOwedUp=key;
+    // A key already held before capture is not a new binding. Leave its release
+    // with the native owner that received its original down.
+    if (repeat) return false;
+    nativeBindingOwned[size_t(key)] = true;
     if ((key>=VK_F6 && key<=VK_F11)) return true;
     const int result=key==VK_ESCAPE ? -1 : key==VK_DELETE ? 0 : key;
     nativeBindingResult=result;
@@ -103,6 +114,10 @@ static void configureNativeSettings() {
         return readable(uintptr_t(e), 5 * sizeof(*e)) ? Table{e, 5} : Table{};
     };
     nativeSettings.replace = replaceNativeSettingsElements;
+    if (layout.optionalGroupAvailable("settingsRedraw"))
+        nativeSettings.requestRedraw = [] {
+            ((void (*)())gameAt(fp::sig::guiRequestRedraw))();
+        };
     nativeSettings.checkboxHandler = reinterpret_cast<panel::NativeSettingsIntegration::NativeHandler>(gameAt(fp::sig::guiCheckboxHandler));
     nativeSettings.scrollGeometry = [](uintptr_t pane, panel::NativeScrollGeometry& g) {
         namespace F=field::nativeForm;
@@ -234,9 +249,10 @@ static void nativeSettingsMaintenance(uintptr_t self) {
         InterlockedDecrement(&nativeSettingsInFlight);
     }
 }
-static void f8WindowTick(bool show, bool) {
-    nativeSettingsWanted =
-        show;
+static void f8WindowTick(bool requested, bool foreground) {
+    // Focus loss releases input, not the settings transaction. Only begin an
+    // opening while foreground; explicit F8 dismissal still closes off-focus.
+    if (!requested || foreground) nativeSettingsWanted = requested;
     static bool noticed = false;
     if (nativeSettingsFaulted.load() && !noticed) {
         noticed = true;
@@ -245,6 +261,7 @@ static void f8WindowTick(bool show, bool) {
     }
 }
 static void nativeSettingsBeforeStop() {
+    clearNativeBindingPresses();
     nativeBindingArmed=0;
     nativeBindingResult=-2;
     nativeSettingsWanted = false;

@@ -15,6 +15,7 @@ inline constexpr size_t interact = 9 * stride;     // 0x2B7370 in the source bui
 
 // A character (playerRoot holds the controlled one). Positions are local to its scene sector.
 namespace character {
+inline constexpr size_t metadata = 0; // optional native attack-variant ownership
 inline constexpr size_t sceneNode = 0x18;    // the root of its mesh tree
 inline constexpr size_t physicsLive = 0x4C8; // u8: its physics body is simulated
 inline constexpr size_t weaponCount = 0x920; // int: weapons carried (1-2)
@@ -77,6 +78,9 @@ inline constexpr size_t pressBlocked = 0x96E;  // u8
 
 // A physics body part (the head, the chest, a hand).
 namespace bodyPart {
+inline constexpr size_t metadata = 0, motionFlags = 8; // optional ordinary-body admission
+inline constexpr size_t constraintCount = 0x31C, childCount = 0x430;
+inline constexpr size_t releaseSettling = 0x450; // native eight-step release settling
 inline constexpr size_t flags = 0xC;             // 0x4000: the pose builder applies extraRotation
 inline constexpr size_t meshNode = 0x18;         // its scene node
 inline constexpr size_t poseCoefficients = 0xB0; // turn the points into a pose
@@ -115,10 +119,20 @@ inline constexpr size_t rayContext = 0x3B8;
 
 // A scene sector (sceneNode::sector) and its list of meshes.
 namespace sector {
+inline constexpr size_t scene = 0x220; // owning scene, used by native body release
 inline constexpr size_t origin = 0x64;    // float[3]: add to sector-local positions for global ones
 inline constexpr size_t lastMesh = 0x1C8; // int
 inline constexpr size_t meshes = 0x1D0;
 } // namespace sector
+
+namespace scene {
+inline constexpr size_t lifecycleFlags = 0x1C20; // optional native attack-variant ownership
+inline constexpr size_t physicsContext = 0x1C28; // owning native physics context
+} // namespace scene
+namespace physicsContext {
+inline constexpr size_t scene = 0x48, running = 0x159; // optional native attack-variant ownership
+inline constexpr size_t frequencyHz = 0x6C; // signed int: native simulation frequency
+} // namespace physicsContext
 
 namespace camera {
 inline constexpr size_t pose = 0x40;        // float[12]
@@ -139,6 +153,7 @@ inline constexpr size_t pickCamera = 0x1C0; // the camera the pick rays unprojec
 inline constexpr size_t sceneManager = 0x1F0;
 } // namespace viewport
 namespace view {
+inline constexpr size_t pickFarDepth = 0x120; // float: native far unprojection depth
 inline constexpr size_t camera = 0x50;
 } // namespace view
 namespace sceneManager {
@@ -197,6 +212,10 @@ static_assert(sizeof(MeshRayQuery) == meshRayQuery::requiredSize);
 
 // The drag manager (dragManager): +8 its flags.
 namespace drag {
+inline constexpr size_t specialSource = 0x150; // native deferred source-side-effect flag
+inline constexpr size_t acceptedKind = 0xC4; // u32: native last accepted placement kind
+inline constexpr size_t acceptedQuery = 0x70; // 24-byte native successful placement query
+inline constexpr size_t acceptedPoints = 0x88; // 48-byte native successful body-point snapshot
 inline constexpr size_t flags = 0x8; // all native drag contexts
 inline constexpr size_t object = 0x10;
 inline constexpr size_t targetPoints =
@@ -216,6 +235,8 @@ inline constexpr size_t body = 0x0; // pointer, followed by the four target poin
 
 // The GUI: its manager (guiManager), tasks and their forms (the game's windows).
 namespace gui {
+inline constexpr size_t dragSource = 0x78; // native source view for current drag
+inline constexpr size_t dragPayload = 0x90; // current drag payload pointer
 inline constexpr size_t pointerX = 0x18; // LONG[2]: current client X/Y
 inline constexpr size_t pressX = 0x20;   // LONG[2]: native press X/Y
 inline constexpr size_t hoverView = 0x30; // widget under the pointer
@@ -266,6 +287,20 @@ namespace list {
 inline constexpr size_t count = 0x10C;
 inline constexpr size_t items = 0x110;
 } // namespace list
+
+namespace inventorySource {
+inline constexpr size_t special = 0x3EB, merchant = 0x3EC; // source cancellation class guards
+inline constexpr size_t finishSlot = 0xF0; // VTABLE byte offset, not object member
+}
+namespace inventoryPayload {
+inline constexpr size_t source = 0, item = 0x10, flags = 0x14;
+}
+namespace inventoryJob {
+inline constexpr size_t item = 0, flags = 4, sector = 8, object = 0x10;
+}
+
+namespace nativeThread { inline constexpr size_t id = 0x10; }
+namespace grip { inline constexpr size_t callback = 0xB0, stride = 0xB8; }
 
 } // namespace fp::game
 

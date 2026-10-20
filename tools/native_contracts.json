@@ -310,6 +310,499 @@
       "end_rva": "0x4c5e1",
       "pattern": "48 8D 64 24 E8 48 89 C8 49 8B 08 48 89 0C 24 41 8B 48 08 89 4C 24 08 48 89 E1",
       "entry_offset": 0
+    },
+    {
+      "name": "terrainPass",
+      "rva": "0x1b8760",
+      "end_rva": "0x1b9314",
+      "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D A4 24 90 FE FF FF 66 0F 7F B4 24 50 01 00 00 66 44 0F 7F 84 24 60 01 00 00 48 89 4C 24 30",
+      "entry_offset": 0,
+      "target": "terrainPass"
+    },
+    {
+      "name": "meshRay",
+      "rva": "0x26a910",
+      "end_rva": "0x26ae5e",
+      "pattern": "0F 28 F1 0F 2F 35 ?? ?? ?? ?? 7A 07 0F 82 ?? ?? ?? ?? 90 4C 8B 43 10 48 8D 4C 24 44",
+      "entry_offset": -929
+    },
+    {
+      "name": "guiFormCreate",
+      "rva": "0x2a8a0",
+      "end_rva": "0x2aa86",
+      "pattern": "55 48 89 E5 48 8D 64 24 C0 48 89 4D E8 48 89 55 F0 4C 89 45 F8 48 83 7D F0 01 75 14 48 8B 45 E8 48 8B 55 E8 48 89 C1 FF 52 68 48 89 45 E8 66 90 48 83 7D E8 00 0F 84 ?? ?? ?? ?? 90 90 48 C7 45 E0 FF FF FF FF 48 8B 4D E8 31 D2 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 55 E8",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiFormLayoutFlags",
+      "rva": "0x291d0",
+      "end_rva": "0x29396",
+      "pattern": "53 57 56 48 8D 64 24 E0 48 89 CB 8B 43 60 25 00 20 00 00 3D 00 20 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiSettingsConstructor",
+      "rva": "0xa94d0",
+      "end_rva": "0xa9823",
+      "pattern": "55 48 89 E5 48 8D 64 24 B0 48 89 5D D8 48 89 7D E0 48 89 75 E8 48 C7 45 F0 00 00 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiElementLayout",
+      "rva": "0x33c90",
+      "end_rva": "0x343b2",
+      "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 D0 48 89 4C 24 20 41 89 D6 44 89 F7 85 FF 0F 8C ?? ?? ?? ??",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiElementAppend",
+      "rva": "0x32860",
+      "end_rva": "0x32934",
+      "pattern": "53 57 56 41 54 41 55 41 56 48 8D 64 24 D8 48 89 CB 89 D6 4C 89 C7 4D 89 CC",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiButton",
+      "rva": "0x32ae0",
+      "end_rva": "0x32cc4",
+      "pattern": "53 57 56 48 8D 64 24 D0 48 89 CB 44 89 44 24 20 44 89 4C 24 28 BE 00 00 00 00 83 FA 01 0F 82 ?? ?? ?? ?? 83 EA 01 74 38 83 EA 01 74 53 83 EA 1E",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiActivate",
+      "rva": "0x32940",
+      "end_rva": "0x32a75",
+      "pattern": "53 57 56 41 54 41 55 41 56 48 8D 64 24 D8 48 89 CB BF 83 00 00 00 48 89 DE",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiLiteral",
+      "rva": "0x80f0",
+      "end_rva": "0x8130",
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 48 89 D6 48 3B 33 74 25 66 90 48 85 F6 74 13",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiFormElements",
+      "rva": "0x2b200",
+      "end_rva": "0x2b364",
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CB 48 89 D6 44 89 C7 45 88 CC 80 BB 18 01 00 00 00",
+      "entry_offset": 0,
+      "target": "guiFormElements"
+    },
+    {
+      "name": "nativeSettingsCreate",
+      "rva": "0xa94d0",
+      "end_rva": "0xa9823",
+      "pattern": "55 48 89 E5 48 8D 64 24 B0 48 89 5D D8 48 89 7D E0 48 89 75 E8 48 C7 45 F0 00 00 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiOptionsCancel",
+      "rva": "0xa8390",
+      "end_rva": "0xa83cb",
+      "pattern": "53 48 8D 64 24 E0 48 89 CB E8 ?? ?? ?? ?? 48 89 D8 48 8B 50 20 C7 82 38 01 00 00 00 00 00 00",
+      "entry_offset": 0,
+      "target": "guiOptionsCancel"
+    },
+    {
+      "name": "guiCheckboxHandler",
+      "rva": "0x33020",
+      "end_rva": "0x33304",
+      "pattern": "53 57 56 48 8D 64 24 D0 48 89 CB 44 89 44 24 20 44 89 4C 24 28 BE 00 00 00 00 83 FA 01 0F 82 B5 02 00 00",
+      "entry_offset": 0,
+      "target": "guiCheckboxHandler"
+    },
+    {
+      "name": "guiViewportToContent",
+      "rva": "0x2ce40",
+      "end_rva": "0x2cea3",
+      "pattern": "48 89 C8 4C 63 1A 48 63 48 30 49 29 CB 4C 63 48 48 4C 63 50 44 49 29 CA 4D 29 D1 F3 49 0F 2A C1 F3 0F 59",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiContentHitConversion",
+      "rva": "0x2ceb0",
+      "end_rva": "0x2cf15",
+      "pattern": "48 89 C8 4C 63 0A 48 63 48 30 4D 8D 1C 09 4C 63 50 48 4C 63 48 44 49 29 C9 4D 29 CA F3 49 0F 2A C2 F3 0F",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiCheckboxHitTest",
+      "rva": "0x2d960",
+      "end_rva": "0x2d9e4",
+      "pattern": "53 56 48 8D 64 24 B8 48 89 CB 89 54 24 28 44 89 44 24 30 31 F6 4C 8D 44 24 30 48 8D 54 24 28 48 89 D9 E8 29 F5 FF FF",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldUpdate",
+      "rva": "0x11f610",
+      "end_rva": "0x11fec3",
+      "target": "heldUpdate",
+      "pattern": "53 57 56 41 54 41 55 41 56 48 8D 64 24 A8 49 89 CC 48 8B 05 ?? ?? ?? ??",
+      "entry_offset": 0
+    },
+    {
+      "name": "pickDepthUnproject",
+      "rva": "0x8f460",
+      "end_rva": "0x8f526",
+      "pattern": "53 56 48 8D 64 24 A8 66 0F 7F 74 24 30 66 44 0F 7F 44 24 40 48 89 C8 0F 28 C1",
+      "entry_offset": 0
+    },
+    {
+      "name": "physicsContextInit",
+      "rva": "0x832b0",
+      "end_rva": "0x8359d",
+      "pattern": "55 48 89 E5 48 8D A4 24 70 FF FF FF 48 89 7D 90 48 89 75 98 48 89 4D D0",
+      "entry_offset": 0
+    },
+    {
+      "name": "releaseBodyDynamics",
+      "rva": "0x116be0",
+      "end_rva": "0x116d70",
+      "pattern": "53 57 56 41 54 41 55 41 56 48 8D 64 24 D8 48 8B 99 60 01 00 00 C7 83 50 04 00 00 08 00 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "inventoryAdmission",
+      "rva": "0x119ab0",
+      "end_rva": "0x119b5a",
+      "pattern": "53 56 48 8D 64 24 A8 48 89 CB 31 F6 80 3D ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ??",
+      "entry_offset": 0,
+      "target": "inventoryAdmission"
+    },
+    {
+      "name": "viewportAdmissionDispatch",
+      "rva": "0x4b210",
+      "end_rva": "0x4b23e",
+      "pattern": "53 48 8D 64 24 E0 48 89 C8 31 DB 48 83 B8 A0 02 00 00 00 74 0F 48 8B 88 A8 02 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiDragAdmissionResult",
+      "rva": "0x2f7e0",
+      "end_rva": "0x2fcba",
+      "pattern": "55 48 89 E5 48 8D 64 24 90 48 89 4D F0 88 55 F8 C6 45 EC 00 80 7D F8 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiDragCompletionRoute",
+      "rva": "0x300e0",
+      "end_rva": "0x30233",
+      "pattern": "53 57 56 48 8D 64 24 E0 48 89 CB 48 8D 73 70 40 30 FF 81 E2 00 08 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "resourceQueue",
+      "rva": "0x99bd0",
+      "end_rva": "0x99c85",
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CB 48 89 D6 4C 89 C7 4D 89 CC 48 8B 4B 38",
+      "entry_offset": 0,
+      "target": "resourceQueue"
+    },
+    {
+      "name": "inventoryLoader",
+      "rva": "0x11cf50",
+      "end_rva": "0x11cfc1",
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 48 8B 05 ?? ?? ?? ?? 48 83 C0 70 8B 00 3D 01 FB 00 00",
+      "entry_offset": 0,
+      "target": "inventoryLoader"
+    },
+    {
+      "name": "inventoryComplete",
+      "rva": "0x11d1d0",
+      "end_rva": "0x11d47b",
+      "pattern": "55 48 89 E5 48 8D 64 24 90 48 89 5D C0 48 89 7D C8 48 89 75 D0 4C 89 65 D8 48 89 CB 48 C7 45 F0 00 00 00 00",
+      "entry_offset": 0,
+      "target": "inventoryComplete"
+    },
+    {
+      "name": "inventoryCommit",
+      "rva": "0x119f10",
+      "end_rva": "0x11a101",
+      "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 E0 49 89 CE 44 89 C3 45 31 FF",
+      "entry_offset": 0,
+      "target": "inventoryCommit"
+    },
+    {
+      "name": "inventorySourceFinish",
+      "rva": "0x137800",
+      "end_rva": "0x137ad3",
+      "pattern": "53 57 56 41 54 41 55 41 56 48 8D 64 24 D8 48 89 CB 48 89 D6 44 89 C7 45 31 E4 80 BB EB 03 00 00 00",
+      "entry_offset": 0,
+      "target": "inventorySourceFinish"
+    },
+    {
+      "name": "inventoryJobCreate",
+      "rva": "0x11d480",
+      "end_rva": "0x11d50b",
+      "pattern": "53 48 8D 64 24 D0 48 89 CB 48 8D 4C 24 20 BA 30 00 00 00 E8 ?? ?? ?? ??",
+      "entry_offset": 0
+    },
+    {
+      "name": "inventoryPayloadCreate",
+      "rva": "0x133fc0",
+      "end_rva": "0x134184",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 C0 66 0F 7F 74 24 30 48 89 CB 4C 89 C6",
+      "entry_offset": 0
+    },
+    {
+      "name": "inventoryDeferredCleanup",
+      "rva": "0x119970",
+      "end_rva": "0x119aaa",
+      "pattern": "55 48 89 E5 48 8D 64 24 A0 48 89 5D D8 48 89 75 E0 48 89 CB 48 C7 45 F8 00 00 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldRecovery",
+      "rva": "0x119cb0",
+      "end_rva": "0x119de8",
+      "pattern": "53 48 8D 64 24 E0 48 89 CB 8B 83 C4 00 00 00 83 E0 01 0F 86 ?? ?? ?? ??",
+      "entry_offset": 0
+    },
+    {
+      "name": "inventoryViewportCommitDispatch",
+      "rva": "0x4b240",
+      "end_rva": "0x4b292",
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CE 48 89 D7 45 89 C4 48 83 BE B0 02 00 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "attackFamilyA",
+      "rva": "0x157240",
+      "end_rva": "0x1576f6",
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CB 80 BB F7 12 00 00 00 74 3A 48 8B 83 78 0E 00 00 F3 0F 10 80 B8 04 00 00 F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 40 54 48 8B 83 80 0E 00 00 F3 0F 10 80 B8 04 00 00 F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 40 54 66 90 84 D2 74 15 8B 83 B8 09 00 00 83 F8 08 7C 0A 83 F8 0A",
+      "entry_offset": 0,
+      "target": "attackFamilyA"
+    },
+    {
+      "name": "attackFamilyB",
+      "rva": "0x157700",
+      "end_rva": "0x157be2",
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CB 80 BB F7 12 00 00 00 74 3A 48 8B 83 78 0E 00 00 F3 0F 10 80 B8 04 00 00 F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 40 54 48 8B 83 80 0E 00 00 F3 0F 10 80 B8 04 00 00 F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 40 54 66 90 84 D2 74 15 8B 83 B8 09 00 00 83 F8 05 7C 0A 83 F8 07",
+      "entry_offset": 0,
+      "target": "attackFamilyB"
+    },
+    {
+      "name": "variantThreadCreate",
+      "rva": "0x8c120",
+      "end_rva": "0x8c27b",
+      "pattern": "53 57 56 48 8D 64 24 D0 48 89 CB 8B B3 18 01 00 00 C7 83 18 01 00 00 FF FF FF FF",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantThreadStart",
+      "rva": "0x21b80",
+      "end_rva": "0x21c6b",
+      "pattern": "53 57 56 41 54 48 8D 64 24 C8 48 89 CB 48 89 D6 4C 89 C7 45 30 E4 83 7B 28 08 0F 83 BC 00 00 00 C7 05 A6 8E 28 00 FF FF FF FF 48 83 7B 38 00 75 17 BA 01 00 00 00 48 8D 0D A3 48 2D 00 E8 2E 87 FF FF 48 89 43 38 66 90 48 89 7B 18 48 89 73 20 8B 43 28 83 E0 04 83 C8 08 89 43 28 83 E0 04 76 2D C7 44 24 20 04 00 00 00 48 8D 43 10 48 89 44 24 28 4C 8D 05 E7 FE FF FF 49 89 D9 BA 00 04 00 00 31 C9 E8 38 F6 FD FF 48 89 43 08 EB 2B C7 44 24 20 00 00 00 00 48 8D 43 10 48 89 44 24 28 4C 8D 05 BA FE FF FF 49 89 D9 BA 00 04 00 00 31 C9 E8 0B F6 FD FF 48 89 43 08 48 83 7B 08 00 76 12 48 63 53 2C 48 8B 4B 08 E8 83 F6 FD FF 41 B4 01 EB 0A 48 89 D9 B2 01 E8 14 00 00 00 44 88 E0 90 48 8D 64 24 38 41 5C 5E 5F 5B C3",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantPhysicsSchedule",
+      "rva": "0x8bce0",
+      "end_rva": "0x8c11f",
+      "pattern": "55 48 89 E5 48 8D A4 24 00 FF FF FF 48 89 9D 20 FF FF FF 48 89 4D F0 B9 3F 13 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantActorAllocate",
+      "rva": "0xbff0",
+      "end_rva": "0xc0a9",
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CB 48 8B 13 48 8D 4C 24 20 E8 ?? ?? ?? ??",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantSceneRetireRequest",
+      "rva": "0x5ae90",
+      "end_rva": "0x5af12",
+      "pattern": "48 8D 64 24 C8 48 89 4C 24 20 48 89 C8 48 83 B8 28 1C 00 00 00 74 5A 48 8B 54 24 20",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantSceneRetire",
+      "rva": "0x8bc60",
+      "end_rva": "0x8bcd8",
+      "pattern": "31 D2 EB 6B 0F 1F 40 00 48 8B 0D ?? ?? ?? ?? 48 63 C2 48 8B 04 C1 48 8B 40 48",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantSceneFree",
+      "rva": "0x5ad90",
+      "end_rva": "0x5ae86",
+      "pattern": "53 48 8D 64 24 E0 31 DB EB 5D 66 0F 1F 44 00 00 48 8B 15 ?? ?? ?? ?? 48 63 C3",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantGripCallback",
+      "rva": "0x154780",
+      "end_rva": "0x1547c4",
+      "pattern": "53 48 8D 64 24 E0 48 89 CB 3B 93 B0 10 00 00 74 2B 0F 1F 00 89 93 B0 10 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantGripSelect",
+      "rva": "0x155250",
+      "end_rva": "0x15528d",
+      "pattern": "83 FA 01 75 07 BA 05 00 00 00 EB 1D 89 C8 25 F0 00 00 00 3D 90 00 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantTransitionClosure",
+      "rva": "0x179ee0",
+      "end_rva": "0x17a0f8",
+      "pattern": "53 57 56 48 8D 64 24 E0 48 89 CB 89 D6 44 89 C7 3B B3 B8 09 00 00 75 0C",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantMotionClosure",
+      "rva": "0x179ab0",
+      "end_rva": "0x179ce5",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 80 48 89 CB 48 8B 83 00 03 00 00 48 89 83 78 0B 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantGripDispatchClosure",
+      "rva": "0x1547d0",
+      "end_rva": "0x154863",
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 89 D6 8B 83 F4 0D 00 00 25 00 02 00 00 76 0F",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantChildWalkClosure",
+      "rva": "0x157220",
+      "end_rva": "0x15723c",
+      "pattern": "48 89 C8 EB 0D 0F 1F 00 48 8B 90 38 04 00 00 48 8B 02 83 B8 30 04 00 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "variantClassifierClosure",
+      "rva": "0x156fb0",
+      "end_rva": "0x15717e",
+      "pattern": "53 57 56 48 8D 64 24 C0 66 0F 7F 74 24 30 48 89 D3 BE FF FF FF FF 8B 83 18 10 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "guiRequestRedraw",
+      "rva": "0x26140",
+      "end_rva": "0x26148",
+      "pattern": "83 0D ?? ?? ?? ?? 03 C3",
+      "entry_offset": 0,
+      "target": "guiRequestRedraw"
+    },
+    {
+      "name": "nativeSwapOwner",
+      "rva": "0x21e60",
+      "end_rva": "0x21e92",
+      "pattern": "48 8D 64 24 D8 48 83 3D ?? ?? ?? ?? 00 74 0F 48 8B 0D ?? ?? ?? ?? FF 15 ?? ?? ?? ??",
+      "entry_offset": 0
+    },
+    {
+      "name": "nativeRenderPublish",
+      "rva": "0x23e50",
+      "end_rva": "0x240fa",
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CB 40 30 FF 48 89 D9 E8 ?? ?? ?? ??",
+      "entry_offset": 0
+    },
+    {
+      "name": "nativeRenderRetire",
+      "rva": "0x21ab0",
+      "end_rva": "0x21adb",
+      "pattern": "48 8D 64 24 D8 E8 ?? ?? ?? ?? 31 C0 31 C9 48 89 C2 FF 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ??",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldBodyIntegrate",
+      "rva": "0x88d30",
+      "end_rva": "0x89180",
+      "pattern": "53 57 56 48 8D A4 24 30 FF FF FF 66 0F 7F B4 24 B0 00 00 00 66 44 0F 7F 84 24 C0 00 00 00",
+      "entry_offset": 0,
+      "target": "heldBodyIntegrate"
+    },
+    {
+      "name": "heldBodyDestroy",
+      "rva": "0x88060",
+      "end_rva": "0x881ce",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 D0 48 89 CB 48 89 D6 48 85 F6 7E 0D 48 89 D9",
+      "entry_offset": 0,
+      "target": "heldBodyDestroy"
+    },
+    {
+      "name": "applyHeldReleaseWithoutPose",
+      "rva": "0x116d70",
+      "end_rva": "0x116e4f",
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 40 30 F6 8B 05 ?? ?? ?? ?? 67 8D 50 FF 48 89 D9",
+      "entry_offset": 0,
+      "target": "applyHeldReleaseWithoutPose"
+    },
+    {
+      "name": "heldReleaseSettle",
+      "rva": "0x116be0",
+      "end_rva": "0x116d70",
+      "pattern": "53 57 56 41 54 41 55 41 56 48 8D 64 24 D8 48 8B 99 60 01 00 00 C7 83 50 04 00 00 08 00 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldHistoryAdvance",
+      "rva": "0x89330",
+      "end_rva": "0x8975c",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 A0 66 0F 7F 74 24 50 49 89 CC 89 D3 41 8B 84 24 BC 04 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldReleaseSubmission",
+      "rva": "0x117000",
+      "end_rva": "0x1170e1",
+      "pattern": "53 57 56 48 8D 64 24 A0 48 89 CB 48 89 D6 48 85 DB 0F 84 ?? ?? ?? ?? 90",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldGenericBodyInit",
+      "rva": "0x87f10",
+      "end_rva": "0x88056",
+      "pattern": "55 48 89 E5 48 8D 64 24 B0 48 89 4D E0 48 89 55 F0 48 83 FA 01 75 15 48 8B 45 E0",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldConstraintWalk",
+      "rva": "0x89bf0",
+      "end_rva": "0x89d76",
+      "pattern": "53 57 56 41 54 48 8D 64 24 A8 66 0F 7F 74 24 40 48 89 CB 8B 83 1C 03 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldNodeDestroy",
+      "rva": "0x4ff00",
+      "end_rva": "0x5010a",
+      "pattern": "55 48 89 E5 48 8D 64 24 90 48 89 5D C8 48 89 4D F0 48 89 55 F8 48 C7 45 D0 00 00 00 00 48 C7 45 D8 00 00 00 00 48 83 7D F8 00 7E 14 48 8B 45 F0 48 8B 55 F0 48 8B 12 48 89 C1 FF 92 90 00 00 00 90 90 48 8B 45 F0 48 83 B8 60 01 00 00 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldDeleteDispatch",
+      "rva": "0xbf60",
+      "end_rva": "0xbf83",
+      "pattern": "48 8D 64 24 D8 48 89 C8 48 85 C9 74 0F 48 89 C1 BA 01 00 00 00 48 8B 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldDeallocate",
+      "rva": "0xc0b0",
+      "end_rva": "0xc0ce",
+      "pattern": "53 48 8D 64 24 E0 48 89 CB E8 C2 04 00 00 48 89 D9 E8 0A 2D 00 00 90 48 8D 64 24 20 5B C3",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldSceneDestroy",
+      "rva": "0x5aca0",
+      "end_rva": "0x5ad88",
+      "pattern": "53 57 56 48 8D 64 24 E0 48 89 CB 8B 05 ?? ?? ?? ?? 83 E8 01 85 C0 0F 8C ?? ?? ?? ??",
+      "entry_offset": 0
+    },
+    {
+      "name": "heldDescendantDestroy",
+      "rva": "0x50a60",
+      "end_rva": "0x50e43",
+      "pattern": "55 48 89 E5 48 8D 64 24 90 48 89 5D C8 48 89 4D F0 89 55 F8 48 C7 45 D0 00 00 00 00",
+      "entry_offset": 0
     }
   ],
   "fields": [
@@ -2068,6 +2561,920 @@
       "native_instruction": "cvtsi2ss xmm0, dword ptr [rax + 0x1a0]",
       "displacement_offset": 11,
       "displacement_bytes": 4
+    },
+    {
+      "name": "camera::farPlane",
+      "owner": "rebuildProjection",
+      "window_offset": 139,
+      "pattern": "F3 0F 59 43 20 F3 0F 11 83 24 01 00 00 8B 86 D0 01 00 00 89 44 24 30 8B 86 CC 01 00 00",
+      "value": "0x1d0",
+      "instruction": "0x9f378",
+      "width": 4,
+      "native_instruction": "mov eax, dword ptr [rsi + 0x1d0]",
+      "provenance": "Reviewed mov eax, dword ptr [rsi + 0x1d0] at RVA 0x9f378 in rebuildProjection; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "camera::target",
+      "owner": "terrainPass",
+      "window_offset": 46,
+      "pattern": "48 8B 05 ?? ?? ?? ?? 48 8B 40 50 48 8B 80 D8 01 00 00 48 8D 50 64 48 8B 05 ?? ?? ?? ??",
+      "value": "0x1d8",
+      "instruction": "0x1b8799",
+      "width": 8,
+      "native_instruction": "mov rax, qword ptr [rax + 0x1d8]",
+      "provenance": "Reviewed mov rax, qword ptr [rax + 0x1d8] at RVA 0x1b8799 in terrainPass; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "pick::scratchBank",
+      "owner": "pickRay",
+      "window_offset": 134,
+      "pattern": "66 90 48 8B 84 24 A0 00 00 00 8B 50 34 89 94 24 94 00 00 00 48 8B 8C 24 A0 00 00 00",
+      "value": "0x34",
+      "instruction": "0x8f7b0",
+      "width": 4,
+      "native_instruction": "mov edx, dword ptr [rax + 0x34]",
+      "provenance": "Reviewed mov edx, dword ptr [rax + 0x34] at RVA 0x8f7b0 in pickRay; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "meshRayQuery::node",
+      "owner": "meshRay",
+      "window_offset": 698,
+      "pattern": "48 8B 44 24 58 4C 8B 40 08 4C 89 01 8B 41 44 48 C1 E0 0B 4C 8D 05 ?? ?? ?? ??",
+      "value": "0x0",
+      "instruction": "0x26abd3",
+      "width": 8,
+      "native_instruction": "mov qword ptr [rcx], r8",
+      "provenance": "Reviewed mov qword ptr [rcx], r8 at RVA 0x26abd3 in meshRay; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "meshRayQuery::minDistance",
+      "owner": "meshRay",
+      "window_offset": 57,
+      "pattern": "48 89 D1 8B 05 ?? ?? ?? ?? 89 41 08 41 BF FF FF FF FF 0F 1F 44 00 00 41 83 C7 01",
+      "value": "0x8",
+      "instruction": "0x26a952",
+      "width": 4,
+      "native_instruction": "mov dword ptr [rcx + 8], eax",
+      "provenance": "Reviewed mov dword ptr [rcx + 8], eax at RVA 0x26a952 in meshRay; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "meshRayQuery::distance",
+      "owner": "meshRay",
+      "window_offset": 121,
+      "pattern": "45 89 F9 F3 42 0F 10 44 88 20 F3 0F 59 40 0C F3 42 0F 58 44 80 10 0F 28 D0",
+      "value": "0xc",
+      "instruction": "0x26a993",
+      "width": 4,
+      "native_instruction": "mulss xmm0, dword ptr [rax + 0xc]",
+      "provenance": "Reviewed mulss xmm0, dword ptr [rax + 0xc] at RVA 0x26a993 in meshRay; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "meshRayQuery::origin",
+      "owner": "meshRay",
+      "window_offset": 93,
+      "pattern": "F3 42 0F 10 44 88 20 F3 0F 59 40 08 F3 42 0F 58 44 80 10 0F 28 C8 48 89 C8",
+      "value": "0x10",
+      "instruction": "0x26a979",
+      "width": 4,
+      "native_instruction": "addss xmm0, dword ptr [rax + r8*4 + 0x10]",
+      "provenance": "Reviewed addss xmm0, dword ptr [rax + r8*4 + 0x10] at RVA 0x26a979 in meshRay; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "meshRayQuery::direction",
+      "owner": "meshRay",
+      "window_offset": 87,
+      "pattern": "45 89 F8 45 89 F9 F3 42 0F 10 44 88 20 F3 0F 59 40 08 F3 42 0F 58 44 80 10",
+      "value": "0x20",
+      "instruction": "0x26a96d",
+      "width": 4,
+      "native_instruction": "movss xmm0, dword ptr [rax + r9*4 + 0x20]",
+      "provenance": "Reviewed movss xmm0, dword ptr [rax + r9*4 + 0x20] at RVA 0x26a96d in meshRay; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "meshRayQuery::inverseDirection",
+      "owner": "meshRay",
+      "window_offset": 207,
+      "pattern": "F3 0F 5E 44 81 20 44 89 F8 F3 0F 11 44 81 30 45 89 F8 48 8B 44 24 58 42 0F 2F 54 80 4C",
+      "value": "0x30",
+      "instruction": "0x26a9e8",
+      "width": 4,
+      "native_instruction": "movss dword ptr [rcx + rax*4 + 0x30], xmm0",
+      "provenance": "Reviewed movss dword ptr [rcx + rax*4 + 0x30], xmm0 at RVA 0x26a9e8 in meshRay; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "meshRayQuery::traversalStack",
+      "owner": "meshRay",
+      "window_offset": 717,
+      "pattern": "4C 8D 05 ?? ?? ?? ?? 4C 01 C0 48 89 41 3C 49 89 C6 49 89 D5 4C 89 EF 0F 1F 40 00",
+      "value": "0x3c",
+      "instruction": "0x26abe7",
+      "width": 8,
+      "native_instruction": "mov qword ptr [rcx + 0x3c], rax",
+      "provenance": "Reviewed mov qword ptr [rcx + 0x3c], rax at RVA 0x26abe7 in meshRay; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "meshRayQuery::scratchBank",
+      "owner": "meshRay",
+      "window_offset": 703,
+      "pattern": "4C 8B 40 08 4C 89 01 8B 41 44 48 C1 E0 0B 4C 8D 05 ?? ?? ?? ?? 4C 01 C0",
+      "value": "0x44",
+      "instruction": "0x26abd6",
+      "width": 4,
+      "native_instruction": "mov eax, dword ptr [rcx + 0x44]",
+      "provenance": "Reviewed mov eax, dword ptr [rcx + 0x44] at RVA 0x26abd6 in meshRay; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::x",
+      "owner": "guiFormCreate",
+      "window_offset": 368,
+      "pattern": "C7 40 60 00 30 00 00 48 8B 45 E8 C7 40 20 4F 97 21 C5 48 8B 45 E8 C7 40 24 4F 97 21 C5",
+      "value": "0x20",
+      "instruction": "0x2aa1b",
+      "width": 4,
+      "native_instruction": "mov dword ptr [rax + 0x20], 0xc521974f",
+      "provenance": "Reviewed mov dword ptr [rax + 0x20], 0xc521974f at RVA 0x2aa1b in guiFormCreate; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::y",
+      "owner": "guiFormCreate",
+      "window_offset": 379,
+      "pattern": "C7 40 20 4F 97 21 C5 48 8B 45 E8 C7 40 24 4F 97 21 C5 48 C7 45 E0 01 00 00 00",
+      "value": "0x24",
+      "instruction": "0x2aa26",
+      "width": 4,
+      "native_instruction": "mov dword ptr [rax + 0x24], 0xc521974f",
+      "provenance": "Reviewed mov dword ptr [rax + 0x24], 0xc521974f at RVA 0x2aa26 in guiFormCreate; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::width",
+      "owner": "guiFormCreate",
+      "window_offset": 218,
+      "pattern": "C7 80 00 01 00 00 FF FF FF FF 48 8B 45 E8 C7 40 28 2E 01 00 00 48 8B 45 E8",
+      "value": "0x28",
+      "instruction": "0x2a988",
+      "width": 4,
+      "native_instruction": "mov dword ptr [rax + 0x28], 0x12e",
+      "provenance": "Reviewed mov dword ptr [rax + 0x28], 0x12e at RVA 0x2a988 in guiFormCreate; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::height",
+      "owner": "guiFormCreate",
+      "window_offset": 232,
+      "pattern": "C7 40 28 2E 01 00 00 48 8B 45 E8 C7 40 2C 92 01 00 00 48 8B 45 E8 C7 40 48 2C 01 00 00",
+      "value": "0x2c",
+      "instruction": "0x2a993",
+      "width": 4,
+      "native_instruction": "mov dword ptr [rax + 0x2c], 0x192",
+      "provenance": "Reviewed mov dword ptr [rax + 0x2c], 0x192 at RVA 0x2a993 in guiFormCreate; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::layoutFlags",
+      "owner": "guiFormLayoutFlags",
+      "window_offset": 24,
+      "pattern": "75 12 44 8B 43 64 8B 53 5C 48 89 D9 E8 ?? ?? ?? ?? 0F 1F 00 48 8B 83 A0 00 00 00",
+      "value": "0x5c",
+      "instruction": "0x291ee",
+      "width": 4,
+      "native_instruction": "mov edx, dword ptr [rbx + 0x5c]",
+      "provenance": "Reviewed mov edx, dword ptr [rbx + 0x5c] at RVA 0x291ee in guiFormLayoutFlags; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::frameFlags",
+      "owner": "guiFormCreate",
+      "window_offset": 346,
+      "pattern": "C6 80 19 01 00 00 01 48 8B 45 E8 C7 40 64 22 00 03 00 48 8B 45 E8 C7 40 60 00 30 00 00",
+      "value": "0x64",
+      "instruction": "0x2aa05",
+      "width": 4,
+      "native_instruction": "mov dword ptr [rax + 0x64], 0x30022",
+      "provenance": "Reviewed mov dword ptr [rax + 0x64], 0x30022 at RVA 0x2aa05 in guiFormCreate; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::title",
+      "owner": "guiSettingsConstructor",
+      "window_offset": 65,
+      "pattern": "C7 43 28 B2 01 00 00 C7 43 2C 18 02 00 00 48 8D 8B 80 00 00 00 48 8D 15 ?? ?? ?? ??",
+      "value": "0x80",
+      "instruction": "0xa951f",
+      "width": 8,
+      "native_instruction": "lea rcx, [rbx + 0x80]",
+      "provenance": "Reviewed lea rcx, [rbx + 0x80] at RVA 0xa951f in guiSettingsConstructor; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeElement::stride",
+      "owner": "guiElementAppend",
+      "window_offset": 93,
+      "pattern": "49 63 04 24 48 6B C0 68 48 8D 4C 01 68 45 31 C0 E8 ?? ?? ?? ?? 41 89 F5",
+      "value": "0x68",
+      "instruction": "0x328c5",
+      "width": 8,
+      "native_instruction": "lea rcx, [rcx + rax + 0x68]",
+      "provenance": "Reviewed lea rcx, [rcx + rax + 0x68] at RVA 0x328c5 in guiElementAppend; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeElement::x",
+      "owner": "guiElementLayout",
+      "window_offset": 420,
+      "pattern": "67 8D 04 19 66 89 42 06 66 8B 42 04 66 3D 00 80 74 62 66 3D 01 80 0F 84 ?? ?? ?? ??",
+      "value": "0x4",
+      "instruction": "0x33e3c",
+      "width": 2,
+      "native_instruction": "mov ax, word ptr [rdx + 4]",
+      "provenance": "Reviewed mov ax, word ptr [rdx + 4] at RVA 0x33e3c in guiElementLayout; matches the retained shipping witness and source_sha256. Operand width is 2 bytes."
+    },
+    {
+      "name": "nativeElement::y",
+      "owner": "guiElementLayout",
+      "window_offset": 180,
+      "pattern": "45 85 FF 0F 8E ?? ?? ?? ?? 66 81 7A 06 00 00 0F 8D ?? ?? ?? ?? 66 8B 42 06",
+      "value": "0x6",
+      "instruction": "0x33d4d",
+      "width": 2,
+      "native_instruction": "cmp word ptr [rdx + 6], 0",
+      "provenance": "Reviewed cmp word ptr [rdx + 6], 0 at RVA 0x33d4d in guiElementLayout; matches the retained shipping witness and source_sha256. Operand width is 2 bytes."
+    },
+    {
+      "name": "nativeElement::width",
+      "owner": "guiElementLayout",
+      "window_offset": 576,
+      "pattern": "48 8D 4C 08 98 44 0F BF 41 04 0F BF 41 08 44 01 C0 66 89 42 04 E9 ?? ?? ?? ??",
+      "value": "0x8",
+      "instruction": "0x33eda",
+      "width": 2,
+      "native_instruction": "movsx eax, word ptr [rcx + 8]",
+      "provenance": "Reviewed movsx eax, word ptr [rcx + 8] at RVA 0x33eda in guiElementLayout; matches the retained shipping witness and source_sha256. Operand width is 2 bytes."
+    },
+    {
+      "name": "nativeElement::height",
+      "owner": "guiElementLayout",
+      "window_offset": 1272,
+      "pattern": "66 8B 46 18 66 89 42 08 66 81 7A 0A 00 00 75 08 66 8B 46 1A 66 89 42 0A",
+      "value": "0xa",
+      "instruction": "0x34190",
+      "width": 2,
+      "native_instruction": "cmp word ptr [rdx + 0xa], 0",
+      "provenance": "Reviewed cmp word ptr [rdx + 0xa], 0 at RVA 0x34190 in guiElementLayout; matches the retained shipping witness and source_sha256. Operand width is 2 bytes."
+    },
+    {
+      "name": "nativeElement::style",
+      "owner": "guiElementLayout",
+      "window_offset": 1334,
+      "pattern": "89 42 18 0F 1F 00 66 81 7A 0C 00 00 75 08 66 8B 46 1C 66 89 42 0C 48 8B 46 08",
+      "value": "0xc",
+      "instruction": "0x341cc",
+      "width": 2,
+      "native_instruction": "cmp word ptr [rdx + 0xc], 0",
+      "provenance": "Reviewed cmp word ptr [rdx + 0xc], 0 at RVA 0x341cc in guiElementLayout; matches the retained shipping witness and source_sha256. Operand width is 2 bytes."
+    },
+    {
+      "name": "nativeElement::group",
+      "owner": "guiActivate",
+      "window_offset": 17,
+      "pattern": "BF 83 00 00 00 48 89 DE 66 81 7E 0E 00 00 0F 86 ?? ?? ?? ?? 8B 46 1C 83 E0 20",
+      "value": "0xe",
+      "instruction": "0x32959",
+      "width": 2,
+      "native_instruction": "cmp word ptr [rsi + 0xe], 0",
+      "provenance": "Reviewed cmp word ptr [rsi + 0xe], 0 at RVA 0x32959 in guiActivate; matches the retained shipping witness and source_sha256. Operand width is 2 bytes."
+    },
+    {
+      "name": "nativeElement::text",
+      "owner": "guiButton",
+      "window_offset": 224,
+      "pattern": "81 FA 00 00 01 00 75 21 48 8B 40 10 48 85 C0 74 04 48 8B 40 F8 48 85 C0",
+      "value": "0x10",
+      "instruction": "0x32bc8",
+      "width": 8,
+      "native_instruction": "mov rax, qword ptr [rax + 0x10]",
+      "provenance": "Reviewed mov rax, qword ptr [rax + 0x10] at RVA 0x32bc8 in guiButton; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeElement::appearance",
+      "owner": "guiButton",
+      "window_offset": 122,
+      "pattern": "E9 ?? ?? ?? ?? 90 8B 43 18 25 00 00 10 00 76 0E 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ??",
+      "value": "0x18",
+      "instruction": "0x32b60",
+      "width": 4,
+      "native_instruction": "mov eax, dword ptr [rbx + 0x18]",
+      "provenance": "Reviewed mov eax, dword ptr [rbx + 0x18] at RVA 0x32b60 in guiButton; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeElement::flags",
+      "owner": "guiActivate",
+      "window_offset": 25,
+      "pattern": "66 81 7E 0E 00 00 0F 86 ?? ?? ?? ?? 8B 46 1C 83 E0 20 83 F8 20 75 1D 8B 46 18",
+      "value": "0x1c",
+      "instruction": "0x32965",
+      "width": 4,
+      "native_instruction": "mov eax, dword ptr [rsi + 0x1c]",
+      "provenance": "Reviewed mov eax, dword ptr [rsi + 0x1c] at RVA 0x32965 in guiActivate; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeElement::owner",
+      "owner": "guiActivate",
+      "window_offset": 68,
+      "pattern": "83 66 1C DF E9 ?? ?? ?? ?? 4C 8B 76 20 45 8B A6 90 00 00 00 45 85 E4 0F 8C ?? ?? ?? ??",
+      "value": "0x20",
+      "instruction": "0x3298d",
+      "width": 8,
+      "native_instruction": "mov r14, qword ptr [rsi + 0x20]",
+      "provenance": "Reviewed mov r14, qword ptr [rsi + 0x20] at RVA 0x3298d in guiActivate; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeElement::action",
+      "owner": "guiActivate",
+      "window_offset": 263,
+      "pattern": "89 43 1C BF 83 00 00 00 48 83 7B 28 00 74 06 FF 53 28 0F 1F 00 81 63 1C FF FF EF FF",
+      "value": "0x28",
+      "instruction": "0x32a4f",
+      "width": 8,
+      "native_instruction": "cmp qword ptr [rbx + 0x28], 0",
+      "provenance": "Reviewed cmp qword ptr [rbx + 0x28], 0 at RVA 0x32a4f in guiActivate; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeElement::handler",
+      "owner": "guiButton",
+      "window_offset": 360,
+      "pattern": "45 31 C9 BA 30 00 00 00 FF 53 30 83 C8 05 89 C6 EB 5E 66 90 81 7C 24 20 00 01 00 00",
+      "value": "0x30",
+      "instruction": "0x32c50",
+      "width": 8,
+      "native_instruction": "call qword ptr [rbx + 0x30]",
+      "provenance": "Reviewed call qword ptr [rbx + 0x30] at RVA 0x32c50 in guiButton; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeElement::help",
+      "owner": "guiButton",
+      "window_offset": 196,
+      "pattern": "48 89 D8 BE 03 00 00 00 48 83 78 40 00 0F 84 ?? ?? ?? ?? 8B 50 1C 81 E2 00 00 0F 00",
+      "value": "0x40",
+      "instruction": "0x32bac",
+      "width": 8,
+      "native_instruction": "cmp qword ptr [rax + 0x40], 0",
+      "provenance": "Reviewed cmp qword ptr [rax + 0x40], 0 at RVA 0x32bac in guiButton; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeString::referenceHeader",
+      "owner": "guiLiteral",
+      "window_offset": 20,
+      "pattern": "48 85 F6 74 13 48 83 7E F0 00 7E 0C 48 8D 4E F0 E8 ?? ?? ?? ?? 0F 1F 00",
+      "value": "0x10",
+      "instruction": "0x8109",
+      "width": 8,
+      "adjust": -32,
+      "native_instruction": "cmp qword ptr [rsi - 0x10], 0",
+      "provenance": "Reviewed cmp qword ptr [rsi - 0x10], 0 at RVA 0x8109 in guiLiteral; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeString::lengthHeader",
+      "owner": "guiButton",
+      "window_offset": 236,
+      "pattern": "48 85 C0 74 04 48 8B 40 F8 48 85 C0 0F 8E ?? ?? ?? ?? 81 CE 00 01 00 00",
+      "value": "0x8",
+      "instruction": "0x32bd1",
+      "width": 8,
+      "adjust": -16,
+      "native_instruction": "mov rax, qword ptr [rax - 8]",
+      "provenance": "Reviewed mov rax, qword ptr [rax - 8] at RVA 0x32bd1 in guiButton; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeForm::elementLast",
+      "owner": "guiFormElements",
+      "window_offset": 31,
+      "pattern": "48 83 BB 98 00 00 00 00 74 13 8B 93 90 00 00 00 48 8D 8B 98 00 00 00 E8 ?? ?? ?? ??",
+      "value": "0x90",
+      "instruction": "0x2b229",
+      "width": 4,
+      "native_instruction": "mov edx, dword ptr [rbx + 0x90]",
+      "provenance": "Reviewed mov edx, dword ptr [rbx + 0x90] at RVA 0x2b229 in guiFormElements; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::elements",
+      "owner": "guiFormElements",
+      "window_offset": 22,
+      "pattern": "80 BB 18 01 00 00 00 74 1D 48 83 BB 98 00 00 00 00 74 13 8B 93 90 00 00 00",
+      "value": "0x98",
+      "instruction": "0x2b21f",
+      "width": 8,
+      "native_instruction": "cmp qword ptr [rbx + 0x98], 0",
+      "provenance": "Reviewed cmp qword ptr [rbx + 0x98], 0 at RVA 0x2b21f in guiFormElements; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeForm::stateFlags",
+      "owner": "guiFormElements",
+      "window_offset": 306,
+      "pattern": "48 8B 8B 98 00 00 00 E8 ?? ?? ?? ?? 8B 43 60 25 00 40 00 00 76 10 48 89 D9",
+      "value": "0x60",
+      "instruction": "0x2b33e",
+      "width": 4,
+      "native_instruction": "mov eax, dword ptr [rbx + 0x60]",
+      "provenance": "Reviewed mov eax, dword ptr [rbx + 0x60] at RVA 0x2b33e in guiFormElements; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::skin",
+      "owner": "nativeSettingsCreate",
+      "window_offset": 93,
+      "pattern": "E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89 83 30 01 00 00 81 4B 64 00 10 00 00",
+      "value": "0x130",
+      "instruction": "0xa9537",
+      "width": 8,
+      "native_instruction": "mov qword ptr [rbx + 0x130], rax",
+      "provenance": "Reviewed mov qword ptr [rbx + 0x130], rax at RVA 0xa9537 in nativeSettingsCreate; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeForm::behaviorFlags",
+      "owner": "nativeSettingsCreate",
+      "window_offset": 127,
+      "pattern": "83 C8 20 0D 00 01 00 00 89 43 68 48 8D 15 ?? ?? ?? ?? 48 89 D9 45 30 C9",
+      "value": "0x68",
+      "instruction": "0xa9557",
+      "width": 4,
+      "native_instruction": "mov dword ptr [rbx + 0x68], eax",
+      "provenance": "Reviewed mov dword ptr [rbx + 0x68], eax at RVA 0xa9557 in nativeSettingsCreate; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "optionsForm::graphicsPane",
+      "owner": "guiSettingsConstructor",
+      "window_offset": 195,
+      "pattern": "E8 ?? ?? ?? ?? 48 89 C6 48 89 B3 58 01 00 00 48 8B 86 A0 00 00 00 8B 40 28",
+      "value": "0x158",
+      "instruction": "0xa959b",
+      "width": 8,
+      "native_instruction": "mov qword ptr [rbx + 0x158], rsi",
+      "provenance": "Reviewed mov qword ptr [rbx + 0x158], rsi at RVA 0xa959b in guiSettingsConstructor; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "optionsForm::controlsPane",
+      "owner": "guiSettingsConstructor",
+      "window_offset": 468,
+      "pattern": "E8 ?? ?? ?? ?? 48 89 C6 48 89 B3 60 01 00 00 C7 46 30 00 00 00 00 48 8B 86 A0 00 00 00",
+      "value": "0x160",
+      "instruction": "0xa96ac",
+      "width": 8,
+      "native_instruction": "mov qword ptr [rbx + 0x160], rsi",
+      "provenance": "Reviewed mov qword ptr [rbx + 0x160], rsi at RVA 0xa96ac in guiSettingsConstructor; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "optionsForm::controllerPane",
+      "owner": "guiSettingsConstructor",
+      "window_offset": 679,
+      "pattern": "E8 ?? ?? ?? ?? 48 89 83 70 01 00 00 48 89 C6 C7 46 5C 02 00 00 00",
+      "value": "0x170",
+      "instruction": "0xa977c",
+      "width": 8,
+      "native_instruction": "mov qword ptr [rbx + 0x170], rax",
+      "provenance": "Reviewed mov qword ptr [rbx + 0x170], rax at RVA 0xa977c in guiSettingsConstructor; matches the retained shipping witness and source_sha256. Operand width is 8 bytes."
+    },
+    {
+      "name": "nativeForm::scrollExtent",
+      "owner": "guiSettingsConstructor",
+      "window_offset": 553,
+      "pattern": "0D 80 00 00 00 89 46 64 C7 46 4C A4 02 00 00 48 8D 15 ?? ?? ?? ?? 48 89 F1",
+      "value": "0x4c",
+      "instruction": "0xa9701",
+      "width": 4,
+      "native_instruction": "mov dword ptr [rsi + 0x4c], 0x2a4",
+      "provenance": "Reviewed mov dword ptr [rsi + 0x4c], 0x2a4 at RVA 0xa9701 in guiSettingsConstructor; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "optionsForm::applied",
+      "owner": "guiOptionsCancel",
+      "window_offset": 14,
+      "pattern": "48 89 D8 48 8B 50 20 C7 82 38 01 00 00 00 00 00 00 48 8B 48 20 48 89 C2",
+      "value": "0x138",
+      "instruction": "0xa83a5",
+      "width": 4,
+      "native_instruction": "mov dword ptr [rdx + 0x138], 0",
+      "provenance": "Reviewed mov dword ptr [rdx + 0x138], 0 at RVA 0xa83a5 in guiOptionsCancel; matches the retained shipping witness and source_sha256. Operand width is 4 bytes."
+    },
+    {
+      "name": "nativeForm::contentLeft",
+      "value": "0x30",
+      "owner": "guiViewportToContent",
+      "witness": "nativeForm::scrollCoordinateLayout",
+      "instruction": "0x2ce46",
+      "width": 4,
+      "provenance": "Coordinate conversion member movsxd rcx, dword ptr [rax + 0x30] at RVA 0x2ce46; guarded by the complete scrollCoordinateLayout event window."
+    },
+    {
+      "name": "nativeForm::contentTop",
+      "value": "0x40",
+      "owner": "guiViewportToContent",
+      "witness": "nativeForm::scrollCoordinateLayout",
+      "instruction": "0x2ce75",
+      "width": 4,
+      "provenance": "Coordinate conversion member movsxd rdx, dword ptr [rax + 0x40] at RVA 0x2ce75; guarded by the complete scrollCoordinateLayout event window."
+    },
+    {
+      "name": "nativeForm::contentBottom",
+      "value": "0x3c",
+      "owner": "guiViewportToContent",
+      "witness": "nativeForm::scrollCoordinateLayout",
+      "instruction": "0x2ce80",
+      "width": 4,
+      "provenance": "Coordinate conversion member movsxd rcx, dword ptr [rax + 0x3c] at RVA 0x2ce80; guarded by the complete scrollCoordinateLayout event window."
+    },
+    {
+      "name": "nativeForm::horizontalScroll",
+      "value": "0xd8",
+      "owner": "guiViewportToContent",
+      "witness": "nativeForm::scrollCoordinateLayout",
+      "instruction": "0x2ce60",
+      "width": 4,
+      "provenance": "Coordinate conversion member mulss xmm0, dword ptr [rax + 0xd8] at RVA 0x2ce60; guarded by the complete scrollCoordinateLayout event window."
+    },
+    {
+      "name": "nativeForm::verticalScroll",
+      "value": "0xdc",
+      "owner": "guiViewportToContent",
+      "witness": "nativeForm::scrollCoordinateLayout",
+      "instruction": "0x2ce8f",
+      "width": 4,
+      "provenance": "Coordinate conversion member mulss xmm0, dword ptr [rax + 0xdc] at RVA 0x2ce8f; guarded by the complete scrollCoordinateLayout event window."
+    },
+    {
+      "name": "nativeForm::contentRight",
+      "value": "0x44",
+      "owner": "guiViewportToContent",
+      "witness": "nativeForm::scrollCoordinateLayout",
+      "instruction": "0x2ce51",
+      "width": 4,
+      "provenance": "Coordinate conversion member movsxd r10, dword ptr [rax + 0x44] at RVA 0x2ce51; guarded by the complete scrollCoordinateLayout event window."
+    },
+    {
+      "name": "nativeForm::contentWidth",
+      "value": "0x48",
+      "owner": "guiViewportToContent",
+      "witness": "nativeForm::scrollCoordinateLayout",
+      "instruction": "0x2ce4d",
+      "width": 4,
+      "provenance": "Coordinate conversion member movsxd r9, dword ptr [rax + 0x48] at RVA 0x2ce4d; guarded by the complete scrollCoordinateLayout event window."
+    },
+    {
+      "name": "drag::acceptedKind",
+      "value": "0xc4",
+      "owner": "heldUpdate",
+      "instruction": "0x11f88b",
+      "width": 4,
+      "window_offset": 622,
+      "pattern": "0F 84 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? C7 80 C4 00 00 00 01 00 00 00 48 8B 0D ?? ?? ?? ??",
+      "native_instruction": "mov dword ptr [rax + 0xc4], 1",
+      "provenance": "Native DWORD kind is written to 1 only after heldPlace and the native clearance check both return success. Verified against the source_sha256 executable and Ghidra function 10011f610."
+    },
+    {
+      "name": "drag::acceptedQuery",
+      "value": "0x70",
+      "owner": "heldUpdate",
+      "instruction": "0x11f8a4",
+      "width": 8,
+      "window_offset": 652,
+      "pattern": "48 8D 54 24 20 48 8B 02 48 89 41 70 48 8B 42 08 48 89 41 78 48 8B 42 10",
+      "native_instruction": "mov qword ptr [rcx + 0x70], rax",
+      "provenance": "Native accepted query starts here; three QWORD copies at 11F8A4, 11F8AC, 11F8B4 retain 24 bytes from the accepted placement query. Verified against the source_sha256 executable and Ghidra function 10011f610."
+    },
+    {
+      "name": "drag::acceptedPoints",
+      "value": "0x88",
+      "owner": "heldUpdate",
+      "instruction": "0x11f8cd",
+      "width": 8,
+      "window_offset": 690,
+      "pattern": "48 8B 42 10 48 8B 80 60 01 00 00 48 8D BA 88 00 00 00 48 8D B0 F0 00 00 00",
+      "native_instruction": "lea rdi, [rdx + 0x88]",
+      "provenance": "Native accepted body-point snapshot starts here; LEA selects the destination and REP MOVSQ at 11F8E0 copies six QWORDs (48 bytes) from body+F0. Verified against the source_sha256 executable and Ghidra function 10011f610."
+    },
+    {
+      "name": "view::pickFarDepth",
+      "value": "0x120",
+      "owner": "pickDepthUnproject",
+      "instruction": "0x8f4cc",
+      "width": 4,
+      "window_offset": 96,
+      "pattern": "E8 ?? ?? ?? ?? 48 8B 83 A8 01 00 00 F3 0F 10 88 20 01 00 00 F3 0F 2A 83 A0 01 00 00",
+      "native_instruction": "movss xmm1, dword ptr [rax + 0x120]",
+      "provenance": "Float far-depth read at RVA 0x8F4CC via viewport+0x1A8. Native 0x8F460 unprojects near depth from pickCamera+0x1CC and far depth from view+0x120 through 0x4C520, then subtracts the near point. Source producer 0x9F2E0 uses 25000.f for nonpositive or unordered/NaN camera far, otherwise camera far-1.f. Verified in source_sha256 bytes and Ghidra functions 10008f460, 10009f2e0, 10004c520."
+    },
+    {
+      "name": "sector::scene",
+      "value": "0x220",
+      "owner": "releaseBodyDynamics",
+      "instruction": "0x116c20",
+      "width": 8,
+      "window_offset": 54,
+      "pattern": "89 43 08 48 8B 81 30 01 00 00 48 8B 80 20 02 00 00 48 8B 80 28 1C 00 00",
+      "native_instruction": "mov rax, qword ptr [rax + 0x220]",
+      "provenance": "Release function 0x116BE0 resolves the owning scene through sceneNode+0x130 then sector+0x220; this is not the global world pointer. Verified against source_sha256 executable and actual Ghidra exports 1000832b0/100116be0."
+    },
+    {
+      "name": "scene::physicsContext",
+      "value": "0x1c28",
+      "owner": "releaseBodyDynamics",
+      "instruction": "0x116c27",
+      "width": 8,
+      "window_offset": 57,
+      "pattern": "48 8B 81 30 01 00 00 48 8B 80 20 02 00 00 48 8B 80 28 1C 00 00 48 8B 40 70",
+      "native_instruction": "mov rax, qword ptr [rax + 0x1c28]",
+      "provenance": "Release function 0x116BE0 reads the physics-context pointer from the owning scene+0x1C28; constructor 0x832B0 writes the reciprocal backlink at 0x8348A. This is a distinct object type from worldObject::characters despite the equal displacement. Verified against source_sha256 executable and actual Ghidra exports 1000832b0/100116be0."
+    },
+    {
+      "name": "physicsContext::frequencyHz",
+      "value": "0x6c",
+      "owner": "physicsContextInit",
+      "instruction": "0x83316",
+      "width": 4,
+      "window_offset": 92,
+      "pattern": "48 8B 55 D0 8B 05 ?? ?? ?? ?? 89 42 6C 48 8B 55 D0 8B 05 ?? ?? ?? ?? 89 82 80 00 00 00",
+      "native_instruction": "mov dword ptr [rdx + 0x6c], eax",
+      "provenance": "Constructor loads the signed 32-bit native simulation frequency from global 0x2AE740 at 0x83310 and stores context+0x6C at 0x83316. Native scheduling divides 1000.0 by this field at 0x833A5..0x833BB. The reviewed source default is 83 Hz; global 0x2AE760 is 83/Hz, not seconds. Verified against source_sha256 executable and actual Ghidra exports 1000832b0/100116be0."
+    },
+    {
+      "name": "gui::dragSource",
+      "value": "0x78",
+      "owner": "heldRecovery",
+      "instruction": "0x119cf5",
+      "width": 8,
+      "window_offset": 57,
+      "pattern": "E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 8B 40 78 48 3B 43 18 75 12 48 8D 53 40",
+      "native_instruction": "mov rax, qword ptr [rax + 0x78]",
+      "provenance": "GUI manager+78 is the native source view; 119CB0 reads it after resolving the GUI manager global. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "gui::dragPayload",
+      "value": "0x90",
+      "owner": "inventoryLoader",
+      "instruction": "0x11cf83",
+      "width": 8,
+      "window_offset": 42,
+      "pattern": "66 90 48 8B 05 ?? ?? ?? ?? 48 8B 80 90 00 00 00 8B 48 10 E8 ?? ?? ?? ??",
+      "native_instruction": "mov rax, qword ptr [rax + 0x90]",
+      "provenance": "Loader reads the CURRENT GUI manager payload pointer at +90. This is not job-local provenance; the observer must not replace native loader behavior. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "drag::specialSource",
+      "value": "0x150",
+      "owner": "inventoryDeferredCleanup",
+      "instruction": "0x11998d",
+      "width": 1,
+      "window_offset": 20,
+      "pattern": "48 C7 45 F8 00 00 00 00 90 80 BB 50 01 00 00 00 0F 84 ?? ?? ?? ?? C6 83 50 01 00 00 00",
+      "native_instruction": "cmp byte ptr [rbx + 0x150], 0",
+      "provenance": "Deferred cleanup tests and clears this special-source byte before optional source-side effects. Ordinary cancellation eligibility requires it clear. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventorySource::special",
+      "value": "0x3eb",
+      "owner": "inventorySourceFinish",
+      "instruction": "0x13781a",
+      "width": 1,
+      "window_offset": 20,
+      "pattern": "44 89 C7 45 31 E4 80 BB EB 03 00 00 00 74 15 48 8B 46 20 8B 40 14 25 00 00 00 80",
+      "native_instruction": "cmp byte ptr [rbx + 0x3eb], 0",
+      "provenance": "Source completion tests this byte; when set with payload high flag it replaces cancel sentinel with code -1. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventorySource::merchant",
+      "value": "0x3ec",
+      "owner": "inventorySourceFinish",
+      "instruction": "0x137840",
+      "width": 1,
+      "window_offset": 56,
+      "pattern": "81 FF 00 00 00 80 75 34 80 BB EC 03 00 00 00 0F 84 ?? ?? ?? ?? F3 0F 10 83 D8 03 00 00",
+      "native_instruction": "cmp byte ptr [rbx + 0x3ec], 0",
+      "provenance": "Even cancel sentinel invokes a financial/source adjustment when this merchant byte is set. Ordinary no-source-operation eligibility requires it clear. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventorySource::finishSlot",
+      "value": "0xf0",
+      "owner": "guiDragCompletionRoute",
+      "instruction": "0x3017b",
+      "width": 8,
+      "window_offset": 145,
+      "pattern": "48 8B 83 A8 00 00 00 48 8B 00 FF 90 F0 00 00 00 0F 1F 00 48 83 BB D0 00 00 00 00",
+      "native_instruction": "call qword ptr [rax + 0xf0]",
+      "provenance": "This is a VTABLE slot offset, not a source-object member: GUI source completion calls [source-vtable+F0] with the native cancel sentinel. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventoryPayload::source",
+      "value": "0x0",
+      "owner": "inventoryPayloadCreate",
+      "instruction": "0x134139",
+      "width": 8,
+      "window_offset": 368,
+      "pattern": "E8 ?? ?? ?? ?? 48 8B 46 20 48 89 18 48 C7 40 08 00 00 00 00 44 89 60 10",
+      "native_instruction": "mov qword ptr [rax], rbx",
+      "provenance": "Payload creation explicitly stores the source inventory window pointer into payload+0. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventoryPayload::item",
+      "value": "0x10",
+      "owner": "inventoryPayloadCreate",
+      "instruction": "0x134144",
+      "width": 4,
+      "window_offset": 377,
+      "pattern": "48 89 18 48 C7 40 08 00 00 00 00 44 89 60 10 8B 54 24 20 89 50 14 8B 15 ?? ?? ?? ??",
+      "native_instruction": "mov dword ptr [rax + 0x10], r12d",
+      "provenance": "Payload creation stores the item handle into payload+10 as a DWORD. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventoryPayload::flags",
+      "value": "0x14",
+      "owner": "inventoryPayloadCreate",
+      "instruction": "0x13414c",
+      "width": 4,
+      "window_offset": 388,
+      "pattern": "44 89 60 10 8B 54 24 20 89 50 14 8B 15 ?? ?? ?? ?? D1 EA 89 50 18 8B 15 ?? ?? ?? ??",
+      "native_instruction": "mov dword ptr [rax + 0x14], edx",
+      "provenance": "Payload creation stores item/source flags into payload+14 as a DWORD. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventoryJob::item",
+      "value": "0x0",
+      "owner": "inventoryJobCreate",
+      "instruction": "0x11d4c0",
+      "width": 4,
+      "window_offset": 56,
+      "pattern": "48 8B 54 24 20 8B 40 10 89 02 48 8B 05 ?? ?? ?? ?? 48 8B 80 90 00 00 00",
+      "native_instruction": "mov dword ptr [rdx], eax",
+      "provenance": "Job creation copies the current payload item DWORD into job+0. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventoryJob::flags",
+      "value": "0x4",
+      "owner": "inventoryJobCreate",
+      "instruction": "0x11d4d8",
+      "width": 4,
+      "window_offset": 80,
+      "pattern": "48 8B 54 24 20 8B 40 14 89 42 04 48 8B 54 24 20 48 89 5A 08 4C 8D 05 ?? ?? ?? ??",
+      "native_instruction": "mov dword ptr [rdx + 4], eax",
+      "provenance": "Job creation copies the current payload flags DWORD into job+4. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventoryJob::sector",
+      "value": "0x8",
+      "owner": "inventoryJobCreate",
+      "instruction": "0x11d4e0",
+      "width": 8,
+      "window_offset": 88,
+      "pattern": "89 42 04 48 8B 54 24 20 48 89 5A 08 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ??",
+      "native_instruction": "mov qword ptr [rdx + 8], rbx",
+      "provenance": "Job creation stores its native scene-manager/sector argument into job+8. The argument is viewport+1F0 from admission; name matches the adapter, not a scene-sector registry object. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "inventoryJob::object",
+      "value": "0x10",
+      "owner": "inventoryLoader",
+      "instruction": "0x11cfae",
+      "width": 8,
+      "window_offset": 86,
+      "pattern": "8B 53 04 E8 ?? ?? ?? ?? 48 89 43 10 40 B6 01 40 88 F0 90 48 8D 64 24 28",
+      "native_instruction": "mov qword ptr [rbx + 0x10], rax",
+      "provenance": "Loader stores the returned preview object pointer into job+10. Completion may consume/free the job, so no post-completion read is authorized by this field contract. Verified against source_sha256 executable instruction and corresponding actual Ghidra export."
+    },
+    {
+      "name": "character::metadata",
+      "value": "0x0",
+      "owner": "variantActorAllocate",
+      "instruction": "0xc029",
+      "width": 8,
+      "window_offset": 49,
+      "pattern": "48 89 F1 E8 ?? ?? ?? ?? 48 89 1E 48 83 7B 50 00 74 0D 48 89 D9 48 89 F2",
+      "native_instruction": "mov qword ptr [rsi], rbx",
+      "optional_group": "attackVariants",
+      "provenance": "Native allocation writes the metadata pointer to actor+0. Verified from the source executable and corresponding native Ghidra export; this is bounded admission evidence, not a lifetime lock."
+    },
+    {
+      "name": "nativeThread::id",
+      "value": "0x10",
+      "owner": "variantThreadStart",
+      "instruction": "0x21be9",
+      "width": 8,
+      "window_offset": 95,
+      "pattern": "76 2D C7 44 24 20 04 00 00 00 48 8D 43 10 48 89 44 24 28 4C 8D 05 ?? ?? ?? ??",
+      "native_instruction": "lea rax, [rbx + 0x10]",
+      "optional_group": "physicsOwnership",
+      "provenance": "LEA passes object+10 to CreateThread as the DWORD thread-ID output; operand width is address width, not ID size. Verified from the source executable and corresponding native Ghidra export; this is bounded admission evidence, not a lifetime lock."
+    },
+    {
+      "name": "scene::lifecycleFlags",
+      "value": "0x1c20",
+      "owner": "variantSceneRetireRequest",
+      "instruction": "0x5aeac",
+      "width": 4,
+      "window_offset": 21,
+      "pattern": "74 5A 48 8B 54 24 20 81 8A 20 1C 00 00 00 00 00 04 83 05 ?? ?? ?? ?? 01",
+      "native_instruction": "or dword ptr [rdx + 0x1c20], 0x4000000",
+      "optional_group": "physicsOwnership",
+      "provenance": "Scene retirement request sets bit04000000; live bit02000000 is retired after scheduler callbacks. Verified from the source executable and corresponding native Ghidra export; this is bounded admission evidence, not a lifetime lock."
+    },
+    {
+      "name": "grip::callback",
+      "value": "0xb0",
+      "owner": "variantGripCallback",
+      "instruction": "0x1547a1",
+      "width": 8,
+      "window_offset": 20,
+      "pattern": "89 93 B0 10 00 00 48 8B 83 70 10 00 00 48 83 B8 B0 00 00 00 00 74 11 48 89 D9",
+      "native_instruction": "cmp qword ptr [rax + 0xb0], 0",
+      "optional_group": "attackVariants",
+      "provenance": "Native grip helper tests the selected table entry callback before an indirect call. Verified from the source executable and corresponding native Ghidra export; this is bounded admission evidence, not a lifetime lock."
+    },
+    {
+      "name": "grip::stride",
+      "value": "0xb8",
+      "owner": "variantGripSelect",
+      "instruction": "0x15527b",
+      "width": 8,
+      "window_offset": 39,
+      "pattern": "89 CA 21 D2 48 69 C2 B8 00 00 00 48 8D 15 ?? ?? ?? ?? 48 01 D0 C3",
+      "native_instruction": "imul rax, rdx, 0xb8",
+      "optional_group": "attackVariants",
+      "provenance": "Native grip lookup multiplies the selected index by table entry stride. Verified from the source executable and corresponding native Ghidra export; this is bounded admission evidence, not a lifetime lock.",
+      "operand_kind": "immediate"
+    },
+    {
+      "name": "physicsContext::scene",
+      "value": "0x48",
+      "owner": "physicsContextInit",
+      "instruction": "0x8347e",
+      "width": 8,
+      "window_offset": 454,
+      "pattern": "48 8B 55 D0 48 8B 45 F0 48 89 42 48 48 8B 45 D0 48 8B 50 48 48 89 82 28 1C 00 00",
+      "native_instruction": "mov qword ptr [rdx + 0x48], rax",
+      "optional_group": "physicsOwnership",
+      "provenance": "Context constructor stores its owning scene pointer and writes the reciprocal scene+1C28 backlink. Verified from the source executable and corresponding native Ghidra export; this is bounded admission evidence, not a lifetime lock."
+    },
+    {
+      "name": "physicsContext::running",
+      "value": "0x159",
+      "owner": "variantPhysicsSchedule",
+      "instruction": "0x8bf3c",
+      "width": 1,
+      "window_offset": 599,
+      "pattern": "90 48 8B 45 80 C6 80 59 01 00 00 01 48 8B 45 80 83 40 50 01 48 8B 45 80",
+      "native_instruction": "mov byte ptr [rax + 0x159], 1",
+      "optional_group": "physicsOwnership",
+      "provenance": "Scheduler sets this byte before sector callbacks and clears it after callbacks. Verified from the source executable and corresponding native Ghidra export; this is bounded admission evidence, not a lifetime lock."
+    },
+    {
+      "name": "bodyPart::metadata",
+      "value": "0x0",
+      "owner": "variantActorAllocate",
+      "instruction": "0xc029",
+      "width": 8,
+      "window_offset": 49,
+      "pattern": "48 89 F1 E8 ?? ?? ?? ?? 48 89 1E 48 83 7B 50 00 74 0D 48 89 D9 48 89 F2",
+      "native_instruction": "mov qword ptr [rsi], rbx",
+      "optional_group": "heldThrow",
+      "provenance": "Generic object allocator writes passed metadata pointer to offset0; held body exact metadata is separately validated. Verified actual source executable native instruction; optional delayed-throw scope only."
+    },
+    {
+      "name": "bodyPart::motionFlags",
+      "value": "0x8",
+      "owner": "heldBodyIntegrate",
+      "instruction": "0x88d78",
+      "width": 4,
+      "window_offset": 63,
+      "pattern": "83 AB 88 04 00 00 01 66 90 8B 43 08 83 E0 40 76 5C 48 8D BB F0 00 00 00",
+      "native_instruction": "mov eax, dword ptr [rbx + 8]",
+      "optional_group": "heldThrow",
+      "provenance": "Native integrator tests motion flags including unsupported alternate branch bit40. Verified actual source executable native instruction; optional delayed-throw scope only."
+    },
+    {
+      "name": "bodyPart::constraintCount",
+      "value": "0x31c",
+      "owner": "heldConstraintWalk",
+      "instruction": "0x89c03",
+      "width": 4,
+      "window_offset": 10,
+      "pattern": "66 0F 7F 74 24 40 48 89 CB 8B 83 1C 03 00 00 67 8D 70 FF 85 F6 0F 8C ?? ?? ?? ??",
+      "native_instruction": "mov eax, dword ptr [rbx + 0x31c]",
+      "optional_group": "heldThrow",
+      "provenance": "Native constraint walk iterates this signed count over external constraint records at320. Verified actual source executable native instruction; optional delayed-throw scope only."
+    },
+    {
+      "name": "bodyPart::childCount",
+      "value": "0x430",
+      "owner": "heldReleaseSettle",
+      "instruction": "0x116c39",
+      "width": 4,
+      "window_offset": 78,
+      "pattern": "48 8B 40 70 48 89 83 18 04 00 00 8B 83 30 04 00 00 67 44 8D 60 FF 45 85 E4",
+      "native_instruction": "mov eax, dword ptr [rbx + 0x430]",
+      "optional_group": "heldThrow",
+      "provenance": "Native release recursively processes this child count. Verified actual source executable native instruction; optional delayed-throw scope only."
+    },
+    {
+      "name": "bodyPart::releaseSettling",
+      "value": "0x450",
+      "owner": "heldReleaseSettle",
+      "instruction": "0x116bf5",
+      "width": 4,
+      "window_offset": 9,
+      "pattern": "48 8D 64 24 D8 48 8B 99 60 01 00 00 C7 83 50 04 00 00 08 00 00 00 C7 83 48 03 00 00 00 00 00 00",
+      "native_instruction": "mov dword ptr [rbx + 0x450], 8",
+      "optional_group": "heldThrow",
+      "provenance": "Native release writes8; integrator decrements settling counter before ordinary integration. Verified actual source executable native instruction; optional delayed-throw scope only."
     }
   ],
   "references": [
@@ -2265,6 +3672,20 @@
       "base": "bindings::stride",
       "multiply": 9,
       "provenance": "The MOVZX ECX, word ptr [RIP+0x19568F] at 0x121CDA has next instruction 0x121CE1, resolving to native VK global 0x2B7370. The immediately following call is the GetAsyncKeyState thunk at 0x1A50, inside native interaction-release logic. 0x2B7370 - movementKeys 0x2B72E0 = 0x90. The native memory read is two bytes; the four-byte table reads currently used by the mod are not evidence of native width."
+    },
+    {
+      "name": "pick::requiredSize",
+      "value": 56,
+      "base": "pick::scratchBank",
+      "add": 4,
+      "provenance": "Buffer extent includes the last witnessed four-byte scratchBank member."
+    },
+    {
+      "name": "meshRayQuery::requiredSize",
+      "value": 72,
+      "base": "meshRayQuery::scratchBank",
+      "add": 4,
+      "provenance": "Buffer extent includes the last witnessed four-byte scratchBank member."
     }
   ],
   "constants": [
@@ -2283,6 +3704,453 @@
     {
       "field": "sceneNode::poseOrigin",
       "reason": "tpHideKeep used body-part +2C4 on mesh nodes; fixed to directly witnessed sceneNode::transformOrigin +64 with each node's own sector origin."
+    }
+  ],
+  "events": [
+    {
+      "name": "nativeCheckbox::coordinateEvents",
+      "owner": "guiCheckboxHandler",
+      "window_offset": 488,
+      "pattern": "44 0F BF 44 24 22 0F BF 54 24 20 48 89 D9 E8 65 F8 FF FF 89 C6 E9 D6 00 00 00 66 90 31 F6 8B 43 1C 83 E0 10 83 F8 10 0F 84 C3 00 00 00 0F 1F 00 8B 44 24 20 83 E0 07 83 F8 01 0F 85 B0 00 00 00 44 8B 44 24 28 48 89 D9 45 31 C9 BA 30 00 00 00 FF 53 30 83 C8 05 89 C6 E9 93 00 00 00 0F 1F 00 48 89 DF 8B 44 24 20 25 00 00 01 00 0F 86 7E 00 00 00 44 0F BF 44 24 2A 0F BF 54 24 28 48 8B 4F 20 E8 D2 A6 FF FF 48 39 D8 0F 85 61 00 00 00 8B 44 24 20 83 E0 07 0B 47 1C 89 47 1C 8B 47 18 25 00 00 00 10 76 0C 48 89 D9 E8 EA FC FF FF 89 C6 EB 0A 48 89 D9 E8 7E F6 FF FF 89 C6 83 67 1C F8",
+      "provenance": "Reviewed native instruction sequence at RVA 0x33208 in guiCheckboxHandler; retained verbatim from the shipping runtime contract and verified against source_sha256. This proves the guarded sequence, not arbitrary caller behavior."
+    },
+    {
+      "name": "nativeForm::scrollCoordinateLayout",
+      "owner": "guiViewportToContent",
+      "window_offset": 0,
+      "pattern": "48 89 C8 4C 63 1A 48 63 48 30 49 29 CB 4C 63 48 48 4C 63 50 44 49 29 CA 4D 29 D1 F3 49 0F 2A C1 F3 0F 59 80 D8 00 00 00 F3 48 0F 2D C8 4C 01 D9 89 0A 4D 63 10 48 63 50 40 49 29 D2 4C 63 48 4C 48 63 48 3C 48 29 D1 49 29 C9 F3 49 0F 2A C1 F3 0F 59 80 DC 00 00 00 F3 48 0F 2D C0 4C 01 D0 41 89 00 C3",
+      "provenance": "Reviewed native instruction sequence at RVA 0x2ce40 in guiViewportToContent; retained verbatim from the shipping runtime contract and verified against source_sha256. This proves the guarded sequence, not arbitrary caller behavior."
+    },
+    {
+      "name": "nativeForm::scrollHitConversion",
+      "owner": "guiContentHitConversion",
+      "window_offset": 0,
+      "pattern": "48 89 C8 4C 63 0A 48 63 48 30 4D 8D 1C 09 4C 63 50 48 4C 63 48 44 49 29 C9 4D 29 CA F3 49 0F 2A C2 F3 0F 59 80 D8 00 00 00 F3 48 0F 2D C8 4C 01 D9 89 0A 49 63 08 48 63 50 40 4C 8D 14 11 4C 63 48 4C 48 63 48 3C 48 29 D1 49 29 C9 F3 49 0F 2A C1 F3 0F 59 80 DC 00 00 00 F3 48 0F 2D C0 4C 01 D0 41 89 00 C3",
+      "provenance": "Reviewed native instruction sequence at RVA 0x2ceb0 in guiContentHitConversion; retained verbatim from the shipping runtime contract and verified against source_sha256. This proves the guarded sequence, not arbitrary caller behavior."
+    },
+    {
+      "name": "nativeCheckbox::ownerHitConversion",
+      "owner": "guiCheckboxHitTest",
+      "window_offset": 0,
+      "pattern": "53 56 48 8D 64 24 B8 48 89 CB 89 54 24 28 44 89 44 24 30 31 F6 4C 8D 44 24 30 48 8D 54 24 28 48 89 D9 E8 29 F5 FF FF 48 8D 44 24 40 48 89 44 24 20 4C 8D 4C 24 38 44 8B 44 24 30 8B 54 24 28 48 89 D9 48 8B 03 FF 90 20 01 00 00 25 FF FF 00 00 83 E8 01 48 3B 5C 24 38 75 1E 85 C0 7C 1A 3B 83 90 00 00 00 7F 12 48 8B 93 98 00 00 00 21 C0 48 6B C0 68 48 8D 34 02 90 48 89 F0 90 48 8D 64 24 48 5E 5B C3",
+      "provenance": "Reviewed native instruction sequence at RVA 0x2d960 in guiCheckboxHitTest; retained verbatim from the shipping runtime contract and verified against source_sha256. This proves the guarded sequence, not arbitrary caller behavior."
+    },
+    {
+      "name": "drag::acceptedPlacementCommit",
+      "owner": "heldUpdate",
+      "window_offset": 560,
+      "pattern": "4C 8D 44 24 20 48 8B 05 ?? ?? ?? ?? 48 8B 50 18 48 8B 05 ?? ?? ?? ?? 48 8B 48 10 E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 8B 40 10 48 8D 48 20 E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? C7 80 C4 00 00 00 01 00 00 00 48 8B 0D ?? ?? ?? ?? 48 8D 54 24 20 48 8B 02 48 89 41 70 48 8B 42 08 48 89 41 78 48 8B 42 10 48 89 81 80 00 00 00 48 8B 15 ?? ?? ?? ?? 48 8B 42 10 48 8B 80 60 01 00 00 48 8D BA 88 00 00 00 48 8D B0 F0 00 00 00 B9 06 00 00 00 F3 48 A5 45 30 ED",
+      "provenance": "Native success-gated commit at RVA 0x11F840..0x11F8E6: heldPlace and native clearance must return true before kind=1, three query QWORDs and six accepted-point QWORDs are written. Reviewed using source_sha256 disassembly and Ghidra function 10011f610."
+    },
+    {
+      "name": "view::pickDepthCallChain",
+      "owner": "pickRay",
+      "window_offset": 175,
+      "pattern": "4C 8D 4C 24 2C 41 0F 28 D0 0F 28 CE 48 89 9C 24 A8 00 00 00 48 89 D9 E8 75 FC FF FF",
+      "provenance": "Native pickRay passes its viewport and pixel coordinates to 0x8F460 at call RVA 0x8F7E6 before direction normalization. The call displacement is intentionally fixed, not weakened. Verified against source_sha256 and actual Ghidra C exports."
+    },
+    {
+      "name": "view::pickDepthConsumer",
+      "owner": "pickDepthUnproject",
+      "window_offset": 33,
+      "pattern": "48 8B 90 C0 01 00 00 F3 0F 10 92 CC 01 00 00 F3 0F 2A 88 A0 01 00 00 F3 41 0F 5C C8 0F 28 F0 F3 0F 11 74 24 20 F3 0F 11 4C 24 24 F3 0F 11 54 24 28 4C 8D 44 24 20 48 89 F2 48 89 C3 48 89 D9 E8 5B D0 FB FF 48 8B 83 A8 01 00 00 F3 0F 10 88 20 01 00 00 F3 0F 2A 83 A0 01 00 00 F3 41 0F 5C C0 F3 0F 11 74 24 20 F3 0F 11 44 24 24 F3 0F 11 4C 24 28 4C 8D 44 24 20 48 8D 56 0C 48 89 D9 E8 1C D0 FB FF 48 89 F2 48 8D 4E 0C E8 90 9C F8 FF",
+      "provenance": "Native ray construction reads pickCamera+0x1CC and view+0x120, unprojects both through calls to 0x4C520 at 0x8F4C0 and 0x8F4FF, then subtracts near from far with 0x191A0. Call displacements are intentionally fixed. Verified against source_sha256 and actual Ghidra C exports."
+    },
+    {
+      "name": "view::pickFarDepthProducer",
+      "owner": "rebuildProjection",
+      "window_offset": 244,
+      "pattern": "F3 0F 10 05 ?? ?? ?? ?? 0F 2F 86 D0 01 00 00 7A 20 73 1E 48 8B 43 50 F3 0F 10 80 D0 01 00 00 F3 0F 5C 05 ?? ?? ?? ?? F3 0F 11 83 20 01 00 00 EB 0C 8B 05 ?? ?? ?? ?? 89 83 20 01 00 00",
+      "provenance": "Native COMISS compares source constant 0.f against camera far; JP or JAE chooses 25000.f, otherwise camera far-1.f is written to view+0x120. Source constants verified as 0.f at 0x306A80, 1.f at 0x306A78, 25000.f at 0x2AFC70. This window guards instructions, not mutable constant-table contents. Verified against source_sha256 and actual Ghidra C exports."
+    },
+    {
+      "name": "view::directDepthUnprojection",
+      "owner": "aimUnproject",
+      "window_offset": 0,
+      "pattern": "48 8D 64 24 E8 48 89 C8 49 8B 08 48 89 0C 24 41 8B 48 08 89 4C 24 08 48 89 E1 F3 0F 2A 80 9C 01 00 00 F3 0F 10 1D ?? ?? ?? ?? 0F 28 C8 F3 0F 59 CB F3 0F 10 11 F3 0F 5C D1 F3 0F 59 51 08 48 8B 88 A8 01 00 00 F3 0F 10 89 A0 00 00 00 F3 0F 59 C8 F3 0F 59 CB F3 0F 5E D1 F3 0F 11 12 48 89 E1 F3 0F 2A 80 A0 01 00 00 F3 0F 10 1D ?? ?? ?? ?? 0F 28 C8 F3 0F 59 CB F3 0F 10 51 04 F3 0F 5C D1 F3 0F 59 51 08 48 8B 80 A8 01 00 00 F3 0F 10 88 B4 00 00 00 F3 0F 59 C8 F3 0F 59 CB F3 0F 5E D1 F3 0F 11 52 04 F3 0F 10 44 24 08 F3 0F 10 0D ?? ?? ?? ?? 0F 57 C1 F3 0F 11 42 08 48 8D 64 24 18 C3",
+      "provenance": "Native 0x4C520 directly scales X/Y by supplied depth using viewport width/height and view+A0/B4 projection terms, and writes negative depth as Z. This is the native unprojection behavior relied on by a collision-only near-depth zero borrow; projection denominators remain native valid-state assumptions. Verified against source_sha256 and actual Ghidra C exports."
+    },
+    {
+      "name": "physicsContext::releaseOwnershipChain",
+      "owner": "releaseBodyDynamics",
+      "window_offset": 57,
+      "pattern": "48 8B 81 30 01 00 00 48 8B 80 20 02 00 00 48 8B 80 28 1C 00 00 48 8B 40 70",
+      "provenance": "Native release reads object+130 -> sector+220 -> scene+1C28 -> context+70. This guards the ownership route, not the lifetime of external pointers. Verified against source_sha256 executable and Ghidra exports."
+    },
+    {
+      "name": "physicsContext::sceneBacklink",
+      "owner": "physicsContextInit",
+      "window_offset": 466,
+      "pattern": "48 8B 45 D0 48 8B 50 48 48 89 82 28 1C 00 00",
+      "provenance": "Constructor writes this context into its associated scene+1C28, proving the reciprocal ownership link. Verified against source_sha256 executable and Ghidra exports."
+    },
+    {
+      "name": "physicsContext::frequencyPeriod",
+      "owner": "physicsContextInit",
+      "window_offset": 241,
+      "pattern": "48 8B 55 D0 F2 0F 2A 42 6C F2 0F 10 0D ?? ?? ?? ?? F2 0F 5E C8 F2 48 0F 2D C1 89 42 58",
+      "provenance": "Native scheduler converts signed context+6C to double, divides source constant 1000.0 by it, rounds and stores the millisecond period at context+58. Together with the constructor load/store this identifies frequency units; the normalized 83/Hz global is not a physical timestep. Verified against source_sha256 executable and Ghidra exports."
+    },
+    {
+      "name": "inventory::inventoryAdmission",
+      "owner": "inventoryAdmission",
+      "window_offset": 7,
+      "pattern": "48 89 CB 31 F6 80 3D ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ?? 0F 1F 00 81 FA 01 FB 00 00 74 0C 81 FA 02 FB 00 00 0F 85 ?? ?? ?? ?? 80 BB 4D 01 00 00 00 0F 85 ?? ?? ?? ?? 8B 43 08 25 00 10 00 00 77 58 90 48 83 7B 10 00 74 09 BE 01 00 00 00 EB 49 66 90 48 8B 0D ?? ?? ?? ?? 48 8D 05 ?? ?? ?? ?? 48 89 81 D0 00 00 00 48 89 99 D8 00 00 00 8B 43 08 25 00 10 00 00 77 21 66 90 81 FA 01 FB 00 00 75 10 48 8B 43 18 48 8B 88 F0 01 00 00 E8 ?? ?? ?? ?? C7 43 08 00 10 00 00 89 F0 90",
+      "provenance": "Native admission accepts only formats FB01/FB02 with invalidDrop clear and pending 0x1000 clear. Present object returns mask 0x1. Empty object queues 119970 through GUI+D0/D8, conditionally invokes 11D480 for FB01 and sets pending 0x1000 while returning 0. This complete decision/side-effect window supports a pre-call veto, not synthetic completion. Verified against source_sha256 executable instructions and actual Ghidra exports 100119ab0/10004b210/10002f7e0/1000300e0."
+    },
+    {
+      "name": "inventory::viewportAdmissionDispatch",
+      "owner": "viewportAdmissionDispatch",
+      "window_offset": 6,
+      "pattern": "48 89 C8 31 DB 48 83 B8 A0 02 00 00 00 74 0F 48 8B 88 A8 02 00 00 FF 90 A0 02 00 00 89 C3 89 D8",
+      "provenance": "Viewport dispatch invokes callback+2A0 with context+2A8, preserving the format argument in EDX, and returns its result unchanged. Verified against source_sha256 executable instructions and actual Ghidra exports 100119ab0/10004b210/10002f7e0/1000300e0."
+    },
+    {
+      "name": "inventory::guiDragAdmissionResult",
+      "owner": "guiDragAdmissionResult",
+      "window_offset": 670,
+      "pattern": "48 8B 4D D0 48 8B 45 D0 48 8B 00 FF 90 E0 00 00 00 89 45 DC 83 E0 01 7E 2E 48 8B 55 F0 48 8B 45 D0 48 89 82 B8 00 00 00 48 8B 45 F0 8B 55 E0 89 90 C8 00 00 00 C7 45 CC 00 00 00 00",
+      "provenance": "Native GUI calls destination vtable+E0, tests return mask 0x1 and only then writes accepted destination+B8 and accepted item+C8. Zero admission therefore does not mark an accepted target. Verified against source_sha256 executable instructions and actual Ghidra exports 100119ab0/10004b210/10002f7e0/1000300e0."
+    },
+    {
+      "name": "inventory::guiDragCompletionRoute",
+      "owner": "guiDragCompletionRoute",
+      "window_offset": 40,
+      "pattern": "48 83 BB B8 00 00 00 00 74 44 48 8D 53 70 44 8B 83 C8 00 00 00 48 8B 8B B8 00 00 00 48 8B 83 B8 00 00 00 48 8B 00 FF 90 E8 00 00 00 C7 43 38 00 00 00 00 48 C7 83 B8 00 00 00 00 00 00 00 81 BB C8 00 00 00 00 00 00 80 40 0F 95 C7 EB 2E 48 83 BB A8 00 00 00 00 74 24 48 8D 53 70 48 8B 8B A8 00 00 00 41 B8 00 00 00 80 48 8B 83 A8 00 00 00 48 8B 00 FF 90 F0 00 00 00 0F 1F 00",
+      "provenance": "Native GUI completion calls accepted destination+E8 when present; otherwise calls source+F0 with sentinel 0x80000000. The hook must preserve this native cancellation route and must not synthesize completion or queued callbacks. Verified against source_sha256 executable instructions and actual Ghidra exports 100119ab0/10004b210/10002f7e0/1000300e0."
+    },
+    {
+      "name": "inventory::resourceQueueRecord",
+      "owner": "resourceQueue",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CB 48 89 D6 4C 89 C7 4D 89 CC 48 8B 4B 38 E8 ?? ?? ?? ?? 83 43 40 01 48 63 43 40 48 89 44 24 20 48 8D 15 ?? ?? ?? ?? 48 8D 4B 48 4C 8D 4C 24 20 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 48 8B 53 48 48 63 43 40 48 C1 E0 05 C7 44 02 E0 00 00 00 00 48 8B 53 48 48 63 43 40 48 C1 E0 05 48 89 74 02 E8 48 8B 53 48 48 63 43 40 48 C1 E0 05 48 89 7C 02 F0 48 8B 53 48 48 63 43 40 48 C1 E0 05 4C 89 64 02 F8 8B 43 28 83 E0 10 76 0A 48 89 D9 E8 ?? ?? ?? ?? 66 90 48 8B 4B 38 E8 ?? ?? ?? ?? 90 48 8D 64 24 28 41 5C 5E 5F 5B C3",
+      "provenance": "Queue stores the supplied loader, completion and job pointer together in one 32-byte work record under its native lock; the observer only records the exact supplied identity. Verified against source_sha256 bytes and actual Ghidra C; no native lifecycle repair is claimed."
+    },
+    {
+      "name": "inventory::jobAllocationAndCallbacks",
+      "owner": "inventoryJobCreate",
+      "window_offset": 0,
+      "pattern": "53 48 8D 64 24 D0 48 89 CB 48 8D 4C 24 20 BA 30 00 00 00 E8 ?? ?? ?? ?? 48 8B 4C 24 20 45 31 C0 BA 30 00 00 00 E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 8B 80 90 00 00 00 48 8B 54 24 20 8B 40 10 89 02 48 8B 05 ?? ?? ?? ?? 48 8B 80 90 00 00 00 48 8B 54 24 20 8B 40 14 89 42 04 48 8B 54 24 20 48 89 5A 08 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 4C 8B 4C 24 20 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8D 64 24 30 5B C3",
+      "provenance": "Native job creation allocates and zeros 0x30 bytes, copies payload item/flags and the supplied scene manager, then queues loader 11CF50 and completion 11D1D0 through 099BD0. Verified against source_sha256 bytes and actual Ghidra C; no native lifecycle repair is claimed."
+    },
+    {
+      "name": "inventory::loaderCurrentPayload",
+      "owner": "inventoryLoader",
+      "window_offset": 0,
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 48 8B 05 ?? ?? ?? ?? 48 83 C0 70 8B 00 3D 01 FB 00 00 74 0E 3D 02 FB 00 00 74 07 40 30 F6 EB 3B 66 90 48 8B 05 ?? ?? ?? ?? 48 8B 80 90 00 00 00 8B 48 10 E8 ?? ?? ?? ?? 89 C1 48 8B 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 89 C1 4C 8B 43 08 8B 53 04 E8 ?? ?? ?? ?? 48 89 43 10 40 B6 01 40 88 F0 90 48 8D 64 24 28 5E 5B C3",
+      "provenance": "Loader checks CURRENT GUI format FB01/FB02 and reads CURRENT payload item, while taking flags/scene manager from the job and storing its object. Identity observation does not fix loader use of current globals. Verified against source_sha256 bytes and actual Ghidra C; no native lifecycle repair is claimed."
+    },
+    {
+      "name": "inventory::completionCurrentOwner",
+      "owner": "inventoryComplete",
+      "window_offset": 0,
+      "pattern": "55 48 89 E5 48 8D 64 24 90 48 89 5D C0 48 89 7D C8 48 89 75 D0 4C 89 65 D8 48 89 CB 48 C7 45 F0 00 00 00 00 48 C7 45 F8 00 00 00 00 90 49 89 DC 49 83 7C 24 10 00 0F 84 48 02 00 00 48 8B 05 ?? ?? ?? ?? 8B 40 08 25 00 10 00 00 75 27 48 8B 05 ?? ?? ?? ?? 48 8B 40 18 48 8B 88 F0 01 00 00 41 B8 01 00 00 00 49 8B 54 24 10 E8 ?? ?? ?? ?? E9 10 02 00 00 49 8B 44 24 10 48 8B 80 38 01 00 00 48 8B 80 60 01 00 00 48 85 C0 74 13 8B 40 0C 25 00 00 00 10 3D 00 00 00 10 0F 84 9D 00 00 00 48 8D 4D F8 E8 ?? ?? ?? ?? C6 44 24 20 01 45 31 C9 41 B8 0F 00 00 00 49 8B 44 24 10 48 8D 90 40 01 00 00 48 8D 4D F0 E8 ?? ?? ?? ?? 4C 8B 45 F0 45 31 C9 48 8D 15 ?? ?? ?? ?? 48 8D 4D F8 E8 ?? ?? ?? ?? 4C 8B 45 F8 48 8D 15 ?? ?? ?? ?? B9 04 00 00 00 FF 15 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 8B 40 18 48 8B 88 F0 01 00 00 41 B8 01 00 00 00 49 8B 54 24 10 E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? C7 40 08 00 10 00 00 48 8B 05 ?? ?? ?? ?? 48 C7 40 10 00 00 00 00 E9 50 01 00 00 48 8B 05 ?? ?? ?? ?? 48 8B 40 18 48 8B 80 C0 01 00 00 4C 8D 40 40 49 8B 44 24 10 48 8D 50 70 49 8B 44 24 10 48 8D 48 70 E8 ?? ?? ?? ?? 49 8B 4C 24 10 E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 8B 40 18 48 8B 88 F0 01 00 00 45 31 C0 49 8D 54 24 10 E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 49 8B 44 24 10 48 89 42 10 4C 89 E0 48 8B 50 10 8B 40 04 89 82 84 01 00 00 48 8B 05 ?? ?? ?? ?? 8B 40 08 25 00 20 00 00 75 41 48 8B 15 ?? ?? ?? ?? 48 8B 42 10 48 8B 80 60 01 00 00 48 8D 7A 40 48 8D B0 F0 00 00 00 B9 06 00 00 00 F3 48 A5 48 8B 05 ?? ?? ?? ?? 48 8D B8 88 00 00 00 48 8D 70 40 B9 06 00 00 00 F3 48 A5 66 90 48 8B 05 ?? ?? ?? ?? C7 80 C4 00 00 00 00 00 00 00 48 8B 05 ?? ?? ?? ?? 48 8B 48 18 45 30 C9 45 30 C0 49 8B 54 24 10 E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 8B 50 18 48 8B 05 ?? ?? ?? ?? 48 8B 48 10 F3 0F 10 05 ?? ?? ?? ?? 0F 28 D0 E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? C7 40 08 00 20 00 00 48 8B 05 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 8B 50 18 48 89 8A 68 02 00 00 48 89 82 70 02 00 00 48 89 D9 E8 ?? ?? ?? ?? 90 48 89 E9 E8 ?? ?? ?? ?? 48 8B 5D C0 48 8B 7D C8 48 8B 75 D0 4C 8B 65 D8 48 8D 65 00 5D C3",
+      "provenance": "Completion checks job object and CURRENT drag pending state, adopts or deletes through CURRENT viewport/manager, and performs native job cleanup. Wrapper must forward all register arguments and must not inspect the job after native return. Verified against source_sha256 bytes and actual Ghidra C; no native lifecycle repair is claimed."
+    },
+    {
+      "name": "inventory::commitCrossSourceCancel",
+      "owner": "inventoryCommit",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 E0 49 89 CE 44 89 C3 45 31 FF 49 89 D4 4D 89 E5 49 8B 46 18 49 3B 45 08 0F 85 F8 00 00 00 E8 ?? ?? ?? ?? 49 83 7E 10 00 0F 84 8F 01 00 00 81 FB 00 00 00 80 74 0A 41 80 BE 4D 01 00 00 00 74 45 49 8B 46 10 48 8B 80 60 01 00 00 48 8D B8 F0 00 00 00 49 8D 76 40 B9 06 00 00 00 F3 48 A5 49 8B 46 10 48 8B 88 60 01 00 00 E8 ?? ?? ?? ?? 41 80 BE 51 01 00 00 00 74 0D 41 C7 86 C4 00 00 00 30 00 00 00 66 90 31 D2 B9 01 00 00 00 E8 ?? ?? ?? ?? 41 80 BE 51 01 00 00 00 74 3E 41 83 BE C4 00 00 00 30 75 1F 49 8B 46 10 48 8D 48 64 49 8D 96 3C 01 00 00 E8 ?? ?? ?? ?? 0F 2F 05 ?? ?? ?? ?? 7A 17 76 15 4D 8D 86 3C 01 00 00 49 8B 56 10 4C 89 F1 E8 ?? ?? ?? ?? 66 90 41 83 BE C4 00 00 00 30 75 0B 49 8B 4E 10 E8 ?? ?? ?? ?? EB 0D 49 8D 56 40 49 8B 4E 10 E8 ?? ?? ?? ?? 49 C7 46 10 00 00 00 00 41 C7 86 C4 00 00 00 00 00 00 00 0F 1F 00 E9 A7 00 00 00 81 FB 00 00 00 80 75 37 49 83 7E 10 00 74 30 49 8B 46 18 48 8B 88 F0 01 00 00 49 8B 56 10 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 49 C7 46 10 00 00 00 00 41 C7 86 C4 00 00 00 00 00 00 00 0F 1F 00 49 83 7D 08 00 74 19 41 89 D8 4C 89 E2 49 8B 4D 08 49 8B 45 08 48 8B 00 FF 90 F0 00 00 00 66 90 49 83 7E 10 00 74 41 31 D2 B9 01 00 00 00 E8 ?? ?? ?? ?? 41 83 BE C4 00 00 00 30 75 0B 49 8B 4E 10 E8 ?? ?? ?? ?? EB 0B 49 8B 4E 10 31 D2 E8 ?? ?? ?? ?? 49 C7 46 10 00 00 00 00 41 C7 86 C4 00 00 00 00 00 00 00 66 90 41 C7 46 08 00 00 00 00 41 C6 86 51 01 00 00 00 44 89 F8 90 48 8D 64 24 20 41 5F 41 5E 41 5D 41 5C 5E 5F 5B C3",
+      "provenance": "Native commit first distinguishes drag viewport from source data+8. Only cross-source sentinel 80000000 deletes preview and clears drag object/kind before forwarding source+F0; same-source restore/release remains separate and must not be redirected. Verified against source_sha256 bytes and actual Ghidra C; no native lifecycle repair is claimed."
+    },
+    {
+      "name": "inventory::ordinarySourceCancel",
+      "owner": "inventorySourceFinish",
+      "window_offset": 14,
+      "pattern": "48 89 CB 48 89 D6 44 89 C7 45 31 E4 80 BB EB 03 00 00 00 74 15 48 8B 46 20 8B 40 14 25 00 00 00 80 76 07 BF FF FF FF FF 66 90 81 FF 00 00 00 80 75 34 80 BB EC 03 00 00 00 0F 84 73 02 00 00 F3 0F 10 83 D8 03 00 00 48 8B 8B E8 02 00 00 48 8B 15 ?? ?? ?? ?? 0F 28 D0 E8 ?? ?? ?? ?? 90 E9 4F 02 00 00 0F 1F 00",
+      "provenance": "Special-source plus payload high flag can replace sentinel by -1. With special=0 and merchant=0, sentinel80000000 branches directly to the no-operation return tail. Both class guards and exact callback identity are required. Verified against source_sha256 bytes and actual Ghidra C; no native lifecycle repair is claimed."
+    },
+    {
+      "name": "inventory::sourceFinishReturn",
+      "owner": "inventorySourceFinish",
+      "window_offset": 704,
+      "pattern": "44 89 E0 90 48 8D 64 24 28 41 5E 41 5D 41 5C 5E 5F 5B C3",
+      "provenance": "Ordinary-source cancel branch targets this zero-return epilogue without source writes or callbacks. Verified against source_sha256 bytes and actual Ghidra C; no native lifecycle repair is claimed."
+    },
+    {
+      "name": "inventory::viewportCommitArguments",
+      "owner": "inventoryViewportCommitDispatch",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CE 48 89 D7 45 89 C4 48 83 BE B0 02 00 00 00 74 17 48 8B 8E B8 02 00 00 45 89 E0 48 89 FA FF 96 B0 02 00 00 89 C3 EB 10 45 89 E0 48 89 FA 48 89 F1 E8 ?? ?? ?? ?? 89 C3 89 D8 90 48 8D 64 24 28 41 5C 5E 5F 5B C3",
+      "provenance": "Viewport wrapper forwards original GUI drag-data pointer and code to callback+2B0 with context+2B8, or uses native fallback when no callback is installed. Verified against source_sha256 bytes and actual Ghidra C; no native lifecycle repair is claimed."
+    },
+    {
+      "name": "attackVariants::familyATail",
+      "owner": "attackFamilyA",
+      "window_offset": 1133,
+      "pattern": "80 BB F3 12 00 00 00 74 16 C6 83 F3 12 00 00 00 85 F6 7D 0B 48 89 D9 E8 ?? ?? ?? ?? 0F 1F 00 89 B3 5C 0F 00 00 8B 05 ?? ?? ?? ?? 89 83 9C 0E 00 00 8B 05 ?? ?? ?? ?? 89 83 A0 0E 00 00 90 48 8D 64 24 28 41 5C 5E 5F 5B C3",
+      "optional_group": "attackVariants",
+      "provenance": "Native active cleanup precedes the F5C publication; after publication only E9C/EA0 stores and epilogue occur, with no calls. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::familyBTail",
+      "owner": "attackFamilyB",
+      "window_offset": 1180,
+      "pattern": "80 BB F3 12 00 00 00 74 13 C6 83 F3 12 00 00 00 85 F6 7D 08 48 89 D9 E8 ?? ?? ?? ?? 89 B3 5C 0F 00 00 8B 05 ?? ?? ?? ?? 89 83 9C 0E 00 00 8B 05 ?? ?? ?? ?? 89 83 A0 0E 00 00 90 48 8D 64 24 28 41 5C 5E 5F 5B C3",
+      "optional_group": "attackVariants",
+      "provenance": "Native active cleanup precedes the F5C publication; after publication only E9C/EA0 stores and epilogue occur, with no calls. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::threadSingleton",
+      "owner": "variantThreadCreate",
+      "window_offset": 0,
+      "pattern": "53 57 56 48 8D 64 24 D0 48 89 CB 8B B3 18 01 00 00 C7 83 18 01 00 00 FF FF FF FF 81 4B 08 00 00 01 00 49 89 D8 BA 01 00 00 00 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89 C7 48 83 3D ?? ?? ?? ?? 00 74 09 48 89 F9 FF 15 ?? ?? ?? ?? 48 89 F9 E8 ?? ?? ?? ?? 48 63 05 ?? ?? ?? ?? 48 83 C0 01 48 89 44 24 20 48 8D 15 ?? ?? ?? ?? 4C 8D 4C 24 20 48 8D 0D ?? ?? ?? ?? 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 63 05 ?? ?? ?? ?? 48 89 3C C2 83 05 ?? ?? ?? ?? 01 E8 ?? ?? ?? ?? 2B 05 ?? ?? ?? ?? 89 87 8C 00 00 00 81 8B 20 1C 00 00 00 00 00 02 48 83 3D ?? ?? ?? ?? 00 0F 85 84 00 00 00 C6 05 ?? ?? ?? ?? 01 BA 01 00 00 00 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 48 89 C1 BA 0F 00 00 00 E8 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 4D 31 C0 E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 8B 40 38 48 89 05 ?? ?? ?? ?? BA 01 00 00 00 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? BA 01 00 00 00 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 89 B3 18 01 00 00 48 89 D0 90 48 8D 64 24 30 5E 5F 5B C3",
+      "optional_group": "physicsOwnership",
+      "provenance": "Creates the singleton thread object and starts native physics scheduling. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::threadIdentity",
+      "owner": "variantThreadStart",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 48 8D 64 24 C8 48 89 CB 48 89 D6 4C 89 C7 45 30 E4 83 7B 28 08 0F 83 BC 00 00 00 C7 05 ?? ?? ?? ?? FF FF FF FF 48 83 7B 38 00 75 17 BA 01 00 00 00 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89 43 38 66 90 48 89 7B 18 48 89 73 20 8B 43 28 83 E0 04 83 C8 08 89 43 28 83 E0 04 76 2D C7 44 24 20 04 00 00 00 48 8D 43 10 48 89 44 24 28 4C 8D 05 ?? ?? ?? ?? 49 89 D9 BA 00 04 00 00 31 C9 E8 ?? ?? ?? ?? 48 89 43 08 EB 2B C7 44 24 20 00 00 00 00 48 8D 43 10 48 89 44 24 28 4C 8D 05 ?? ?? ?? ?? 49 89 D9 BA 00 04 00 00 31 C9 E8 ?? ?? ?? ?? 48 89 43 08 48 83 7B 08 00 76 12 48 63 53 2C 48 8B 4B 08 E8 ?? ?? ?? ?? 41 B4 01 EB 0A 48 89 D9 B2 01 E8 ?? ?? ?? ?? 44 88 E0 90 48 8D 64 24 38 41 5C 5E 5F 5B C3",
+      "optional_group": "physicsOwnership",
+      "provenance": "Both CreateThread branches use object+10 as thread-ID output. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::schedulerOwnership",
+      "owner": "variantPhysicsSchedule",
+      "window_offset": 0,
+      "pattern": "55 48 89 E5 48 8D A4 24 00 FF FF FF 48 89 9D 20 FF FF FF 48 89 4D F0 B9 3F 13 00 00 E8 ?? ?? ?? ?? 48 8D 8D 70 FF FF FF E8 ?? ?? ?? ?? 0F 1F 00 EB 6A 66 0F 1F 44 00 00 E8 ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? 67 8D 58 FF 85 DB 7C 2D C7 45 E0 FF FF FF FF 66 0F 1F 44 00 00 83 45 E0 01 48 8B 15 ?? ?? ?? ?? 48 63 45 E0 48 8B 0C C2 E8 ?? ?? ?? ?? 3B 5D E0 7F E3 0F 1F 00 48 8D 0D ?? ?? ?? ?? 31 D2 E8 ?? ?? ?? ?? B9 0B 00 00 00 E8 ?? ?? ?? ?? 80 3D ?? ?? ?? ?? 00 75 0C 0F 1F 00 83 3D ?? ?? ?? ?? 00 7F 93 80 3D ?? ?? ?? ?? 00 0F 85 6F 03 00 00 66 90 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 2B 05 ?? ?? ?? ?? 89 45 B0 C7 85 30 FF FF FF 64 00 00 00 8B 05 ?? ?? ?? ?? 83 E8 01 85 C0 0F 8C DF 00 00 00 C7 45 E0 FF FF FF FF 83 45 E0 01 48 8B 15 ?? ?? ?? ?? 48 63 4D E0 48 8B 14 CA 48 89 55 80 8B 4A 54 8B 52 58 01 CA 89 95 50 FF FF FF 48 8B 55 80 8B 8A 8C 00 00 00 8B 55 B0 29 CA 89 95 40 FF FF FF 3B 95 50 FF FF FF 72 5A 8B 8D 40 FF FF FF 8B 95 50 FF FF FF 48 29 D1 48 8B 55 80 8B 52 58 C1 E2 02 21 D2 48 39 D1 7E 2E 48 8B 55 80 80 BA 5C 01 00 00 00 75 21 4C 8B 45 80 41 8B 88 8C 00 00 00 8B 95 40 FF FF FF 01 CA 2B 95 50 FF FF FF 41 89 90 8C 00 00 00 90 C7 85 30 FF FF FF 00 00 00 00 EB 39 8B 8D 50 FF FF FF 8B 95 40 FF FF FF 48 29 D1 48 63 95 30 FF FF FF 48 39 D1 7D 15 8B 95 50 FF FF FF 8B 8D 40 FF FF FF 29 CA 89 95 30 FF FF FF 90 3B 45 E0 0F 8F 2B FF FF FF 0F 1F 00 83 BD 30 FF FF FF 01 7C 1E 0F 1F 00 8B 85 30 FF FF FF 67 8D 50 FF 48 8D 8D 70 FF FF FF E8 ?? ?? ?? ?? E9 D1 FE FF FF 48 8B 45 80 48 89 05 ?? ?? ?? ?? 48 8B 45 80 48 8B 40 48 48 89 05 ?? ?? ?? ?? 48 8B 45 80 48 8B 40 48 48 8B 80 F0 1D 00 00 48 89 05 ?? ?? ?? ?? 48 8B 4D 80 E8 ?? ?? ?? ?? 48 83 3D ?? ?? ?? ?? 00 74 0A 48 8B 4D 80 FF 15 ?? ?? ?? ?? 48 8B 45 80 80 B8 5B 01 00 00 00 74 0F 48 8D 0D ?? ?? ?? ?? 31 D2 E8 ?? ?? ?? ?? 90 48 8B 45 80 C6 80 59 01 00 00 01 48 8B 45 80 83 40 50 01 48 8B 45 80 48 8B 55 80 8B 40 58 01 42 54 48 8B 45 80 8B 40 54 89 05 ?? ?? ?? ?? 48 8B 45 80 8B 40 50 89 05 ?? ?? ?? ?? 48 8B 45 80 48 83 B8 28 01 00 00 00 74 0F 48 8B 4D 80 48 8B 45 80 FF 90 28 01 00 00 90 48 8B 45 80 48 8D 88 30 01 00 00 48 8B 55 80 E8 ?? ?? ?? ?? 48 C7 05 ?? ?? ?? ?? 00 00 00 00 48 8B 45 80 8B 80 90 00 00 00 67 8D 58 FF 85 DB 0F 8C 8F 00 00 00 C7 45 D0 FF FF FF FF 0F 1F 40 00 83 45 D0 01 48 8B 4D 80 48 8B 91 98 00 00 00 48 63 45 D0 48 8B 14 C2 8B 41 50 89 42 10 48 83 3D ?? ?? ?? ?? 00 74 21 48 8B 45 80 48 8B 90 98 00 00 00 48 63 45 D0 48 8B 04 C2 48 8B 88 D8 00 00 00 FF 15 ?? ?? ?? ?? 90 48 8B 45 80 48 8B 80 98 00 00 00 48 63 55 D0 48 8B 04 D0 48 8B 88 00 01 00 00 48 8B 45 80 48 8B 80 98 00 00 00 48 63 55 D0 48 8B 04 D0 FF 90 F8 00 00 00 3B 5D D0 0F 8F 7C FF FF FF 48 8B 55 80 8B 42 50 89 42 5C 48 8B 45 80 8B 50 54 89 50 60 48 8B 45 80 48 8D 88 40 01 00 00 48 8B 55 80 E8 ?? ?? ?? ?? 90 48 83 3D ?? ?? ?? ?? 00 74 46 48 8B 0D ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 8B 00 FF 90 D8 00 00 00 48 C7 05 ?? ?? ?? ?? 00 00 00 00 0F 1F 00 EB 1F 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 04 00 00 00 FF 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8B 45 80 C6 80 59 01 00 00 00 E8 ?? ?? ?? ?? 80 3D ?? ?? ?? ?? 00 75 0E 48 8D 0D ?? ?? ?? ?? 31 D2 E8 ?? ?? ?? ?? 80 3D ?? ?? ?? ?? 00 0F 84 7B FC FF FF 48 8D 8D 70 FF FF FF E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 9D 20 FF FF FF 48 8D 65 00 5D C3",
+      "optional_group": "physicsOwnership",
+      "provenance": "Publishes current context and scene, brackets native callbacks with running byte, then retires scenes. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::sceneRetirementRequest",
+      "owner": "variantSceneRetireRequest",
+      "window_offset": 0,
+      "pattern": "48 8D 64 24 C8 48 89 4C 24 20 48 89 C8 48 83 B8 28 1C 00 00 00 74 5A 48 8B 54 24 20 81 8A 20 1C 00 00 00 00 00 04 83 05 ?? ?? ?? ?? 01 48 63 05 ?? ?? ?? ?? 48 89 44 24 28 48 8D 15 ?? ?? ?? ?? 4C 8D 4C 24 28 48 8D 0D ?? ?? ?? ?? 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 63 15 ?? ?? ?? ?? 48 8B 4C 24 20 48 89 4C D0 F8 EB 0A 48 8D 4C 24 20 E8 ?? ?? ?? ?? 90 48 8D 64 24 38 C3",
+      "optional_group": "physicsOwnership",
+      "provenance": "Sets the retirement request bit before enqueueing. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::sceneRetirement",
+      "owner": "variantSceneRetire",
+      "window_offset": 0,
+      "pattern": "31 D2 EB 6B 0F 1F 40 00 48 8B 0D ?? ?? ?? ?? 48 63 C2 48 8B 04 C1 48 8B 40 48 8B 80 20 1C 00 00 25 00 00 00 04 76 45 48 8B 0D ?? ?? ?? ?? 48 63 C2 48 8B 04 C1 48 8B 48 48 81 A1 20 1C 00 00 FF FF FF FD 83 2D ?? ?? ?? ?? 01 4C 8B 0D ?? ?? ?? ?? 48 63 C2 4C 8B 05 ?? ?? ?? ?? 48 63 0D ?? ?? ?? ?? 49 8B 0C C8 49 89 0C C1 EB 03 83 C2 01 3B 15 ?? ?? ?? ?? 7C 91 C3",
+      "optional_group": "physicsOwnership",
+      "provenance": "Clears live bit after callbacks; not a mod lifetime lock. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::sceneFree",
+      "owner": "variantSceneFree",
+      "window_offset": 0,
+      "pattern": "53 48 8D 64 24 E0 31 DB EB 5D 66 0F 1F 44 00 00 48 8B 15 ?? ?? ?? ?? 48 63 C3 48 8B 04 C2 8B 40 08 25 00 00 00 02 76 05 83 C3 01 EB 3A 48 8B 15 ?? ?? ?? ?? 48 63 C3 48 8B 0C C2 E8 ?? ?? ?? ?? 83 2D ?? ?? ?? ?? 01 4C 8B 05 ?? ?? ?? ?? 48 63 C3 48 8B 15 ?? ?? ?? ?? 48 63 0D ?? ?? ?? ?? 48 8B 14 CA 49 89 14 C0 3B 1D ?? ?? ?? ?? 7C A1 31 DB EB 5F 0F 1F 44 00 00 48 8B 15 ?? ?? ?? ?? 48 63 C3 48 8B 04 C2 8B 80 20 1C 00 00 25 00 00 00 02 76 05 83 C3 01 EB 3A 48 8B 15 ?? ?? ?? ?? 48 63 C3 48 8D 0C C2 E8 ?? ?? ?? ?? 83 2D ?? ?? ?? ?? 01 4C 8B 05 ?? ?? ?? ?? 48 63 C3 48 8B 15 ?? ?? ?? ?? 48 63 0D ?? ?? ?? ?? 48 8B 14 CA 49 89 14 C0 3B 1D ?? ?? ?? ?? 7C 9E 48 83 3D ?? ?? ?? ?? 00 74 08 FF 15 ?? ?? ?? ?? EB 02 B0 01 90 48 8D 64 24 20 5B C3",
+      "optional_group": "physicsOwnership",
+      "provenance": "Native freeing waits for live bit to clear. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::gripCallback",
+      "owner": "variantGripCallback",
+      "window_offset": 0,
+      "pattern": "53 48 8D 64 24 E0 48 89 CB 3B 93 B0 10 00 00 74 2B 0F 1F 00 89 93 B0 10 00 00 48 8B 83 70 10 00 00 48 83 B8 B0 00 00 00 00 74 11 48 89 D9 FF 90 B0 00 00 00 C6 83 FF 12 00 00 01 90 90 48 8D 64 24 20 5B C3",
+      "optional_group": "attackVariants",
+      "provenance": "Non-null callback may publish unrelated state and is excluded. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::gripLookup",
+      "owner": "variantGripSelect",
+      "window_offset": 0,
+      "pattern": "83 FA 01 75 07 BA 05 00 00 00 EB 1D 89 C8 25 F0 00 00 00 3D 90 00 00 00 75 07 BA 01 00 00 00 EB 08 83 E1 70 C1 E9 04 89 CA 21 D2 48 69 C2 B8 00 00 00 48 8D 15 ?? ?? ?? ?? 48 01 D0 C3",
+      "optional_group": "attackVariants",
+      "provenance": "Native table lookup uses strideB8 and native gripTable; only reviewed null entries0/1/4/5 may be admitted. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::absentIncomingMotion",
+      "owner": "defenseCleanup",
+      "window_offset": 189,
+      "pattern": "83 B9 5C 0F 00 00 00 7C 0A C7 81 5C 0F 00 00 FF FF FF FF",
+      "optional_group": "attackVariants",
+      "provenance": "Native cleanup represents absent incoming motion by writing signed -1 to F5C when it is nonnegative. Exact source executable control flow reviewed; runtime must compare these mapped-file windows to loaded bytes before enabling this optional capability. No universal runtime lifetime guarantee is claimed."
+    },
+    {
+      "name": "attackVariants::attackFamilyAClosure",
+      "owner": "attackFamilyA",
+      "window_offset": 37,
+      "pattern": "F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 40 54 48 8B 83 80 0E 00 00 F3 0F 10 80 B8 04 00 00 F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 40 54 66 90 84 D2 74 15 8B 83 B8 09 00 00 83 F8 08 7C 0A 83 F8 0A 7F 05 41 B4 01 EB 03 45 30 E4 BE FF FF FF FF BF FF FF FF FF F3 0F 10 83 0C 10 00 00 0F 2F 05 ?? ?? ?? ?? 7A 09 76 07 31 FF E9 E4 01 00 00 83 BB 98 11 00 00 03 0F 85 08 01 00 00 8B 93 40 0C 00 00 89 D0 25 00 00 00 04 77 15 81 E2 00 00 00 02 0F 86 6C 00 00 00 45 84 E4 0F 85 63 00 00 00 48 8B 83 38 0E 00 00 48 85 C0 0F 84 53 00 00 00 83 B8 F4 0D 00 00 02 75 4A 48 8B 93 38 0E 00 00 48 89 D9 E8 ?? ?? ?? ?? 89 C7 83 F8 14 7C 2C 83 E8 15 7E 13 83 E8 01 74 1E 83 E8 01 7C 1D 83 E8 01 7E 0C EB 16 66 90 BF 01 00 00 00 EB 15 90 BF 02 00 00 00 EB 0D 90 31 FF EB 08 BF FF FF FF FF 0F 1F 00 85 FF 7C 12 48 8B 83 38 0E 00 00 8B B0 B8 09 00 00 E9 3A 01 00 00 8B 83 64 0F 00 00 48 8D 90 F4 01 00 00 8B 05 ?? ?? ?? ?? 48 39 C2 0F 8E 1E 01 00 00 8B 83 60 0F 00 00 83 F8 14 0F 82 0F 01 00 00 83 E8 15 76 1A 83 E8 01 74 2D 83 E8 01 0F 82 FC 00 00 00 83 E8 01 76 13 E9 F2 00 00 00 66 90 BF 01 00 00 00 E9 E6 00 00 00 66 90 BF 02 00 00 00 E9 DA 00 00 00 66 90 31 FF 66 90 E9 CF 00 00 00 81 BB 68 10 00 00 90 00 00 00 0F 85 BF 00 00 00 48 8B 83 38 0E 00 00 48 85 C0 0F 84 53 00 00 00 83 B8 F4 0D 00 00 02 75 4A 48 8B 93 38 0E 00 00 48 89 D9 E8 ?? ?? ?? ?? 89 C7 83 F8 14 7C 2C 83 E8 15 7E 13 83 E8 01 74 1E 83 E8 01 7C 1D 83 E8 01 7E 0C EB 16 66 90 BF 01 00 00 00 EB 15 90 BF 02 00 00 00 EB 0D 90 31 FF EB 08 BF FF FF FF FF 0F 1F 00 85 FF 7C 0F 48 8B 83 38 0E 00 00 8B B0 B8 09 00 00 EB 49 8B 83 64 0F 00 00 48 05 F4 01 00 00 8B 15 ?? ?? ?? ?? 48 39 D0 7E 32 8B 83 60 0F 00 00 83 F8 14 72 27 83 E8 14 74 0E 83 E8 02 74 19 83 E8 01 74 0C EB 16 66 90 BF 01 00 00 00 EB 0D 90 BF 02 00 00 00 EB 05 90 31 FF 66 90 85 FF 7D 50 8B 05 ?? ?? ?? ?? 69 C0 05 84 08 08 83 C0 01 89 05 ?? ?? ?? ?? 48 6B C0 03 48 C1 E8 20 89 C7 EB 26 0F 1F 80 00 00 00 00 8B 05 ?? ?? ?? ?? 69 C0 05 84 08 08 83 C0 01 89 05 ?? ?? ?? ?? 48 6B C0 03 48 C1 E8 20 89 C7 3B BB 2C 0D 00 00 74 D9 90 89 BB 2C 0D 00 00 45 84 E4 0F 84 EA 00 00 00 8B 83 B8 09 00 00 83 F8 08 0F 8C DB 00 00 00 83 F8 0A 0F 8F D2 00 00 00 8B 83 B8 09 00 00 89 83 30 0D 00 00 8B 83 20 09 00 00 83 E8 01 85 C0 7C 28 BF FF FF FF FF 0F 1F 00 83 C7 01 89 FA 48 8B 94 D3 78 09 00 00 8B 52 0C 81 E2 00 00 01 00 89 F9 89 54 8C 20 39 F8 7F E0 8B 83 2C 0D 00 00 67 8D 50 05 48 8B 83 88 09 00 00 48 8B 80 E0 06 00 00 F3 0F 10 40 48 F3 0F 59 05 ?? ?? ?? ?? F3 48 0F 2D C0 4C 8D 40 02 48 89 D9 45 30 C9 E8 ?? ?? ?? ?? C7 83 08 12 00 00 01 00 00 00 81 8B 18 10 00 00 00 00 01 00 8B 83 20 09 00 00 89 83 70 09 00 00 8B 83 20 09 00 00 83 E8 01 85 C0 0F 8C D3 00 00 00 BF FF FF FF FF 90 83 C7 01 89 FA 89 F9 4C 8B 84 CB 78 09 00 00 8B 4C 94 20 41 09 48 0C 39 F8 7F E5 90 E9 AC 00 00 00 C7 83 30 0D 00 00 00 00 00 00 8B 83 2C 0D 00 00 67 8D 50 05 48 89 D9 45 30 C9 45 31 C0 E8 ?? ?? ?? ?? C7 83 08 12 00 00 01 00 00 00 8B 05 ?? ?? ?? ?? 89 83 28 0A 00 00 48 8B 83 28 09 00 00 48 89 83 88 09 00 00 8B 83 20 09 00 00 89 83 70 09 00 00 8B 83 20 09 00 00 67 44 8D 60 FF 45 85 E4 7C 29 BF FF FF FF FF 83 C7 01 89 F8 48 8B 8C C3 28 09 00 00 E8 ?? ?? ?? ?? 89 FA 48 89 84 D3 78 09 00 00 41 39 FC 7F DF 0F 1F 00 8B 83 40 0C 00 00 83 E0 01 75 0C C7 83 18 10 00 00 00 00 08 00 EB 0A C7 83 18 10 00 00 00 00 00 00 80 BB F3 12 00 00 00 74 16 C6 83 F3 12 00 00 00 85 F6 7D 0B 48 89 D9 E8 ?? ?? ?? ?? 0F 1F 00 89 B3 5C 0F 00 00 8B 05 ?? ?? ?? ?? 89 83 9C 0E 00 00 8B 05 ?? ?? ?? ?? 89 83 A0 0E 00 00 90 48 8D 64 24 28 41 5C 5E 5F 5B C3",
+      "optional_group": "attackVariants",
+      "provenance": "Native family closure from the first instruction after the hook entry region through return. Native classifier, action/grip callback paths and publication flow are preserved. Loaded-image equality is additionally required; ownership guards do not imply a universal lifetime lock."
+    },
+    {
+      "name": "attackVariants::attackFamilyBClosure",
+      "owner": "attackFamilyB",
+      "window_offset": 37,
+      "pattern": "F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 40 54 48 8B 83 80 0E 00 00 F3 0F 10 80 B8 04 00 00 F3 0F 59 05 ?? ?? ?? ?? F3 0F 11 40 54 66 90 84 D2 74 15 8B 83 B8 09 00 00 83 F8 05 7C 0A 83 F8 07 7F 05 41 B4 01 EB 03 45 30 E4 BE FF FF FF FF BF FF FF FF FF F3 0F 10 83 0C 10 00 00 0F 2F 05 ?? ?? ?? ?? 7A 09 76 07 31 FF E9 E4 01 00 00 83 BB 98 11 00 00 03 0F 85 08 01 00 00 8B 93 40 0C 00 00 89 D0 25 00 00 00 04 77 15 81 E2 00 00 00 02 0F 86 6C 00 00 00 45 84 E4 0F 85 63 00 00 00 48 8B 83 38 0E 00 00 48 85 C0 0F 84 53 00 00 00 83 B8 F4 0D 00 00 02 75 4A 48 8B 93 38 0E 00 00 48 89 D9 E8 ?? ?? ?? ?? 89 C7 83 F8 14 7C 2C 83 E8 15 7E 13 83 E8 01 74 1E 83 E8 01 7C 1D 83 E8 01 7E 0C EB 16 66 90 BF 02 00 00 00 EB 15 90 BF 01 00 00 00 EB 0D 90 31 FF EB 08 BF FF FF FF FF 0F 1F 00 85 FF 7C 12 48 8B 83 38 0E 00 00 8B B0 B8 09 00 00 E9 3A 01 00 00 8B 83 64 0F 00 00 48 8D 90 F4 01 00 00 8B 05 ?? ?? ?? ?? 48 39 C2 0F 8E 1E 01 00 00 8B 83 60 0F 00 00 83 F8 14 0F 82 0F 01 00 00 83 E8 15 76 1A 83 E8 01 74 2D 83 E8 01 0F 82 FC 00 00 00 83 E8 01 76 13 E9 F2 00 00 00 66 90 BF 02 00 00 00 E9 E6 00 00 00 66 90 BF 01 00 00 00 E9 DA 00 00 00 66 90 31 FF 66 90 E9 CF 00 00 00 81 BB 68 10 00 00 90 00 00 00 0F 85 BF 00 00 00 48 8B 83 38 0E 00 00 48 85 C0 0F 84 53 00 00 00 83 B8 F4 0D 00 00 02 75 4A 48 8B 93 38 0E 00 00 48 89 D9 E8 ?? ?? ?? ?? 89 C7 83 F8 14 7C 2C 83 E8 15 7E 13 83 E8 01 74 1E 83 E8 01 7C 1D 83 E8 01 7E 0C EB 16 66 90 BF 01 00 00 00 EB 15 90 BF 02 00 00 00 EB 0D 90 31 FF EB 08 BF FF FF FF FF 0F 1F 00 85 FF 7C 0F 48 8B 83 38 0E 00 00 8B B0 B8 09 00 00 EB 49 8B 83 64 0F 00 00 48 05 F4 01 00 00 8B 15 ?? ?? ?? ?? 48 39 D0 7E 32 8B 83 60 0F 00 00 83 F8 15 72 27 83 E8 15 74 0E 83 E8 01 74 19 83 E8 02 74 0C EB 16 66 90 BF 01 00 00 00 EB 0D 90 BF 02 00 00 00 EB 05 90 31 FF 66 90 85 FF 7D 50 8B 05 ?? ?? ?? ?? 69 C0 05 84 08 08 83 C0 01 89 05 ?? ?? ?? ?? 48 6B C0 03 48 C1 E8 20 89 C7 EB 26 0F 1F 80 00 00 00 00 8B 05 ?? ?? ?? ?? 69 C0 05 84 08 08 83 C0 01 89 05 ?? ?? ?? ?? 48 6B C0 03 48 C1 E8 20 89 C7 3B BB 28 0D 00 00 74 D9 90 89 BB 28 0D 00 00 45 84 E4 0F 84 D2 00 00 00 8B 83 B8 09 00 00 89 83 30 0D 00 00 8B 83 20 09 00 00 83 E8 01 85 C0 7C 28 BF FF FF FF FF 0F 1F 00 83 C7 01 89 FA 48 8B 94 D3 78 09 00 00 8B 52 0C 81 E2 00 00 01 00 89 F9 89 54 8C 20 39 F8 7F E0 8B 83 28 0D 00 00 67 8D 50 08 48 8B 83 88 09 00 00 48 8B 80 E0 06 00 00 F3 0F 10 40 48 F3 0F 59 05 ?? ?? ?? ?? F3 48 0F 2D C0 4C 8D 40 02 48 89 D9 45 30 C9 E8 ?? ?? ?? ?? C7 83 08 12 00 00 01 00 00 00 81 8B 18 10 00 00 00 00 01 00 8B 83 20 09 00 00 89 83 70 09 00 00 8B 83 20 09 00 00 83 E8 01 85 C0 0F 8C 1A 01 00 00 BF FF FF FF FF 90 83 C7 01 89 FA 89 F9 4C 8B 84 CB 78 09 00 00 8B 4C 94 20 41 09 48 0C 39 F8 7F E5 90 E9 F3 00 00 00 C7 83 30 0D 00 00 00 00 00 00 8B 83 68 10 00 00 25 80 00 00 00 7E 10 48 8B 83 30 09 00 00 48 89 83 88 09 00 00 EB 0E 48 8B 83 28 09 00 00 48 89 83 88 09 00 00 48 8B 83 88 09 00 00 48 8B 80 E0 06 00 00 8B 50 4C B8 14 00 00 00 29 D0 89 C7 8B 83 28 0D 00 00 67 8D 50 08 F2 0F 2A C7 F2 0F 59 05 ?? ?? ?? ?? F2 4C 0F 2D C0 48 89 D9 45 30 C9 E8 ?? ?? ?? ?? C7 83 08 12 00 00 01 00 00 00 8B 05 ?? ?? ?? ?? 89 83 28 0A 00 00 8B 83 20 09 00 00 89 83 70 09 00 00 8B 83 20 09 00 00 67 44 8D 60 FF 45 85 E4 7C 2C BF FF FF FF FF 0F 1F 00 83 C7 01 89 F8 48 8B 8C C3 28 09 00 00 E8 ?? ?? ?? ?? 89 FA 48 89 84 D3 78 09 00 00 41 39 FC 7F DF 0F 1F 00 C7 83 18 10 00 00 00 00 00 00 8B 83 40 0C 00 00 83 E0 01 75 0B C7 83 18 10 00 00 00 00 08 00 90 80 BB F3 12 00 00 00 74 13 C6 83 F3 12 00 00 00 85 F6 7D 08 48 89 D9 E8 ?? ?? ?? ?? 89 B3 5C 0F 00 00 8B 05 ?? ?? ?? ?? 89 83 9C 0E 00 00 8B 05 ?? ?? ?? ?? 89 83 A0 0E 00 00 90 48 8D 64 24 28 41 5C 5E 5F 5B C3",
+      "optional_group": "attackVariants",
+      "provenance": "Native family closure from the first instruction after the hook entry region through return. Native classifier, action/grip callback paths and publication flow are preserved. Loaded-image equality is additionally required; ownership guards do not imply a universal lifetime lock."
+    },
+    {
+      "name": "attackVariants::transitionClosure",
+      "owner": "variantTransitionClosure",
+      "window_offset": 0,
+      "pattern": "53 57 56 48 8D 64 24 E0 48 89 CB 89 D6 44 89 C7 3B B3 B8 09 00 00 75 0C 45 84 C9 0F 84 ED 01 00 00 0F 1F 00 48 89 D9 E8 ?? ?? ?? ?? 48 8B 93 B0 09 00 00 89 F0 48 8B 04 C2 8B 40 04 83 E0 01 0F 97 83 E5 12 00 00 C7 83 1C 0D 00 00 00 00 00 00 8B 05 ?? ?? ?? ?? 89 83 20 0A 00 00 8B 05 ?? ?? ?? ?? 89 83 28 0A 00 00 C6 83 EA 12 00 00 00 C6 83 EB 12 00 00 00 C7 83 08 12 00 00 00 00 00 00 8B 83 B8 09 00 00 83 F8 05 7C 19 83 F8 0C 7F 14 C6 83 F3 12 00 00 00 48 89 D9 E8 ?? ?? ?? ?? E9 A4 00 00 00 8B 83 B8 09 00 00 85 C0 74 05 83 F8 01 75 55 C7 83 08 10 00 00 02 00 00 00 8B 05 ?? ?? ?? ?? 05 F4 01 00 00 89 83 CC 0F 00 00 48 8B 05 ?? ?? ?? ?? 48 89 83 48 09 00 00 48 8B 05 ?? ?? ?? ?? 48 89 83 50 09 00 00 48 8B 05 ?? ?? ?? ?? 48 89 83 58 09 00 00 48 8B 05 ?? ?? ?? ?? 48 89 83 60 09 00 00 EB 40 48 83 BB 30 12 00 00 00 74 36 48 8B 8B 38 12 00 00 BA 04 00 00 00 FF 93 30 12 00 00 85 C0 7D 20 31 C0 48 C7 83 30 12 00 00 00 00 00 00 48 89 83 38 12 00 00 C7 83 40 12 00 00 00 00 00 00 66 90 8B 83 B8 09 00 00 89 83 C4 09 00 00 89 B3 B8 09 00 00 89 B3 C0 09 00 00 C7 83 C8 09 00 00 FF FF FF FF 8B 93 B8 09 00 00 48 89 D9 E8 ?? ?? ?? ?? 85 FF 76 11 89 F8 F3 48 0F 2A C0 F3 0F 11 83 24 0A 00 00 EB 0C 8B 05 ?? ?? ?? ?? 89 83 24 0A 00 00 89 BB 2C 0A 00 00 8B 83 20 09 00 00 83 E8 01 85 C0 7C 28 BA FF FF FF FF 0F 1F 80 00 00 00 00 83 C2 01 89 D1 4C 8B 84 CB 28 09 00 00 41 81 60 0C FF FF FE FF 39 D0 7F E7 0F 1F 00 8B 83 70 09 00 00 83 E8 01 85 C0 7C 23 BA FF FF FF FF 66 90 83 C2 01 89 D1 4C 8B 84 CB 78 09 00 00 41 81 60 0C FF FF FE FF 39 D0 7F E7 0F 1F 00 C7 83 70 09 00 00 00 00 00 00 90 48 8D 64 24 20 5E 5F 5B C3",
+      "provenance": "Transition and action callback helper; admission excludes non-null action callback. Verified against actual source executable and native disassembly/Ghidra; no universal runtime ownership or lifetime guarantee.",
+      "optional_group": "attackVariants"
+    },
+    {
+      "name": "attackVariants::motionClosure",
+      "owner": "variantMotionClosure",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 80 48 89 CB 48 8B 83 00 03 00 00 48 89 83 78 0B 00 00 8B 83 08 03 00 00 89 83 80 0B 00 00 83 BB B8 09 00 00 00 7D 0E 48 89 D9 E8 ?? ?? ?? ?? E9 E5 01 00 00 90 8B 83 10 09 00 00 67 8D 70 FF 85 F6 0F 8C D2 01 00 00 BF FF FF FF FF 90 83 C7 01 48 8B 93 18 09 00 00 48 63 C7 4C 8B 2C C2 41 83 BD 68 04 00 00 00 0F 8C A5 01 00 00 90 45 8B A5 68 04 00 00 49 8B 45 18 83 B8 7C 01 00 00 07 0F 8E 0D 01 00 00 48 8D 4C 24 20 4D 8D 85 A0 02 00 00 49 8B 85 28 04 00 00 48 8D 90 A0 02 00 00 E8 ?? ?? ?? ?? 41 8B 45 0C 83 E0 40 0F 86 84 00 00 00 49 8B 45 18 83 B8 7C 01 00 00 0A 7D 77 48 8D 93 FC 0D 00 00 4C 8D 44 24 20 48 8D 4C 24 50 E8 ?? ?? ?? ?? F3 0F 10 05 ?? ?? ?? ?? 48 8D 54 24 68 48 8D 4C 24 38 0F 28 D0 E8 ?? ?? ?? ?? 48 8D 4C 24 38 E8 ?? ?? ?? ?? 4C 8D 44 24 38 48 8D 54 24 2C 48 8D 4C 24 2C E8 ?? ?? ?? ?? 48 8D 4C 24 2C E8 ?? ?? ?? ?? 4C 8D 44 24 38 48 8D 54 24 2C 48 8D 4C 24 20 E8 ?? ?? ?? ?? 48 8D 4C 24 20 E8 ?? ?? ?? ?? 90 48 8B 93 70 0B 00 00 44 89 E0 48 6B C0 14 48 8D 0C 02 48 8D 54 24 20 E8 ?? ?? ?? ?? 48 8B 93 70 0B 00 00 44 89 E0 48 6B C0 14 48 8D 0C 02 E8 ?? ?? ?? ?? 48 8B 8B 70 0B 00 00 44 89 E0 48 6B D0 14 48 8B 04 11 49 89 85 DC 05 00 00 48 8B 44 11 08 49 89 85 E4 05 00 00 E9 7F 00 00 00 48 8B 83 B0 09 00 00 8B 93 B8 09 00 00 48 8B 14 D0 48 8B 8B 70 0B 00 00 44 89 E0 48 6B D0 14 49 8B 85 DC 05 00 00 48 89 04 11 49 8B 85 E4 05 00 00 48 89 44 11 08 41 83 BD 38 03 00 00 00 7E 3F 49 8B 85 40 03 00 00 8B 40 10 83 E0 02 7E 18 48 8B 93 70 0B 00 00 44 89 E0 48 6B C0 14 C7 44 02 10 01 00 00 00 EB 16 48 8B 93 70 0B 00 00 44 89 E0 48 6B C0 14 C7 44 02 10 00 00 00 00 66 90 39 FE 0F 8F 34 FE FF FF 90 48 8D A4 24 80 00 00 00 41 5D 41 5C 5E 5F 5B C3",
+      "provenance": "Nonnegative-motion branch helper; admission excludes unsupported motion. Verified against actual source executable and native disassembly/Ghidra; no universal runtime ownership or lifetime guarantee.",
+      "optional_group": "attackVariants"
+    },
+    {
+      "name": "attackVariants::gripDispatchClosure",
+      "owner": "variantGripDispatchClosure",
+      "window_offset": 0,
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 89 D6 8B 83 F4 0D 00 00 25 00 02 00 00 76 0F 48 89 D9 31 D2 E8 ?? ?? ?? ?? E9 62 00 00 00 83 FE 13 74 04 85 F6 75 0F 48 89 D9 BA 02 00 00 00 E8 ?? ?? ?? ?? EB 4A 83 FE 0B 75 0F 48 89 D9 BA 03 00 00 00 E8 ?? ?? ?? ?? EB 36 83 FE 0E 7C 05 83 FE 11 7E 13 83 FE 1C 74 0E 83 FE 1F 74 09 83 BB B8 09 00 00 2C 7C 0C 48 89 D9 31 D2 E8 ?? ?? ?? ?? EB 0D 48 89 D9 BA 01 00 00 00 E8 ?? ?? ?? ?? 90 48 8D 64 24 28 5E 5B C3",
+      "provenance": "Immediate native grip dispatch closure. Verified against actual source executable and native disassembly/Ghidra; no universal runtime ownership or lifetime guarantee.",
+      "optional_group": "attackVariants"
+    },
+    {
+      "name": "attackVariants::childWalkClosure",
+      "owner": "variantChildWalkClosure",
+      "window_offset": 0,
+      "pattern": "48 89 C8 EB 0D 0F 1F 00 48 8B 90 38 04 00 00 48 8B 02 83 B8 30 04 00 00 00 7F ED C3",
+      "provenance": "Immediate native child walk used by the family starter. Verified against actual source executable and native disassembly/Ghidra; no universal runtime ownership or lifetime guarantee.",
+      "optional_group": "attackVariants"
+    },
+    {
+      "name": "attackVariants::classifierClosure",
+      "owner": "variantClassifierClosure",
+      "window_offset": 0,
+      "pattern": "53 57 56 48 8D 64 24 C0 66 0F 7F 74 24 30 48 89 D3 BE FF FF FF FF 8B 83 18 10 00 00 25 00 00 01 00 76 08 8B BB 30 0D 00 00 EB 06 8B BB B8 09 00 00 80 B9 EE 12 00 00 00 74 18 48 8B 81 30 0A 00 00 48 89 44 24 20 8B 81 38 0A 00 00 89 44 24 28 EB 16 48 8B 81 E8 0B 00 00 48 89 44 24 20 8B 81 F0 0B 00 00 89 44 24 28 80 BB EE 12 00 00 00 74 13 48 8D 93 30 0A 00 00 48 8D 4C 24 20 E8 ?? ?? ?? ?? EB 11 48 8D 93 E8 0B 00 00 48 8D 4C 24 20 E8 ?? ?? ?? ?? 48 8D 8B FC 0C 00 00 E8 ?? ?? ?? ?? 0F 28 F0 48 8D 4C 24 20 E8 ?? ?? ?? ?? 0F 28 C8 0F 28 C6 E8 ?? ?? ?? ?? F3 0F 5A C0 F2 0F 59 05 ?? ?? ?? ?? F2 0F 58 05 ?? ?? ?? ?? F2 0F 5A D8 0F 2F 1D ?? ?? ?? ?? 7A 14 73 12 48 63 C7 48 8D 15 ?? ?? ?? ?? F3 0F 10 54 C2 D8 EB 4C 0F 2F 1D ?? ?? ?? ?? 7A 14 76 12 48 63 C7 48 8D 15 ?? ?? ?? ?? F3 0F 10 54 C2 DC EB 2F 48 63 C7 48 8D 15 ?? ?? ?? ?? 48 8D 44 C2 D8 F3 0F 10 05 ?? ?? ?? ?? F3 0F 5C C3 F3 0F 59 00 F3 0F 10 48 04 F3 0F 59 CB F3 0F 58 C8 0F 28 D1 F3 0F 5C 54 24 24 83 FF 05 0F 8C 73 00 00 00 83 EF 07 7E 16 83 EF 03 7E 2D 83 EF 01 74 4C 83 EF 01 74 3F E9 5A 00 00 00 66 90 0F 2F 15 ?? ?? ?? ?? 7A 09 76 07 BE 14 00 00 00 EB 46 BE 17 00 00 00 EB 3F 0F 1F 00 0F 2F 15 ?? ?? ?? ?? 7A 09 76 07 BE 15 00 00 00 EB 2A BE 18 00 00 00 EB 23 0F 1F 00 BE 16 00 00 00 EB 19 90 0F 2F 1D ?? ?? ?? ?? 7A 09 73 07 BE 14 00 00 00 EB 06 BE 15 00 00 00 90 89 F0 90 66 0F 6F 74 24 30 48 8D 64 24 40 5E 5F 5B C3",
+      "provenance": "Classifier body newly allowed in bounded scope. Loaded comparison must run with classifier hook disabled, before initial enable or rearm. Verified against actual source executable and native disassembly/Ghidra; no universal runtime ownership or lifetime guarantee.",
+      "optional_group": "attackVariants"
+    },
+    {
+      "name": "settings::requestRedraw",
+      "owner": "guiRequestRedraw",
+      "window_offset": 0,
+      "pattern": "83 0D ?? ?? ?? ?? 03 C3",
+      "provenance": "Native8-byte leaf ORs redraw global49A660 with3 then returns; it is not a lock-prefixed interthread synchronization operation. Verified against actual source executable and native disassembly/Ghidra; no universal runtime ownership or lifetime guarantee.",
+      "optional_group": "settingsRedraw"
+    },
+    {
+      "name": "renderOwnership::nativeSwapOwner",
+      "owner": "nativeSwapOwner",
+      "window_offset": 0,
+      "pattern": "48 8D 64 24 D8 48 83 3D ?? ?? ?? ?? 00 74 0F 48 8B 0D ?? ?? ?? ?? FF 15 ?? ?? ?? ?? EB 0D 48 8B 0D ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 90 48 8D 64 24 28 C3",
+      "provenance": "Both native swap paths load the same native HDC global499610. Verified against actual source executable and native disassembly/Ghidra; no universal runtime ownership or lifetime guarantee."
+    },
+    {
+      "name": "renderOwnership::nativeRenderPublish",
+      "owner": "nativeRenderPublish",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 48 8D 64 24 D8 48 89 CB 40 30 FF 48 89 D9 E8 ?? ?? ?? ?? 48 89 C6 48 85 C0 75 20 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 06 00 00 00 FF 15 ?? ?? ?? ?? E9 5D 02 00 00 66 90 80 3D ?? ?? ?? ?? 00 74 0D 48 89 F1 E8 ?? ?? ?? ?? 41 89 C4 EB 06 41 BC FF FF FF FF 83 3D ?? ?? ?? ?? 02 75 0B 48 8D 05 ?? ?? ?? ?? 83 48 04 02 80 3D ?? ?? ?? ?? 00 74 1B 48 8D 05 ?? ?? ?? ?? 8B 50 04 81 E2 FF FD FF FF 81 CA 00 04 00 00 89 50 04 66 90 45 85 E4 7D 13 48 8D 15 ?? ?? ?? ?? 48 89 F1 FF 15 ?? ?? ?? ?? 41 89 C4 83 3D ?? ?? ?? ?? 01 7E 0F 44 89 E2 48 89 F1 E8 ?? ?? ?? ?? 41 89 C4 90 4C 8D 05 ?? ?? ?? ?? 44 89 E2 48 89 F1 FF 15 ?? ?? ?? ?? 85 C0 0F 84 93 01 00 00 4C 8D 0D ?? ?? ?? ?? 44 89 E2 48 89 F1 41 B8 28 00 00 00 FF 15 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? 02 75 2F 8B 05 ?? ?? ?? ?? 83 E0 02 75 24 C7 05 ?? ?? ?? ?? 00 00 00 00 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 06 00 00 00 FF 15 ?? ?? ?? ?? 90 8B 05 ?? ?? ?? ?? 83 E0 40 83 F8 40 75 32 C6 05 ?? ?? ?? ?? 01 C7 05 ?? ?? ?? ?? 03 00 00 00 C7 05 ?? ?? ?? ?? 03 00 00 00 C7 05 ?? ?? ?? ?? 01 00 00 00 C7 05 ?? ?? ?? ?? 00 00 00 00 0F 1F 00 0F B6 05 ?? ?? ?? ?? 89 05 ?? ?? ?? ?? 48 83 3D ?? ?? ?? ?? 00 41 0F 94 C4 75 43 48 89 F1 41 B8 02 00 00 00 BA 03 00 00 00 E8 ?? ?? ?? ?? 21 C0 48 89 05 ?? ?? ?? ?? 48 85 C0 75 38 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 06 00 00 00 FF 15 ?? ?? ?? ?? E9 D1 00 00 00 66 90 EB 16 80 3D ?? ?? ?? ?? 00 74 0D 31 D2 B9 92 88 00 00 FF 15 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 89 F1 FF 15 ?? ?? ?? ?? 85 C0 74 3F E8 ?? ?? ?? ?? 48 83 3D ?? ?? ?? ?? 00 76 15 48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 90 48 89 35 ?? ?? ?? ?? 45 84 E4 74 0A E8 ?? ?? ?? ?? 40 88 C7 EB 64 40 B7 01 EB 5F 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 06 00 00 00 FF 15 ?? ?? ?? ?? 48 83 3D ?? ?? ?? ?? 00 76 3C 48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 66 90 EB 24 48 89 F2 48 89 D9 E8 ?? ?? ?? ?? 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 06 00 00 00 FF 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 40 88 F8 90 48 8D 64 24 28 41 5C 5E 5F 5B C3",
+      "provenance": "Native creates/stores HGLRC, binds it, publishes HDC on success and restores old pair on failure. Verified against actual source executable and native disassembly/Ghidra; no universal runtime ownership or lifetime guarantee."
+    },
+    {
+      "name": "renderOwnership::nativeRenderRetire",
+      "owner": "nativeRenderRetire",
+      "window_offset": 0,
+      "pattern": "48 8D 64 24 D8 E8 ?? ?? ?? ?? 31 C0 31 C9 48 89 C2 FF 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 90 48 8D 64 24 28 C3",
+      "provenance": "Native unbinds and deletes rendering context but does not clear published globals; current WGL identity is therefore mandatory at admission. Verified against actual source executable and native disassembly/Ghidra; no universal runtime ownership or lifetime guarantee."
+    },
+    {
+      "name": "heldThrow::heldReleaseSettle",
+      "owner": "heldReleaseSettle",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 41 55 41 56 48 8D 64 24 D8 48 8B 99 60 01 00 00 C7 83 50 04 00 00 08 00 00 00 C7 83 48 03 00 00 00 00 00 00 8B 43 08 25 FA F7 FF FF 0D 00 10 00 00 89 43 08 48 8B 81 30 01 00 00 48 8B 80 20 02 00 00 48 8B 80 28 1C 00 00 48 8B 40 70 48 89 83 18 04 00 00 8B 83 30 04 00 00 67 44 8D 60 FF 45 85 E4 0F 8C 13 01 00 00 41 BD FF FF FF FF 0F 1F 44 00 00 41 83 C5 01 48 8B 93 38 04 00 00 49 63 C5 48 8B 04 C2 48 8B 40 18 48 8D 50 70 48 8B 8B 38 04 00 00 49 63 C5 48 8B 04 C1 48 8D 88 A0 02 00 00 4C 8D 83 A0 02 00 00 E8 ?? ?? ?? ?? 48 8B 93 38 04 00 00 49 63 C5 4C 8B 34 C2 49 8D 56 58 49 8D 8E F0 00 00 00 4D 8D 86 A0 02 00 00 E8 ?? ?? ?? ?? 49 8D 56 64 49 8D 8E FC 00 00 00 4D 8D 86 A0 02 00 00 E8 ?? ?? ?? ?? 49 8D 56 70 49 8D 8E 08 01 00 00 4D 8D 86 A0 02 00 00 E8 ?? ?? ?? ?? 49 8D 56 7C 49 8D 8E 14 01 00 00 4D 8D 86 A0 02 00 00 E8 ?? ?? ?? ?? 49 8D BE 20 01 00 00 49 8D B6 F0 00 00 00 B9 06 00 00 00 F3 48 A5 49 8D BE 50 01 00 00 49 8D B6 F0 00 00 00 B9 06 00 00 00 F3 48 A5 49 8D BE D0 02 00 00 49 8D B6 A0 02 00 00 B9 06 00 00 00 F3 48 A5 48 8B 93 38 04 00 00 49 63 C5 48 8B 04 C2 48 8B 48 18 E8 ?? ?? ?? ?? 45 39 EC 0F 8F F9 FE FF FF 90 90 48 8D 64 24 28 41 5E 41 5D 41 5C 5E 5F 5B C3",
+      "optional_group": "heldThrow",
+      "provenance": "Native release sets450=8, updates motion flags and recursively visits children before queueing native ownership work. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldHistoryAdvance",
+      "owner": "heldHistoryAdvance",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 A0 66 0F 7F 74 24 50 49 89 CC 89 D3 41 8B 84 24 BC 04 00 00 67 8D 70 FF 85 F6 0F 8C BD 01 00 00 41 BD FF FF FF FF 0F 1F 80 00 00 00 00 41 83 C5 01 49 8B 94 24 C0 04 00 00 49 63 C5 48 6B C0 48 48 8D 3C 02 49 83 BC 24 28 04 00 00 00 74 36 4D 8D 84 24 D0 02 00 00 48 8D 4C 24 40 48 8D 57 04 E8 ?? ?? ?? ?? 49 8B 84 24 28 04 00 00 4C 8D 80 D0 02 00 00 48 8D 54 24 40 48 8D 4C 24 40 E8 ?? ?? ?? ?? 66 90 48 8D 4C 24 40 48 8D 57 3C E8 ?? ?? ?? ?? 0F 28 F0 48 8B 44 24 40 48 89 47 3C 8B 44 24 48 89 47 44 F3 0F 5A C6 66 0F 2F 05 ?? ?? 27 00 7A 35 76 33 F3 0F 51 C6 F3 0F 59 05 ?? ?? ?? ?? F3 0F 58 C6 F3 0F 5A C0 F2 0F 59 05 ?? ?? ?? ?? F2 0F 5A F0 0F 2F 35 ?? ?? ?? ?? 7A 0A 76 08 F3 0F 10 35 ?? ?? ?? ?? F3 0F 5A 47 28 F2 0F 59 05 ?? ?? ?? ?? F3 0F 5A CE F2 0F 59 0D ?? ?? ?? ?? F2 0F 58 C8 F2 0F 5A C1 F3 0F 11 47 28 F3 0F 5A 47 28 66 0F 2F 05 ?? ?? 27 00 0F 8A 9C 00 00 00 0F 86 96 00 00 00 48 8B 47 2C 8B 00 83 E0 01 75 2A 48 8B 47 2C 48 89 44 24 20 49 8D 94 24 C4 02 00 00 F3 0F 10 1D ?? ?? ?? ?? F3 0F 10 15 ?? ?? ?? ?? 48 8B 4F 34 E8 ?? ?? ?? ?? 48 89 F8 48 8B 50 2C F3 0F 10 40 28 F3 0F 59 40 20 F3 0F 11 42 10 48 89 F8 48 8B 50 2C F3 0F 5A 40 28 F2 0F 59 05 ?? ?? ?? ?? F2 0F 58 05 ?? ?? ?? ?? F3 0F 5A 48 24 F2 0F 59 C8 F2 0F 5A C1 F3 0F 11 42 14 48 8B 57 2C 49 8B 84 24 C4 02 00 00 48 89 42 20 41 8B 84 24 CC 02 00 00 89 42 28 EB 13 48 8B 47 2C 8B 00 83 E0 01 76 08 48 8B 57 2C 83 0A 08 90 44 39 EE 0F 8F 53 FE FF FF 0F 1F 00 4D 8D 84 24 B0 00 00 00 49 8D 94 24 F0 00 00 00 49 8D 8C 24 A0 02 00 00 E8 ?? ?? ?? ?? 4D 8D 84 24 A0 02 00 00 49 8D 94 24 70 02 00 00 49 8D 8C 24 80 02 00 00 E8 ?? ?? ?? ?? 49 8D BC 24 D0 02 00 00 49 8D B4 24 A0 02 00 00 B9 06 00 00 00 F3 48 A5 49 8D BC 24 50 01 00 00 49 8D B4 24 20 01 00 00 B9 06 00 00 00 F3 48 A5 49 8D BC 24 20 01 00 00 49 8D B4 24 F0 00 00 00 B9 06 00 00 00 F3 48 A5 41 89 5C 24 10 41 83 7C 24 14 02 0F 8D 15 01 00 00 41 C7 44 24 14 00 00 00 00 41 83 4C 24 08 01 41 BD FF FF FF FF 41 83 C5 01 44 89 E8 48 6B D0 0C 48 8B 05 ?? ?? ?? ?? 49 89 84 14 80 01 00 00 8B 05 ?? ?? ?? ?? 41 89 84 14 88 01 00 00 44 89 E8 48 6B D0 0C 48 8B 05 ?? ?? ?? ?? 49 89 84 14 B0 01 00 00 8B 05 ?? ?? ?? ?? 41 89 84 14 B8 01 00 00 44 89 E8 48 6B D0 0C 48 8B 05 ?? ?? ?? ?? 49 89 84 14 E0 01 00 00 8B 05 ?? ?? ?? ?? 41 89 84 14 E8 01 00 00 41 83 FD 03 7C 8A 49 8B 44 24 18 8B 98 18 01 00 00 85 DB 0F 8C FF 00 00 00 41 BD FF FF FF FF 90 41 83 C5 01 49 8B 44 24 18 48 8B 90 20 01 00 00 44 89 E8 48 8B 04 C2 48 83 B8 60 01 00 00 00 74 3F 49 8B 44 24 18 48 8B 90 20 01 00 00 44 89 E8 48 8B 04 C2 48 8B 88 60 01 00 00 49 8B 44 24 18 48 8B 90 20 01 00 00 44 89 E8 48 8B 04 C2 48 8B 80 60 01 00 00 48 8B 00 FF 90 F0 00 00 00 66 90 44 39 EB 7F 9B 0F 1F 00 E9 8B 00 00 00 0F 1F 00 49 8B 44 24 18 8B 80 04 02 00 00 25 00 04 00 00 75 36 49 8B 84 24 D0 04 00 00 48 8B 88 F0 00 00 00 4D 8D 84 24 A0 02 00 00 49 8B 54 24 18 49 8B 84 24 D0 04 00 00 48 8B 80 F0 00 00 00 48 8B 00 FF 90 38 01 00 00 66 90 49 8B 84 24 50 02 00 00 49 89 84 24 40 02 00 00 41 8B 84 24 58 02 00 00 41 89 84 24 48 02 00 00 49 8B 84 24 80 02 00 00 49 89 84 24 60 02 00 00 41 8B 84 24 88 02 00 00 41 89 84 24 68 02 00 00 90 66 0F 6F 74 24 50 48 8D 64 24 60 41 5D 41 5C 5E 5F 5B C3",
+      "optional_group": "heldThrow",
+      "provenance": "Native history rollover follows integration and preserves pointwise history semantics. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldReleaseSubmission",
+      "owner": "heldReleaseSubmission",
+      "window_offset": 0,
+      "pattern": "53 57 56 48 8D 64 24 A0 48 89 CB 48 89 D6 48 85 DB 0F 84 C0 00 00 00 90 4C 8B 83 60 01 00 00 48 85 F6 0F 84 95 00 00 00 48 8B 83 30 01 00 00 48 8B B8 20 02 00 00 48 83 BF 28 03 00 00 00 74 34 48 89 F2 48 8D 4C 24 20 49 81 C0 B0 00 00 00 E8 ?? ?? ?? ?? 4C 8D 44 24 20 48 89 DA 48 8B 8F 28 03 00 00 48 8B 87 28 03 00 00 48 8B 00 FF 90 30 01 00 00 90 48 8D 4C 24 50 BA 38 00 00 00 E8 ?? ?? ?? ?? 48 8B 44 24 50 48 8B 93 60 01 00 00 48 89 10 48 8B 44 24 50 48 8D 78 08 B9 06 00 00 00 F3 48 A5 48 8D 15 ?? ?? ?? ?? 4C 8B 44 24 50 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? EB 1A 4C 8B 83 60 01 00 00 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8D 64 24 60 5E 5F 5B C3",
+      "optional_group": "heldThrow",
+      "provenance": "Both pose and no-transform queue paths are observed; a later native release must invalidate any older ticket. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldGenericBodyInit",
+      "owner": "heldGenericBodyInit",
+      "window_offset": 0,
+      "pattern": "55 48 89 E5 48 8D 64 24 B0 48 89 4D E0 48 89 55 F0 48 83 FA 01 75 15 48 8B 45 E0 48 8B 55 E0 48 89 C1 FF 52 68 48 89 45 E0 0F 1F 00 48 83 7D E0 00 0F 84 04 01 00 00 90 90 48 C7 45 D0 FF FF FF FF 48 8B 4D E0 31 D2 E8 ?? ?? ?? ?? 48 8B 45 E0 C7 40 0C 00 00 00 10 48 8B 45 E0 48 89 40 20 48 8B 45 E0 C6 80 C8 04 00 00 01 48 8B 45 E0 8B 15 ?? ?? ?? ?? 89 90 0C 04 00 00 48 8B 55 E0 8B 05 ?? ?? ?? ?? 89 82 10 04 00 00 48 8B 45 E0 48 89 80 20 04 00 00 48 8B 45 E0 48 89 80 28 04 00 00 48 8B 45 E0 48 05 A0 00 00 00 8B 15 ?? ?? ?? ?? 89 10 8B 15 ?? ?? ?? ?? 89 50 04 8B 15 ?? ?? ?? ?? 89 50 08 8B 15 ?? ?? ?? ?? 89 50 0C 48 8B 45 E0 8B 15 ?? ?? ?? ?? 89 90 44 04 00 00 48 8B 45 E0 C7 80 54 04 00 00 03 00 00 00 48 C7 45 D0 01 00 00 00 48 83 7D E0 00 74 41 48 83 7D F0 00 74 3A 48 8B 4D E0 48 8B 45 E0 48 8B 00 FF 90 88 00 00 00 66 90 EB 25 48 83 7D F0 00 74 13 48 8B 55 D0 48 8B 4D E0 48 8B 45 E0 48 8B 00 FF 50 60 90 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8B 45 E0 90 48 8D 65 00 5D C3",
+      "optional_group": "heldThrow",
+      "provenance": "Generic body constructor establishes ordinary class flags and initial fields. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldConstraintWalk",
+      "owner": "heldConstraintWalk",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 48 8D 64 24 A8 66 0F 7F 74 24 40 48 89 CB 8B 83 1C 03 00 00 67 8D 70 FF 85 F6 0F 8C 1F 01 00 00 BF FF FF FF FF 66 0F 1F 44 00 00 83 C7 01 48 8B 93 20 03 00 00 48 63 C7 48 6B C0 68 4C 8D 24 02 41 8B 44 24 38 25 00 00 10 00 0F 87 E7 00 00 00 0F 1F 00 41 8B 44 24 38 25 00 00 01 00 3D 00 00 01 00 0F 85 CF 00 00 00 41 8B 44 24 38 25 08 10 00 00 0F 87 BF 00 00 00 0F 1F 00 4C 8D 83 F0 00 00 00 48 8D 4C 24 20 4C 89 E2 E8 ?? ?? ?? ?? 48 8D 4C 24 30 49 8B 44 24 30 4C 8D 80 F0 00 00 00 49 8D 54 24 10 E8 ?? ?? ?? ?? 48 8D 54 24 30 48 8D 4C 24 20 E8 ?? ?? ?? ?? 48 8D 44 24 20 F3 0F 10 08 F3 0F 59 C9 F3 0F 10 40 04 F3 0F 59 C0 F3 0F 58 C1 F3 0F 10 48 08 F3 0F 59 C9 F3 0F 58 C8 0F 28 F1 F3 41 0F 10 44 24 20 0F 2F 05 ?? ?? ?? ?? 7A 44 76 42 F3 41 0F 10 44 24 20 F3 0F 59 C0 0F 2F C6 7A 0E 73 0C 41 8B 44 24 20 41 89 44 24 28 EB 23 0F 2F 35 ?? ?? ?? ?? 7A 0F 76 0D F3 0F 51 C6 F3 41 0F 11 44 24 28 EB 0B 8B 05 ?? ?? ?? ?? 41 89 44 24 28 90 39 FE 0F 8F EC FE FF FF 8B 83 30 04 00 00 67 8D 70 FF 85 F6 7C 22 BF FF FF FF FF 90 83 C7 01 48 8B 93 38 04 00 00 48 63 C7 48 8B 0C C2 E8 ?? ?? ?? ?? 39 FE 7F E6 66 90 90 66 0F 6F 74 24 40 48 8D 64 24 58 41 5C 5E 5F 5B C3",
+      "optional_group": "heldThrow",
+      "provenance": "External constraint count31C and child count430 drive native constraint traversal; first adapter excludes both. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldNodeDestroy",
+      "owner": "heldNodeDestroy",
+      "window_offset": 0,
+      "pattern": "55 48 89 E5 48 8D 64 24 90 48 89 5D C8 48 89 4D F0 48 89 55 F8 48 C7 45 D0 00 00 00 00 48 C7 45 D8 00 00 00 00 48 83 7D F8 00 7E 14 48 8B 45 F0 48 8B 55 F0 48 8B 12 48 89 C1 FF 92 90 00 00 00 90 90 48 8B 45 F0 48 83 B8 60 01 00 00 00 74 20 48 8B 45 F0 8B 40 0C 25 00 00 10 00 75 12 48 8B 45 F0 48 8B 88 60 01 00 00 E8 ?? ?? ?? ?? 66 90 48 8B 45 F0 48 83 B8 B0 01 00 00 00 74 1E 48 8B 45 F0 8B 40 0C 25 80 00 00 00 76 10 48 8B 45 F0 48 8B 88 B0 01 00 00 E8 ?? ?? ?? ?? 48 8B 45 F0 48 83 B8 98 01 00 00 00 74 12 48 8B 45 F0 48 8B 88 98 01 00 00 E8 ?? ?? ?? ?? 66 90 48 8B 45 F0 48 83 B8 20 01 00 00 00 74 12 48 8B 45 F0 48 8B 88 20 01 00 00 E8 ?? ?? ?? ?? 66 90 48 8B 45 F0 8B 98 50 01 00 00 85 DB 7C 32 C7 45 EC FF FF FF FF 0F 1F 80 00 00 00 00 83 45 EC 01 48 8B 45 F0 48 8B 80 58 01 00 00 48 63 55 EC 48 8B 0C D0 E8 ?? ?? ?? ?? 3B 5D EC 7F DF 0F 1F 00 48 C7 45 E0 00 00 00 00 48 8D 15 ?? ?? ?? ?? 48 8B 45 F0 48 8D 88 58 01 00 00 4C 8D 4D E0 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 48 C7 45 E0 00 00 00 00 48 8D 15 ?? ?? ?? ?? 48 8B 45 F0 48 8D 88 70 01 00 00 4C 8D 4D E0 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 48 8B 4D F0 31 D2 E8 ?? ?? ?? ?? EB 5E 48 8D 4D D8 E8 ?? ?? ?? ?? C6 44 24 20 01 48 8B 45 F0 48 8D 90 40 01 00 00 45 31 C9 41 B8 0F 00 00 00 48 8D 4D D0 E8 ?? ?? ?? ?? 4C 8B 45 D0 45 31 C9 48 8D 15 ?? ?? ?? ?? 48 8D 4D D8 E8 ?? ?? ?? ?? 4C 8B 45 D8 48 8D 15 ?? ?? ?? ?? B9 04 00 00 00 FF 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 90 48 89 E9 E8 ?? ?? ?? ?? 48 83 7D F0 00 74 17 48 83 7D F8 00 74 10 48 8B 4D F0 48 8B 45 F0 48 8B 00 FF 50 70 66 90 48 8B 5D C8 48 8D 65 00 5D C3",
+      "optional_group": "heldThrow",
+      "provenance": "Owned node deletion dispatches generic body deletion unless the borrowed ownership flag excludes ownership. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldDeleteDispatch",
+      "owner": "heldDeleteDispatch",
+      "window_offset": 0,
+      "pattern": "48 8D 64 24 D8 48 89 C8 48 85 C9 74 0F 48 89 C1 BA 01 00 00 00 48 8B 00 FF 50 60 90 90 48 8D 64 24 28 C3",
+      "optional_group": "heldThrow",
+      "provenance": "Native object deletion dispatches metadata destructor+60. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldDeallocate",
+      "owner": "heldDeallocate",
+      "window_offset": 0,
+      "pattern": "53 48 8D 64 24 E0 48 89 CB E8 ?? ?? ?? ?? 48 89 D9 E8 ?? ?? ?? ?? 90 48 8D 64 24 20 5B C3",
+      "optional_group": "heldThrow",
+      "provenance": "Native deallocator invokes object cleanup then00EDD0 free. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldSceneDestroy",
+      "owner": "heldSceneDestroy",
+      "window_offset": 0,
+      "pattern": "53 57 56 48 8D 64 24 E0 48 89 CB 8B 05 ?? ?? ?? ?? 83 E8 01 85 C0 0F 8C 68 00 00 00 BE FF FF FF FF 0F 1F 80 00 00 00 00 83 C6 01 4C 8B 05 ?? ?? ?? ?? 48 63 D6 49 8B 14 D0 48 3B 13 75 42 83 2D ?? ?? ?? ?? 01 8B 15 ?? ?? ?? ?? 83 EA 01 39 F2 7C 32 67 8D 4E FF 66 90 83 C1 01 4C 8B 15 ?? ?? ?? ?? 4C 63 C1 4C 8B 1D ?? ?? ?? ?? 4C 63 C9 4F 8B 44 C2 08 4F 89 04 CB 39 CA 7F DC EB 06 66 90 39 F0 7F A4 48 8B 03 48 89 05 ?? ?? ?? ?? 48 8B 03 8B B8 18 01 00 00 85 FF 7C 29 BE FF FF FF FF 83 C6 01 48 8B 03 48 8B 90 20 01 00 00 89 F0 48 8B 0C C2 BA 03 00 00 00 E8 ?? ?? ?? ?? 39 F7 7F DF 0F 1F 00 48 8B 0B E8 ?? ?? ?? ?? 48 C7 03 00 00 00 00 48 C7 05 ?? ?? ?? ?? 00 00 00 00 90 48 8D 64 24 20 5E 5F 5B C3",
+      "optional_group": "heldThrow",
+      "provenance": "Ordinary recursive scene teardown invokes native descendant teardown. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldDescendantDestroy",
+      "owner": "heldDescendantDestroy",
+      "window_offset": 0,
+      "pattern": "55 48 89 E5 48 8D 64 24 90 48 89 5D C8 48 89 4D F0 89 55 F8 48 C7 45 D0 00 00 00 00 48 C7 45 D8 00 00 00 00 90 90 48 8B 55 F0 81 4A 08 00 00 00 80 48 8B 45 F0 48 8B 80 38 01 00 00 48 8D 88 B8 01 00 00 E8 ?? ?? ?? ?? 90 48 8B 45 F0 83 B8 68 01 00 00 00 0F 8E AF 00 00 00 48 8B 45 F0 48 8B 90 70 01 00 00 48 63 80 68 01 00 00 48 8B 44 C2 F8 48 89 45 E0 48 8B 45 F0 8B 80 68 01 00 00 83 E8 01 85 C0 7C 4A 89 45 EC 83 C0 01 89 45 EC 90 83 6D EC 01 48 8B 45 F0 48 8B 90 70 01 00 00 48 63 45 EC 48 8B 04 C2 8B 40 0C 83 E0 01 76 19 48 8B 45 F0 48 8B 90 70 01 00 00 48 63 45 EC 48 8B 04 C2 48 89 45 E0 EB 06 83 7D EC 00 7F C2 66 90 48 8B 55 E0 48 8B 4D F0 41 B0 01 48 8B 45 F0 48 8B 00 FF 90 C8 00 00 00 48 8B 4D F0 48 8B 45 F0 48 8B 00 FF 90 E0 00 00 00 48 8B 45 F0 48 89 80 38 01 00 00 E9 AB 00 00 00 48 8B 45 F0 48 3B 80 38 01 00 00 74 2A 48 8B 45 F0 48 8B 88 38 01 00 00 48 8B 55 F0 E8 ?? ?? ?? ?? 48 8B 4D F0 48 8B 45 F0 48 8B 00 FF 90 E0 00 00 00 E9 74 00 00 00 48 8B 45 F0 8B 40 08 25 00 20 00 00 3D 00 20 00 00 75 24 48 8B 45 F0 48 8B 80 30 01 00 00 48 8B 80 20 02 00 00 48 8B 88 B0 1D 00 00 48 8B 55 F0 E8 ?? ?? ?? ?? EB 1D 48 8B 45 F0 8B 40 08 25 00 70 00 00 3D 00 40 00 00 75 0A 48 8B 4D F0 E8 ?? ?? ?? ?? 90 48 8B 45 F0 8B 40 0C 83 E0 01 76 14 48 8B 4D F0 48 8B 45 F0 48 8B 00 FF 90 D8 00 00 00 0F 1F 00 90 48 89 E9 E8 ?? ?? ?? ?? 8B 45 F8 83 E0 01 0F 85 D7 00 00 00 48 8B 45 F0 48 8B 80 28 01 00 00 8B 98 18 01 00 00 85 DB 0F 8C BE 00 00 00 C7 45 EC FF FF FF FF 0F 1F 80 00 00 00 00 83 45 EC 01 48 8B 4D F0 48 8B 81 28 01 00 00 48 8B 90 20 01 00 00 8B 45 EC 48 3B 0C C2 0F 85 81 00 00 00 48 8B 45 F0 48 8B 80 28 01 00 00 8B 80 18 01 00 00 3B 45 EC 7E 57 48 8B 45 F0 48 8B 80 28 01 00 00 4C 63 80 18 01 00 00 48 63 45 EC 49 29 C0 49 C1 E0 03 48 8B 45 F0 48 8B 80 28 01 00 00 48 8B 80 20 01 00 00 48 63 55 EC 48 8D 4C D0 08 48 8B 45 F0 48 8B 80 28 01 00 00 48 8B 80 20 01 00 00 8B 55 EC 48 8D 14 D0 E8 ?? ?? ?? ?? 90 48 8B 45 F0 48 8B 80 28 01 00 00 83 A8 18 01 00 00 01 EB 09 3B 5D EC 0F 8F 53 FF FF FF 0F 1F 00 48 8B 45 F0 C7 80 E4 00 00 00 01 00 00 00 48 8B 45 F0 8B 40 08 25 00 00 04 00 76 30 8B 45 F8 83 E0 02 75 28 48 8B 45 F0 48 8B 80 30 01 00 00 48 8B 88 20 02 00 00 48 8B 55 F0 41 B8 02 00 00 00 E8 ?? ?? ?? ?? E9 E6 00 00 00 66 90 83 4D F8 01 48 8B 45 F0 8B 98 18 01 00 00 85 DB 7C 4E C7 45 EC FF FF FF FF 0F 1F 00 83 45 EC 01 48 8B 4D F0 48 8B 81 20 01 00 00 8B 55 EC 48 8B 14 D0 48 8B 81 30 01 00 00 48 89 82 30 01 00 00 48 8B 45 F0 48 8B 90 20 01 00 00 8B 45 EC 48 8B 0C C2 8B 55 F8 E8 ?? ?? ?? ?? 3B 5D EC 7F BD 90 8B 45 F8 83 E0 02 76 0B 48 8B 4D F0 E8 ?? ?? ?? ?? EB 71 8B 45 F8 83 E0 04 75 69 48 8B 4D F0 E8 ?? ?? ?? ?? EB 5E 48 8D 4D D8 E8 ?? ?? ?? ?? C6 44 24 20 01 48 8B 45 F0 48 8D 90 40 01 00 00 45 31 C9 41 B8 0F 00 00 00 48 8D 4D D0 E8 ?? ?? ?? ?? 4C 8B 45 D0 45 31 C9 48 8D 15 ?? ?? ?? ?? 48 8D 4D D8 E8 ?? ?? ?? ?? 4C 8B 45 D8 48 8D 15 ?? ?? ?? ?? B9 04 00 00 00 FF 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 90 48 89 E9 E8 ?? ?? ?? ?? 48 8B 5D C8 48 8D 65 00 5D C3",
+      "optional_group": "heldThrow",
+      "provenance": "Native descendant teardown follows object ownership deletion path. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldBodyIntegrate",
+      "owner": "heldBodyIntegrate",
+      "window_offset": 0,
+      "pattern": "53 57 56 48 8D A4 24 30 FF FF FF 66 0F 7F B4 24 B0 00 00 00 66 44 0F 7F 84 24 C0 00 00 00 48 89 CB 48 8D 8C 24 80 00 00 00 45 31 C0 BA 30 00 00 00 E8 ?? ?? ?? ?? 83 BB 88 04 00 00 01 7E 09 83 AB 88 04 00 00 01 66 90 8B 43 08 83 E0 40 76 5C 48 8D BB F0 00 00 00 48 8D B3 50 01 00 00 B9 06 00 00 00 F3 48 A5 48 8D BB 20 01 00 00 48 8D B3 50 01 00 00 B9 06 00 00 00 F3 48 A5 8B 05 ?? ?? ?? ?? 89 83 48 04 00 00 48 3B 9B 20 04 00 00 0F 85 9B 03 00 00 48 89 D9 BA 01 00 00 00 E8 ?? ?? ?? ?? 66 90 E9 87 03 00 00 0F 1F 00 48 8D 93 50 01 00 00 48 8D 8B 20 01 00 00 E8 ?? ?? ?? ?? 0F 28 F0 48 8D 93 5C 01 00 00 48 8D 8B 2C 01 00 00 E8 ?? ?? ?? ?? 0F 2F F0 7A 06 73 04 0F 28 F0 90 48 8D 93 68 01 00 00 48 8D 8B 38 01 00 00 E8 ?? ?? ?? ?? 0F 2F F0 7A 08 73 06 0F 28 F0 0F 1F 00 48 8D 93 74 01 00 00 48 8D 8B 44 01 00 00 E8 ?? ?? ?? ?? 0F 2F F0 7A 08 73 06 0F 28 F0 0F 1F 00 48 8B 83 18 04 00 00 0F 2F 70 20 7A 2B 76 29 48 8B 83 18 04 00 00 F3 44 0F 10 40 08 48 63 05 ?? ?? ?? ?? 48 F7 D8 48 8B 93 20 04 00 00 89 82 4C 04 00 00 E9 A3 00 00 00 48 8B 83 18 04 00 00 0F 2F 70 24 0F 8A 85 00 00 00 0F 86 7F 00 00 00 48 8B 83 18 04 00 00 F3 44 0F 10 40 0C 8B 43 14 3B 05 ?? ?? ?? ?? 7D 37 48 63 05 ?? ?? ?? ?? 48 F7 D8 48 8B 93 20 04 00 00 48 63 92 4C 04 00 00 48 39 D0 7D 57 48 63 05 ?? ?? ?? ?? 48 F7 D8 48 8B 93 20 04 00 00 89 82 4C 04 00 00 90 EB 3D 8B 43 14 3B 05 ?? ?? ?? ?? 7E 32 48 8B 83 20 04 00 00 83 B8 4C 04 00 00 01 7E 22 48 8B 83 20 04 00 00 C7 80 4C 04 00 00 01 00 00 00 66 90 EB 0D 48 8B 83 18 04 00 00 F3 44 0F 10 40 10 48 8B 83 28 04 00 00 8B 40 14 3B 43 14 7D 0E 48 8B 83 28 04 00 00 8B 53 14 89 50 14 90 F3 0F 11 B3 14 04 00 00 48 8B 8B 18 04 00 00 4C 8D 44 24 50 48 89 DA E8 ?? ?? ?? ?? 83 BB 50 04 00 00 00 0F 8E 7E 00 00 00 83 AB 50 04 00 00 01 48 8D BB 80 01 00 00 48 8D B4 24 80 00 00 00 B9 06 00 00 00 F3 48 A5 48 8D BB B0 01 00 00 48 8D B4 24 80 00 00 00 B9 06 00 00 00 F3 48 A5 48 8D 8B F0 00 00 00 48 8D 54 24 50 E8 ?? ?? ?? ?? 48 8D 8B FC 00 00 00 48 8D 54 24 5C E8 ?? ?? ?? ?? 48 8D 8B 08 01 00 00 48 8D 54 24 68 E8 ?? ?? ?? ?? 48 8D 8B 14 01 00 00 48 8D 54 24 74 E8 ?? ?? ?? ?? E9 BB 00 00 00 81 63 08 FF EF FF FF BE FF FF FF FF 0F 1F 44 00 00 83 C6 01 89 F0 48 6B C0 0C 4C 8D 84 03 50 01 00 00 89 F0 48 6B C0 0C 48 8D 94 03 20 01 00 00 48 8D 4C 24 20 E8 ?? ?? ?? ?? 89 F0 48 6B C0 0C 48 8D 8C 03 F0 00 00 00 41 0F 28 D0 48 8D 54 24 20 E8 ?? ?? ?? ?? 89 F0 48 6B D0 0C 48 8B 44 24 20 48 89 84 13 80 01 00 00 8B 44 24 28 89 84 13 88 01 00 00 89 F0 48 6B C0 0C 48 8D 8C 03 E0 01 00 00 F3 0F 10 15 ?? ?? ?? ?? 48 8D 54 24 20 E8 ?? ?? ?? ?? 89 F0 48 6B C0 0C 48 8D 8C 03 F0 00 00 00 89 F0 48 6B C0 0C 48 8D 54 04 50 E8 ?? ?? ?? ?? 83 FE 03 0F 8C 56 FF FF FF 48 3B 9B 20 04 00 00 0F 85 9D 00 00 00 F3 0F 10 83 F4 00 00 00 0F 2F 05 ?? ?? ?? ?? 7A 4C 73 4A 8B 43 08 25 00 00 08 00 75 40 81 4B 08 00 00 08 00 48 83 BB E8 04 00 00 00 74 0B 48 89 D9 FF 93 E8 04 00 00 EB 21 48 8B 83 D0 04 00 00 48 8B 80 E0 00 00 00 48 8B 48 48 48 8B 53 18 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 0F 1F 00 83 BB 4C 04 00 00 00 7D 14 48 63 93 4C 04 00 00 48 F7 DA 48 89 D9 E8 ?? ?? ?? ?? EB 17 83 BB 4C 04 00 00 00 7E 0E 8B 93 4C 04 00 00 48 89 D9 E8 ?? ?? ?? ?? C7 83 4C 04 00 00 02 00 00 00 66 90 8B 05 ?? ?? ?? ?? 89 83 48 04 00 00 90 66 0F 6F B4 24 B0 00 00 00 66 44 0F 6F 84 24 C0 00 00 00 48 8D A4 24 D0 00 00 00 5E 5F 5B C3",
+      "optional_group": "heldThrow",
+      "provenance": "Native integrator preserves eight-step settling, damping and ordinary pointwise integration; hook executes before native body. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::heldBodyDestroy",
+      "owner": "heldBodyDestroy",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 D0 48 89 CB 48 89 D6 48 85 F6 7E 0D 48 89 D9 48 8B 03 FF 90 90 00 00 00 90 48 C7 44 24 20 00 00 00 00 48 8D 15 ?? ?? ?? ?? 48 8D 8B 20 03 00 00 4C 8D 4C 24 20 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 48 C7 44 24 20 00 00 00 00 48 8D 15 ?? ?? ?? ?? 48 8D 8B 38 04 00 00 4C 8D 4C 24 20 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 48 C7 44 24 20 00 00 00 00 48 8D 15 ?? ?? ?? ?? 48 8D 8B 30 03 00 00 4C 8D 4C 24 20 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 48 C7 44 24 20 00 00 00 00 48 8D 15 ?? ?? ?? ?? 48 8D 8B 40 03 00 00 4C 8D 4C 24 20 41 B8 01 00 00 00 E8 ?? ?? ?? ?? 8B 83 BC 04 00 00 67 8D 78 FF 85 FF 7C 4A 41 BC FF FF FF FF 0F 1F 40 00 41 83 C4 01 48 8B 93 C0 04 00 00 49 63 C4 48 6B C0 48 4C 8D 2C 02 49 83 7D 2C 00 74 0B 49 8D 4D 2C E8 ?? ?? ?? ?? 66 90 49 83 7D 34 00 74 09 49 8D 4D 34 E8 ?? ?? ?? ?? 44 39 E7 7F C3 0F 1F 00 48 3B 5B 20 75 22 48 83 BB 10 03 00 00 00 74 18 48 8B 8B 10 03 00 00 E8 ?? ?? ?? ?? 48 C7 83 10 03 00 00 00 00 00 00 90 48 89 D9 31 D2 E8 ?? ?? ?? ?? 48 85 DB 74 11 48 85 F6 74 0C 48 89 D9 48 8B 03 FF 50 70 0F 1F 00 90 48 8D 64 24 30 41 5D 41 5C 5E 5F 5B C3",
+      "optional_group": "heldThrow",
+      "provenance": "Pre-destruction observer invalidates tickets before native destructor and possible deallocation. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
+    },
+    {
+      "name": "heldThrow::applyHeldReleaseWithoutPose",
+      "owner": "applyHeldReleaseWithoutPose",
+      "window_offset": 0,
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 40 30 F6 8B 05 ?? ?? ?? ?? 67 8D 50 FF 48 89 D9 E8 ?? ?? ?? ?? 48 8B 43 18 8B 40 08 25 00 00 08 00 75 0F 48 8B 8B D0 04 00 00 48 89 DA E8 ?? ?? ?? ?? 48 8B 43 18 48 8B 80 30 01 00 00 48 8B 80 20 02 00 00 48 83 B8 28 03 00 00 00 74 24 4C 8D 83 A0 02 00 00 48 8B 53 18 48 8B 88 28 03 00 00 48 8B 80 28 03 00 00 48 8B 00 FF 90 38 01 00 00 66 90 4C 8D 83 B0 00 00 00 48 8D 93 F0 00 00 00 48 8D 8B A0 02 00 00 E8 ?? ?? ?? ?? 4C 8D 83 A0 02 00 00 48 8D 93 70 02 00 00 48 8D 8B 80 02 00 00 E8 ?? ?? ?? ?? 4C 8D 83 F0 00 00 00 48 8D 93 20 02 00 00 48 8D 8B 50 02 00 00 E8 ?? ?? ?? ?? 48 8B 4B 18 E8 ?? ?? ?? ?? 40 88 F0 90 48 8D 64 24 28 5E 5B C3",
+      "optional_group": "heldThrow",
+      "provenance": "Native no-transform release callback is forwarded unchanged and invalidates previous serials. Actual source executable and corresponding native export verified. Admission additionally requires fresh reviewed source hash and loaded-file equality; this does not establish arbitrary raw-free safety."
     }
   ]
 }

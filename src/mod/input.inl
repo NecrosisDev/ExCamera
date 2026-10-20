@@ -1,6 +1,7 @@
 // Input: the game window procedure (F6-F11, right mouse, raw mouse), mouse-look aim, the input and behaviour hooks, head steadying, movement, the attack cue's state.
 // Part of first_person.cpp (one translation unit): included there, in order.
 static bool closeViewContext();
+static void recordHeldThrow(int wheel, float distance);
 static bool manualCombatNow();
 static bool bindingContextNow();
 static bool nativeSettingsBindingInput(UINT message, WPARAM wp, LPARAM lp);
@@ -18,25 +19,6 @@ static bool alternateBindingKey(unsigned key) {
             (alternate == family[0] && (key == family[1] || key == family[2])))
             return true;
     return false;
-}
-// Combat reserves the configured native alternate key before an attack starts.
-// The same rule governs window claims and polling; old owned holds still retire
-// through their release ledger instead of changing actions at a stance boundary.
-static bool leanBindingAvailable(int key, uintptr_t root = 0) {
-    if constexpr (!explicitLeanEnabled) {
-        (void)key;
-        (void)root;
-        return false;
-    } else {
-        if (!base || key <= 0 || key >= 256) return false;
-        __try {
-            if (!root) root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
-            return root && (!*(unsigned char*)(root + field::character::combatStance) ||
-                            !alternateBindingKey(unsigned(key)));
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return false;
-        }
-    }
 }
 // Holding an item (drag 0x2000) while the mod drives the view: the rotate key then turns it.
 static bool holdingItem() {
@@ -138,11 +120,38 @@ static void worldPointerMotion(float dx, float dy) {
 struct GuiPointerPresentation {
     bool active = false, read = false;
     LONG x = 0, y = 0;
+    uintptr_t gui = 0, viewport = 0, camera = 0, controller = 0, view = 0;
+    fp::InputStamp stamp;
+    LONG priorX = 0, priorY = 0;
+    bool compare = false, rejected = false, nativeOnly = false;
 };
 static thread_local GuiPointerPresentation guiPointerPresentation;
+static WindowInstallation windowInstallationSnapshot() {
+    AcquireSRWLockShared(&windowInstallationLock);
+    const WindowInstallation result = windowInstallation;
+    ReleaseSRWLockShared(&windowInstallationLock);
+    return result;
+}
+static void retireWindowInstallation(const WindowInstallation& owner) {
+    AcquireSRWLockExclusive(&windowInstallationLock);
+    if (windowInstallation.window == owner.window &&
+        windowInstallation.generation == owner.generation)
+        windowInstallation.retired = true;
+    ReleaseSRWLockExclusive(&windowInstallationLock);
+}
 static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
+    const WindowInstallation owner = windowInstallationSnapshot();
+    // A foreign/stale direct invocation has no predecessor we can reconstruct.
+    // Do not borrow another window's procedure or mutate its input ownership.
+    if (owner.window != w || !owner.previous || owner.retired)
+        return DefWindowProcW(w, message, wp, lp);
+    if (message == WM_NCDESTROY) {
+        const LRESULT result = CallWindowProcW(owner.previous, w, message, wp, lp);
+        retireWindowInstallation(owner); // exact generation, after native destruction
+        return result;
+    }
     if (InterlockedCompareExchange(&stopping, 0, 0))
-        return CallWindowProcW(originalWindowProc, w, message, wp, lp);
+        return CallWindowProcW(owner.previous, w, message, wp, lp);
     // While choosing an ExCamera binding, the native Settings UI owns this
     // single press. Never let F6-F11, mouse buttons or an alternate attack
     // leak through to gameplay or native Settings shortcuts during capture.
@@ -179,16 +188,6 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             if (canTake && bindingKey == rotateHeldKey.load() && holdingItem()) {
                 inputOwner.windowClaim(bindingKey);
                 return xbutton ? TRUE : 0;
-            }
-            if (canTake && explicitLeanEnabled && !(bindingKey == VK_RBUTTON && manualCombatNow())) {
-                const bool keysMode = leanKeysMode.load();
-                const bool matches =
-                    keysMode ? bindingKey == leanLeftKey.load() || bindingKey == leanRightKey.load()
-                             : bindingKey == leanKey.load();
-                if (matches && leanBindingAvailable(bindingKey)) {
-                    inputOwner.windowClaim(bindingKey);
-                    return xbutton ? TRUE : 0;
-                }
             }
             if (canTake && trackingEnabled.load() && bindingKey == trackingRecenterKey.load()) {
                 inputOwner.windowClaim(bindingKey);
@@ -232,7 +231,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                               raw.data.mouse.lLastY, owns);
             ReleaseSRWLockExclusive(&rawLock);
         }
-        return CallWindowProcW(originalWindowProc, w, message, wp, lp); // DefWindowProc cleanup.
+        return CallWindowProcW(owner.previous, w, message, wp, lp); // DefWindowProc cleanup.
     }
     unsigned bit = keyMask(wp);
     if (message == WM_KEYDOWN && bit && InterlockedCompareExchange(&inputEnabled, 0, 0)) {
@@ -249,6 +248,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             kind = 0;
         }
         if (kind == 1) {
+            recordHeldThrow(GET_WHEEL_DELTA_WPARAM(wp), holdTarget.load());
             holdTarget = fp::holdTargetStep(holdTarget.load(), GET_WHEEL_DELTA_WPARAM(wp), fp::holdNear,
                                             float(grabRange.load()));
             ++holdNotches;
@@ -282,7 +282,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     if (message == WM_KEYDOWN && !(lp & (1LL << 30))) {
         if (wp == VK_F6 && !fp::rearmF6Accepted(GetTickCount64(), rearmedAt.load()))
             return 0; // the polled press that re-armed
-        if (wp == VK_F6) releaseHeldDoor();
+        if (wp == VK_F6) { ++inventoryOwnerEpoch; releaseHeldDoor(); }
         if (wp == VK_F6) {
             // F6 cycles first person -> third person -> the game's overhead.
             if (InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
@@ -316,10 +316,11 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         if (wp == VK_ESCAPE) releaseInput();
     }
     if (message == WM_KILLFOCUS || message == WM_CANCELMODE || (message == WM_ACTIVATEAPP && !wp)) {
+        ++inventoryOwnerEpoch;
         rmbEvent(fp::RmbEvent::focusLost, false);
         releaseInput();
     }
-    return CallWindowProcW(originalWindowProc, w, message, wp, lp);
+    return CallWindowProcW(owner.previous, w, message, wp, lp);
 }
 // A console (EMTK's framework opens one with AllocConsole) reports the game's process too: never the game's window.
 static bool consoleWindow(HWND w) {
@@ -605,13 +606,6 @@ static void updateAim(uintptr_t behavior) {
             addTo(heldTurnY, float(dy));
             dx = dy = 0;
         } // turning a held item
-        else if (leaning.load() && !leanKeysMode.load()) {
-            if constexpr (explicitLeanEnabled) {
-                addTo(leanMouseX, float(dx));
-                addTo(leanMouseY, float(dy));
-                dx = dy = 0;
-            }
-        } // explicit Lean disabled: never divert mouse-look movement
         worldPointerMotion(dx, dy);
         if (combat) aim.swing.move(dx, dy, float(rect.right));
         // Gesture thresholds and explicit item rotation consume physical motion.
@@ -646,7 +640,7 @@ static void updateAim(uintptr_t behavior) {
     // away from the cursor while the onscreen reticle jumped to centre.
     const bool recenterNow = recenterClicks.exchange(0) != 0;
     if (freeAim && !freeCursor && InterlockedCompareExchange(&mouseCaptured, 0, 0) &&
-        !heldRotating.load() && !leaning.load() && (recenterNow || aimAutoRecenter.load())) {
+        !heldRotating.load() && (recenterNow || aimAutoRecenter.load())) {
         const int thirdFov = tpFov.load();
         const float fov = float(mode == 1 && thirdFov > 0 ? thirdFov : selectedFov.load());
         float centeredYaw = aim.yaw, centeredPitch = aim.pitch;
@@ -763,13 +757,17 @@ static AnalogVectorOp originalAnalogScale, originalAnalogAdd;
 // target - 600*ray, then up to 1000 units forward. A close-view hold instead
 // searches only from its real pick origin to its requested cursor target.
 struct HeldPlacement {
-    uintptr_t object = 0, viewport = 0, query = 0, root = 0;
+    uintptr_t object = 0, viewport = 0, query = 0, root = 0, scene = 0, sector = 0;
     ULONGLONG generation = 0;
     int mode = 0;
-    float distance = 0.f, values[6]{};
+    float distance = 0.f, values[6]{}, sectorOrigin[3]{};
     bool blocked = false;
 };
-static thread_local HeldPlacement pendingPlacement{}, boundedPlacement{};
+static thread_local HeldPlacement pendingPlacement{}, boundedPlacement{}, updatePlacement{};
+static thread_local unsigned heldUpdateDepth = 0;
+static thread_local HeldPlacement acceptedHeldPlacement{};
+static bool heldRecoveryPlacement(uintptr_t object, uintptr_t viewport, uintptr_t query,
+                                  HeldPlacement& proposal);
 static constexpr unsigned heldCollisionQueryBit = 0x200000;
 static constexpr float nativeHeldSweepSpan = 1000.f;
 static float heldPlacementStart(uintptr_t caller, const float* origin, const float* direction, float scale) {
@@ -893,31 +891,11 @@ static bool heldBinding(fp::HeldBinding role, int key, bool eligible, const Inpu
     const bool down = key > 0 && key < 256 && (keyState(key) & 0x8000);
     return inputOwner.held(role, key, down, eligible, sample);
 }
-static void sampleHeldBindings(uintptr_t root, uintptr_t bh, bool owned, const InputOwner::Sample& sample) {
-    const int rotate = rotateHeldKey.load(), key = leanKey.load(), left = leanLeftKey.load(),
-              right = leanRightKey.load();
-    const bool keysMode = leanKeysMode.load();
+static void sampleHeldBindings(bool owned, const InputOwner::Sample& sample) {
+    const int rotate = rotateHeldKey.load();
     const bool turning = heldBinding(fp::HeldBinding::rotate, rotate, owned && holdingItem(), sample);
     heldRotating = turning;
     if (turning) inputOwner.consumeBinding(rotate);
-    // Still sample the legacy roles with eligibility=false so their old owner
-    // lifetimes retire, without capturing keyboard, mouse, aim or native actions.
-    const bool enabled = explicitLeanEnabled && owned && viewMode.load() < 2 && !turning;
-    const bool manual = enabled && manualCombat(root, bh);
-    const bool l = heldBinding(fp::HeldBinding::left, left,
-                               enabled && keysMode && !(left == VK_RBUTTON && manual) &&
-                                   leanBindingAvailable(left, root), sample),
-               r = heldBinding(fp::HeldBinding::right, right,
-                               enabled && keysMode && !(right == VK_RBUTTON && manual) &&
-                                   leanBindingAvailable(right, root), sample),
-               mouseLean = heldBinding(fp::HeldBinding::lean, key,
-                                       enabled && !keysMode && !(key == VK_RBUTTON && manual) &&
-                                           leanBindingAvailable(key, root), sample);
-    leanKeySide = explicitLeanEnabled && keysMode ? int(r) - int(l) : 0;
-    leaning = explicitLeanEnabled && (mouseLean || l || r);
-    if (mouseLean) inputOwner.consumeBinding(key);
-    if (l) inputOwner.consumeBinding(left);
-    if (r) inputOwner.consumeBinding(right);
     if (trackingEnabled.load() && inputOwner.windowOwns(trackingRecenterKey.load()))
         inputOwner.consumeBinding(trackingRecenterKey.load());
     // Keep an old physical press masked across a rebind or gameplay release.
@@ -925,7 +903,7 @@ static void sampleHeldBindings(uintptr_t root, uintptr_t bh, bool owned, const I
     for (int bound = 1; bound < 256; ++bound)
         if (inputOwner.bindingOwned(bound) && inputOwner.maskBinding(bound, (keyState(bound) & 0x8000) != 0)) {
             consumeNativeBinding(bound);
-            // A side-specific lean hold also owns its generic native modifier.
+            // A side-specific owned hold also masks its generic native modifier.
             if (alternateBindingKey(unsigned(bound))) *(unsigned*)gameAt(fp::sig::keyWord) &= ~0x80u;
         }
 }
@@ -970,7 +948,7 @@ static void input() {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         // Scene teardown can invalidate the former controlled actor.
     }
-    sampleHeldBindings(root, bh, owned, sample);
+    sampleHeldBindings(owned, sample);
     combatInput(root, bh, owned, sample);
     if (owned) prepareAttackHeading(bh);
     duckKey = (*(unsigned*)gameAt(fp::sig::keyWord) & duckKeyBit) != 0;
@@ -1118,39 +1096,16 @@ static void spineBendStep(uintptr_t root, SpinePoseBorrow (&borrowed)[2]) {
                     lower = readable(chest, 0x430) ? *(uintptr_t*)(chest + field::bodyPart::parentPart) : 0;
     const uintptr_t parts[2] = {chest && chest != rootPart ? chest : 0,
                                 lower && lower != rootPart ? lower : 0};
-    static fp::Lean lean;
-    static uintptr_t leanRoot = 0;
     const bool eligible = InterlockedCompareExchange(&active, 0, 0) &&
                           !InterlockedCompareExchange(&stopping, 0, 0) &&
                           InterlockedCompareExchange(&cameraReady, 0, 0) && viewMode.load() < 2 && head &&
                           bodyCalm(root, head);
-    if (leanRoot != root || !eligible) {
-        lean = {};
-        leanRoot = root;
-    }
-    if (explicitLeanEnabled) {
-        const float step = physicsStep.load();
-        const float seconds = step > 0.f ? step : 1.f / 60.f;
-        const float dx = leanMouseX.exchange(0.f), dy = leanMouseY.exchange(0.f);
-        if (eligible && leanKeysMode.load())
-            lean.keys(leanKeySide.load(), seconds);
-        else if (eligible)
-            lean.step(dx, dy, leaning.load(), seconds);
-    } else {
-        // No old mouse delta or accumulated lean may bleed into a native
-        // attack or an unrelated exploration spine-follow pose.
-        lean = {};
-        leanMouseX.exchange(0.f);
-        leanMouseY.exchange(0.f);
-    }
-    leanSideNow = lean.side;
-    leanForwardNow = lean.forward;
     // Native attacks already consume their target through C0790/166580. Head
     // gaze is independent of that target in free aim; do not add an automatic
-    // torso correction in combat. Explicit lean remains a separate player input.
+    // torso correction in combat.
     const int follow =
         eligible && !*(unsigned char*)(root + field::character::combatStance) ? spineFollow.load() : 0;
-    const bool on = eligible && (follow > 0 || lean.active());
+    const bool on = eligible && follow > 0;
     const float bend =
         follow > 0 ? fp::spineBend((const float*)(root + field::character::gaze), follow) : 0.f;
     for (int i = 0; i < 2; ++i) {
@@ -1160,14 +1115,9 @@ static void spineBendStep(uintptr_t root, SpinePoseBorrow (&borrowed)[2]) {
             parts[i] && readable(parts[i], 0x430) ? *(uintptr_t*)(parts[i] + field::bodyPart::parentPart) : 0;
         const bool apply =
             on && parts[i] && readable(parts[i], 0x2d0) && readable(parent, 0x2d0) &&
-            (lean.active()
-                 ? fp::spineLeanQuat((const float*)(parts[i] + field::bodyPart::pose),
-                                     (const float*)(parent + field::bodyPart::pose),
-                                     (const float*)(root + field::character::gaze),
-                                     (bend + lean.forward) * share, lean.side * share, q)
-                 : fp::spineBendQuat((const float*)(parts[i] + field::bodyPart::pose),
-                                     (const float*)(parent + field::bodyPart::pose),
-                                     (const float*)(root + field::character::gaze), bend * share, q));
+            fp::spineBendQuat((const float*)(parts[i] + field::bodyPart::pose),
+                             (const float*)(parent + field::bodyPart::pose),
+                             (const float*)(root + field::character::gaze), bend * share, q);
         if (apply) borrowSpinePart(root, parts[i], q, borrowed[i]);
     }
     if (on) ++spineBendTicks;
@@ -1201,8 +1151,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
                     ++crouchTicks;
                 }
             }
-            // This owner also retires its lean history while the close view is
-            // parked. A later camera re-arm must not replay the former lean.
+            // Recheck the live character, head and stance for this physical pose build.
             __try {
                 spineBendStep(root, borrowed);
             } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -1524,11 +1473,12 @@ static fp::SwingHands swingHands(uintptr_t root, fp::OriginCue cue, int motion) 
     if (s.slot >= 0) s.hand = fp::weaponHand(w, held, parts, s.expectedHand);
     // Both hand names are read (status shows them); the swinging hand decides.
     int sides[2]{};
+    HandNamesStatus names;
     for (int h = 0; h < 2; h++) {
         const uintptr_t part = parts[h];
         const uintptr_t mesh = readable(part, 0x20) ? *(uintptr_t*)(part + field::bodyPart::meshNode) : 0;
         if (!mesh || !readable(mesh, 0x168) || *(uintptr_t*)(mesh + field::sceneNode::bodyPart) != part) {
-            handNames[h][0] = 0;
+            names.names[h][0] = 0;
             continue;
         }
         char name[17]{};
@@ -1537,12 +1487,13 @@ static fp::SwingHands swingHands(uintptr_t root, fp::OriginCue cue, int motion) 
         // Status JSON only: keep letters, digits and '_'.
         for (int i = 0; i < 16; i++) {
             const char c = i < 15 ? name[i] : 0;
-            handNames[h][i] =
+            names.names[h][i] =
                 !c || ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_')
                     ? c
                     : '_';
         }
     }
+    publishHandNames(names);
     if (s.hand >= 0) s.handSide = sides[s.hand];
     handSlot = s.slot;
     handIndex = s.hand;
@@ -1690,6 +1641,32 @@ static bool reticleForUi(LONG* x, LONG* y) {
     ++uiReticleReads;
     return true;
 }
+// A borrowed comparison operand is never a world-pick coordinate. Keep the
+// admitted real point for this synchronous call, but never lend it to a new owner.
+static bool guiPointerOwned() {
+    auto& point = guiPointerPresentation;
+    if (!point.active || point.rejected) return false;
+    __try {
+        const fp::InputStamp now = worldPointerStamp();
+        if (gameplayOwnsPointer() && closeViewContext() &&
+            *(int*)gameAt(fp::sig::pointerOverride) < 1 &&
+            point.gui == *(uintptr_t*)gameAt(fp::sig::guiManager) &&
+            point.viewport == *(uintptr_t*)gameAt(fp::sig::mainViewport) && point.camera == savedCamera &&
+            point.controller == savedController && point.view == savedView && savedCamera && savedView &&
+            savedRoot == now.root && savedScene == now.scene &&
+            *(uintptr_t*)(point.viewport + field::viewport::pickCamera) == savedCamera &&
+            *(uintptr_t*)(point.viewport + field::viewport::view) == savedView &&
+            *(uintptr_t*)(savedView + field::view::camera) == savedCamera &&
+            *(uintptr_t*)(savedCamera + field::camera::controller) == point.controller &&
+            point.stamp.root == now.root && point.stamp.head == now.head && point.stamp.scene == now.scene &&
+            point.stamp.mode == now.mode && point.stamp.generation == now.generation &&
+            point.stamp.policyRevision == now.policyRevision)
+            return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    point.rejected = true;
+    return false;
+}
 using GuiMousePress = void (*)(uintptr_t, unsigned short);
 using GuiMousePoll = char (*)(uintptr_t, char);
 static GuiMousePress originalGuiMousePress;
@@ -1701,7 +1678,8 @@ struct WorldPointerSample {
     bool havePress = false;
 };
 static bool sampleWorldPointer(uintptr_t gui, WorldPointerSample& sample) {
-    if (guiPointerPresentation.active || !gameplayOwnsPointer() || !closeViewContext()) return false;
+    if (guiPointerPresentation.active || guiPointerPresentation.nativeOnly ||
+        !gameplayOwnsPointer() || !closeViewContext()) return false;
     __try {
         if (gui != *(uintptr_t*)gameAt(fp::sig::guiManager) ||
             !readable(gui, field::gui::capture + sizeof(uintptr_t)) ||
@@ -1747,6 +1725,22 @@ static void restoreGuiPointer(uintptr_t gui, size_t offset, LONG fromX, LONG fro
     }
 }
 static void guiMousePress(uintptr_t gui, unsigned short buttons) {
+    if (guiPointerPresentation.active &&
+        (gui != guiPointerPresentation.gui || guiPointerPresentation.nativeOnly)) {
+        const GuiPointerPresentation previous = guiPointerPresentation;
+        // Retain the borrowed owner's identity: a foreign callback may reenter
+        // that GUI before its translated press operand has been restored.
+        guiPointerPresentation.nativeOnly = gui != guiPointerPresentation.gui;
+        __try {
+            originalGuiMousePress(gui, buttons);
+        } __finally {
+            const bool read = guiPointerPresentation.read, rejected = guiPointerPresentation.rejected;
+            guiPointerPresentation = previous;
+            guiPointerPresentation.read |= read;
+            guiPointerPresentation.rejected |= rejected;
+        }
+        return;
+    }
     WorldPointerSample sample;
     if ((buttons & 7) != 1 || !sampleWorldPointer(gui, sample)) {
         originalGuiMousePress(gui, buttons);
@@ -1762,6 +1756,12 @@ static void guiMousePress(uintptr_t gui, unsigned short buttons) {
     const LONG oldPressX = pressed[0], oldPressY = pressed[1];
     const GuiPointerPresentation previous = guiPointerPresentation;
     guiPointerPresentation = {true, false, x, y};
+    guiPointerPresentation.gui = gui;
+    guiPointerPresentation.viewport = *(uintptr_t*)gameAt(fp::sig::mainViewport);
+    guiPointerPresentation.camera = savedCamera;
+    guiPointerPresentation.controller = savedController;
+    guiPointerPresentation.view = savedView;
+    guiPointerPresentation.stamp = sample.stamp;
     bool accepted = false;
     __try {
         current[0] = x;
@@ -1788,33 +1788,59 @@ static void guiMousePress(uintptr_t gui, unsigned short buttons) {
     }
 }
 static char guiMousePoll(uintptr_t gui, char force) {
+    if (guiPointerPresentation.active &&
+        (gui != guiPointerPresentation.gui || guiPointerPresentation.nativeOnly)) {
+        const GuiPointerPresentation previous = guiPointerPresentation;
+        // Retain the borrowed owner's identity: a foreign callback may reenter
+        // that GUI before its translated press operand has been restored.
+        guiPointerPresentation.nativeOnly = gui != guiPointerPresentation.gui;
+        __try {
+            return originalGuiMousePoll(gui, force);
+        } __finally {
+            const bool read = guiPointerPresentation.read, rejected = guiPointerPresentation.rejected;
+            guiPointerPresentation = previous;
+            guiPointerPresentation.read |= read;
+            guiPointerPresentation.rejected |= rejected;
+        }
+    }
     WorldPointerSample sample;
     const unsigned buttons = readable(gui, field::gui::buttons + sizeof(unsigned))
                                  ? *(unsigned*)(gui + field::gui::buttons) : 0;
     if ((buttons & 7) != 1 || (buttons & 0x6100) || !sampleWorldPointer(gui, sample) || !sample.havePress)
         return originalGuiMousePoll(gui, force);
-    const LONG x = gestureCoordinate(sample.centerX, sample.limitX, sample.current.x),
-               y = gestureCoordinate(sample.centerY, sample.limitY, sample.current.y),
-               previousX = gestureCoordinate(sample.centerX, sample.limitX, sample.polled.x),
-               previousY = gestureCoordinate(sample.centerY, sample.limitY, sample.polled.y);
+    const LONG x = sample.x, y = sample.y,
+               totalX = gestureCoordinate(sample.centerX, sample.limitX, sample.current.x) - sample.centerX,
+               totalY = gestureCoordinate(sample.centerY, sample.limitY, sample.current.y) - sample.centerY,
+               deltaX = totalX - (gestureCoordinate(sample.centerX, sample.limitX, sample.polled.x) - sample.centerX),
+               deltaY = totalY - (gestureCoordinate(sample.centerY, sample.limitY, sample.polled.y) - sample.centerY),
+               priorX = x - deltaX, priorY = y - deltaY, pressX = x - totalX, pressY = y - totalY;
     auto* current = (LONG*)(gui + field::gui::pointerX);
     auto* pressed = (LONG*)(gui + field::gui::pressX);
     const LONG oldPressX = pressed[0], oldPressY = pressed[1];
     const GuiPointerPresentation previous = guiPointerPresentation;
     guiPointerPresentation = {true, false, x, y};
+    guiPointerPresentation.gui = gui;
+    guiPointerPresentation.viewport = *(uintptr_t*)gameAt(fp::sig::mainViewport);
+    guiPointerPresentation.camera = savedCamera;
+    guiPointerPresentation.controller = savedController;
+    guiPointerPresentation.view = savedView;
+    guiPointerPresentation.stamp = sample.stamp;
+    guiPointerPresentation.priorX = priorX;
+    guiPointerPresentation.priorY = priorY;
+    guiPointerPresentation.compare = true;
     char result = 0;
     bool sampled = false;
     __try {
-        current[0] = previousX;
-        current[1] = previousY;
-        pressed[0] = sample.centerX;
-        pressed[1] = sample.centerY;
+        current[0] = x;
+        current[1] = y;
+        pressed[0] = pressX;
+        pressed[1] = pressY;
         result = originalGuiMousePoll(gui, force);
         sampled = guiPointerPresentation.read;
     } __finally {
         restoreGuiPointer(gui, field::gui::pointerX, x, y, sample.x, sample.y);
-        restoreGuiPointer(gui, field::gui::pointerX, previousX, previousY, sample.x, sample.y);
-        restoreGuiPointer(gui, field::gui::pressX, sample.centerX, sample.centerY, oldPressX, oldPressY);
+        restoreGuiPointer(gui, field::gui::pointerX, priorX, priorY, sample.x, sample.y);
+        restoreGuiPointer(gui, field::gui::pressX, pressX, pressY, oldPressX, oldPressY);
         guiPointerPresentation = previous;
     }
     if (sampled) {
@@ -1992,17 +2018,22 @@ static float heldSweep(uintptr_t body, const float* direction, uintptr_t viewpor
     return heldSweepFor((uintptr_t)_ReturnAddress(), body, direction, viewport, pose);
 }
 static bool heldPlace(uintptr_t object, uintptr_t viewport, uintptr_t query) {
-    const HeldPlacement proposal = pendingPlacement;
+    HeldPlacement proposal = pendingPlacement;
     pendingPlacement = {};
     if (!object || closeWorldHeldObject(viewport) != object) {
         // A close-view query cannot become an overhead placement after handoff.
         if (proposal.object) return false;
         return originalHeldPlace(object, viewport, query);
     }
-    if (gameplayHeldObject(viewport) != object || proposal.object != object ||
+    // 119CB0 revalidates its saved native query without calling 117AA0 again.
+    // Only that exact call may borrow the last native-confirmed bounded proposal.
+    const bool recovery = (uintptr_t)_ReturnAddress() == gameAt(fp::sig::heldRecoveryPlaceReturn) &&
+                          heldRecoveryPlacement(object, viewport, query, proposal);
+    if ((!recovery && gameplayHeldObject(viewport) != object) || proposal.object != object ||
         proposal.viewport != viewport || proposal.query != query ||
         proposal.generation != holdGeneration.load() || proposal.mode != viewMode.load() ||
-        proposal.root != *(uintptr_t*)gameAt(fp::sig::playerRoot) || !std::isfinite(proposal.distance) ||
+        proposal.root != *(uintptr_t*)gameAt(fp::sig::playerRoot) ||
+        proposal.scene != *(uintptr_t*)gameAt(fp::sig::currentScene) || !std::isfinite(proposal.distance) ||
         proposal.distance < 1.f || !query || memcmp((void*)query, proposal.values, sizeof proposal.values))
         return false;
     const HeldPlacement previous = boundedPlacement;
@@ -2013,7 +2044,9 @@ static bool heldPlace(uintptr_t object, uintptr_t viewport, uintptr_t query) {
         result = result && !boundedPlacement.blocked && proposal.generation == holdGeneration.load() &&
                  proposal.mode == viewMode.load() &&
                  proposal.root == *(uintptr_t*)gameAt(fp::sig::playerRoot) &&
-                 gameplayHeldObject(viewport) == object;
+                 proposal.scene == *(uintptr_t*)gameAt(fp::sig::currentScene) &&
+                 (recovery ? closeWorldHeldObject(viewport) : gameplayHeldObject(viewport)) == object;
+        if (result && !recovery && heldUpdateDepth == 1) updatePlacement = proposal;
     } __finally {
         boundedPlacement = previous;
     }
@@ -2096,6 +2129,9 @@ static bool dragRotate(uintptr_t object, uintptr_t viewport) {
     // for locomotion; only this grab's rotate-key mouse deltas turn the item.
     return turnHeld(object);
 }
+static ULONGLONG inventoryPlacementBegin(uintptr_t object, uintptr_t viewport);
+static void inventoryPlacementEnd(ULONGLONG generation, uintptr_t object, int result);
+static void inventoryPlacementHandoff();
 static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
     // Inventory materialization (11D1D0) enters 1183C0 before flags become
     // 0x2000. Its -100000 height fallback is an overhead policy too. Preflight
@@ -2108,9 +2144,13 @@ static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
         InterlockedCompareExchange(&cameraReady, 0, 0) && *(uintptr_t*)gameAt(fp::sig::playerRoot) &&
         (flags == 0x1000 || flags == 0x2000) && *(uintptr_t*)(manager + field::drag::object) == object;
     if (closePlacement) {
+        const ULONGLONG inventory = inventoryPlacementBegin(object, camera);
         if (flags == 0x1000) resetHeldGrab();
         alignas(8) unsigned char ray[0x40]{};
-        if (!prepareHeldPlacement(object, camera, h, ray)) return 0;
+        if (!prepareHeldPlacement(object, camera, h, ray)) {
+            inventoryPlacementEnd(inventory, object, 0);
+            return 0;
+        }
         const DWORD previousThread = placingThread;
         const bool previousReady = placingReady;
         const uintptr_t previousViewport = placingViewport;
@@ -2139,8 +2179,10 @@ static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
             placingViewport = previousViewport;
             memcpy(placingRay, previousRay, sizeof placingRay);
         }
+        inventoryPlacementEnd(inventory, object, result);
         return result;
     }
+    inventoryPlacementHandoff(); // native-only placement cannot retain an old owned failure
     if (holdObject.load() || grabStartDistance.load() != 0.f) resetHeldGrab();
     return originalDragPlace(object, camera, h);
 }
@@ -2160,11 +2202,15 @@ static float holdReachClamp(const float* origin, const float* dir, float t) {
     return t;
 }
 static float levelClear(uintptr_t level, const float* origin, const float* dir, float length) {
-    if (levelBlocked(level, origin, dir, length) != 1) return length;
+    const int initial = levelBlocked(level, origin, dir, length);
+    if (initial < 0) return 0.f; // unknown is not clear space
+    if (initial == 0) return length;
     float lo = 0, hi = length;
     for (int i = 0; i < 7; i++) {
         const float mid = (lo + hi) * .5f;
-        if (levelBlocked(level, origin, dir, mid) == 1)
+        const int blocked = levelBlocked(level, origin, dir, mid);
+        if (blocked < 0) return 0.f; // no safe clearance established by a fault
+        if (blocked == 1)
             hi = mid;
         else
             lo = mid;
@@ -2220,14 +2266,14 @@ static float viewClearance(const float* pose, float fov) {
 // The close-view hold is a distance from the eye along the actual pointer ray,
 // limited by the nearer hit, native level geometry and the player's reach.
 // Neither the ray's origin nor its direction is ever rewritten.
-static char heldPointAlongView(char hit, uintptr_t out) {
+static char heldPointAlongViewDistance(char hit, uintptr_t out, float distance) {
     const float* dir = (const float*)(out + field::pick::direction);
     const float* origin = (const float*)(out + field::pick::origin);
     const float length = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
     if (!std::isfinite(length) || length < 0.5f || !std::isfinite(origin[0] + origin[1] + origin[2]))
         return 0;
     const float eye[3] = {eyeGlobal[0].load(), eyeGlobal[1].load(), eyeGlobal[2].load()};
-    float t = fp::holdAlongRay(origin, dir, eye, holdApplied.load());
+    float t = fp::holdAlongRay(origin, dir, eye, distance);
     if (t < 0.f) return 0; // pointing away from the character
     t = holdReachClamp(origin, dir, t);
     const float reached = *(float*)(out + field::pick::distance);
@@ -2243,6 +2289,9 @@ static char heldPointAlongView(char hit, uintptr_t out) {
     for (int i = 0; i < 3; i++) ((float*)(out + 8))[i] = origin[i] + dir[i] * t;
     *(float*)(out + field::pick::distance) = t;
     return 1;
+}
+static char heldPointAlongView(char hit, uintptr_t out) {
+    return heldPointAlongViewDistance(hit, out, holdApplied.load());
 }
 // The game's picks (0x8F720, 0x8FB30) keep the nearest mesh the ray meets and skip any whose flags +8 carry
 // 0x4000000. In first and third person the ray starts at (or near) your own head, so your arms, hands, what

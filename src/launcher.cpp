@@ -229,9 +229,9 @@ static int activate(HANDLE process, DWORD pid, const std::wstring& directory) {
         !request)
         return fail(L"Could not create an activation request. Activation was not requested.");
     if (!callEnable(process, pid, request))
-        return fail(L"The loaded camera module could not accept this activation request. It may be an older "
-                    L"build or have stopped after a fault. See first-person-status.json; restart Exanima "
-                    L"to load the current build.");
+        return fail(L"Could not confirm that the loaded camera module accepted this activation request. "
+                    L"A remote call may still be pending. See first-person-status.json; restart Exanima "
+                    L"before retrying if activation remains unconfirmed or a fault is reported.");
     const std::wstring path = directory + L"first-person-status.json";
     for (unsigned i = 0; i < 100; ++i) {
         if (!waitTick()) return 0;

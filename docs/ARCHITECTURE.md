@@ -9,9 +9,12 @@ The files under `src/mod/` intentionally form **one translation unit** through o
 ## Where to start
 
 - `mod/state.inl`, `activation.inl`, `session.inl`: shared state, activation checks, hooks, and session lifetime.
+- `mod/optional_contracts.inl`, `held_throw_admission.inl`: exact loaded optional witnesses and held-body hook admission/retirement.
 - `mod/input.inl`, `input_policy.h`, `input_ownership.h`, `raw_registration.h`: input routing and ownership.
 - `mod/camera.inl`, `view.inl`, `frame.inl`, `camera_motion.h`, `head_stabiliser.h`: camera pose, transitions, and per-frame behavior.
-- `mod/combat.inl`, `picking.inl`, `held_object.h`: combat and interaction integration.
+- `mod/combat.inl`, `attack_variants.inl`, `picking.inl`, `held_object.h`: combat and interaction integration.
+- `mod/inventory.inl`: observed ordinary inventory-preview transactions and native commit cancellation.
+- `mod/held_throw.inl`: release intent, native body lifetime, and one-shot physics delivery.
 - `mod/supersampling.inl`, `supersampling_depth.h`, `supersampling_shim.asm`: rendering integration.
 - `mod/overlay.inl`, `panel.inl`, `settings.inl`: overlay, settings integration, and persistence.
 - `native_settings.*`, `native_widgets.h`, `native_widget_contract.h`: native widget adapter and event contracts.
@@ -24,14 +27,58 @@ The files under `src/mod/` intentionally form **one translation unit** through o
 
 `game_structs.h` describes the layouts used by the mod. `game_contracts.h` contains precomputed owner/field evidence; `native_contracts.h` validates those contracts. `native_build.h` supplies the supported build identity. Native widget event semantics are separate again: `native_widget_contract.h` distinguishes checkbox selected-state handling from slider callback handling rather than treating all widgets identically.
 
-Signature and contract tables are checked in. Their original generation and research tooling is not bundled or required to build this minimal distribution. Updating compatibility for another game build requires fresh verification, not simply changing the executable hash or accepting a successful signature match.
+Signature and contract tables are checked in alongside their authoritative specifications in `tools/targets.json` and `tools/native_contracts.json`. `python tools/check_generated.py` verifies source/header consistency using only the Python standard library; CI runs it before compiling. The optional native generators additionally require the reviewed executable, pefile and capstone, and are not needed for a normal build. See `tools/README.md`. Updating compatibility requires fresh native review, not simply changing the executable hash or accepting a successful signature match.
+
+Core field witnesses validate the executable file; loaded entry/dispatch checks are separate. The optional capabilities documented below additionally compare their critical loaded instruction windows. These checks do not establish that every required function interior in memory is unchanged by another component.
 
 ## Settings boundaries
 
-The native UI edits a draft. Apply commits an accepted snapshot; Cancel discards draft edits. The presentation layer maps internal values to labels without making the native controller Controls table into an ExCamera page. Preferences are external to the source and runtime package.
+The native UI edits a draft. Apply publishes accepted values and queues per-row revisions under a short settings lock; Cancel discards draft edits. Only the session worker persists INI values, outside that lock, then acknowledges the exact revision written. Edits arriving during a write remain pending. Failed writes remain pending: running and cleanly stopped sessions retry on the same worker; a fault exit makes a final best-effort pass after its notice/recovery work ends. Native GUI callbacks never wait for disk I/O. Status files are best-effort snapshots and may remain stale if publication fails. The presentation layer maps internal values to labels without making the native controller Controls table into an ExCamera page. Preferences are external to the source and runtime package.
+
+Explicit leaning has no runtime input or pose path. Its four hidden legacy INI preferences, existing bulk-policy invalidation, and false/zero lean status fields remain for compatibility. The pose-cadence diagnostic (`held.physics_step`) also remains; it is not native release/throw timing. Active exploration spine-follow is separate and retains its native pose borrowing and restoration.
 
 ExCamera-owned checkboxes adapt the native scrolling-coordinate round trip for preview and release events. The game still performs hit testing, capture, checked-state changes, and action dispatch. This is not a global GUI patch; vanilla descriptors retain their native handlers. Handler dispatch lifetime is guarded separately from action callbacks so a native activation can still update the draft.
 
+## Thread and input boundaries
+
+Diagnostic names are copied under a short leaf lock, drag status uses atomic flags, and camera-owned diagnostic values are copied under the camera lock before JSON/file I/O. Tracking transport failures retire the current sample and exit the receiver so its lifecycle owner can restart after backoff.
+
+Guard priority suppresses attack only during the overlap. Releasing guard admits a still-held native attack without clearing unrelated ownership masks or inventing a queued attack. Native timing and recovery still decide when an attack can execute.
+
+Window callbacks capture their forwarding procedure and installation generation. Native destruction is forwarded before retiring that exact installation, so a recycled HWND does not inherit the old registration. Raw-input retirement retries fresh ownership observations for a bounded interval; unknown or foreign registrations are not removed. This does not make Win32 procedure replacement atomic against arbitrary concurrent subclassers.
+
+## Inventory preview boundary
+
+The inventory adapter observes one ordinary source/payload/job transaction. Only an unchanged completed preview with a positively observed placement failure may use the native cancellation sentinel at commit. The game still owns loading, completion, source handling and disposal. Merchant/special sources, changed scenes and replaced jobs remain native; this is not a general asynchronous inventory lifetime repair.
+
+## Bounded native attack variants
+
+The optional `attackVariants` capability preserves the native classifier inside only the two ordinary attack-family starters. The existing Manual-defense gate remains unchanged outside an admitted invocation. Unsupported starts fall back to that gate, rather than disabling Manual defense.
+
+Ordinary native two-handed weapon configurations do not consult this classifier in these starters, so they do not need the exception. The adapter does not broaden admission merely to cover synthetic grip/equipment combinations.
+
+Admission requires the exact controlled native actor, its head/behaviour/scene identities, the native physics thread while its published scene's callback loop is active, a live non-retiring scene, entry motion 3–12, inactive defense with no existing incoming-motion request, and a native grip-table entry with no callback. Motions outside 3–12 are deliberately unsupported by this initial adapter; this is not the native motion range. Every nested starter pushes its own scope, including rejected calls, so same-actor reentry cannot inherit an outer grant.
+
+The original starter executes once and selects the variant, motion and RNG state. On a validated normal return, the adapter re-establishes physical ownership and obtains fresh Manual/held/native permission. If still denied, it writes only the newly published incoming-motion request to absent. It does not call native defense cleanup or save/restore hand, contact, constraint, recovery or pose state. Input-generation changes signal a handoff, not an actor lifetime lock. Unknown normal-return ownership disables this optional capability until process restart and does not attempt an old-pointer rollback.
+
+This initial capability additionally requires the supported executable hash, freshly checked on installation and re-arm. It is deliberately unavailable on merely signature-compatible, unreviewed game builds; the existing Manual gate remains the fallback. File contracts and exact loaded instruction windows cover the reviewed family bodies/tails and immediate classifier, transition, grip and child-traversal helpers, along with critical scheduler, lifetime and thread witnesses. Optional creation failures preserve the existing Manual capability when rollback succeeds. Retained hooks must pass fresh source and loaded-code checks on re-arm even after a runtime ownership fault. These checks do not establish universal compatibility with another mod patching unrelated interior callees, calling actors off-scheduler, or destroying native objects concurrently.
+
+Shared thread/context/scene locators and ten ownership witnesses belong to the independent optional `physicsOwnership` group. Attack admission requires its fifteen local witnesses plus those ten shared witnesses, preserving the original twenty-five-window proof. Withholding attack never clears common or held-throw locators. A missing common dependency withholds dependent optional capabilities, not Manual defense or core gameplay.
+
+## Optional held-body hook lifetime
+
+Throwing is limited to the reviewed generic, owned root body with no child bodies or external attachment constraints. Native release retains all eight settling steps and its collision flags. At the next eligible integration, a uniform velocity delta is added to the older point history, letting the native integrator apply damping, gravity and collision response. It does not replace current geometry or existing angular motion.
+
+The same serial remains published through queued work, native release and settling. Destruction, another release, any new grab, owner/input changes, a changed settling sequence, or the absolute 250 ms queue deadline discard the optional impulse. Unsupported or interrupted cases keep the native drop; articulated objects are not covered. The original 120 ms wheel-gesture freshness is separate from this delivery deadline.
+
+`heldThrow` is independently admitted using the same fresh supported-source check, its own loaded windows, shared physics ownership, and five exact native metadata cells. Neither attack preservation nor Manual defense is a prerequisite. Creation installs the body destructor hook before integration; an optional failure rolls back only those hooks, retaining removal identities and aborting the session if rollback fails.
+
+Session activation, cancellation and stop are separate from runtime queue ownership. Before an arm attempt, stop or fault cleanup, readiness is withdrawn, any MinHook suspension debt is discharged outside gameplay locks, and only then does the runtime's cancellation lock clear older queued serials. A suspended callback may own that lock, so every cancellation path uses this ordering rather than relying on an earlier caller to have recovered. Only a fully successful session arm restores readiness. Native callbacks are not made under that queue lock. Retained source/code changes require restart before any all-hooks re-enable, rather than silently disabling the feature while reusing unsafe trampolines.
+
+## Optional cue rendering boundary
+
+The attack cue owns its OpenGL resources and capability decisions per current native presentation context. Where supported, it changes only draw-buffer zero and viewport zero, preserving floating-point viewport coordinates; global setters are used only for genuinely global state. Drawing requires a default framebuffer with only output zero active, without changing native routing. Nondefault or multi-output frames are temporarily skipped and can resume on a later swap. Missing or uncertain required APIs, failed program creation, or a draw error omit the optional cue for that context; owned resources remain subject to the existing context retirement paths. This boundary does not replace native rendering or promise recovery from arbitrary driver exceptions.
+
 ## Validation boundary
 
-Compatibility checks and DLL export checks catch specific integration failures; they do not prove camera, input, or rendering behavior in a running game. This revision still needs a Windows/MSVC build and in-game verification. Development test harnesses are not included in this distribution.
+Compatibility checks and DLL export checks catch specific integration failures; they do not prove camera, input, or rendering behavior in a running game. This revision still needs a Windows/MSVC build and in-game verification. The optional generator tests under `tools/` are not required to build. Gameplay regression harnesses are kept outside the runtime source and are not part of the release ZIP.

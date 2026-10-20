@@ -752,16 +752,16 @@ inline const RowInfo& rowInfo(int row) {
          L"FirstPerson", L"Defense", fp::defenseModeFromText, fp::defenseModeText,
          L"Automatic keeps native defense. In ordinary combat, holding right mouse in Manual readies "
          L"the weapon and actively requests native attack-specific interception. "
-         L"Guard takes priority over a new attack; release left mouse before attacking again. Movement "
+         L"Guard takes priority over a new attack. Release right mouse to stop guarding; a still-held "
+         L"left mouse can resume native attacks. Movement "
          L"and aim remain available. Native reach, equipment and recovery still decide success. "
          L"If Manual is unavailable, its choice stays saved and Automatic defense remains active."},
         {setting::tpDefense, L"Third person: defense", RowInfo::choice, &ModSettings::tpDefense, nullptr,
          L"ThirdPerson", L"Defense", fp::defenseModeFromText, fp::defenseModeText,
-         L"Choose independently for third person. In ordinary combat, hold right mouse to ready the weapon "
+         L"Uses the same defense choice as first person. In ordinary combat, hold right mouse to ready the weapon "
          L"and request native attack-specific interception; "
          L"it does not guarantee a block or add a timing bonus. Right mouse no longer cursor-walks in "
          L"ordinary close-view combat. Interaction and held objects keep their native controls. "
-         L"Manual uses right mouse in place of an overlapping lean binding during ordinary combat. "
          L"If Manual is unavailable, its choice stays saved and Automatic defense remains active."},
         {setting::fpSwingSelection, L"First person: swing selection", RowInfo::choice,
          &ModSettings::fpSwingSelection, nullptr, L"FirstPerson", L"SwingSelection", iniSwingSelection,

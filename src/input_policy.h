@@ -84,7 +84,14 @@ inline float wrapHeading(float a) {
     return a;
 }
 inline bool oppositeSide(float aim, float body, bool wideThreshold) {
-    return wrapHeading(aim - body) > (wideThreshold ? 20.f : 15.f) * 0.0174532925f;
+    // Match native 1C8C0: float subtraction, double pi bounds, one float wrap.
+    // Do not change wrapHeading: camera and aim normalization have different owners.
+    float relative = aim - body;
+    constexpr double pi = 3.141592653589793;
+    constexpr float tau = 6.2831854820251465f;
+    if (double(relative) < -pi) relative += tau;
+    else if (double(relative) > pi) relative -= tau;
+    return relative > (wideThreshold ? 20.f : 15.f) * 0.0174532925f;
 }
 inline float flippedSideHeading(float aim, float body, bool wideThreshold) {
     const float threshold = (wideThreshold ? 20.f : 15.f) * 0.0174532925f;

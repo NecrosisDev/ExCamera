@@ -2,10 +2,12 @@
 // Part of first_person.cpp (one translation unit): included there, in order.
 // View-scoped head draw suppression. Exanima's shared _SKIN node is a sibling
 // of 10Head. Never mask _SKIN: that would remove the rest of the character.
-// Instead do NOT enqueue only the player's separate 10Head drawable for the
+// In addition to the whole-head sector visibility policy, do NOT enqueue
+// the player's separate 10Head drawable for the
 // first-person MAIN colour pass (4E610 -> 26F230, call return 4E720).
 // Other submission callsites, including 4EE10 -> 26F230 (return 4EF9E), continue unchanged.
-// Native collision/body-part data and scene passMask are never modified.
+// This queue fallback never modifies collision/body-part data or scene passMask;
+// view.inl separately masks the verified head's render/pick visibility.
 using MeshQueue = void (*)(uintptr_t, int, unsigned short);
 static MeshQueue originalMeshQueue = nullptr;
 static std::atomic<unsigned> firstPersonHeadDrawsSkipped{0};
@@ -49,7 +51,25 @@ __declspec(noinline) static void meshQueue(uintptr_t node, int material, unsigne
     }
     originalMeshQueue(node,material,flags);
 }
+// Only the native presentation pair owns frame bookkeeping and cue resources.
+// Teardown leaves the native globals stale, so current WGL ownership is required too.
+static bool ownedNativeSwap(HDC dc) {
+    if (!dc || !base || !layout.rva[fp::sig::nativeSwapDC] ||
+        !layout.rva[fp::sig::nativeRenderContext]) return false;
+    __try {
+        const uintptr_t dcSlot = gameAt(fp::sig::nativeSwapDC);
+        const uintptr_t contextSlot = gameAt(fp::sig::nativeRenderContext);
+        if (!readable(dcSlot, sizeof(HDC)) || !readable(contextSlot, sizeof(HGLRC))) return false;
+        const HDC nativeDC = *(HDC*)dcSlot;
+        const HGLRC nativeContext = *(HGLRC*)contextSlot;
+        return nativeDC && nativeContext && dc == nativeDC &&
+               cueCurrentDC() == nativeDC && cueCurrentContext() == nativeContext;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
 static BOOL WINAPI swap(HDC dc) {
+    if (!ownedNativeSwap(dc)) return originalSwap(dc);
     fp::CueSide cueSideNow = fp::CueSide::none;
     LONG cueX = 0, cueY = 0;
     float cueFillNow = 0, cueAlphaNow = 0;
@@ -264,6 +284,44 @@ static int tpHideCandidate(uintptr_t hitNode, uintptr_t root, bool hideObjects, 
     if (loose) return 2;
     return target && hideObjects ? 1 : 0;
 }
+// hideLock is already shared by maskSector. Never acquire tpHideLock or cameraLock here.
+static bool tpPropMaskCurrent(uintptr_t node, uintptr_t sector, signed char (&verdicts)[16]) {
+    const HiddenTpProps& hidden = publishedTpProps;
+    if (hidden.count > 16 || hidden.meshCount > 16 * 256) return false;
+    unsigned lo = 0, hi = hidden.meshCount;
+    while (lo < hi) {
+        const unsigned mid = (lo + hi) / 2;
+        if (hidden.meshes[mid].node < node) lo = mid + 1; else hi = mid;
+    }
+    if (lo == hidden.meshCount || hidden.meshes[lo].node != node) return true;
+    if (!hidden.root || hidden.count > 16 || viewMode.load() == 0 ||
+        tpBlockers.load() != fp::blockersHide || !InterlockedCompareExchange(&active, 0, 0) ||
+        !InterlockedCompareExchange(&cameraReady, 0, 0) || InterlockedCompareExchange(&stopping, 0, 0) ||
+        *(uintptr_t*)gameAt(fp::sig::playerRoot) != hidden.root ||
+        *(uintptr_t*)gameAt(fp::sig::currentScene) != hidden.scene) return false;
+    const unsigned targets = hidden.meshes[lo].targets;
+    uintptr_t at = node, seen[64];
+    unsigned count = 0;
+    while (at && count < 64) {
+        if (!readable(at, field::sceneNode::sector + sizeof(uintptr_t)) ||
+            *(uintptr_t*)(at + field::sceneNode::sector) != sector) return false;
+        for (unsigned i = 0; i < count; ++i) if (seen[i] == at) return false;
+        seen[count++] = at;
+        for (unsigned i = 0; i < hidden.count; ++i) {
+            if (!(targets & (1u << i)) || at != hidden.tops[i]) continue;
+            if (!verdicts[i]) {
+                uintptr_t currentTarget = 0;
+                verdicts[i] = tpHideCandidate(at, hidden.root, true, currentTarget) == 1 &&
+                              currentTarget == at ? 1 : -1;
+            }
+            if (verdicts[i] > 0) return true;
+        }
+        // Match native/current candidate ancestry. This does not establish a
+        // universal pointer lifetime or reciprocal child-list/ABA guarantee.
+        at = *(uintptr_t*)(at + field::sceneNode::parent);
+    }
+    return false;
+}
 static int tpHideHit(uintptr_t hitNode, uintptr_t root, bool hideObjects) {
     uintptr_t target = 0;
     const int verdict = tpHideCandidate(hitNode, root, hideObjects, target);
@@ -362,7 +420,15 @@ static void tpHideAdd() {
         if (tpHideCandidate(tops[i], savedRoot, tpBlockers.load() == fp::blockersHide, target) != 1 ||
             target != tops[i]) continue;
         const unsigned c = walkScene(tops[i], tpWalk, tpWalkParents, 256);
-        for (unsigned j = 0; j < c; ++j) hideAdd(tpWalk[j]);
+        const unsigned index = pendingTpProps.count;
+        if (index >= 16) break;
+        pendingTpProps.root = savedRoot;
+        pendingTpProps.scene = owner;
+        pendingTpProps.tops[pendingTpProps.count++] = tops[i];
+        for (unsigned j = 0; j < c && pendingTpProps.meshCount < 16 * 256; ++j) {
+            pendingTpProps.meshes[pendingTpProps.meshCount++] = {tpWalk[j], 1u << index};
+            hideAdd(tpWalk[j]);
+        }
     }
 }
 // Third-person physical head gaze still needs world depth. Combat targeting

@@ -2,9 +2,22 @@
 // Part of first_person.cpp (one translation unit): included there, in order.
 // Camera collision probes borrow a trial pose through one owner. Both callers
 // retain their physical camera policy; native unprojection receives its viewport.
-static bool cameraPosePick(uintptr_t camera, const float* pose, float x, float y, uintptr_t out) {
+// 8F460 starts screen rays at camera+1CC; 4C520 scales their origin by that
+// depth. Collision must also see the interval between the eye and the old near
+// plane. Borrow zero only during this query, without rebuilding projection:
+// its far endpoint still supplies the same nonzero direction, now from the eye.
+// Ordinary interaction picks never use this adapter.
+static bool cameraPosePick(uintptr_t camera, const float* pose, float x, float y, uintptr_t out,
+                           uintptr_t ignoredHeld = 0) {
     const uintptr_t viewport = pickViewportForCamera(camera);
     if (!viewport || !originalPickRay) return false;
+    const uintptr_t view = *(uintptr_t*)(viewport + field::viewport::view);
+    if (!readable(view, field::view::pickFarDepth + sizeof(float))) return false;
+    const float pickFar = *(float*)(view + field::view::pickFarDepth);
+    // 8F720 normalizes the ray before testing meshes. Reject a degenerate
+    // cached endpoint before it can send a zero/NaN direction to native rays.
+    if (!std::isfinite(pickFar) || pickFar <= 0.f) return false;
+    const float keptNear = *(float*)(camera + field::camera::nearPlane);
     float kept[24];
     memcpy(kept, (void*)(camera + field::camera::pose), 48);
     memcpy(kept + 12, (void*)(camera + field::camera::pose2), 48);
@@ -12,11 +25,19 @@ static bool cameraPosePick(uintptr_t camera, const float* pose, float x, float y
     memcpy((void*)(camera + field::camera::pose2), pose, 48);
     rebuildInverse(camera + field::camera::inverse, camera + field::camera::pose);
     bool got = false;
+    *(float*)(camera + field::camera::nearPlane) = 0.f;
     __try {
-        got = ownedPickRay(viewport, x, y, out) != 0;
+        // Nav owns this thread and the camera lock. Exclude the controlled
+        // tree before native nearest-hit selection, not after it has masked a
+        // farther blocker. Only FP clearance supplies an additional held item;
+        // TP retains its existing prop/held-object collision policy.
+        got = pickPastSelf(ownedPickRay, viewport, x, y, out, ignoredHeld) != 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         got = false;
     }
+    // Nested collision queries restore zero to this scope; this scope restores
+    // the real near plane even when the native query faults.
+    *(float*)(camera + field::camera::nearPlane) = keptNear;
     memcpy((void*)(camera + field::camera::pose), kept, 48);
     memcpy((void*)(camera + field::camera::pose2), kept + 12, 48);
     rebuildInverse(camera + field::camera::inverse, camera + field::camera::pose);
@@ -32,11 +53,13 @@ static float centrePropDepth(uintptr_t camera, const float* pose, uintptr_t root
         client.bottom < 40)
         return -1.f;
     alignas(8) unsigned char hit[0x40]{};
+    const uintptr_t held = heldNode();
     const bool got =
-        cameraPosePick(camera, pose, float(client.right) * .5f, float(client.bottom) * .5f, (uintptr_t)hit);
+        cameraPosePick(camera, pose, float(client.right) * .5f, float(client.bottom) * .5f, (uintptr_t)hit,
+                       held);
     const float t = *(float*)(hit + field::pick::distance);
     if (!got || !std::isfinite(t) || t <= 0.f || t > 16.f) return -1.f;
-    const uintptr_t node = *(uintptr_t*)hit, held = heldNode(),
+    const uintptr_t node = *(uintptr_t*)hit,
                     playerMesh = readable(root, 0x20) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
     unsigned depth = 0;
     for (uintptr_t at = node; at && depth < 64 && readable(at, 0x130);

@@ -1,5 +1,6 @@
 #include "native_settings.h"
 #include "settings_presentation.h"
+#include <cstring>
 
 namespace panel {
 // Adapt only owned mod checkboxes. The native handler performs the hit test,
@@ -121,8 +122,18 @@ void NativeSettingsIntegration::dispatch(NativeSettingsIntegration* self, Native
             self->transaction.value=self->transaction.initial;
             self->originals[Index](e);
         } else if constexpr (Index == 6) {
+            // Controller Controls is entirely native. Its Defaults must not
+            // reset the ExCamera rows that are only shown in keyboard mode.
+            // Decide before native Defaults can rebuild the child table.
+            bool resetControls=false;
+            if (self->page==1) {
+                const auto child=self->table(self->children.controls);
+                resetControls=self->nativeKeyboard(child) ||
+                    (self->controlsOwned && self->baseCount==44 && self->ownedControls(child));
+            }
             if (self->page < 2) self->originals[Index](e);
-            if (self->page != 0) self->transaction.resetGroup(self->page == 1 ? 1 : self->page == 2 ? 0 : 2);
+            if (resetControls || self->page>=2)
+                self->transaction.resetGroup(self->page == 1 ? 1 : self->page == 2 ? 0 : 2);
             self->dirty=true;
         }
     } else if (action.row >= pageEvent && action.row < pageEvent+4) {
@@ -335,7 +346,8 @@ void NativeSettingsIntegration::serviceTick(bool stop, bool want) {
         dirty = true;
     }
     if (!ownedRoot(table(root))) { fail(); return; }
-    transaction.refreshStatus(settings()); // these statuses are not row text; preserve focus
+    const ModSettings liveSettings = settings();
+    transaction.refreshStatus(liveSettings);
     auto ct=table(children.controls);
     // Game keyboard/controller changes can replace the native child table,
     // invalidating our old contents. Never claim an unrelated replacement.
@@ -351,10 +363,12 @@ void NativeSettingsIntegration::serviceTick(bool stop, bool want) {
     // Never replace that backing table until its physical drag ends.
     if (dirty && mouseHeld && mouseHeld()) {
         deferUntilMouseRelease=true;
+        refreshStatusCaptions(liveSettings);
         return;
     }
     if (dirty && deferUntilMouseRelease) {
         deferUntilMouseRelease=false;
+        refreshStatusCaptions(liveSettings);
         return;
     }
     if (dirty) {
@@ -363,6 +377,47 @@ void NativeSettingsIntegration::serviceTick(bool stop, bool want) {
         if (nativeKeyboard(ct) || nativeController(ct) || controlsOwned) rebuildControls(ct);
         dirty = false;
     }
+    refreshStatusCaptions(liveSettings);
+}
+
+void NativeSettingsIntegration::refreshStatusCaptions(const ModSettings& liveSettings) {
+    // Private GUI-maintenance work inside tick's existing non-reentrancy guard.
+    // A status update must not rebuild descriptors, move focus, or change a draft.
+    if (fault || closing || callbackActive() || thread != GetCurrentThreadId() ||
+        !controlsOwned || builtChildPage != 1 || !requestRedraw) return;
+    const auto live = table(children.controls);
+    if (!ownedControls(live)) return;
+    static const auto actions = callbacks<true>(std::make_index_sequence<capacity>{});
+    // Admit every target before changing any buffer. A foreign second row
+    // must not leave a partially refreshed first caption behind.
+    for (int i = baseCount; i < live.count; ++i) {
+        const int id = controlActions[size_t(i)].row;
+        if (id != setting::rawMouse && id != setting::tracking) continue;
+        const auto& element = live.data[i];
+        const auto& text = controlText[size_t(i)];
+        if (element.owner != children.controls || element.kind != 2 ||
+            element.action != actions[size_t(i)] || element.text != text.bytes) { fail(); return; }
+    }
+    bool changed = false;
+    for (int i = baseCount; i < live.count; ++i) {
+        const int id = controlActions[size_t(i)].row;
+        if (id != setting::rawMouse && id != setting::tracking) continue;
+        auto& text = controlText[size_t(i)];
+        const wchar_t* caption = settingLabel(id);
+        if (id == setting::rawMouse && transaction.value.rawMouse && liveSettings.rawMouse &&
+            liveSettings.rawMouseFallback) caption = L"Raw: fallback";
+        if (id == setting::tracking && transaction.value.tracking && liveSettings.tracking) {
+            if (liveSettings.trackingStatus == 1) caption = L"Tracking: waiting";
+            if (liveSettings.trackingStatus == 3) caption = L"Tracking: error";
+        }
+        NativeText desired;
+        desired.set(caption);
+        if (std::strcmp(text.bytes, desired.bytes) != 0) {
+            text.set(caption);
+            changed = true;
+        }
+    }
+    if (changed) requestRedraw();
 }
 
 bool NativeSettingsIntegration::callbackActive() const { return callbackDepth != 0 || handlerDepth != 0; }

@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/**'
       - 'build.py'
+      - 'tools/**'
       - 'LICENSE'
       - '.github/workflows/build.yml'
   pull_request:
@@ -13,6 +14,7 @@ on:
     paths:
       - 'src/**'
       - 'build.py'
+      - 'tools/**'
       - 'LICENSE'
       - '.github/workflows/build.yml'
   workflow_dispatch:
@@ -41,30 +43,23 @@ jobs:
           python-version: '3.12'
           architecture: x64
 
-      # build.py locates VS 2022, initializes x64 MSVC and checks DLL exports.
-      # No development tests, tools folder or game files are required.
+      - name: Check generated compatibility tables
+        shell: pwsh
+        run: python tools/check_generated.py
+
+      - name: Test portable build and release tooling
+        shell: pwsh
+        run: python -m unittest discover -s tools -v
+
+      # build.py initializes x64 MSVC and checks DLL exports.
+      # The CI checks need only source and Python, never a game executable.
       - name: Build and package
         shell: pwsh
         run: python build.py --package
 
-      - name: Verify release ZIP
-        shell: python
-        run: |
-          from pathlib import Path
-          import zipfile
-          packages = list(Path('build').glob('ExCamera-*-minimal.zip'))
-          if len(packages) != 1:
-              raise SystemExit(f'Expected one release ZIP, found {len(packages)}')
-          expected = {'ExCamera.exe', 'ExanimaFirstPerson.dll', 'LICENSE.txt', 'LICENSE-MinHook.txt'}
-          with zipfile.ZipFile(packages[0]) as archive:
-              if len(archive.namelist()) != 4 or set(archive.namelist()) != expected:
-                  raise SystemExit('Release ZIP contains missing or unexpected files')
-              if archive.testzip() is not None:
-                  raise SystemExit('Release ZIP failed its integrity check')
-              for name in expected:
-                  if not archive.getinfo(name).file_size:
-                      raise SystemExit(f'Empty release file: {name}')
-          print(f'Ready: {packages[0]}')
+      - name: Verify runtime ZIP
+        shell: pwsh
+        run: python tools/release.py verify --local
 
       - name: Upload release ZIP
         uses: actions/upload-artifact@v7

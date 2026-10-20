@@ -51,46 +51,50 @@ inline void rotateAxes(float* axes, const float* axis, float angle) {
 // mouse's turn rate.
 inline constexpr float heldRotateRadiansPerPixel = 0.006f;
 
-// Flinging: let go while the wheel is pushing the object out and it keeps that speed. The game zeroes a released
-// object's velocity by making its physics points' history equal to where they are (Verlet: the velocity is
-// the difference); the fling writes that history as "where they are, minus the velocity times one physics
-// step" instead. Capped, as Half-Life 2 caps a throw.
-inline constexpr float flingMaxSpeed = 1200.f;          // cm/s
-inline constexpr unsigned long long flingFreshMs = 120; // a push older than this is no longer under way
+// A fresh outward wheel gesture requests release velocity, independently of placement.
+// Strength matches holdApproach's initial rate (12 * requested distance increase).
+inline constexpr float flingMaxSpeed = 1200.f;
+inline constexpr unsigned long long flingFreshMs = 120;
+inline float wheelThrowSpeed(float distance, int wheel) {
+    if (!(distance > 0.f) || !std::isfinite(distance) || wheel <= 0) return 0.f;
+    const float speed = 12.f * distance * std::expm1(std::log(1.12f) * float(wheel) / 120.f);
+    return std::isfinite(speed) ? std::fmin(speed, flingMaxSpeed) : 0.f;
+}
 
-// How fast the hold distance is growing (cm/s), smoothed over a few frames; 0 when it is not growing.
-struct PushRate {
-    float last = -1.f, rate = 0.f;
-    unsigned long long at = 0;
-    void step(float distance, unsigned long long ms) {
-        if (last >= 0.f && ms > at && ms - at < 250) {
-            const float now = (distance - last) * 1000.f / float(ms - at);
-            const float k = 1.f - std::exp(-float(ms - at) / 40.f);
-            rate += ((std::isfinite(now) ? now : 0.f) - rate) * k;
-        } else
-            rate = 0.f;
-        last = distance;
-        at = ms;
-    }
-    // The outward speed if a push is under way at `ms`, else 0.
-    float pushing(unsigned long long ms) const { return rate > 1.f && ms - at <= flingFreshMs ? rate : 0.f; }
-};
+// Preserve the grabbed point and proportional wheel motion in the physical plane.
+inline bool heldPlaneRadiusScale(const float* origin, const float* grabbed, const float* plane,
+                                  float rayDistance, float& scale) {
+    const float nn = plane[0]*plane[0] + plane[1]*plane[1] + plane[2]*plane[2];
+    if (!(nn > .5f) || !std::isfinite(nn) || !(rayDistance > 0.f)) return false;
+    float delta[3], dot = 0.f;
+    for (int i = 0; i < 3; ++i) { delta[i] = grabbed[i] - origin[i]; dot += delta[i]*plane[i]; }
+    float length2 = 0.f;
+    for (int i = 0; i < 3; ++i) { delta[i] -= plane[i]*dot/nn; length2 += delta[i]*delta[i]; }
+    if (!(length2 > 1.e-6f) || !std::isfinite(length2) || !std::isfinite(rayDistance)) return false;
+    scale = std::sqrt(length2) / rayDistance;
+    return std::isfinite(scale) && scale > 0.f;
+}
 
-// The released body's point history for a velocity (cm/s, capped) and a physics step (s): the previous points
-// one step behind along it, the ones before that two steps behind. False (nothing written) without a velocity
-// or a known step.
-inline bool flingHistory(const float* velocity, float stepSeconds, const float (*now)[3],
-                         float (*previous)[3], float (*beforeThat)[3]) {
-    float v[3] = {velocity[0], velocity[1], velocity[2]};
-    const float speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-    if (!(speed > 1.f) || !(stepSeconds > 0.f && stepSeconds < 0.1f)) return false;
+// Native 088D30 adds (history - history2) to current points, then 089330 rolls
+// history -> history2 and current -> history. At the live pre-integration seam,
+// changing ONLY history2 adds velocity without doubling it after that rollover.
+// Preserve existing translation/rotation and stage all12 finite results before writing.
+inline bool addFlingHistoryDelta(const float* velocity, float stepSeconds, float (*older)[3]) {
+    if (!(stepSeconds > 0.f && stepSeconds < .1f) || !std::isfinite(stepSeconds)) return false;
+    double v[3] = {velocity[0], velocity[1], velocity[2]};
+    for (double x : v) if (!std::isfinite(x)) return false;
+    const double speed = std::hypot(std::hypot(v[0], v[1]), v[2]);
+    if (!(speed > 1.) || !std::isfinite(speed)) return false;
     if (speed > flingMaxSpeed)
-        for (float& c : v) c *= flingMaxSpeed / speed;
+        for (double& x : v) x *= double(flingMaxSpeed) / speed;
+    float staged[4][3];
     for (int k = 0; k < 4; ++k)
         for (int i = 0; i < 3; ++i) {
-            previous[k][i] = now[k][i] - v[i] * stepSeconds;
-            beforeThat[k][i] = now[k][i] - 2.f * v[i] * stepSeconds;
+            if (!std::isfinite(older[k][i])) return false;
+            staged[k][i] = float(double(older[k][i]) - v[i] * double(stepSeconds));
+            if (!std::isfinite(staged[k][i])) return false;
         }
+    std::memcpy(older, staged, sizeof staged);
     return true;
 }
 
@@ -120,6 +124,8 @@ inline std::wstring heldKeyName(int key) {
     switch (key) {
     case 0:
         return L"unbound";
+    case 0x01:
+        return L"left mouse";
     case 0x02:
         return L"right mouse";
     case 0x04:
@@ -128,14 +134,49 @@ inline std::wstring heldKeyName(int key) {
         return L"mouse 4";
     case 0x06:
         return L"mouse 5";
+    case 0x08:
+        return L"Backspace";
+    case 0x09:
+        return L"Tab";
+    case 0x0d:
+        return L"Enter";
     case 0x10:
         return L"Shift";
     case 0x11:
         return L"Ctrl";
     case 0x12:
         return L"Alt";
+    case 0x13:
+        return L"Pause";
+    case 0x14:
+        return L"Caps Lock";
+    case 0x1b:
+        return L"Esc";
+    case 0x20:
+        return L"Space";
+    case 0x21:
+        return L"Page Up";
+    case 0x22:
+        return L"Page Down";
+    case 0x23:
+        return L"End";
+    case 0x24:
+        return L"Home";
+    case 0x25:
+        return L"Left";
+    case 0x26:
+        return L"Up";
+    case 0x27:
+        return L"Right";
+    case 0x28:
+        return L"Down";
+    case 0x2d:
+        return L"Insert";
+    case 0x2e:
+        return L"Delete";
     }
     if ((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9')) return std::wstring(1, wchar_t(key));
+    if (key >= 0x70 && key <= 0x87) return L"F" + std::to_wstring(key - 0x70 + 1);
     return L"key " + std::to_wstring(key);
 }
 // The F8 row cycles these; the ini takes any key.

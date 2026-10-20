@@ -73,6 +73,62 @@ class NativeContractTests(unittest.TestCase):
         self.assertEqual(result['rvas']['playerBehavior'], 0x100)
         self.assertEqual(self.layout, before)
 
+    def test_attack_variant_failure_preserves_manual_defense(self):
+        self.layout['rvas'].update(attackFamilyA=0x200, attackFamilyB=0x210)
+        self.layout['groups'].update(attackFamilyA='attackVariants', attackFamilyB='attackVariants')
+        self.spec['events'] = [{'name': 'attackVariants::tail', 'owner': 'core',
+                               'window_offset': 0x30, 'pattern': 'FF FF',
+                               'optional_group': 'attackVariants'}]
+        result = self.result()
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['disabled'], {'attackFamilyA', 'attackFamilyB'})
+        self.assertEqual(result['rvas']['attackFamilyA'], 0)
+        self.assertEqual(result['rvas']['attackFamilyB'], 0)
+        for name, group in self.layout['groups'].items():
+            if group == 'manualDefense':
+                self.assertEqual(result['rvas'][name], self.layout['rvas'][name])
+
+    def test_optional_redraw_failure_preserves_required_and_combat(self):
+        self.layout['rvas']['guiRequestRedraw'] = 0x220
+        self.layout['groups']['guiRequestRedraw'] = 'settingsRedraw'
+        self.spec['events'] = [{'name': 'settings::requestRedraw', 'owner': 'core',
+                               'window_offset': 0x30, 'pattern': 'FF FF',
+                               'optional_group': 'settingsRedraw'}]
+        result = self.result()
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['disabled'], {'guiRequestRedraw'})
+        for name in self.layout['rvas']:
+            if name != 'guiRequestRedraw':
+                self.assertEqual(result['rvas'][name], self.layout['rvas'][name])
+
+    def test_render_ownership_witness_failure_is_required(self):
+        self.spec['events'] = [{'name': 'renderOwnership::nativeSwapOwner', 'owner': 'core',
+                               'window_offset': 0x30, 'pattern': 'FF FF'}]
+        result = self.result()
+        self.assertFalse(result['ok'])
+        self.assertIsNone(result['rvas'])
+
+    def test_shared_physics_and_feature_failures_are_independent(self):
+        additions = {'attackFamilyA': ('attackVariants', 0x200),
+                     'heldBodyIntegrate': ('heldThrow', 0x210),
+                     'nativePhysicsThread': ('physicsOwnership', 0x220)}
+        for name, (group, rva) in additions.items():
+            self.layout['rvas'][name] = rva
+            self.layout['groups'][name] = group
+        for failed in ('attackVariants', 'heldThrow', 'physicsOwnership'):
+            with self.subTest(failed=failed):
+                self.spec['events'] = [{'name': 'optional::changed', 'owner': 'core',
+                                       'window_offset': 0x30, 'pattern': 'FF FF',
+                                       'optional_group': failed}]
+                result = self.result()
+                self.assertTrue(result['ok'])
+                expected = {n for n, (g, _) in additions.items() if g == failed}
+                self.assertEqual(result['disabled'], expected)
+                for name, (group, rva) in additions.items():
+                    self.assertEqual(result['rvas'][name], 0 if group == failed else rva)
+                self.assertEqual(result['rvas']['playerBehavior'], 0x100)
+                self.assertEqual(result['rvas']['defenseCleanup'], 0x180)
+
     def test_required_failure_is_not_hidden_by_optional_failure(self):
         self.image.mem[0x133] ^= 1
         self.image.mem[0x1B2] ^= 1

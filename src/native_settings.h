@@ -35,6 +35,7 @@ public:
     std::function<ModSettings()> settings;
     std::function<void(const ModSettings&, const ModSettings&)> apply;
     std::function<void()> recenter, onClosed;
+    std::function<void()> requestRedraw; // Admitted native redraw request, not geometry.
 
     uintptr_t handle() const;
     bool retired() const;
@@ -95,6 +96,7 @@ private:
     void captureRowWidget(std::vector<NativeElement>& out,int id);
     template<bool Controls> void row(std::vector<NativeElement>& out,int id,int y);
     void serviceTick(bool stop, bool want);
+    void refreshStatusCaptions(const ModSettings& live);
     void rebuildRoot();
     void rebuildControls(Table live);
     void restore();

@@ -117,7 +117,8 @@ private:
         sockaddr_in acceptedSender{};
         ULONGLONG lastAccepted = 0;
         bool haveSender = false;
-        while (WaitForSingleObject(wake, 4) == WAIT_TIMEOUT) {
+        bool receiveFailed = false;
+        while (!receiveFailed && WaitForSingleObject(wake, 4) == WAIT_TIMEOUT) {
             // Bounded work even if a sender floods the endpoint; shutdown always gets a turn.
             for (unsigned i = 0; i < 64; ++i) {
                 char bytes[49]; // oversized packets must never masquerade as a six-double packet
@@ -128,7 +129,13 @@ private:
                 if (n == SOCKET_ERROR) {
                     const int error = WSAGetLastError();
                     if (error == WSAEMSGSIZE) continue;
-                    if (error != WSAEWOULDBLOCK) state = Status::unavailable;
+                    // Empty queues and interrupted calls may retry after the wake poll.
+                    if (error == WSAEWOULDBLOCK || error == WSAEINTR) break;
+                    // Do not leave a broken receiver alive: service() can only reap
+                    // and back off/restart a completed worker. Retire its pose now.
+                    receiveFailed = true;
+                    clearSample();
+                    state = Status::unavailable;
                     break;
                 }
                 TrackingSample sample;
@@ -159,7 +166,7 @@ private:
         closesocket(socketHandle);
         boundPort = 0;
         WSACleanup();
-        return 0;
+        return receiveFailed ? 1 : 0;
     }
 };
 } // namespace fp

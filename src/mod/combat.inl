@@ -106,7 +106,8 @@ static void combatInput(uintptr_t root, uintptr_t bh, bool owned, const InputOwn
     publishGuard(ownerSample, sample.guard);
 }
 enum class DefensePermission { native, denied, held };
-static DefensePermission defensePermission(uintptr_t root) {
+static DefensePermission defensePermission(uintptr_t root, bool* known = nullptr) {
+    if (known) *known = true;
     if (!root || !base || !manualDefenseReady.load()) return DefensePermission::native;
     __try {
         const uintptr_t bh = *(uintptr_t*)(root + field::character::behaviour);
@@ -126,7 +127,9 @@ static DefensePermission defensePermission(uintptr_t root) {
                           (keyState(VK_RBUTTON) & 0x8000);
         return held ? DefensePermission::held : DefensePermission::denied;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // A failed ownership check must not leave a partially adapted actor.
+        // Existing callers remain native on uncertainty; optional adapters must
+        // distinguish an unreadable owner from a legitimate policy change.
+        if (known) *known = false;
         return DefensePermission::native;
     }
 }
@@ -208,8 +211,10 @@ static void defenseAttackUpdate(uintptr_t root) {
     // interception branch without suppressing an attack or physical contact.
     originalDefenseAttackUpdate(root);
 }
+#include "attack_variants.inl"
 static uint64_t defenseMotionSelect(uintptr_t root, uintptr_t incoming) {
-    if (defensePermission(root) == DefensePermission::denied) return 0xffffffffu;
+    if (defensePermission(root) == DefensePermission::denied && !attackVariantClassifier(root))
+        return 0xffffffffu;
     return originalDefenseMotionSelect(root, incoming);
 }
 // 169200 resolves native physical state, polls the player, and runs automatic

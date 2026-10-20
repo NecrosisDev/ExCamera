@@ -44,7 +44,7 @@ struct CueResources {
         program = 0;
         color = -1;
     }
-    template <class Api> bool compile(Api& g, const char* vs, const char* fs) {
+    template <class Api> bool compile(Api& g, const char* vs, const char* fs, bool modern) {
         int ok = 0;
         vertex = g.createShader(0x8B31);
         fragment = g.createShader(0x8B30);
@@ -65,9 +65,12 @@ struct CueResources {
                 g.attachShader(program, fragment);
                 fragmentAttached = true;
                 g.bindAttribLocation(program, 0, "position");
-                g.linkProgram(program);
+                if (modern) g.bindFragDataLocation(program, 0, "fragment");
                 ok = 0;
-                g.getProgramiv(program, 0x8B82, &ok);
+                if (!modern || g.getError() == 0) {
+                    g.linkProgram(program);
+                    g.getProgramiv(program, 0x8B82, &ok);
+                } // A failed binding must not be hidden by the compile drain.
             }
         }
         const bool linked = program && ok;
@@ -98,7 +101,8 @@ struct CueResources {
             "main(){gl_FragColor=vec4(color.rgb,color.a*v);}"
         };
         drain(g);
-        for (unsigned i = 0; i < 3 && !program; ++i) compile(g, vs[i], fs[i]);
+        for (unsigned i = g.modernShaders ? 0 : 2; i < (g.modernShaders ? 2u : 3u) && !program; ++i)
+            compile(g, vs[i], fs[i], i < 2);
         drain(g);
         if (!program) return false;
         color = g.getUniformLocation(program, "color");

@@ -7,7 +7,7 @@
 // 0x4EFE0, 0x4F0B0) and the screen pick 0x8F720 take a mesh only when their pass mask & mesh+0xE0 is
 // non-zero; flagsC 0x10000 is not read there, so clearing it hides nothing. A hidden mesh gets, right
 // after 0x58CD0 returns for its sector, the value of a mesh outside the view (fp::hiddenPassMask).
-// Nothing is stored in the mesh: the next frame recomputes it, so leaving the hide list, F6, F7 or a
+// No persistent mask is stored: the next native update recomputes it, so leaving the hide list, F6, F7 or a
 // scene change show it again with no undo.
 static bool readable(uintptr_t address, size_t size) {
     MEMORY_BASIC_INFORMATION m;
@@ -94,20 +94,71 @@ using CoverPass = uint64_t (*)(uintptr_t);
 using CoverDepth = void (*)(uintptr_t);
 static CoverPass originalCoverPass;   // RVA 0x144610 (returns 1: stays in its pass list)
 static CoverDepth originalCoverDepth; // RVA 0x1444A0
-static std::atomic<bool> skipCovers{false}, coversHiddenInFirstPerson{true};
+static std::atomic<bool> coversHiddenInFirstPerson{true};
+static bool hideCoversFor(uintptr_t level); // current native render owner, not last swap
 static std::atomic<unsigned> coverPassesSkipped{0};
 static uint64_t coverPass(uintptr_t level) {
-    if (skipCovers.load(std::memory_order_relaxed)) {
+    if (hideCoversFor(level)) {
         coverPassesSkipped.fetch_add(1, std::memory_order_relaxed);
         return 1;
     }
     return originalCoverPass(level);
 }
 static void coverDepth(uintptr_t level) {
-    if (skipCovers.load(std::memory_order_relaxed)) return;
+    if (hideCoversFor(level)) return;
     originalCoverDepth(level);
 }
 static uintptr_t hideScene = 0; // scene manager the list belongs to; another scene is never masked
+// Whole-head visibility is independent of the helmet option. These exact-node
+// identities travel with the hide list; they never describe a subtree or _SKIN.
+struct HiddenPlayerHead { uintptr_t root = 0, node = 0; };
+static HiddenPlayerHead pendingPlayerHead, publishedPlayerHead;
+// Exact headwear entries share the hide-list lock and are revalidated when used.
+struct HiddenHeadWear {
+    uintptr_t root = 0, head = 0, scene = 0, nodes[64]{};
+    unsigned count = 0;
+};
+static HiddenHeadWear pendingHeadWear, publishedHeadWear;
+struct HiddenBodyWear {
+    uintptr_t root = 0, mesh = 0, scene = 0, nodes[96]{};
+    unsigned count = 0;
+};
+static HiddenBodyWear pendingBodyWear, publishedBodyWear;
+static bool bodyWearMaskCurrent(uintptr_t node, uintptr_t sector);
+
+// TP hides retain exact mesh-to-prop provenance until the sector applies them.
+// Actor ownership can change after the render thread published the list.
+struct HiddenTpProps {
+    struct Entry { uintptr_t node = 0; unsigned targets = 0; };
+    uintptr_t root = 0, scene = 0, tops[16]{};
+    unsigned count = 0, meshCount = 0;
+    Entry meshes[16 * 256]{};
+};
+static HiddenTpProps pendingTpProps, publishedTpProps;
+static bool tpPropMaskCurrent(uintptr_t node, uintptr_t sector, signed char (&verdicts)[16]);
+
+static bool headWearMaskCurrent(uintptr_t node, uintptr_t sector);
+static uintptr_t verifiedPlayerHead(uintptr_t root) {
+    if (!readable(root, field::character::headPart + sizeof(uintptr_t))) return 0;
+    const uintptr_t part = *(uintptr_t*)(root + field::character::headPart);
+    if (!readable(part, field::bodyPart::character + sizeof(uintptr_t)) ||
+        *(uintptr_t*)(part + field::bodyPart::character) != root) return 0;
+    const uintptr_t node = *(uintptr_t*)(part + field::bodyPart::meshNode);
+    if (!readable(node, field::sceneNode::bodyPart + sizeof(uintptr_t)) ||
+        *(uintptr_t*)(node + field::sceneNode::bodyPart) != part ||
+        fp::bodyPartNumber(nodeName(node)) != 10) return 0;
+    return node;
+}
+// Rechecked at application, not merely when the preceding frame published it.
+static bool playerHeadMaskCurrent(uintptr_t sector) {
+    return publishedPlayerHead.node && viewMode.load() == 0 &&
+           InterlockedCompareExchange(&active, 0, 0) &&
+           InterlockedCompareExchange(&cameraReady, 0, 0) &&
+           !InterlockedCompareExchange(&stopping, 0, 0) &&
+           *(uintptr_t*)gameAt(fp::sig::playerRoot) == publishedPlayerHead.root &&
+           verifiedPlayerHead(publishedPlayerHead.root) == publishedPlayerHead.node &&
+           *(uintptr_t*)(publishedPlayerHead.node + field::sceneNode::sector) == sector;
+}
 static volatile LONG sectorThread = 0;
 static std::atomic<int> viewFault{0};
 using SectorUpdate = uintptr_t (*)(uintptr_t);
@@ -128,17 +179,39 @@ static void hidePublish() {
         hideMeshCount = n;
     }
     hideScene = scene;
+    std::sort(pendingTpProps.meshes, pendingTpProps.meshes + pendingTpProps.meshCount,
+              [](const HiddenTpProps::Entry& a, const HiddenTpProps::Entry& b) { return a.node < b.node; });
+    unsigned unique = 0;
+    for (unsigned i = 0; i < pendingTpProps.meshCount; ++i) {
+        const auto entry = pendingTpProps.meshes[i];
+        if (unique && pendingTpProps.meshes[unique - 1].node == entry.node)
+            pendingTpProps.meshes[unique - 1].targets |= entry.targets;
+        else pendingTpProps.meshes[unique++] = entry;
+    }
+    pendingTpProps.meshCount = unique;
+    publishedTpProps = pendingTpProps;
+    pendingTpProps = {};
+    publishedPlayerHead = pendingPlayerHead;
+    pendingPlayerHead = {};
+    publishedHeadWear = pendingHeadWear;
+    pendingHeadWear = {};
+    publishedBodyWear = pendingBodyWear;
+    pendingBodyWear = {};
     ReleaseSRWLockExclusive(&hideLock);
     hiddenMeshes = n;
     pendingHideCount = 0;
 }
 static void maskSector(uintptr_t sector) {
     if (*(uintptr_t*)(gameAt(fp::sig::currentScene)) != hideScene) return;
+    signed char tpVerdicts[16]{}; // Each prop scans the actor roster at most once per sector.
     const int last = *(int*)(sector + field::sector::lastMesh);
     const uintptr_t list = *(uintptr_t*)(sector + field::sector::meshes);
     for (int j = 0; j <= last; ++j) {
         const uintptr_t m = *(uintptr_t*)(list + size_t(j) * 8);
+        if (m == publishedPlayerHead.node && !playerHeadMaskCurrent(sector)) continue;
         if (fp::sortedContains(hideMeshes, hideMeshCount, m)) {
+            if (!headWearMaskCurrent(m, sector) || !bodyWearMaskCurrent(m, sector) ||
+                !tpPropMaskCurrent(m, sector, tpVerdicts)) continue;
             unsigned& e = *(unsigned*)(m + field::sceneNode::passMask);
             e = fp::hiddenPassMask(e);
             ++maskedDraws;
@@ -200,8 +273,8 @@ static unsigned parents[8192];
 // body-part nodes (a sword under 17RHand), so anything under the controlled
 // character's 10Head node (root+0x11E0 -> +0x18) is head wear. [View] Helmet=show
 // (default) draws it from the inside with the game's own lighting; Helmet=hide hides
-// it as before meant to. The head itself is never touched (it is part of
-// the shared skin and is not drawn from the eye). A worn mesh that covers the view
+// it as before meant to. The separate verified 10Head drawable is hidden
+// independently above; the shared _SKIN node is never hidden. A worn mesh that covers the view
 // centre is hidden in either mode: rays from the eye along the view axis and four
 // directions fp::helmetConeDegrees around it, fp::helmetProbeLength long, through
 // the mesh's own ray routine (mesh+0x3B0 with context +0x3B8, as the screen pick
@@ -255,7 +328,7 @@ static std::atomic<unsigned> helmetTurnRetests{0};
 // Equipment mounted below the head may share a tree with the character's skinned
 // geometry. Never classify the model's own skin or body-part mesh as a helmet:
 // suppressing their render-pass mask can make the WHOLE player appear transparent.
-static bool headWearCandidate(uintptr_t node, uintptr_t controlledRoot) {
+static bool bodyWearCandidate(uintptr_t node, uintptr_t controlledRoot) {
     if (!readable(node, field::sceneNode::bodyPart + sizeof(uintptr_t))) return false;
     const char* name=nodeName(node);
     if (!strncmp(name, "_SKIN", 5) || fp::bodyPartNumber(name)>=0) return false;
@@ -265,11 +338,109 @@ static bool headWearCandidate(uintptr_t node, uintptr_t controlledRoot) {
         return false;
     return true;
 }
+// Reuse the existing clothing classification and native ancestry, not a new
+// body/physics ownership heuristic. Same-address valid-clothing ABA is outside
+// this current actor/scene/branch check, as it is for TP prop provenance.
+static bool bodyWearMaskCurrent(uintptr_t node, uintptr_t sector) {
+    const HiddenBodyWear& hidden = publishedBodyWear;
+    if (hidden.count > 96) return false;
+    bool listed = false;
+    for (unsigned i = 0; i < hidden.count; ++i)
+        if (hidden.nodes[i] == node) { listed = true; break; }
+    if (!listed) return true;
+    if (viewMode.load() != 0 || !InterlockedCompareExchange(&active, 0, 0) ||
+        !InterlockedCompareExchange(&cameraReady, 0, 0) || InterlockedCompareExchange(&stopping, 0, 0) ||
+        *(uintptr_t*)gameAt(fp::sig::playerRoot) != hidden.root ||
+        *(uintptr_t*)gameAt(fp::sig::currentScene) != hidden.scene ||
+        !readable(hidden.root, field::character::sceneNode + sizeof(uintptr_t)) ||
+        *(uintptr_t*)(hidden.root + field::character::sceneNode) != hidden.mesh ||
+        !readable(hidden.mesh, field::sceneNode::sector + sizeof(uintptr_t)) ||
+        *(uintptr_t*)(hidden.mesh + field::sceneNode::sector) != sector ||
+        !bodyWearCandidate(node, hidden.root)) return false;
+    uintptr_t seen[64];
+    unsigned count = 0;
+    int part = -1;
+    for (uintptr_t at = node; at != hidden.mesh;) {
+        if (!at || count == 64 || !readable(at, field::sceneNode::sector + sizeof(uintptr_t)) ||
+            *(uintptr_t*)(at + field::sceneNode::sector) != sector) return false;
+        for (unsigned i = 0; i < count; ++i) if (seen[i] == at) return false;
+        seen[count++] = at;
+        if (at != node && part < 0) {
+            part = fp::bodyPartNumber(nodeName(at));
+            if (part >= 0 && !fp::torsoPart(part)) return false;
+        }
+        at = *(uintptr_t*)(at + field::sceneNode::parent);
+    }
+    if (part < 0) part = fp::bodyPartNumber(nodeName(hidden.mesh)); // Publication includes nodes[0].
+    return fp::torsoPart(part);
+}
+// Native 0x07FB80 parents equipment meshes below a body-part mesh; 0x1551B0
+// propagates character ownership to attached physics parts. Ownership therefore
+// cannot distinguish a helmet from bare skin. Only accept the verified head's
+// descendant branch, excluding skin, anatomical nodes and foreign actors.
+static bool headWearCandidate(uintptr_t node, uintptr_t controlledRoot) {
+    if (!readable(node, field::sceneNode::bodyPart + sizeof(uintptr_t))) return false;
+    const char* name = nodeName(node);
+    if (!strncmp(name, "_SKIN", 5) || fp::bodyPartNumber(name) >= 0) return false;
+    const uintptr_t part = *(uintptr_t*)(node + field::sceneNode::bodyPart);
+    if (!part) return true; // Non-physical helmet meshes use the same head subtree.
+    if (!readable(part, field::bodyPart::flags + sizeof(unsigned))) return false;
+    const unsigned flags = *(unsigned*)(part + field::bodyPart::flags);
+    // 0x1A2CE0 gates +0x580 on the motile-part family. Head cloth uses 0x60
+    // (0x1726C0 / 0x158B30), not this layout. Never read its unrelated +0x580.
+    if ((flags & 0xff000000) == 0x1a000000) return false; // A nested character, not equipment.
+    if ((flags & 0x12000000) != 0x12000000) return true;
+    if (!readable(part, field::bodyPart::character + sizeof(uintptr_t))) return false;
+    const uintptr_t owner = *(uintptr_t*)(part + field::bodyPart::character);
+    return !owner || owner == part || owner == controlledRoot;
+}
+static bool headWearBranch(unsigned index, unsigned count, uintptr_t controlledRoot) {
+    for (unsigned guard = 0; index && index < count && guard < 256; ++guard) {
+        if (!headWearCandidate(nodes[index], controlledRoot)) return false;
+        const unsigned parent = parents[index];
+        if (parent >= index ||
+            *(uintptr_t*)(nodes[index] + field::sceneNode::parent) != nodes[parent]) return false;
+        index = parent;
+    }
+    return index == 0;
+}
+// A same-scene unequip, reparent or controlled-actor handoff must not let a
+// previous frame hide someone else's equipment. No shared traversal scratch is used.
+static bool headWearMaskCurrent(uintptr_t node, uintptr_t sector) {
+    bool listed = false;
+    for (unsigned i = 0; i < publishedHeadWear.count; ++i)
+        if (publishedHeadWear.nodes[i] == node) { listed = true; break; }
+    if (!listed) return true; // Other visibility policies retain their own checks.
+    const uintptr_t root = publishedHeadWear.root, head = publishedHeadWear.head;
+    if (viewMode.load() != 0 || !InterlockedCompareExchange(&active, 0, 0) ||
+        !InterlockedCompareExchange(&cameraReady, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0) ||
+        *(uintptr_t*)gameAt(fp::sig::playerRoot) != root ||
+        *(uintptr_t*)gameAt(fp::sig::currentScene) != publishedHeadWear.scene ||
+        verifiedPlayerHead(root) != head ||
+        !head || *(uintptr_t*)(head + field::sceneNode::sector) != sector) return false;
+    for (unsigned guard = 0; node != head && guard < 256; ++guard) {
+        if (!headWearCandidate(node, root) ||
+            *(uintptr_t*)(node + field::sceneNode::sector) != sector) return false;
+        const uintptr_t parent = *(uintptr_t*)(node + field::sceneNode::parent);
+        if (!readable(parent, 0x2a0)) return false;
+        const int last = *(int*)(parent + field::sceneNode::lastChild);
+        const uintptr_t children = *(uintptr_t*)(parent + field::sceneNode::children);
+        if (last < 0 || last >= 6000 || !readable(children, (last + 1) * 8)) return false;
+        bool attached = false;
+        for (int i = 0; i <= last; ++i)
+            if (*(uintptr_t*)(children + i * 8) == node) { attached = true; break; }
+        if (!attached) return false;
+        node = parent;
+    }
+    return node == head;
+}
 static void updateHeadWear(bool live) {
     const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
-    const uintptr_t head = readable(root, 0x1200) ? *(uintptr_t*)(root + field::character::headPart) : 0;
-    const uintptr_t headMesh = readable(head, 0x20) ? *(uintptr_t*)(head + field::bodyPart::meshNode) : 0;
+    live = live && root == savedRoot && scene == savedScene;
+    const uintptr_t headMesh = verifiedPlayerHead(root);
+    pendingHeadWear = {};
     if (!live || !readable(headMesh, 0x2a0) || !*(uintptr_t*)(headMesh + field::sceneNode::sector) ||
         scene != headScene) {
         headWearCount = 0;
@@ -281,11 +452,14 @@ static void updateHeadWear(bool live) {
         if (!live || !readable(headMesh, 0x2a0) || !*(uintptr_t*)(headMesh + field::sceneNode::sector))
             return;
     }
+    pendingHeadWear.root = root;
+    pendingHeadWear.head = headMesh;
+    pendingHeadWear.scene = scene;
     const unsigned count = walkScene(headMesh, nodes, parents, 256);
     HeadWear next[64];
     unsigned n = 0;
     for (unsigned j = 1; j < count && n < 64; ++j) {
-        if (!headWearCandidate(nodes[j],root)) continue;
+        if (!headWearBranch(j, count, root)) continue;
         HeadWear w{nodes[j], -2, 0};
         for (unsigned k = 0; k < headWearCount; ++k)
             if (headWear[k].node == w.node) {
@@ -307,6 +481,7 @@ static void updateHeadWear(bool live) {
     }
     for (unsigned k = 0; k < n; ++k) {
         HeadWear& w = next[k];
+        if (helmetMode == fp::HelmetMode::hide) w.verdict = -2; // Show must probe the current pose.
         if (helmetMode == fp::HelmetMode::show && (w.verdict == -2 || turned || ++w.age >= 30)) {
             w.verdict = int(helmetVerdict(w.node));
             w.age = 0;
@@ -314,6 +489,7 @@ static void updateHeadWear(bool live) {
         const bool hide = fp::hideHeadWear(helmetMode, fp::HelmetVerdict(w.verdict));
         if (hide) {
             hideAdd(w.node);
+            pendingHeadWear.nodes[pendingHeadWear.count++] = w.node;
             ++hidden;
         }
         if (w.verdict == int(fp::HelmetVerdict::blocks)) ++blocking;
@@ -329,7 +505,8 @@ static void updateHeadWear(bool live) {
 // Body wear in view: gear under the torso, shoulders and upper arms that the
 // eye-ray test hits within fp::bodyProbeLength is hidden for that frame (looking down), re-tested every
 // 6 frames; gear that cannot be tested is left drawn (unlike the helmet: it is not in front of the eye
-// unless the test says so). The skin, the head (above), the hands, legs and feet are never touched.
+// unless the test says so). This clothing filter never touches skin, head, hands, legs or feet.
+// The verified head drawable has its own first-person visibility policy above.
 struct BodyWear {
     uintptr_t node;
     int verdict;
@@ -341,11 +518,13 @@ static uintptr_t bodyScene = 0;
 static std::atomic<unsigned> bodyWearNodes{0}, hiddenBodyNodes{0};
 static std::atomic<int> bodyFault{0};
 static void updateBodyWear(bool live) {
+    pendingBodyWear = {};
     if (live && lastCamera[7] < 0.34f)
         live =
             false; // only while looking down (view forward more than 20 degrees below level): no cost otherwise
     const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
     const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
+    live = live && root == savedRoot && scene == savedScene;
     const uintptr_t rootMesh = readable(root, 0x1200) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
     if (!live || !readable(rootMesh, 0x2a0) || scene != bodyScene) {
         bodyWearCount = 0;
@@ -354,12 +533,15 @@ static void updateBodyWear(bool live) {
         hiddenBodyNodes = 0;
         if (!live || !readable(rootMesh, 0x2a0)) return;
     }
+    pendingBodyWear.root = root;
+    pendingBodyWear.mesh = rootMesh;
+    pendingBodyWear.scene = scene;
     const unsigned count = walkScene(rootMesh, nodes, parents, 512);
     BodyWear next[96];
     unsigned n = 0;
     for (unsigned j = 1; j < count && n < 96; ++j) {
         // The character's own skinned torso, hands and head are never clothing.
-        if (!headWearCandidate(nodes[j],root)) continue;
+        if (!bodyWearCandidate(nodes[j],root)) continue;
         int part = -1;
         for (unsigned a = parents[j], guard = 0; a < count && guard < 64; a = parents[a], ++guard) {
             const int p = fp::bodyPartNumber(nodeName(nodes[a]));
@@ -386,6 +568,7 @@ static void updateBodyWear(bool live) {
         }
         if (w.verdict == int(fp::HelmetVerdict::blocks)) {
             hideAdd(w.node);
+            pendingBodyWear.nodes[pendingBodyWear.count++] = w.node;
             ++hidden;
         }
     }
@@ -397,13 +580,27 @@ static void updateBodyWear(bool live) {
 // Called from swap under cameraLock. live: a first-person frame is published.
 static void tpHideAdd();
 static void viewFeatures(bool live) {
-    skipCovers =
-        live &&
-        coversHiddenInFirstPerson.load(); // first and third person both skip the tile covers (darkening)
     const bool ownView =
         live; // Both owned camera modes may hide obstructions; wear hiding is first-person only.
     live = live && viewMode.load() == 0;
+    pendingPlayerHead = {};
+    pendingHeadWear = {};
+    pendingBodyWear = {};
+    pendingTpProps = {};
     __try {
+        if (live && !viewFault.load()) {
+            const uintptr_t root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
+            const uintptr_t scene = *(uintptr_t*)gameAt(fp::sig::currentScene);
+            // Do not publish a replacement character against the previous camera.
+            if (root == savedRoot && scene == savedScene) {
+                const uintptr_t node = verifiedPlayerHead(root);
+                if (node) {
+                    pendingPlayerHead = {root, node};
+                    hideAdd(node);
+                }
+            }
+        }
+
         if (!viewFault.load()) updateHeadWear(live);
         if (ownView && viewMode.load() != 0 && !viewFault.load())
             tpHideAdd(); // also through the blend to overhead // what stands between the camera and the player

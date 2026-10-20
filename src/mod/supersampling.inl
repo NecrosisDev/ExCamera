@@ -99,6 +99,19 @@ static bool supersampleViewMatches() {
            *(uintptr_t*)gameAt(fp::sig::currentScene) == scope.scene;
 }
 
+// Covers share the already-admitted native presentation, including the existing
+// blend back to overhead. An unrelated viewport/level never inherits a cached skip.
+static bool hideCoversFor(uintptr_t level) {
+    if (!level || !coversHiddenInFirstPerson.load(std::memory_order_relaxed) ||
+        !supersampleRenderScope.owned)
+        return false;
+    __try {
+        return supersampleViewMatches() && levelGrid() == level;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false; // uncertain ownership preserves the native pass
+    }
+}
+
 static void supersampleCurrentStockOrigin(float origin[3]) {
     const SupersampleRenderScope& scope = supersampleRenderScope;
     memcpy(origin, scope.stockOrigin, sizeof scope.stockOrigin);

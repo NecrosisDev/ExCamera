@@ -23,7 +23,7 @@ struct BindingHold {
         return eligible && down && ready;
     }
 };
-enum class HeldBinding : unsigned { rotate, lean, left, right, count };
+enum class HeldBinding : unsigned { rotate, count };
 struct InputStamp {
     uintptr_t root = 0, head = 0, scene = 0;
     int mode = -1;
@@ -84,8 +84,9 @@ template <size_t Bindings> struct InputContext {
 // history is private and is changed only by the native input thread.
 template <size_t Bindings> class InputOwnership {
     std::array<std::atomic<bool>, 256> windowTaken{};
-    // High bits identify a new LMB press; bit 0 suppresses that press, including
-    // a complete down/up pair received between native polls.
+    // High bits identify a new LMB press; bit 0 records guard overlap. It
+    // suppresses a completed buffered tap, but a still-held native attack may
+    // resume when physical RMB is released. It is not an ownership block.
     std::atomic<uint32_t> attackPress{0};
     std::atomic<uint32_t> generationValue{0};
     std::atomic<unsigned> policyValue{0};
@@ -93,7 +94,7 @@ template <size_t Bindings> class InputOwnership {
     struct Poll {
         InputContext<Bindings> context{};
         bool haveContext = false, haveGeneration = false;
-        uint32_t generation = 0, sampledAttack = 0;
+        uint32_t generation = 0;
         ButtonHandoff buttons;
         std::array<BindingHold, unsigned(HeldBinding::count)> bindings{};
         std::array<bool, 256> consumedKeys{};
@@ -216,29 +217,24 @@ template <size_t Bindings> class InputOwnership {
     }
     CombatSample combatSample(unsigned sampledNativeButtons, unsigned physical, bool ordinary, bool manual) {
         const uint32_t state = attackPress.load();
-        if ((state & ~1u) != poll.sampledAttack) {
-            poll.consumedButtons &= ~1u;
-            poll.sampledAttack = state & ~1u;
-        }
         // Retire only the sampled suppression. A newer window press wins this
         // comparison, including when its complete click falls between polls.
         if ((state & 1u) && !(physical & 1u)) {
             uint32_t expected = state;
             attackPress.compare_exchange_strong(expected, state & ~1u);
         }
-        const unsigned messageMask = state & 1u;
+        // Guard overlap owns only the overlap, not the remaining physical LMB
+        // hold. Keep suppressing a released tap so it cannot replay on guard-up.
+        // Never retire the unrelated ownership/consumed ledgers to resume attack.
+        const unsigned messageMask = (state & 1u) && (!(physical & 1u) || (physical & 2u)) ? 1u : 0u;
         poll.consumedButtons &= physical;
-        poll.consumedButtons |= messageMask & physical;
         const bool guard = ordinary && manual && (sampledNativeButtons & physical & 2u) &&
                            !(poll.buttons.blocked & 2u);
         if (ordinary) {
             sampledNativeButtons &= ~2u;
             poll.consumedButtons |= physical & 2u;
         }
-        if (guard) {
-            poll.consumedButtons |= physical & 1u;
-            sampledNativeButtons &= ~1u;
-        }
+        if (guard) sampledNativeButtons &= ~1u;
         return {sampledNativeButtons & ~(poll.consumedButtons | messageMask), guard};
     }
 

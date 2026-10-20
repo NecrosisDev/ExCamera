@@ -3,7 +3,9 @@
     python tools/signatures.py generate <Exanima.exe>   write game_signatures.h from tools/targets.json
     python tools/signatures.py check <Exanima.exe>      resolve game_signatures.h against an exe and report
 
-`generate` needs the exe the RVAs in targets.json belong to. `check` is what to run on a new game build:
+`generate` requires the hash-identified source exe and verifies every reviewed signature
+in targets.json before emitting the header. It preserves interior anchors, masks, target
+order and slot checks; new/replacement patterns require explicit native review. `check` is what to run on a new game build:
 it lists every target that no longer resolves uniquely and every one that moved. A required target
 failure refuses the layout; one optional-group failure withholds its entire capability while retaining
 the valid core layout. Needs: pip install pefile capstone.
@@ -14,6 +16,7 @@ So a match is the same instruction sequence touching the same struct fields as i
 """
 from pathlib import Path
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -183,88 +186,71 @@ def optional_groups(spec):
 
 
 def generate(exe_path):
-    """Several independent signatures per target, so one edited function or reference does not lose it:
-    functions by their own first bytes (exact and register-blind) and by up to two callers' call instructions;
-    return sites by the call around them (exact and blind); globals and vtable slots by two references in
-    different functions (each exact and blind)."""
+    """Verify every reviewed signature against the source archive, then emit it.
+
+    Do not silently rediscover/replace patterns: the specification includes reviewed
+    interior anchors and independent fallbacks that automatic discovery can lose.
+    """
     exe = Exe(exe_path)
     spec = json.loads(TARGETS.read_text(encoding='utf-8'))
     groups = optional_groups(spec)
-    out, failed = [], []
-    for name, t in spec['functions'].items():
-        rva = int(t['rva'], 16)
-        before = len(out)
-        for blind in (False, True):
-            s, found = code_signature(exe, rva, rva, blind)
-            if found and s == rva:
-                add_unique(out, ('Code', name, rva, found, 0, 0, 0, t.get('hook', False), True))
-        made, used = 0, set()
-        for call, func in exe.calls_to(rva):
-            if func in used or made == 2:
-                continue
-            s, found = code_signature(exe, call, call + 4)
-            if found:
-                add_unique(out, ('Relative', name, rva, found, call - s + 1, call - s + 5, 0, t.get('hook', False), False))
-                used.add(func)
-                made += 1
-        made, used = 0, set()
-        for insn, disp_off, size, func in sorted(exe.refs(rva), key=lambda r: r[0]):
-            if func in used or made == 2:
-                continue
-            s, found = code_signature(exe, insn, insn + size - 1)
-            if found:
-                add_unique(out, ('Relative', name, rva, found, insn - s + disp_off, insn - s + size, 0, t.get('hook', False), False))
-                used.add(func)
-                made += 1
-        if len(out) == before:
-            failed.append(name)
-    for name, t in spec['returns'].items():
-        rva = int(t['rva'], 16)
-        call = next((i for i in reversed(exe.boundaries_before(rva))), None)
-        before = len(out)
-        for blind in (False, True):
-            s, found = code_signature(exe, call, rva, blind) if call is not None else (None, None)
-            if found:
-                add_unique(out, ('Code', name, rva, found, rva - s, 0, 0, False, False))
-            # what follows the call: no byte in common with the call's window
-            after = exe.unique_at(rva, blind=blind)
-            if after:
-                add_unique(out, ('Code', name, rva, after, 0, 0, 0, False, False))
-        if len(out) == before:
-            failed.append(name)
-    for kind, table in (('global', spec['globals']), ('slot', spec['slots'])):
-        for name, t in table.items():
-            target = int(t['vtable' if kind == 'slot' else 'rva'], 16)
-            addend = int(t.get('offset', '0'), 16)
-            before, used = len(out), set()
-            for insn, disp_off, size, func in sorted(exe.refs(target), key=lambda r: r[0]):
-                if func in used or len(used) == 2:
-                    continue
-                made = False
-                for blind in (False, True):
-                    s, found = code_signature(exe, insn, insn + size - 1, blind)
-                    if found:
-                        add_unique(out, ('Relative', name, target + addend, found, insn - s + disp_off, insn - s + size, addend, False, False))
-                        made = True
-                if made:
-                    used.add(func)
-            if len(out) == before:
-                failed.append(name)
-    if failed:
-        sys.exit('No unique signature for: ' + ', '.join(failed))
-    slots = [(n, t['holds']) for n, t in spec['slots'].items()]
-    write_header(out, slots, exe, groups)
-    per = {}
-    for o in out:
-        per[o[1]] = per.get(o[1], 0) + 1
-    single = sorted(n for n, c in per.items() if c == 1)
-    print('WROTE', HEADER, '(%d signatures for %d targets; %d with only one: %s)' % (
-        len(out), len(per), len(single), ', '.join(single) or 'none'))
+    if 'reviewed_signatures' in spec:
+        if hashlib.sha256(exe_path.read_bytes()).hexdigest() != spec['source_sha256']:
+            raise ValueError('Generation requires the reviewed source archive')
+        entries = reviewed_entries(spec)
+        text = generated_header(entries, [(n, t['holds']) for n, t in spec['slots'].items()], exe, groups, spec['target_order'])
+        rows = [(n, k, h, off, end, add, rva, text_pattern(*pat)) for k, n, rva, pat, off, end, add, h, entry in entries]
+        # Every reviewed signature must independently resolve, not merely its target.
+        for row in rows:
+            n, k, h, off, end, add, rva, pattern = row
+            tokens = pattern.split()
+            hits = exe.find(bytes(0 if b == '??' else int(b, 16) for b in tokens), [b != '??' for b in tokens])
+            if len(hits) != 1:
+                raise ValueError('Reviewed signature is not unique: ' + n)
+            at = hits[0]
+            resolved = at + off + add if k == 'Code' else at + end + int.from_bytes(exe.mem[at + off:at + off + 4], 'little', signed=True) + add
+            if resolved != rva:
+                raise ValueError('Reviewed signature resolves elsewhere: ' + n)
+        result = resolve_rows(exe, rows, text)
+        if result['why']:
+            raise ValueError('Reviewed slot/target checks failed: ' + str(result['why']))
+        HEADER.write_text(text, encoding='utf-8', newline='\n')
+        print('WROTE %d reviewed signatures for %d targets' % (len(entries), len(result['known'])))
+        return
+    raise ValueError('Missing reviewed_signatures; native review is required before generation')
 
 
-def write_header(entries, slots, exe, groups=None):
+def reviewed_entries(spec):
+    declared = {name: target for table in ('functions', 'returns', 'globals', 'slots')
+                for name, target in spec[table].items()}
+    if len(spec['target_order']) != len(declared) or set(spec['target_order']) != set(declared):
+        raise ValueError('Reviewed target order differs from declarations')
+    entries, seen = [], set()
+    for row in spec['reviewed_signatures']:
+        name = row['target']
+        if name not in declared or row['kind'] not in ('Code', 'Relative'):
+            raise ValueError('Invalid reviewed signature target: ' + name)
+        target = declared[name]
+        expected = int(target.get('rva', target.get('vtable')), 16) + int(target.get('offset', '0'), 16)
+        tokens = row['pattern'].split()
+        if not tokens or not any(t != '??' for t in tokens) or any(not re.fullmatch(r'[0-9A-F]{2}|\?\?', t) for t in tokens):
+            raise ValueError('Invalid reviewed signature pattern: ' + name)
+        if int(row['known_rva'], 16) != expected or row['hook'] != target.get('hook', False):
+            raise ValueError('Reviewed signature metadata differs: ' + name)
+        if row['offset'] < 0 or row['insn_end'] < 0 or (row['kind'] == 'Relative' and (row['offset'] + 4 > len(tokens) or row['insn_end'] > len(tokens))):
+            raise ValueError('Invalid reviewed signature offsets: ' + name)
+        entries.append((row['kind'], name, expected,
+                        (bytes(0 if t == '??' else int(t, 16) for t in tokens), [t != '??' for t in tokens]),
+                        row['offset'], row['insn_end'], row['addend'], row['hook'], row['entry']))
+        seen.add(name)
+    if seen != set(declared):
+        raise ValueError('Targets without reviewed signatures: ' + ', '.join(sorted(set(declared) - seen)))
+    return entries
+
+
+def generated_header(entries, slots, exe, groups=None, target_order=None):
     groups = {} if groups is None else groups
-    names = []
+    names = list(target_order or [])
     for e in entries:
         if e[1] not in names:
             names.append(e[1])
@@ -285,7 +271,7 @@ def write_header(entries, slots, exe, groups=None):
               'inline constexpr const char* targetOptionalGroups[targetCount] = {']
     lines += ['    %s,' % (json.dumps(groups[n]) if n in groups else 'nullptr') for n in names]
     lines += ['};',
-              '// Code: resolves to match + offset. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative',
+              '// Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative',
               '// reference to a global or a vtable, or a call to the function).',
               'struct Signature {', '    Target target;', '    Kind kind;', '    bool hook;',
               '    bool entry; // matches at the function\'s first byte (compared with the file for other programs\' detours)',
@@ -299,7 +285,11 @@ def write_header(entries, slots, exe, groups=None):
               'struct SlotCheck {', '    Target slot, holds;', '};', 'inline constexpr SlotCheck slotChecks[] = {']
     lines += ['    {%s, %s},' % s for s in slots]
     lines += ['};', '} // namespace fp::sig', '// clang-format on', '']
-    HEADER.write_text('\n'.join(lines), encoding='utf-8', newline='\n')
+    return '\n'.join(lines)
+
+
+def write_header(entries, slots, exe, groups=None):
+    HEADER.write_text(generated_header(entries, slots, exe, groups), encoding='utf-8', newline='\n')
 
 
 def parse_header():
@@ -357,7 +347,7 @@ def resolve_rows(exe, rows, text):
             continue
         at = hits[0]
         if kind == 'Code':
-            rva = at + off
+            rva = at + off + addend
         else:
             if not 0 <= at + off <= len(exe.mem) - 4:
                 miss(name, 'outside the image')

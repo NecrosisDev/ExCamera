@@ -40,7 +40,8 @@ std::wstring settingValue(const ModSettings& settings,int id) {
 
 const wchar_t* settingLabel(int id) {
     switch (id) {
-    case setting::fov: case setting::tpFov: return L"Field of view";
+    case setting::fov: return L"First-person FOV";
+    case setting::tpFov: return L"Third-person FOV";
     case setting::sensitivity: return L"Sensitivity";
     case setting::tpDistance: return L"Distance";
     case setting::tpShoulder: return L"Shoulder";

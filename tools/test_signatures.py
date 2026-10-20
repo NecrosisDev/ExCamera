@@ -54,6 +54,10 @@ class CheckerTests(unittest.TestCase):
             result = signatures.check('owned synthetic image')
         return result, output.getvalue()
 
+    def test_code_interior_anchor_uses_signed_addend(self):
+        rows = [('navSampler', 'Code', False, 1, 0, -1, 0x100, 'AA BB'), self.rows[1]]
+        self.assertEqual(self.resolve(Image(), rows=rows)[0], 0)
+
     def test_valid_slot(self):
         self.assertEqual(self.resolve(Image())[0], 0)
 
