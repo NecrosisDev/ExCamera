@@ -182,9 +182,9 @@ static void normalize(float* v) {
     }
     for (int i = 0; i < 3; i++) v[i] /= n;
 }
-// what the camera's line of sight hits (a placed object or a character, never the player)
-// is hidden for as long as it stands near the line from the camera to the pivot; its whole scene subtree
-// goes into the per-frame hide list (the pass mask the helmet uses), so the pick no longer sees it either.
+// Only verified placed props may be hidden. Characters and their gear always
+// pull the camera in; the player's own tree is ignored. Never infer actor identity
+// from a mesh type flag: use the native world character roster and scene ancestry.
 struct TpHidden {
     uintptr_t top;
     ULONGLONG until;
@@ -194,53 +194,80 @@ static unsigned tpHiddenCount = 0; // nav thread
 static SRWLOCK tpHideLock = SRWLOCK_INIT;
 static uintptr_t tpHideTops[16];
 static unsigned tpHideTopCount = 0; // published to the render thread
-// only a CHARACTER (its mesh tree, found in the level's character
-// list) or a PLACED OBJECT (the highest ancestor flagged 0x2000 that is not a group) is hidden; groups,
-// tiles and wall pieces are walls (pull in); loose items (0x4000) are ignored (neither); nothing on the
-// player's own tree. The list belongs to one scene and is dropped when the scene changes.
 static uintptr_t tpHideScene = 0;
-// 1 hidden, 2 ignored (small loose item), 0 pull the camera in front of it. hideObjects false ([ThirdPerson]
-// Blockers=smart): only people are hidden; a placed object (a door, a cart, a pillar) pulls the camera in like a wall.
-static int tpHideHit(uintptr_t hitNode, uintptr_t root, bool hideObjects) {
-    if (!readable(hitNode, 0x2a0)) return 0;
-    const uintptr_t W = *(uintptr_t*)(gameAt(fp::sig::world));
-    const uintptr_t playerMesh = readable(root, 0x20) ? *(uintptr_t*)(root + field::character::sceneNode) : 0;
-    uintptr_t anc[64];
-    unsigned n = 0;
-    for (uintptr_t at = hitNode; n < 64 && at && at != W && readable(at, 0x130);
-         at = *(uintptr_t*)(at + field::sceneNode::parent)) {
-        if (at == playerMesh) return 2;
-        anc[n++] = at;
-    } // the player's own (weapon, gear)
-    uintptr_t target = 0;
-    {
-        const uintptr_t list = readable(W, 0x1c30) ? *(uintptr_t*)(W + field::worldObject::characters)
-                                                   : 0; // characters (the dead too)
-        if (readable(list, 0x118)) {
-            const int count = *(int*)(list + field::list::count);
-            const uintptr_t array = *(uintptr_t*)(list + field::list::items);
-            if (count > 0 && count <= 4096 && readable(array, size_t(count) * 8))
-                for (int i = 0; i < count && !target; ++i) {
-                    const uintptr_t c = *(uintptr_t*)(array + size_t(i) * 8);
-                    if (!readable(c, 0x20) || c == root) continue;
-                    const uintptr_t m = *(uintptr_t*)(c + field::character::sceneNode);
-                    for (unsigned k = 0; k < n; ++k)
-                        if (anc[k] == m) {
-                            target = m;
-                            break;
-                        }
-                }
+static bool tpAncestry(uintptr_t node, uintptr_t world, uintptr_t* ancestors, unsigned& count) {
+    count = 0;
+    for (uintptr_t at = node; at && at != world; at = *(uintptr_t*)(at + field::sceneNode::parent)) {
+        if (count == 64 || !readable(at, field::sceneNode::parent + sizeof(uintptr_t))) return false;
+        for (unsigned i = 0; i < count; ++i)
+            if (ancestors[i] == at) return false;
+        ancestors[count++] = at;
+    }
+    return count != 0;
+}
+// 1: verified hideable prop; 2: own tree / loose item ignored; 0: pull in.
+// Also called before retaining or publishing a hide, since ownership may change.
+static int tpHideCandidate(uintptr_t hitNode, uintptr_t root, bool hideObjects, uintptr_t& target) {
+    target = 0;
+    const uintptr_t world = *(uintptr_t*)(gameAt(fp::sig::world));
+    if (!readable(root, field::character::sceneNode + sizeof(uintptr_t))) return 0;
+    const uintptr_t playerMesh = *(uintptr_t*)(root + field::character::sceneNode);
+    uintptr_t ancestors[64];
+    unsigned count = 0;
+    if (!playerMesh || !tpAncestry(hitNode, world, ancestors, count)) return 0;
+    for (unsigned i = 0; i < count; ++i)
+        if (ancestors[i] == playerMesh) return 2;
+    if (!readable(world, field::worldObject::characters + sizeof(uintptr_t))) return 0;
+    const uintptr_t roster = *(uintptr_t*)(world + field::worldObject::characters);
+    if (!readable(roster, field::list::items + sizeof(uintptr_t))) return 0;
+    const int characters = *(int*)(roster + field::list::count);
+    const uintptr_t entries = *(uintptr_t*)(roster + field::list::items);
+    if (characters < 0 || characters > 4096 ||
+        (characters && !readable(entries, size_t(characters) * sizeof(uintptr_t)))) return 0;
+    // Choose the placed-object ancestor, but do not admit it until every roster
+    // entry is checked. A character could itself be below that placed subtree.
+    bool loose = false;
+    for (unsigned i = 0; i < count; ++i) {
+        const unsigned flags = *(unsigned*)(ancestors[i] + 8);
+        if ((flags & 0x7000) == 0x4000) loose = true;
+        if ((flags & 0x2000) && (flags & 0xfff) != 0x11) target = ancestors[i];
+    }
+    bool playerListed = false;
+    for (int i = 0; i < characters; ++i) {
+        const uintptr_t character = *(uintptr_t*)(entries + size_t(i) * sizeof(uintptr_t));
+        if (!readable(character, field::character::sceneNode + sizeof(uintptr_t))) return 0;
+        const uintptr_t mesh = *(uintptr_t*)(character + field::character::sceneNode);
+        if (!readable(mesh, field::sceneNode::parent + sizeof(uintptr_t))) return 0;
+        if (character == root && mesh == playerMesh) playerListed = true;
+        for (unsigned j = 0; j < count; ++j)
+            if (ancestors[j] == mesh) return 0;
+        // Smart never hides props, so ancestry containment cannot admit a hide
+        // there. Avoid native-memory walks that cannot affect its decision.
+        if (target && hideObjects) {
+            uintptr_t characterAncestors[64];
+            unsigned characterCount = 0;
+            if (!tpAncestry(mesh, world, characterAncestors, characterCount)) return 0;
+            for (unsigned j = 0; j < characterCount; ++j)
+                if (characterAncestors[j] == target) return 0;
         }
     }
-    if (!target) {
-        for (unsigned k = 0; k < n; ++k) {
-            const unsigned f = *(unsigned*)(anc[k] + 8);
-            if ((f & 0x7000) == 0x4000) return 2; // a loose item: too small to matter
-            if ((f & 0x2000) && (f & 0xfff) != 0x11) target = anc[k];
-        } // the highest placed object
-        if (target && !hideObjects) return 0;
+    // An empty/transitional roster cannot establish that a subtree has no actor.
+    if (!playerListed) return 0;
+    // Also guard the controlled tree independently of the hit's ancestry.
+    if (target && hideObjects) {
+        uintptr_t playerAncestors[64];
+        unsigned playerCount = 0;
+        if (!tpAncestry(playerMesh, world, playerAncestors, playerCount)) return 0;
+        for (unsigned i = 0; i < playerCount; ++i)
+            if (playerAncestors[i] == target) return 0;
     }
-    if (!target) return 0;
+    if (loose) return 2;
+    return target && hideObjects ? 1 : 0;
+}
+static int tpHideHit(uintptr_t hitNode, uintptr_t root, bool hideObjects) {
+    uintptr_t target = 0;
+    const int verdict = tpHideCandidate(hitNode, root, hideObjects, target);
+    if (verdict != 1) return verdict;
     const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
     if (scene != tpHideScene) {
         tpHiddenCount = 0;
@@ -275,10 +302,14 @@ static bool sceneNodeWorldOrigin(uintptr_t node, float* point) {
 static void tpHideKeep(const float* camera, const float* pivot, uintptr_t scene) {
     const ULONGLONG now = GetTickCount64();
     unsigned n = 0;
-    if (scene != tpHideScene || *(uintptr_t*)(gameAt(fp::sig::currentScene)) != scene)
+    if (tpBlockers.load() != fp::blockersHide || scene != tpHideScene ||
+        *(uintptr_t*)(gameAt(fp::sig::currentScene)) != scene)
         tpHiddenCount = 0;
     for (unsigned i = 0; i < tpHiddenCount; ++i) {
         TpHidden h = tpHiddenTops[i];
+        uintptr_t target = 0;
+        if (tpHideCandidate(h.top, savedRoot, tpBlockers.load() == fp::blockersHide, target) != 1 ||
+            target != h.top) continue;
         float p[3];
         if (!sceneNodeWorldOrigin(h.top, p)) continue;
         {
@@ -311,11 +342,12 @@ static void tpHideClear() {
     tpHideTopCount = 0;
     ReleaseSRWLockExclusive(&tpHideLock);
 }
-// Render thread (viewFeatures): the hidden things' meshes into this frame's hide list (only in the scene
-// they were found in; a character or an object is at most 256 nodes).
+// Render thread (viewFeatures): expand admitted prop subtrees into this frame's
+// hide list, only in their owning scene, with a 256-node traversal limit.
 static uintptr_t tpWalk[256];
 static unsigned tpWalkParents[256];
 static void tpHideAdd() {
+    if (tpBlockers.load() != fp::blockersHide) return;
     uintptr_t tops[16];
     unsigned n = 0;
     uintptr_t owner = 0;
@@ -326,6 +358,9 @@ static void tpHideAdd() {
     ReleaseSRWLockShared(&tpHideLock);
     if (!n || owner != *(uintptr_t*)(gameAt(fp::sig::currentScene))) return;
     for (unsigned i = 0; i < n; ++i) {
+        uintptr_t target = 0;
+        if (tpHideCandidate(tops[i], savedRoot, tpBlockers.load() == fp::blockersHide, target) != 1 ||
+            target != tops[i]) continue;
         const unsigned c = walkScene(tops[i], tpWalk, tpWalkParents, 256);
         for (unsigned j = 0; j < c; ++j) hideAdd(tpWalk[j]);
     }

@@ -139,7 +139,7 @@ struct ModSettings {
     int tpLag = 40;
     bool tpDown = true;
     int tpBlockers =
-        fp::blockersSmart; // what is in the way: hide / push in / smart (people hidden, objects push in)
+        fp::blockersSmart; // what is in the way: hide / push in / smart (characters and placed objects pull in)
     bool tpCombatAimFree = true;
     int fpDeadzoneX = 25, fpDeadzoneY = 25, tpDeadzoneX = 25, tpDeadzoneY = 25;
     bool leanKeysMode = false;
@@ -357,9 +357,9 @@ struct ModSettings {
         case setting::tpLag:
             return tpLag == 0 ? std::wstring(L"off (as before)") : std::to_wstring(tpLag) + L"%";
         case setting::tpBlockers:
-            return tpBlockers == fp::blockersHide   ? L"hide blockers"
+            return tpBlockers == fp::blockersHide   ? L"hide props only"
                    : tpBlockers == fp::blockersPush ? L"pull camera in"
-                                                    : L"hide people; pull in";
+                                                    : L"automatic pull-in";
         case setting::tpCombatAim:
             return tpCombatAimFree ? L"Aim oval" : L"Screen centre";
         case setting::fpDeadzoneX:
@@ -616,8 +616,9 @@ inline const RowInfo& rowInfo(int row) {
          L"How softly the third-person camera follows the character.", {0,100,10,10}},
         {setting::tpBlockers, L"Third person: in the way", RowInfo::choice, &ModSettings::tpBlockers, nullptr,
          L"ThirdPerson", L"Blockers", fp::blockersFromText, fp::blockersText,
-         L"What the camera does about props and people between it and you: hide them, pull in in front of "
-         L"them, or hide people and pull in for objects. Walls always pull it in."},
+         L"Characters always remain visible and pull the camera closer. Hide affects verified placed props "
+         L"only. Automatic pulls in for characters and placed props but ignores loose items. "
+         L"Walls always pull the camera in."},
         {setting::tpDown, L"Third person: knocked down", RowInfo::toggle, nullptr, &ModSettings::tpDown,
          L"ThirdPerson", L"KnockdownFollow", nullptr, nullptr,
          L"Follow the body keeps the third-person camera from diving with the head during a knockdown. "
@@ -861,7 +862,7 @@ inline void ModSettings::normalize() {
     autoRecenter = true;
     eyeSetback = fixedEyeSetbackCm;
     nearClip = fixedNearClipTenths;
-    tpBlockers = fp::blockersSmart; // automatic: hide people, pull camera around solid world blockers
+    tpBlockers = fp::blockersSmart; // automatic: keep characters visible and pull in for solid blockers
     grabRange = fixedGrabRangeCm;
     rmbMode = 0;
     spineFollow = fixedSpineFollow;

@@ -254,9 +254,9 @@ inline void stabilizeEyeRotation(float* physical, float yaw, float pitch) {
 }
 inline constexpr float tpPivotMargin =
     20.f; // cm the pivot keeps from a ceiling or floor above or below the eye
-// [ThirdPerson] Blockers: what the camera does about props and people between it and the player. Walls and floors
-// always pull it in. hide: props and people are hidden. push: everything pulls it in. smart: people are hidden,
-// placed objects (doors, carts, pillars) pull it in.
+// Third-person blockers: characters, walls and floors always pull the camera in.
+// Hide may suppress verified placed props only; Push pulls in for every hit.
+// Smart pulls in for placed props too, but ignores loose items and the player tree.
 inline constexpr int blockersHide = 0, blockersPush = 1, blockersSmart = 2;
 inline int blockersFromText(const wchar_t* t) {
     if (!t) return blockersSmart;
