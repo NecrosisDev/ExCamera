@@ -175,12 +175,22 @@ void main() {
 static const char* const aoShader = R"glsl(
 uniform int taps;
 uniform float bounceOn; // 1: gather one bounce of the surrounding surfaces' light
+uniform vec2 halfSize;  // this pass's (and the distance image's) size in texels
 const float radius = 50.0; // cm: wide enough to reach into corners and along wall bases
+
+// The texel of the distance image a point reads, at its centre. A tap's distance and the screen point it is
+// placed at must be the same texel's: the distance of the nearest texel put at the tap's own point lifts it
+// off a flat surface by up to half a texel's depth change, which on floors and walls seen at an angle, and
+// more with distance, read as occlusion: a dark, noisy patch over the middle distance of the view.
+vec2 distanceCell(vec2 p) {
+    return distanceHalfOn > 0.5 ? (floor(p * halfSize) + 0.5) / halfSize : p;
+}
 
 // A nearby surface facing this one both blocks ambient light and passes on the
 // light that falls on it (a torch-lit wall tints the floor beside it).
 float occlusion(vec3 origin, vec3 normal, vec2 p, bool gather, inout vec3 bounce) {
     if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) return 0.0; // past the screen edge
+    p = distanceCell(p);
     float d = tapDistance(p);
     if (d >= 5e4) return 0.0; // sky
     vec3 delta = positionFrom(p, d) - origin;
@@ -197,7 +207,10 @@ void main() {
     gl_FragColor = vec4(0.0);
     float raw = texture2D(depthTex, uv).r;
     if (raw >= skyDepth) return;
-    vec3 p = viewPosition(uv, raw);
+    // The origin from the same distance image as the taps (this pixel is one of its texel centres), so a
+    // flat surface's taps and origin lie on one plane.
+    float own = tapDistance(uv);
+    vec3 p = distanceHalfOn > 0.5 && own < 5e4 ? positionFrom(uv, own) : viewPosition(uv, raw);
     vec3 n = viewNormal(uv, p);
     float footprint = min(max(radius * projection.y * 0.5 / (texel.y * -p.z), 2.0), max(2.0, 32.0 * pixelScale));
     float jitter = noise();
@@ -1980,8 +1993,31 @@ constexpr float darkAdaptSeconds = 3.f, lightAdaptSeconds = 0.5f;
 // other effect copies 128 x 72 pixels instead of the whole view. The meter program
 // is current; leaves its source bound on unit 0 and the meter framebuffer bound.
 constexpr int meterSourceWidth = meterWidth * 4, meterSourceHeight = meterHeight * 4;
+// The oval check: the mean brightness (stops) of the view's middle less its rim, from the meter's 32 x 18
+// log-luminance cells, for the native image and for the finished one. Their difference is what the
+// effects themselves do to the middle against the edges: a dark middle the game draws shows in the first,
+// one the effects add shows in the difference. Eased; in first-person-status.json.
+static std::atomic<float> ovalNativeStops{0.f}, ovalFinishedStops{0.f};
+static void noteMeterOval(const float* cells, bool finished) {
+    float centre = 0.f, rim = 0.f;
+    int centres = 0, rims = 0;
+    for (int y = 0; y < meterHeight; ++y)
+        for (int x = 0; x < meterWidth; ++x) {
+            const float c = cells[y * meterWidth + x];
+            if (!std::isfinite(c)) continue;
+            const float u = (float(x) + .5f) / meterWidth * 2.f - 1.f, v = (float(y) + .5f) / meterHeight * 2.f - 1.f;
+            const float r2 = u * u + v * v;
+            const float stops = std::clamp(c, -14.f, 1.f);
+            if (r2 < 0.16f) { centre += stops; ++centres; }
+            else if (r2 > 0.64f) { rim += stops; ++rims; }
+        }
+    if (!centres || !rims) return;
+    std::atomic<float>& eased = finished ? ovalFinishedStops : ovalNativeStops;
+    const float now = centre / float(centres) - rim / float(rims), was = eased.load(std::memory_order_relaxed);
+    eased.store(was + (now - was) * 0.2f, std::memory_order_relaxed);
+}
 static bool requestMeter(gl::Api& g, fp::CueResources& r, CueContext& owner, GLuint entryFramebuffer,
-                         const GLint* viewport) {
+                         const GLint* viewport, bool finished = false) {
     if (!r.meterFbo) {
         g.genTextures(1, &r.meterTex);
         g.genFramebuffers(1, &r.meterFbo);
@@ -2030,6 +2066,7 @@ static bool requestMeter(gl::Api& g, fp::CueResources& r, CueContext& owner, GLu
     glReadPixels(0, 0, meterWidth, meterHeight, glc::red, GL_FLOAT, nullptr);
     r.meterFences[slot] = g.fenceSync(glc::syncGpuCommandsComplete, 0);
     owner.meterIssued[slot] = GetTickCount64();
+    owner.meterFinal[slot] = finished;
     owner.meterSlot = slot ^ 1;
     return true;
 }
@@ -2054,6 +2091,8 @@ static float collectMeter(gl::Api& g, fp::CueResources& r, CueContext& owner) {
         float cells[meterWidth * meterHeight];
         g.bindBuffer(glc::pixelPackBuffer, r.meterBuffers[newest]);
         g.getBufferSubData(glc::pixelPackBuffer, 0, sizeof cells, cells);
+        noteMeterOval(cells, owner.meterFinal[newest]);
+        if (owner.meterFinal[newest]) return owner.adapted > 0.f ? owner.exposure : 1.f; // the oval check only
         float sum = 0.f;
         for (float c : cells) sum += std::isfinite(c) ? std::clamp(c, -14.f, 1.f) : -14.f;
         const float scene = std::exp2(sum / float(meterWidth * meterHeight));
@@ -2934,6 +2973,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform1f(u.at[uBounceOn], bounce ? 1.f : 0.f);
                 g.uniform1i(u.at[uDistanceHalf], 4);
                 g.uniform1f(u.at[uDistanceHalfOn], distances ? 1.f : 0.f);
+                g.uniform2f(u.at[uHalfSize], float(r.halfWidth), float(r.halfHeight));
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             }
             if (ssrMode) {
@@ -3401,6 +3441,15 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             // Wound skins for the next frame's body draws; the snapshot's restore covers its state.
             if (request.wounds.any()) bakeWoundSkins(g, r);
+        }
+        // The oval check reads the finished image with the same meter, on one frame in eight between the
+        // native readings (frames 0 and 4 of each 8 read the native image).
+        if (adaptMode && r.meterProgram && owner->viewAuditCountdown % 8 == 2) {
+            g.useProgram(r.meterProgram);
+            const auto& u = viewUniforms[contextIndex][programMeter];
+            setViewUniforms(g, u, frame);
+            g.uniform2f(u.at[uCells], float(meterWidth), float(meterHeight));
+            requestMeter(g, r, *owner, target, viewport, true);
         }
         stampTo(5);
         ok = !audit || glGetError() == GL_NO_ERROR; // errors are looked for on audit frames

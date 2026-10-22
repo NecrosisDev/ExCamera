@@ -846,6 +846,11 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
             j.fixed(cpuNames[k], viewEffectsCpuMs[k].load(std::memory_order_relaxed), 3);
         j.fixed("gpu_lag_ms", viewGpuLagMs.load(std::memory_order_relaxed), 2);
         j.fixed("gpu_frame_ms", viewGpuFrameMs.load(std::memory_order_relaxed), 2);
+        // The oval check (view_effects.inl): middle less rim, stops; negative is a darker middle.
+        j.fixed("oval_native_stops", double(ovalNativeStops.load(std::memory_order_relaxed)), 2);
+        j.fixed("oval_finished_stops", double(ovalFinishedStops.load(std::memory_order_relaxed)), 2);
+        j.fixed("oval_effects_stops", double(ovalFinishedStops.load(std::memory_order_relaxed) -
+                                            ovalNativeStops.load(std::memory_order_relaxed)), 2);
         j.fixed("cpu_frame_ms", viewCpuFrameMs.load(std::memory_order_relaxed), 2);
     }
     j.unum("ui_reticle_reads", uiReticleReads.load());

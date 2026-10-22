@@ -282,6 +282,7 @@ struct CueContext {
     // first reading) and the exposure that follows from it.
     float adapted = 0.f, exposure = 1.f;
     ULONGLONG meterTick = 0, meterIssued[2]{};
+    bool meterFinal[2]{}; // the reading is of the finished image (the oval check), not the native one
     unsigned meterSlot = 0;
 };
 // Bounded, context-local owners; a full table omits the optional cue.

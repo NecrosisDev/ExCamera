@@ -9,7 +9,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TAG_RE = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
-EXPECTED_FILES = {'ExCamera.exe', 'ExanimaFirstPerson.dll', 'LICENSE.txt', 'LICENSE-MinHook.txt'}
+EXPECTED_FILES = {'ExCamera.exe', 'ExanimaFirstPerson.dll', 'manifest.toml', 'LICENSE.txt', 'LICENSE-MinHook.txt'}
 
 
 def version_from_tag(tag):
@@ -57,7 +57,7 @@ def verify_package(version):
     if packages != [expected]:
         raise ValueError(f'Expected only {expected.name}, found {[p.name for p in packages]}')
     with zipfile.ZipFile(expected) as archive:
-        if len(archive.namelist()) != 4 or set(archive.namelist()) != EXPECTED_FILES:
+        if len(archive.namelist()) != len(EXPECTED_FILES) or set(archive.namelist()) != EXPECTED_FILES:
             raise ValueError('Release ZIP contains missing or unexpected files')
         if archive.testzip() is not None:
             raise ValueError('Release ZIP failed its integrity check')
