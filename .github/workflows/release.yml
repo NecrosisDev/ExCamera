@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # auto-release.yml starts this on a tag it just created (a token-made tag push starts no workflow).
+  workflow_dispatch:
 
 permissions:
   contents: read

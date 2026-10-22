@@ -1,0 +1,32 @@
+name: Auto release
+
+# A push to main whose FP_BUILD (src/build_identity.h) has no v<FP_BUILD> tag yet creates that tag and starts the
+# Release workflow on it; later pushes with the same FP_BUILD publish nothing. Bump FP_BUILD to release again.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Tag a new FP_BUILD and start its release
+        run: |
+          version=$(tr -d '\r' < src/build_identity.h | sed -nE 's/^#define FP_BUILD "([^"]+)"$/\1/p' | head -n1)
+          tag="v$version"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" > /dev/null 2>&1; then
+            echo "$tag already exists"; exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$tag"

@@ -232,7 +232,7 @@ static void addWound(const CharacterHitRecord& h) {
     if (!intoPose(h.pose, h.direction, false, w.along)) memset(w.along, 0, sizeof w.along);
     if (!std::isfinite(healthMax) || healthMax < 0.05f) healthMax = 1.f;
     // PROVISIONAL(2026-10-22, size from damage: a third of full health fills the scale; tune after
-    // Hunter's first look, ratify-by: 2026-11-05)
+    // a first look in game, ratify-by: 2026-11-05)
     w.severity = kind == woundCrush ? std::clamp(0.35f + 0.8f * balance, 0.35f, 1.f)
                                     : std::clamp(0.35f + 2.f * health / healthMax, 0.35f, 1.f);
     w.kind = kind;
