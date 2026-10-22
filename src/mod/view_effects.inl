@@ -1038,8 +1038,13 @@ vec3 levelSurface(vec3 color) {
         h = (grain.r - 0.5) * 0.5 - 0.7 * pit * (1.0 - joint) - 0.8 * joint;
         albedo = mix((0.9 + 0.2 * grain.g) * (1.0 - 0.25 * pit), 0.85 + 0.3 * grain.a, joint);
     }
+    // The 4 mm grain only where a pixel is finer than it (within a metre or two): coarser pixels each
+    // take an unrelated grain value, which read as a darker, noisy oval around the view on the floor
+    // in front. Its colour and bump both fade to the plain surface there; the broad look stays.
+    float fine = clamp(0.2 / max(footprint, 1e-3) - 0.5, 0.0, 1.0);
+    albedo = mix(1.0, albedo, fine);
     albedo *= weather * (1.0 - 0.22 * damp * (wood ? 0.4 : 1.0));
-    h *= 0.15 * clamp(0.4 / max(footprint, 1e-3), 0.0, 1.0); // finer than a pixel adds no bump
+    h *= 0.15 * fine;
     vec3 dpx = dFdx(p), dpy = dFdy(p);
     vec3 r1 = cross(dpy, n), r2 = cross(n, dpx);
     float det = dot(dpx, r1);

@@ -490,6 +490,11 @@ void NativeSettingsIntegration::serviceTick(bool stop, bool want) {
             ++tabCount;
         }
         widthGain = 100; // room for the Mod Settings list beside its detail pane
+        // A form just taken carries none of our frames. A form the game released while widened (retire, not
+        // narrow) left the flag set: widen() then did nothing, holdWidened() put back the old root frame alone,
+        // and every row was laid out for panes 100 units wider than they were (sliders reduced to their
+        // arrows, headers pushed into the scroll bar), on every later open.
+        widened = false;
         if (widthGain) widen();
         transaction.begin(settings());
         closing = false;
@@ -1072,7 +1077,7 @@ void NativeSettingsIntegration::restore() {
 
 void NativeSettingsIntegration::retire() {
     if (callbackActive()) return;
-    root=0; children={}; paneInset=false; captureRow=none; baseSaved=false;
+    root=0; children={}; paneInset=false; widened=false; captureRow=none; baseSaved=false;
     controlsOwned=false; scrollOwned=false; dirty=false;
     deferUntilMouseRelease=false;
     callbackOwner = nullptr;

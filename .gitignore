@@ -8,3 +8,10 @@
 *.zip
 __pycache__/
 .claude/
+
+# Kept on disk, not published: development notes, tests and tools that do not build the mod
+/DECISIONS.md
+/PROFILING-README.txt
+/docs/HEADWEAR-RENDER-REVIEW.md
+/tools/profile.py
+/COMMIT_MSG.txt
