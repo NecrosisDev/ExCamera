@@ -8,15 +8,15 @@ static unsigned profileDuration = 60;
 static const char* profileReason = "complete";
 static uint64_t profileClock() {
     LARGE_INTEGER value{};
-    return QueryPerformanceCounter(&value) ? uint64_t(value.QuadPart) : 0;
+    return QueryPerformanceCounter(&value) ? static_cast<uint64_t>(value.QuadPart) : 0;
 }
 static uint32_t profileThread() { return GetCurrentThreadId(); }
 static std::string profileUtf8(const std::wstring& value) {
     if (value.empty()) return {};
-    const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(), int(value.size()), nullptr, 0, nullptr, nullptr);
+    const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
     if (size <= 0) return {};
-    std::string out(size_t(size), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, value.data(), int(value.size()), &out[0], size, nullptr, nullptr);
+    std::string out(static_cast<size_t>(size), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), &out[0], size, nullptr, nullptr);
     return out;
 }
 static void profileStatus(const char* state, const char* error = "");
@@ -68,7 +68,7 @@ static std::array<int, 10> profileSettingsStart{}, profileSettingsEnd{};
 static std::array<int, 10> profileSettingsSnapshot() {
     SettingsGuard guard;
     return {selectedFov.load(), tpFov.load(), tpDistance.load(), tpShoulder.load(), tpHeight.load(),
-            tpLag.load(), nearClip.load(), int(tpBlockers.load()), headSteady.load(), int(rawMouse)};
+            tpLag.load(), nearClip.load(), static_cast<int>(tpBlockers.load()), headSteady.load(), static_cast<int>(rawMouse)};
 }
 static void profileWriteCapture(FILE* file) {
     const auto& engine = fp::profile::engine;
@@ -142,7 +142,7 @@ static void profilePulseImpl(bool allowStart) {
     wchar_t expiry[32]{};
     GetPrivateProfileStringW(L"Profile", L"NotAfter", L"0", expiry, 32, profileControl.c_str());
     FILETIME utc{}; GetSystemTimeAsFileTime(&utc);
-    const uint64_t unixNow = ((uint64_t(utc.dwHighDateTime) << 32) | utc.dwLowDateTime) / 10000000 - 11644473600ULL;
+    const uint64_t unixNow = ((static_cast<uint64_t>(utc.dwHighDateTime) << 32) | utc.dwLowDateTime) / 10000000 - 11644473600ULL;
     const uint64_t notAfter = _wcstoui64(expiry, nullptr, 10);
     if (target != GetCurrentProcessId() || notAfter < unixNow || notAfter > unixNow + 60) return;
     if (!CreateDirectoryW(profileDirectory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return;
@@ -153,10 +153,10 @@ static void profilePulseImpl(bool allowStart) {
     profileRequest = profileLastRequest = request; profileLabel = label;
     profileReportPath = profileDirectory + L"\\profile-" + std::to_wstring(GetCurrentProcessId()) + L"-" + profileRequest + L".json";
     profileSettingsStart = profileSettingsSnapshot();
-    if (!QueryPerformanceFrequency(&rate) || !engine.start(profileClock, profileThread, uint64_t(rate.QuadPart), every)) {
+    if (!QueryPerformanceFrequency(&rate) || !engine.start(profileClock, profileThread, static_cast<uint64_t>(rate.QuadPart), every)) {
         profileStatus("error", "timer_or_recorder_unavailable"); return;
     }
-    profileDeadline = engine.started() + uint64_t(profileDuration) * uint64_t(rate.QuadPart);
+    profileDeadline = engine.started() + static_cast<uint64_t>(profileDuration) * static_cast<uint64_t>(rate.QuadPart);
     profileStatus("capturing");
 }
 

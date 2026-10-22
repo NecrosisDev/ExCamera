@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -25,7 +26,7 @@ namespace fp {
 // copy of input in output, including invalid matrices. Exact in-place use is
 // supported; no native matrix or persistent state is borrowed or modified here.
 inline bool correctSampleDepth(const float input[16], float stockNear, float farPlane, bool terrainActive,
-                               float terrainEntryP10, float terrainDistanceRatio, float output[16]) {
+                               float terrainEntryP10, float terrainDistanceRatio, float output[16]) noexcept {
     if (!input || !output) return false;
     if (input != output) std::memmove(output, input, 16 * sizeof(float));
 
@@ -34,6 +35,7 @@ inline bool correctSampleDepth(const float input[16], float stockNear, float far
     if (!std::isfinite(stockNear) || stockNear <= 0.f || !std::isfinite(farPlane) || farPlane < 0.f ||
         (farPlane != 0.f && farPlane <= stockNear))
         return false;
+
     // Only a perspective depth/w column is understood. Off-axis/cropped XY
     // terms are allowed, but orthographic and oblique-depth projections are not.
     if (output[0] == 0.f || output[5] == 0.f || output[2] != 0.f || output[6] != 0.f ||
@@ -53,7 +55,7 @@ inline bool correctSampleDepth(const float input[16], float stockNear, float far
     constexpr double identityTolerance = 2.0 * std::numeric_limits<float>::epsilon();
     const bool stockCoefficient = std::fabs(scale - 1.0) <= identityTolerance;
     const bool stockDistance = !terrainActive ||
-                               std::fabs(double(terrainDistanceRatio) - 1.0) <= identityTolerance;
+                               std::fabs(static_cast<double>(terrainDistanceRatio) - 1.0) <= identityTolerance;
     if (stockCoefficient && stockDistance) return false;
     if (stockCoefficient) scale = 1.0;
 
@@ -61,36 +63,42 @@ inline bool correctSampleDepth(const float input[16], float stockNear, float far
     constexpr double maxFinite = (std::numeric_limits<float>::max)();
     if (!std::isfinite(baseValue) || baseValue < -maxFinite) return false;
     float base = static_cast<float>(baseValue);
+
     // Native computes -(far + near)/(far - near) directly. Reconstructing it
     // from rounded P14 can differ by an ULP; do not invent a bias on ordinary
     // opaque draws or on the centre sample because of that rounding alone.
-    const auto roundingOnly = [](float actual, float reference) {
+    const auto roundingOnly = [](float actual, float reference) noexcept {
         if (actual == reference) return true;
         const float direction = actual < reference ? -std::numeric_limits<float>::infinity()
                                                    : std::numeric_limits<float>::infinity();
         const float limit = std::nextafter(std::nextafter(reference, direction), direction);
         return actual < reference ? actual >= limit : actual <= limit;
     };
+
     const float original = output[10];
     double adjustedDelta = 0.0;
     if (terrainActive) {
-        double ambient = double(terrainEntryP10) - base;
-        const double terrain = double(original) - terrainEntryP10;
+        double ambient = static_cast<double>(terrainEntryP10) - base;
+        const double terrain = static_cast<double>(original) - terrainEntryP10;
         const bool entryIsUnbiased = roundingOnly(terrainEntryP10, base);
         if (entryIsUnbiased && roundingOnly(original, terrainEntryP10)) return false;
         if (entryIsUnbiased) {
-            // The pass entry is the native unbiased value in this case.
             base = terrainEntryP10;
             ambient = 0.0;
         }
-        adjustedDelta = scale * (ambient + terrain * double(terrainDistanceRatio));
+        adjustedDelta = scale * (ambient + terrain * static_cast<double>(terrainDistanceRatio));
     } else {
-        const double authored = double(original) - base;
+        const double authored = static_cast<double>(original) - base;
         if (roundingOnly(original, base)) return false;
         adjustedDelta = scale * authored;
+        // An offset is a constant NDC shift at any near; scaled by a 3 cm/100 cm near ratio, decal and blood
+        // offsets (+1e-5) fall to about one 24-bit depth step and z-fight. Keep at least 16 steps.
+        constexpr double minimumOffset = 16.0 / (1 << 23);
+        const double floor = (std::min)(std::fabs(authored), minimumOffset);
+        if (std::fabs(adjustedDelta) < floor) adjustedDelta = std::copysign(floor, authored);
     }
 
-    const double corrected = double(base) + adjustedDelta;
+    const double corrected = static_cast<double>(base) + adjustedDelta;
     if (!std::isfinite(corrected) || std::fabs(corrected) > maxFinite) return false;
     const float candidate = static_cast<float>(corrected);
     if (candidate == original) return false;

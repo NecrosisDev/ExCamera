@@ -82,7 +82,7 @@ static bool arm(const char*& reason, const char*& hooks) {
     // The game window may have been rebuilt while stopped (re-arm): find it again.
     if (!hookedWindow || !IsWindow(hookedWindow)) {
         hookedWindow = nullptr;
-        EnumWindows(findWindow, (LPARAM)&hookedWindow);
+        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&hookedWindow));
     }
     if (!hookedWindow || !installWindow(hookedWindow)) {
         const bool rollback = rollbackDispatch(true, true, true);
@@ -103,13 +103,13 @@ static fp::RawRegistration rawRegistration() {
     UINT count = 0;
     SetLastError(ERROR_SUCCESS);
     const UINT sized = GetRegisteredRawInputDevices(nullptr, &count, sizeof(RAWINPUTDEVICE));
-    if ((sized == UINT(-1) && GetLastError() != ERROR_INSUFFICIENT_BUFFER) || count > 256) return {};
+    if ((sized == static_cast<UINT>(-1) && GetLastError() != ERROR_INSUFFICIENT_BUFFER) || count > 256) return {};
     fp::RawRegistration result;
     result.known = true;
     if (!count) return result;
     std::vector<RAWINPUTDEVICE> devices(count);
     const UINT found = GetRegisteredRawInputDevices(devices.data(), &count, sizeof(RAWINPUTDEVICE));
-    if (found == UINT(-1) || found > devices.size()) return {};
+    if (found == static_cast<UINT>(-1) || found > devices.size()) return {};
     for (UINT i = 0; i < found; ++i) {
         const RAWINPUTDEVICE& device = devices[i];
         if (device.usUsagePage != 1 || device.usUsage != 2) continue;
@@ -190,7 +190,7 @@ static void rehookWindow() {
     if (!owner.retired && owner.previous && IsWindow(owner.window)) return;
     if (hookedWindow == owner.window) hookedWindow = nullptr;
     HWND w = nullptr;
-    EnumWindows(findWindow, (LPARAM)&w);
+    EnumWindows(findWindow, reinterpret_cast<LPARAM>(&w));
     if (w && installWindow(w)) ++windowRehooks;
 }
 // Worker thread: F7 stops only when held (fp::stopKeyStep); a short press shows
@@ -255,7 +255,6 @@ static void waitForRearmKey() {
 // Any failure is reported as an activation fault (restart required).
 // ---- The game build: verified (the build this release was tested on, by its hash) or compatible (every
 // signature in game_signatures.h resolves in it, and the hooks then prove they run: fp::HookHealth) ----
-static bool verifiedBuild = false;
 // The game's executable as the loader would map it, read from disk: the loaded image may already carry
 // another mod's detours, and must not be what decides where the targets are.
 static bool readGameFile(const wchar_t* path, std::vector<uint8_t>& mapped, fp::ImageView& view) {
@@ -266,8 +265,8 @@ static bool readGameFile(const wchar_t* path, std::vector<uint8_t>& mapped, fp::
     DWORD got = 0;
     bool ok = GetFileSizeEx(f, &size) && size.QuadPart > 0 && size.QuadPart < 64ll * 1024 * 1024;
     if (ok) {
-        file.resize(size_t(size.QuadPart));
-        ok = ReadFile(f, file.data(), DWORD(file.size()), &got, nullptr) && got == file.size();
+        file.resize(static_cast<size_t>(size.QuadPart));
+        ok = ReadFile(f, file.data(), static_cast<DWORD>(file.size()), &got, nullptr) && got == file.size();
     }
     CloseHandle(f);
     return ok && fp::mapPeFile(file.data(), file.size(), mapped, view);
@@ -299,15 +298,15 @@ static bool resolveGame(const wchar_t* executable) {
         manualDefenseFieldMismatch = optionalContractFailed("manualDefense");
         int at = 0;
         degradedTargets[0] = 0;
-        for (unsigned t = 0; t < fp::sig::targetCount && at >= 0 && at < int(sizeof degradedTargets); ++t)
+        for (unsigned t = 0; t < fp::sig::targetCount && at >= 0 && at < static_cast<int>(sizeof degradedTargets); ++t)
             if (report.degraded[t])
                 at += snprintf(degradedTargets + at, sizeof degradedTargets - at, "%s%s", at ? "," : "",
                                fp::sig::targetNames[t]);
         return true;
     }
     int at = snprintf(faultDetail, sizeof faultDetail, "%u of %u game targets unresolved:", report.failures,
-                      unsigned(fp::sig::targetCount));
-    for (unsigned t = 0; t < fp::sig::targetCount && at > 0 && at < int(sizeof faultDetail); ++t)
+                      static_cast<unsigned>(fp::sig::targetCount));
+    for (unsigned t = 0; t < fp::sig::targetCount && at > 0 && at < static_cast<int>(sizeof faultDetail); ++t)
         if (report.why[t] != fp::Unresolved::none)
             at += snprintf(faultDetail + at, sizeof faultDetail - at, " %s (%s)", fp::sig::targetNames[t],
                            fp::unresolvedText(report.why[t]));
@@ -328,7 +327,7 @@ static char otherHooksNames[160]{}; // status: which targets were already hooked
 // The launcher's prompt: the player said yes for this game process (allowOtherHooks, called before enable).
 static volatile LONG playerApproved = 0;
 static bool slotTaken(fp::sig::Target slot, fp::sig::Target original) {
-    return *(uintptr_t*)gameAt(slot) != gameAt(original);
+    return *reinterpret_cast<uintptr_t*>(gameAt(slot)) != gameAt(original);
 } // no longer the game's own function
 // True to go on: nothing else hooked, or chaining is allowed. The function entries are compared with the
 // game's file; the slots with the game's own functions.
@@ -346,14 +345,16 @@ static bool otherHooksCheck(const wchar_t* executable) {
     if (!admitManualDefenseEntries(file) ||
         !admitAttackVariantsEntries(file, optionalSourceVerified) ||
         !admitHeldThrowEntries(file, optionalSourceVerified) ||
-        !admitHeadwearRenderEntries(file, optionalSourceVerified)) {
+        !admitHeadwearRenderEntries(file, optionalSourceVerified) ||
+        !admitViewEffectsEntries(file) ||
+        !admitSilhouetteEntries(file)) {
         otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
         return false;
     }
     fp::sig::Target found[8];
     unsigned n = fp::patchedEntries(
         file, layout,
-        [](uint32_t rva, uint8_t* out) { return memcpy(out, (const void*)(base + rva), 16), true; }, found,
+        [](uint32_t rva, uint8_t* out) { return memcpy(out, reinterpret_cast<const void*>(base + rva), 16), true; }, found,
         8);
     const fp::sig::Target slots[3][2] = {{fp::sig::navSlot, fp::sig::navSampler},
                                          {fp::sig::behaviorSlot, fp::sig::playerBehavior},
@@ -366,7 +367,7 @@ static bool otherHooksCheck(const wchar_t* executable) {
     if (!n) return true;
     int at = 0;
     otherHooksNames[0] = 0;
-    for (unsigned i = 0; i < n && i < 8 && at >= 0 && at < int(sizeof otherHooksNames); ++i)
+    for (unsigned i = 0; i < n && i < 8 && at >= 0 && at < static_cast<int>(sizeof otherHooksNames); ++i)
         at += snprintf(otherHooksNames + at, sizeof otherHooksNames - at, "%s%s", i ? "," : "",
                        fp::sig::targetNames[found[i]]);
     if (fp::chainAllowed(otherHooks, chained || InterlockedCompareExchange(&playerApproved, 0, 0) != 0)) {
@@ -392,8 +393,9 @@ static uintptr_t nav(void*, float);
 static void behavior(uintptr_t);
 static void point(uintptr_t, float*);
 static bool adoptDispatch() {
-    const uintptr_t n = *(uintptr_t*)gameAt(fp::sig::navSlot), b = *(uintptr_t*)gameAt(fp::sig::behaviorSlot),
-                    p = *(uintptr_t*)gameAt(fp::sig::pointSlot);
+    const uintptr_t n = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::navSlot)),
+                    b = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::behaviorSlot)),
+                    p = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::pointSlot));
     const bool own = n == gameAt(fp::sig::navSampler) && b == gameAt(fp::sig::playerBehavior) &&
                      p == gameAt(fp::sig::aimPoint);
     if (!own && !chained) return false;
@@ -420,8 +422,8 @@ static void hookHealthTick() {
     if (hookHealth.decided) return;
     uint32_t hits[fp::healthHooks];
     for (unsigned k = 0; k < fp::healthHooks; ++k) hits[k] = healthHits[k].load(std::memory_order_relaxed);
-    const bool inPlay = *(uintptr_t*)gameAt(fp::sig::playerRoot) != 0 && gameWindow() != nullptr;
-    const auto verdict = fp::healthStep(hookHealth, inPlay, *(uint32_t*)gameAt(fp::sig::gameClock), hits);
+    const bool inPlay = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) != 0 && gameWindow() != nullptr;
+    const auto verdict = fp::healthStep(hookHealth, inPlay, *reinterpret_cast<uint32_t*>(gameAt(fp::sig::gameClock)), hits);
     // A late admitted increment is harmless: totals are never reset, and the
     // next installation takes its own start snapshot before testing progress.
     if (hookHealth.decided) healthRecording.store(false, std::memory_order_relaxed);
@@ -487,7 +489,7 @@ static bool waitForGame() {
                 L"opengl32.dll")) { // the window looked for only then: not a window shown before the game's own
             if (!hookedWindow || !IsWindow(hookedWindow)) {
                 hookedWindow = nullptr;
-                EnumWindows(findWindow, (LPARAM)&hookedWindow);
+                EnumWindows(findWindow, reinterpret_cast<LPARAM>(&hookedWindow));
             }
             if (hookedWindow) return true;
         }
@@ -495,7 +497,178 @@ static bool waitForGame() {
         Sleep(100);
     }
 }
+// Task faults. The game's task loop (0x263C0) catches a throw from any task's update (vtable +0x1C0),
+// clears that task's events and shows "Task fatal error. Task execution halted." without saying where it
+// came from. A first-chance handler notes each distinct exception (code, where it was raised, the first
+// ExCamera and game frames on its stack); the worker appends new ones to fault-log.txt beside the DLL and
+// the status file carries the latest, so the next halt names its source. It only observes: every
+// exception continues to its own handler.
+struct FaultRecord {
+    DWORD code;
+    unsigned count;
+    uintptr_t at, ours, game, caller[2]; // at: raw address; ours/game: module offsets of the first frame in each,
+                                         // or 0; caller: the next two game frames above game
+    FILETIME last;
+    bool logged;
+};
+static FaultRecord faultRecords[16];
+static volatile LONG faultRecordCount = 0, faultRecordBusy = 0, faultsSeen = 0, faultNewest = -1;
+static thread_local bool inFaultRecord = false;
+static uintptr_t imageEnd(uintptr_t image) {
+    const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(image + dos->e_lfanew);
+    return image + nt->OptionalHeader.SizeOfImage;
+}
+static LONG CALLBACK recordFault(EXCEPTION_POINTERS* info) {
+    const DWORD code = info->ExceptionRecord->ExceptionCode;
+    // Informational codes (thread names, debug strings) and debugger traps are not faults.
+    if ((code & 0xC0000000u) == 0x40000000u || code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP ||
+        inFaultRecord)
+        return EXCEPTION_CONTINUE_SEARCH;
+    InterlockedIncrement(&faultsSeen);
+    const uintptr_t raised = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+    // A storm (the same fault every frame) is only counted once its record is well established, without the
+    // stack walk; the walk, and a record of its own, stay for every new exception, so a later one is named.
+    if (!InterlockedCompareExchange(&faultRecordBusy, 1, 0)) {
+        bool counted = false;
+        for (LONG i = 0; i < faultRecordCount && !counted; ++i)
+            if (faultRecords[i].code == code && faultRecords[i].at == raised && faultRecords[i].count >= 64) {
+                ++faultRecords[i].count;
+                GetSystemTimeAsFileTime(&faultRecords[i].last);
+                counted = true;
+            }
+        InterlockedExchange(&faultRecordBusy, 0);
+        if (counted) return EXCEPTION_CONTINUE_SEARCH;
+    }
+    inFaultRecord = true;
+    const uintptr_t ours0 = reinterpret_cast<uintptr_t>(module), game0 = base;
+    uintptr_t ours = 0, game = 0, caller[2]{};
+    int callers = 0;
+    __try {
+        const uintptr_t oursEnd = ours0 ? imageEnd(ours0) : 0, gameEnd = game0 ? imageEnd(game0) : 0;
+        CONTEXT c = *info->ContextRecord;
+        if (code != EXCEPTION_STACK_OVERFLOW)
+            for (int i = 0; i < 48 && c.Rip && (!ours || callers < 2); ++i) {
+                const uintptr_t ip = c.Rip;
+                if (!ours && ip >= ours0 && ip < oursEnd) ours = ip - ours0;
+                if (ip >= game0 && ip < gameEnd) {
+                    if (!game) game = ip - game0;
+                    else if (callers < 2) caller[callers++] = ip - game0;
+                }
+                DWORD64 image = 0;
+                PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(c.Rip, &image, nullptr);
+                if (!entry) {
+                    c.Rip = *reinterpret_cast<const DWORD64*>(c.Rsp);
+                    c.Rsp += 8;
+                } else {
+                    void* data = nullptr;
+                    DWORD64 frame = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, c.Rip, entry, &c, &data, &frame, nullptr);
+                }
+            }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    const uintptr_t at = raised;
+    if (!InterlockedCompareExchange(&faultRecordBusy, 1, 0)) {
+        const LONG n = faultRecordCount;
+        LONG i = 0;
+        while (i < n && !(faultRecords[i].code == code && faultRecords[i].at == at && faultRecords[i].ours == ours &&
+                          faultRecords[i].game == game && faultRecords[i].caller[0] == caller[0]))
+            ++i;
+        if (i == n) {
+            if (n < LONG(std::size(faultRecords))) {
+                faultRecordCount = n + 1;
+            } else { // full: reuse the longest-quiet record already written to the log
+                i = -1;
+                for (LONG k = 0; k < n; ++k)
+                    if (faultRecords[k].logged && (i < 0 || CompareFileTime(&faultRecords[k].last, &faultRecords[i].last) < 0))
+                        i = k;
+            }
+            if (i >= 0) faultRecords[i] = {code, 0, at, ours, game, {caller[0], caller[1]}, {}, false};
+        }
+        if (i >= 0) {
+            ++faultRecords[i].count;
+            GetSystemTimeAsFileTime(&faultRecords[i].last);
+            faultNewest = i;
+        }
+        InterlockedExchange(&faultRecordBusy, 0);
+    }
+    inFaultRecord = false;
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+static void formatFault(const FaultRecord& r, char* out, size_t size) {
+    const uintptr_t ours0 = reinterpret_cast<uintptr_t>(module);
+    char where[40];
+    if (r.at >= ours0 && r.at < imageEnd(ours0))
+        std::snprintf(where, sizeof where, "excamera+0x%llx", static_cast<unsigned long long>(r.at - ours0));
+    else if (base && r.at >= base && r.at < imageEnd(base))
+        std::snprintf(where, sizeof where, "exanima+0x%llx", static_cast<unsigned long long>(r.at - base));
+    else
+        std::snprintf(where, sizeof where, "0x%llx", static_cast<unsigned long long>(r.at));
+    std::snprintf(out, size, "0x%08lx at %s excamera_frame=0x%llx game_frames=0x%llx,0x%llx,0x%llx x%u", r.code, where,
+                  static_cast<unsigned long long>(r.ours), static_cast<unsigned long long>(r.game),
+                  static_cast<unsigned long long>(r.caller[0]), static_cast<unsigned long long>(r.caller[1]), r.count);
+}
+// Worker thread: append each new record to fault-log.txt with the local time it was last seen.
+static void logFaults() {
+    if (!statusPath[0] || InterlockedCompareExchange(&faultRecordBusy, 1, 0)) return;
+    FaultRecord fresh[std::size(faultRecords)];
+    LONG n = 0;
+    for (LONG i = 0; i < faultRecordCount; ++i)
+        if (!faultRecords[i].logged) {
+            faultRecords[i].logged = true;
+            fresh[n++] = faultRecords[i];
+        }
+    InterlockedExchange(&faultRecordBusy, 0);
+    if (!n) return;
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, statusPath);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"fault-log.txt");
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path, L"a") || !f) return;
+    for (LONG i = 0; i < n; ++i) {
+        FILETIME local;
+        SYSTEMTIME t;
+        FileTimeToLocalFileTime(&fresh[i].last, &local);
+        FileTimeToSystemTime(&local, &t);
+        char line[200];
+        formatFault(fresh[i], line, sizeof line);
+        std::fprintf(f, "%04u-%02u-%02u %02u:%02u:%02u build %s: %s\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+                     t.wSecond, FP_BUILD, line);
+    }
+    fclose(f);
+}
 // The worker's running snapshot includes the shared activation acknowledgement.
+// The first ten seconds after each spawn (a new player root), two lines a second to spawn-log.txt beside
+// the DLL: what the first-person hide waits on. The file is rewritten at each spawn, so it stays small.
+static void logSpawn() {
+    static uintptr_t lastRoot = 0;
+    static ULONGLONG since = 0;
+    const uintptr_t root = base ? *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) : 0;
+    const ULONGLONG now = GetTickCount64();
+    const bool fresh = root && root != lastRoot;
+    lastRoot = root;
+    if (fresh) since = now;
+    if (!since || now - since > 10000 || !statusPath[0]) return;
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, statusPath);
+    if (wchar_t* slash = wcsrchr(path, L'\\')) wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"spawn-log.txt");
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path, fresh ? L"w" : L"a") || !f) return;
+    bool owned = false, sameRoot = false;
+    __try {
+        sameRoot = root == savedRoot;
+        owned = InterlockedCompareExchange(&pendingRestore, 0, 0) && !park.active &&
+                !InterlockedCompareExchange(&restorationUnknown, 0, 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    std::fprintf(f, "t=%5llu active=%ld ready=%ld owned=%d same_root=%d park=%d view=%d head_scan=%u head_nodes=%u "
+                    "hidden_faces=%u wear_draws=%u scopes=%u head_skips=%u masked=%u parks=%u rearms=%u\n",
+                 static_cast<unsigned long long>(now - since), InterlockedCompareExchange(&active, 0, 0),
+                 InterlockedCompareExchange(&cameraReady, 0, 0), owned ? 1 : 0, sameRoot ? 1 : 0, park.active ? 1 : 0,
+                 viewMode.load(), headWearScanState.load(), hiddenHeadNodes.load(), headwearRenderHidden.load(),
+                 headwearRenderDraws.load(), supersampleScopes.load(), firstPersonHeadDrawsSkipped.load(),
+                 maskedDraws.load(), parks.load(), rearms.load());
+    fclose(f);
+}
 static void writeRunningStatus(FILE* f, const Aim& a) {
     const auto names = readHandNamesStatus();
     const float nearStatus = readRenderedNearStatus();
@@ -537,8 +710,33 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
     j.num("fov", selectedFov.load());
     j.boolean("settings_saved", !settingsSavePending());
+    j.boolean("settings_widened", nativeSettingsWidened.load());
+    {
+        char at[24];
+        std::snprintf(at, sizeof at, "0x%llx", static_cast<unsigned long long>(nativeSettingsFaultAt.load()));
+        j.str("settings_fault_at", at); // module offset of the first Settings refusal, 0x0 while healthy
+    }
+    {
+        char last[200] = "";
+        if (!InterlockedCompareExchange(&faultRecordBusy, 1, 0)) {
+            if (faultNewest >= 0) formatFault(faultRecords[faultNewest], last, sizeof last);
+            InterlockedExchange(&faultRecordBusy, 0);
+        }
+        j.num("faults_seen", InterlockedCompareExchange(&faultsSeen, 0, 0));
+        j.str("fault_last", last); // the newest distinct exception; fault-log.txt has them all
+    }
+    j.unum("settings_dispatches", nativeSettingsDispatches.load());
+    j.unum("settings_steps", nativeSettingsSteps.load());
+    j.unum("settings_refused", nativeSettingsRefused.load()); // kind<<24 | flags of the last control refused
+    {
+        char frames[160];
+        std::snprintf(frames, sizeof frames, "%d,%d,%d,%d,%d,%d,%d,%d,%d", nativeSettingsFrames[0].load(), nativeSettingsFrames[1].load(),
+                      nativeSettingsFrames[2].load(), nativeSettingsFrames[3].load(), nativeSettingsFrames[4].load(), nativeSettingsFrames[5].load(),
+                      nativeSettingsFrames[6].load(), nativeSettingsFrames[7].load(), nativeSettingsFrames[8].load());
+        j.str("settings_frames", frames); // root x,y,w,h; Graphics, Controls, Controller widths; frame scale x100; UI scale
+    }
     j.boolean("tracking_requested", trackingEnabled.load());
-    j.num("tracking_transport", int(trackingReceiver.status()));
+    j.num("tracking_transport", static_cast<int>(trackingReceiver.status()));
     const auto tracker = trackingReceiver.snapshot();
     const auto trackingNow = GetTickCount64();
     j.boolean("tracking_fresh", tracker.valid && trackingNow >= tracker.received &&
@@ -576,8 +774,8 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("door_holds", doorHolds.load());
     j.str("drag", dragName, 16);
     j.unum("hold_notches", holdNotches.load());
-    j.fixed("hold_target", double(holdTarget.load()), 3);
-    j.fixed("hold_applied", double(holdApplied.load()), 3);
+    j.fixed("hold_target", static_cast<double>(holdTarget.load()), 3);
+    j.fixed("hold_applied", static_cast<double>(holdApplied.load()), 3);
     j.unum("hold_placements", holdPlacements.load());
     j.unum("warps_skipped", warpsSkipped.load());
     j.unum("grabs_refused", grabsRefused.load());
@@ -592,12 +790,74 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("cue_draws", cueDraws.load());
     j.num("cue_gl", cueGl.load());
     j.boolean("cue_binding_failed", cueBindingFailed.load());
+    j.boolean("view_effects_hooked", viewEffectsHooked);
+    j.boolean("silhouette_hooked", silhouetteHooked);
+    j.unum("silhouette_replays", silhouetteReplays.load());
+    j.unum("silhouette_faults", silhouetteFaults.load());
+    j.unum("held_detail_frames", heldDetailFrames.load());
+    j.unum("held_detail_unanchored", heldDetailUnanchored.load());
+    j.unum("wounds_taken", woundsTaken.load());
+    j.unum("wounds_retired", woundsRetired.load());
+    j.unum("wound_faults", woundFaults.load());
+    j.unum("wound_skin_mapped", woundSkinMapped.load());
+    j.unum("wound_skin_unmapped", woundSkinUnmapped.load());
+    j.unum("wound_skin_bakes", woundSkinBakes.load());
+    j.unum("wound_skin_draws", woundSkinDraws.load());
+    j.unum("wound_skin_faults", woundSkinFaults.load());
+    j.boolean("wound_hits_linked", characterHits.load() != nullptr);
+    j.unum("held_texture_reads", heldTextureReads.load());
+    j.unum("held_lights_seen", heldLightsSeen.load());
+    j.unum("held_others", heldOthers.load());
+    j.unum("weapon_blood_taken", weaponBloodTaken.load());
+    j.unum("held_condition_reads", heldConditionReads.load());
+    j.unum("held_objects", heldObjects.load());
+    j.unum("replay_budget_cut", replayBudgetCut.load());
+    j.unum("held_mask_reused", heldMaskReused.load());
+    j.boolean("light_smoothing_hooked", originalShaderSource != nullptr);
+    j.unum("light_smoothing_rewrites", lightSmoothingRewrites.load());
+    j.unum("light_smoothing_faults", lightSmoothingFaults.load());
+    j.fixed("level_detail_scale", levelDetailScale.load(std::memory_order_relaxed), 2);
+    j.fixed("fire_volumes", float(fireShown.load(std::memory_order_relaxed)), 0);
+    j.fixed("fire_quality", fireQuality.load(std::memory_order_relaxed), 2);
+    j.fixed("fire_faults", float(fireFaults.load(std::memory_order_relaxed)), 0);
+    j.unum("level_people", levelPeopleSeen.load());
+    j.unum("view_effects_draws", viewEffectsDraws.load());
+    j.unum("view_effects_unavailable", viewEffectsUnavailable.load());
+    j.str("view_effects_reason", viewEffectsReasonSet.load(std::memory_order_acquire) ? viewEffectsReason : "");
+    j.fixed("dof_focus_cm", double(viewEffectsFocus.load()), 1);
+    j.str("view_effects_skip", viewEffectsSkip.load(std::memory_order_relaxed)); // "" while they draw
+    {
+        // GPU milliseconds per view-effect stage, eased; their sum is the whole stack's cost.
+        static const char* const timerNames[viewTimerCount] = {"gpu_ms_copies", "gpu_ms_occlusion_reflections",
+                                                          "gpu_ms_composite", "gpu_ms_depth_of_field", "gpu_ms_finish"};
+        double total = 0.0;
+        for (unsigned k = 0; k < viewTimerCount; ++k) {
+            // While the effects skip, nothing is drawn: report 0, not the last frame that drew.
+            const double ms = *viewEffectsSkip.load(std::memory_order_relaxed) ? 0.0
+                                                                                : viewEffectsGpuMs[k].load(std::memory_order_relaxed);
+            j.fixed(timerNames[k], ms, 3);
+            total += ms;
+        }
+        j.fixed("gpu_ms_view_effects", total, 3);
+        // The same stages' CPU time, and the whole frame; viewGpuLagMs says how to read them.
+        static const char* const cpuNames[viewTimerCount] = {"cpu_ms_copies", "cpu_ms_occlusion_reflections",
+                                                             "cpu_ms_composite", "cpu_ms_depth_of_field", "cpu_ms_finish"};
+        for (unsigned k = 0; k < viewTimerCount; ++k)
+            j.fixed(cpuNames[k], viewEffectsCpuMs[k].load(std::memory_order_relaxed), 3);
+        j.fixed("gpu_lag_ms", viewGpuLagMs.load(std::memory_order_relaxed), 2);
+        j.fixed("gpu_frame_ms", viewGpuFrameMs.load(std::memory_order_relaxed), 2);
+        j.fixed("cpu_frame_ms", viewCpuFrameMs.load(std::memory_order_relaxed), 2);
+    }
     j.unum("ui_reticle_reads", uiReticleReads.load());
     j.num("pick_camera", pickCamera.load());
     j.unum("notices", notices.load());
     j.str("state", InterlockedCompareExchange(&parkedNow, 0, 0)
                        ? "parked"
                        : (holdingNow.load() ? "holding" : (rearms.load() ? "rearmed" : "running")));
+    j.unum("distance_culled", distanceCulled.load());
+    j.unum("lights_trimmed", lightsTrimmed.load());
+    j.unum("shadow_renders", shadowRenders.load()); // point-light shadow maps the game redrew
+    j.fixed("shadow_ms", double(shadowScheduleMs.load(std::memory_order_relaxed)), 3);
     j.unum("parks", parks.load());
     j.unum("rearms", rearms.load());
     j.unum("reclaims", reclaims.load());
@@ -631,7 +891,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.end();
     j.unum("swing_hides", swingHides.load());
     j.str("look", "head");
-    j.real("near", double(nearStatus), 3);
+    j.real("near", static_cast<double>(nearStatus), 3);
     j.object("supersampling")
         .unum("scopes", supersampleScopes.load())
         .num("in_flight", InterlockedCompareExchange(&renderScopesInFlight, 0, 0))
@@ -665,7 +925,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .end();
     j.unum("helmet_turn_retests", helmetTurnRetests.load());
     j.unum("prop_near_hits", propNearHits.load());
-    j.real("heading_turn", double(headingTurn.load()) * 57.29578, 2);
+    j.real("heading_turn", static_cast<double>(headingTurn.load()) * 57.29578, 2);
     j.unum("overhead_inputs_held", overheadInputsHeld.load());
     j.object("lean")
         .boolean("held", false)
@@ -697,6 +957,73 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .real(nullptr, tpAimY.load(), 4)
         .end()
         .end();
+#ifdef FP_OPENXR_EMULATION
+    j.object("openxr")
+        .str("state", stereoReason.load())
+        .str("fault", stereoFaultText)
+        .str("reconstruction", fp::xr::reconstructionStatus())
+        .unum("frames", stereoFrames.load())
+        .unum("eyes", stereoEyes.load())
+        .unum("rejected", stereoRejected.load())
+        .unum("faults", stereoFaults.load())
+        .boolean("drive_enabled", trackedDriveRequested.load())
+        .boolean("drive_fault", trackedDriveFault.load())
+        .boolean("body_driver_enabled", trackedBodyRequested.load())
+        .boolean("physical_contacts_ready", physicalContactsReady.load())
+        .unum("physical_impact_calls", physicalImpactCalls.load())
+        .unum("motor_targets", trackedMotorTargets.load())
+        .unum("controller_pickups", trackedPickups.load())
+        .unum("hand_draws", trackedHandDraws.load())
+        .unum("body_hides", trackedBodyHides.load())
+        .boolean("title", stereoTitle)
+        .unum("pointer_moves", trackedPointerMoves.load())
+        .unum("pointer_clicks", trackedPointerClicks.load())
+        .unum("runtime_losses", stereoRuntimeLosses.load())
+        .boolean("recenter_remembered", vrRecenterOriginValid.load())
+        .unum("wrist_actions", trackedWristActions.load())
+        .unum("grab_turns", trackedGrabTurns.load())
+        .unum("hand_bends", trackedHandBends.load())
+        .unum("teleports", trackedTeleports.load())
+        .unum("item_carries", trackedItemCarries.load())
+        .boolean("pouch_ready", trackedPouchExports.list != nullptr)
+        .unum("pouch_stores", trackedPouchStores.load())
+        .unum("pouch_takes", trackedPouchTakes.load())
+        .unum("pouch_faults", trackedPouchFaults.load())
+        .boolean("teleport_fault", trackedTeleportFault.load())
+        .unum("haptic_pulses", trackedHapticPulses.load())
+        .unum("effect_passes", trackedEffectPasses.load())
+        .unum("comfort_draws", trackedComfortDraws.load())
+        .unum("hand_faults", trackedHandFaults.load())
+        .unum("body_hand_draws", trackedBodyHandDraws.load())
+        .unum("hand_skinned_drops", trackedHandSkinnedDrops.load())
+        .unum("glove_bends", trackedGloveBends.load())
+        .end();
+#endif
+    j.object("motions") // every build: the kick and the jump through the game's motion player
+        .unum("kicks", motionKicks.load())
+        .boolean("kick_fault", motionKickFault.load())
+        .unum("jumps", motionJumps.load())
+        .boolean("jump_fault", motionJumpFault.load())
+        .end();
+    j.object("blade") // every build: the drawn edge and the sinking thrust on the game's impact path
+        .boolean("ready", bladeReady.load())
+        .unum("drags", bladeDrags.load())
+        .unum("sinks", bladeSinks.load())
+        .unum("faults", bladeFaults.load())
+        .boolean("fault", bladeFault.load())
+        .end();
+    j.object("skin_merge") // every build: rigid hand pieces marked skinnable before the skin build
+        .unum("pieces", skinMergedPieces.load())
+        .boolean("fault", skinMergeFault.load())
+        .end();
+    j.object("finger_bones") // every build: the bones on the game's skeleton and their drivers
+        .unum("bones", trackedBoneCount.load())
+        .unum("characters", trackedBoneRootsDriven.load())
+        .unum("rewrites", trackedBoneRewrites.load())
+        .unum("faults", trackedBoneFaults.load())
+        .boolean("fault", trackedBoneFault.load())
+        .unum("pose_ticks", fingerPoseTicks.load())
+        .end();
     j.finish();
 }
 static DWORD runSession() {
@@ -714,7 +1041,7 @@ static DWORD runSession() {
         wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - statusPath), L"first-person-status.json");
         swprintf_s(statusTempPath, L"%s.tmp", statusPath);
     }
-    EnumWindows(findWindow, (LPARAM)&hookedWindow);
+    EnumWindows(findWindow, reinterpret_cast<LPARAM>(&hookedWindow));
     wchar_t executable[MAX_PATH]{};
     if (!GetModuleFileNameW(nullptr, executable, MAX_PATH)) {
         reportFault("unsupported_executable", "not_installed", "not_required");
@@ -753,7 +1080,7 @@ static DWORD runSession() {
         reportFault("game_not_ready", "not_installed", "not_required");
         return 2;
     }
-    base = (uintptr_t)GetModuleHandleW(nullptr);
+    base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     originalNav = (Nav)(gameAt(fp::sig::navSampler));
     if (!otherHooksCheck(executable)) {
         reportFault("native_code_conflict", "not_installed", "not_required",
@@ -810,6 +1137,8 @@ static DWORD runSession() {
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::sectorUpdate)), (void*)sectorUpdate,
                       (void**)&originalSectorUpdate) != MH_OK ||
+        MH_CreateHook((void*)gameAt(fp::sig::shadowSchedule), (void*)shadowSchedule,
+                      (void**)&originalShadowSchedule) != MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::cameraFade), (void*)cameraFade, (void**)&originalCameraFade) !=
             MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::fadeBounds), (void*)fadeBounds, (void**)&originalFadeBounds) !=
@@ -898,6 +1227,25 @@ static DWORD runSession() {
         MH_Uninitialize();awaitNativeHookRecovery();
         reportFault("headwear_hook_rollback_failed","not_installed","not_required");return 3;
     }
+    if (!createSkinMergeHook()) { // rigid hand pieces into the body skin (xr_bones.inl)
+        MH_Uninitialize();
+        awaitNativeHookRecovery();
+        reportFault("skin_merge_hook_creation_failed", "not_installed", "not_required");
+        return 3;
+    }
+    if (!createBladeHooks()) { // the plain build's own contact and commit hooks; the headset build's drive owns them
+        MH_Uninitialize();
+        awaitNativeHookRecovery();
+        reportFault("blade_hook_creation_failed", "not_installed", "not_required");
+        return 3;
+    }
+    if (!createStereoHooks()) {
+        MH_Uninitialize();
+        awaitNativeHookRecovery();
+        reportFault("stereo_hook_creation_failed", "not_installed", "not_required");
+        return 3;
+    }
+    createViewEffectsHook();
     {
         const char* reason = "";
         const char* hooks = "";
@@ -920,6 +1268,7 @@ static DWORD runSession() {
         for (int i = 0; !InterlockedCompareExchange(&stopping, 0, 0); i++) {
             Sleep(100);
             profilePulse();
+            devPulse();
             trackingReceiver.service(trackingEnabled.load());
             saveFov();
             if (!viewFaultNoticed && viewFault.load()) {
@@ -932,7 +1281,7 @@ static DWORD runSession() {
             if (i % 10 == 0) {
                 static unsigned stepsBefore = 0;
                 const unsigned steps = playerSteps.load(); // the player's pose builds a second
-                physicsStep = steps - stepsBefore >= 10 ? 1.f / float(steps - stepsBefore) : 0.f;
+                physicsStep = steps - stepsBefore >= 10 ? 1.f / static_cast<float>(steps - stepsBefore) : 0.f;
                 stepsBefore = steps;
             }
             pumpNotice();
@@ -953,12 +1302,16 @@ static DWORD runSession() {
             rawReconcile();
             if (i % 10 == 0) {
                 const bool starvedNow = fp::swapWatchStep(
-                    swapWatch, samples.load(), unsigned(InterlockedCompareExchange(&swapCalls, 0, 0)),
+                    swapWatch, samples.load(), static_cast<unsigned>(InterlockedCompareExchange(&swapCalls, 0, 0)),
                     InterlockedCompareExchange(&active, 0, 0) != 0);
                 if (starvedNow)
                     showNotice(
                         FP_SHOWN_NAME L": another program took over the game's frame hook (an overlay?). "
                                       L"Park, re-arm and F7 may not work; restart Exanima without it.");
+            }
+            if (i % 5 == 0 && slash) {
+                logSpawn();
+                logFaults();
             }
             if (i % 10 == 0 && slash) {
                 Aim a;
@@ -1085,6 +1438,7 @@ static void finishSessionWorker(bool (*noticePump)() = pumpNotice) {
     }
 }
 static DWORD WINAPI run(void*) {
+    AddVectoredExceptionHandler(1, recordFault); // never removed: the DLL stays mapped
     const DWORD result = runSession();
     profileStop("session_ended");
     profilePulse(false);

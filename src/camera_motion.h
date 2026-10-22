@@ -481,9 +481,13 @@ struct ThirdPerson {
     // height a ceiling took away (given to the boom instead), how far the pivot was pulled back out of a wall,
     // and the free length behind the pivot.
     float lastCeilingRoom = -1.f, lastLostHeight = 0.f, lastPivotPulled = 0.f, lastAllowed = 0.f;
+    // After a pull-in the boom waits this long before easing back out, so a pillar or a passer-by
+    // sliding past does not pump it in and out.
+    float outHold = 0.f;
     void reset() {
         valid = false;
         distance = -1.f;
+        outHold = 0.f;
         side = 0.f;
         sideNow = 0.f;
         pinned = 0.f;
@@ -594,8 +598,10 @@ struct ThirdPerson {
             valid = true;
             distance = -1.f;
         } else {
-            const float a = 1.f - std::exp(-seconds / tau);
-            for (int i = 0; i < 3; ++i) pivot[i] += (goal[i] - pivot[i]) * a;
+            // Vertical follows a little slower than horizontal so running head bob stays out of the view.
+            const float a = 1.f - std::exp(-seconds / tau),
+                        ay = down ? a : 1.f - std::exp(-seconds / std::fmax(tau, 0.15f));
+            for (int i = 0; i < 3; ++i) pivot[i] += (goal[i] - pivot[i]) * (i == 1 ? ay : a);
         }
         if (pivot[1] > ceilingY && ceilingY >= eye[1])
             pivot[1] = ceilingY; // easing never carries it into a lintel either
@@ -661,11 +667,18 @@ struct ThirdPerson {
                 }
             }
         }
-        if (distance < 0.f || allowed < distance || !std::isfinite(seconds) || seconds < 0.f ||
-            seconds > 0.5f)
+        if (distance < 0.f || !std::isfinite(seconds) || seconds < 0.f || seconds > 0.5f) {
             distance = allowed;
-        else
-            distance += (allowed - distance) * (1.f - std::exp(-seconds / 0.35f));
+            outHold = 0.f;
+        } else if (allowed < distance) {
+            distance = allowed;
+            outHold = 0.25f;
+        } else if (outHold > 0.f) {
+            outHold -= seconds;
+        } else {
+            const float back = 0.35f + 0.004f * (lag < 0.f ? 0.f : (lag > 100.f ? 100.f : lag));
+            distance += (allowed - distance) * (1.f - std::exp(-seconds / back));
+        }
         for (int i = 0; i < 3; ++i) pose[9 + i] = pivot[i] + dir[i] * distance;
     }
 };

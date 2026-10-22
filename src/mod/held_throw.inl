@@ -140,7 +140,7 @@ static QueuedFling captureQueuedFling(uintptr_t payload, uintptr_t body, const H
         if (!readable(release.context, field::physicsContext::running + 1)) return {};
         release.frequency = *(int*)(release.context + field::physicsContext::frequencyHz);
         if (release.frequency <= 10 || release.frequency > 1000) return {};
-        release.step = 1.f / float(release.frequency);
+        release.step = 1.f / static_cast<float>(release.frequency);
         release.thread = *(uintptr_t*)gameAt(fp::sig::nativePhysicsThread);
         if (!readable(release.thread, field::nativeThread::id + sizeof(DWORD))) return {};
         release.threadId = *(DWORD*)(release.thread + field::nativeThread::id);
@@ -199,7 +199,7 @@ static uintptr_t queueWorkFor(uintptr_t caller, uintptr_t queue, uintptr_t callb
     return originalQueueWork(queue, callback, payload);
 }
 static uintptr_t queueWork(uintptr_t queue, uintptr_t callback, uintptr_t payload) {
-    return queueWorkFor((uintptr_t)_ReturnAddress(), queue, callback, payload);
+    return queueWorkFor(reinterpret_cast<uintptr_t>(_ReturnAddress()), queue, callback, payload);
 }
 static uintptr_t applyHeldRelease(uintptr_t payload) {
     ULONGLONG serial = 0;
@@ -264,7 +264,7 @@ static void heldBodyIntegrateProfileBody(uintptr_t body) {
                     // Staged helper changes only12 older-history floats, all or none.
                     const bool applied = heldThrowOwnerLocked(entry) &&
                         fp::addFlingHistoryDelta(entry.velocity, entry.step,
-                        (float(*)[3])(body + field::bodyPart::history2));
+                        reinterpret_cast<float(*)[3]>(body + field::bodyPart::history2));
                     entry = {};
                     if (applied) ++flings;
                 }

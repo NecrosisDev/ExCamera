@@ -3,4 +3,5 @@
 namespace panel {
 std::wstring settingValue(const ModSettings& settings,int id);
 const wchar_t* settingLabel(int id);
+const wchar_t* settingTip(int id);
 } // namespace panel

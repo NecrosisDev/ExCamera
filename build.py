@@ -164,10 +164,21 @@ def _publish_locked(out, names, build, replace):
                 )
 
 
-def build_runtime(stage, ver, package):
+def xr_flags(sdk):
+    """Compile flags for the optional OpenXR integration; None keeps it out of the build."""
+    if sdk is None:
+        return ''
+    sdk = sdk.resolve()
+    if not (sdk / 'include/openxr/openxr.h').is_file():
+        raise SystemExit('OpenXR headers missing: ' + str(sdk))
+    return f'/DFP_OPENXR_EMULATION /DXR_USE_PLATFORM_WIN32 /DXR_USE_GRAPHICS_API_OPENGL /I"{sdk / "include"}" '
+
+
+def build_runtime(stage, ver, package, dev=False, openxr_sdk=None):
     obj = stage / 'obj'
     obj.mkdir(exist_ok=True)
-    cl = f'{CL} /Fo:"{obj}\\\\" '
+    cl = f'{CL}{" /DFP_DEV_TOOLS=1" if dev else ""} /Fo:"{obj}\\\\" '
+    xr = xr_flags(openxr_sdk)
     minhook = ' '.join(f'"{obj / Path(f).with_suffix(".obj").name}"' for f in MINHOOK)
     shim = obj / 'supersampling_shim.obj'
     settings_objects = ' '.join(
@@ -178,7 +189,7 @@ def build_runtime(stage, ver, package):
         f'{MINHOOK_CL} {" ".join(MINHOOK)} /Fo:"{obj}\\\\"',
         f'ml64 /nologo /c /Fo"{shim}" supersampling_shim.asm',
         (
-            f'{cl}/LD first_person.cpp {minhook} "{shim}" {settings_objects} {LIBS} '
+            f'{cl}{xr}/LD first_person.cpp {"xr_host.cpp " if xr else ""}{minhook} "{shim}" {settings_objects} {LIBS} '
             f'/Fe:"{stage / "ExanimaFirstPerson.dll"}" /link /INCREMENTAL:NO /Brepro'
         ),
         (
@@ -190,11 +201,17 @@ def build_runtime(stage, ver, package):
     for symbol in ('enable', 'disable', 'allowOtherHooks', 'enableWithStatus'):
         commands.append(f'findstr /r /c:" {symbol}$" "{obj / "exports.txt"}" >nul')
     run(commands, stage)
+    # EMTK skips a mod folder without manifest.toml; its version is the build's.
+    manifest = re.sub(r'^version = ".*"$', f'version = "{ver}"', (ROOT / 'manifest.toml').read_text(encoding='utf-8'), count=1, flags=re.M)
+    if f'version = "{ver}"' not in manifest:
+        raise ValueError('manifest.toml has no version line')
+    (stage / 'manifest.toml').write_text(manifest, encoding='utf-8', newline='\n')
     if package:
         path = stage / f'ExCamera-{ver}-minimal.zip'
         entries = {
             'ExanimaFirstPerson.dll': (stage / 'ExanimaFirstPerson.dll').read_bytes(),
             'ExCamera.exe': (stage / 'ExCamera.exe').read_bytes(),
+            'manifest.toml': (stage / 'manifest.toml').read_bytes(),
             'LICENSE.txt': (ROOT / 'LICENSE').read_bytes(),
             'LICENSE-MinHook.txt': (SRC / 'vendor/minhook/LICENSE.txt').read_bytes(),
         }
@@ -203,7 +220,7 @@ def build_runtime(stage, ver, package):
                 z.writestr(name, data)
         with zipfile.ZipFile(path) as z:
             if (
-                len(z.namelist()) != 4
+                len(z.namelist()) != len(entries)
                 or set(z.namelist()) != set(entries)
                 or z.testzip() is not None
             ):
@@ -215,16 +232,22 @@ def build_runtime(stage, ver, package):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--package', action='store_true', help='Build and create minimal release ZIP')
+    p.add_argument('--dev', action='store_true', help='Include dev automation (never for release packages)')
+    p.add_argument('--openxr-sdk', type=Path, help='Compile the XR integration with this OpenXR SDK checkout (never packaged)')
     args = p.parse_args()
+    if args.dev and args.package:
+        p.error('--dev builds are never packaged')
+    if args.package and args.openxr_sdk:
+        p.error('--openxr-sdk builds are never packaged')
     ver = re.search(
         r'^#define FP_BUILD "([\w.-]+)"$',
         (SRC / 'build_identity.h').read_text(encoding='utf-8'),
         re.M,
     ).group(1)
-    names = ['ExanimaFirstPerson.dll', 'ExCamera.exe']
+    names = ['ExanimaFirstPerson.dll', 'ExCamera.exe', 'manifest.toml']
     if args.package:
         names.append(f'ExCamera-{ver}-minimal.zip')
-    staged_publish(OUT, names, lambda stage: build_runtime(stage, ver, args.package))
+    staged_publish(OUT, names, lambda stage: build_runtime(stage, ver, args.package, args.dev, args.openxr_sdk))
     print('BUILT', ver, OUT / 'ExanimaFirstPerson.dll', OUT / 'ExCamera.exe')
     if args.package:
         print('PACKAGE', OUT / names[-1])

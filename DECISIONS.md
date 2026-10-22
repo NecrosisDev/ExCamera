@@ -101,3 +101,27 @@ These choices do not transfer any camera ownership to ExaniMate. Tests and synth
 - Decision: import the verified prof8 runtime, profiling helper and compatibility generators without bundling private research, game executables, comparison builds or binaries. Both workflows retain compatibility-table, build/export and ZIP checks.
 - Because: the owner explicitly requested a runtime/developer repository without tests. This does not remove any production safety check or change the tag-derived release version contract.
 - Revisit only if: the owner asks to restore public test sources. Offline/private fixture results remain separate from actual gameplay acceptance.
+
+## Fault-safe hook locks (2026-10-21)
+
+- Decision: nav, swap and cursor-position hooks acquire cameraLock and run their former body in a separate function under __try/__finally; behavior() releases aimLock in __finally when updateAim faults while holding it. Faults still propagate.
+- Over: /EHa, swallowing faults, or a recursive lock.
+- Because: under /EHsc an SEH unwind past CameraGuard need not run its destructor, and updateAim had no release on unwind. A fault reading a dying character, caught by the game, left the lock held and the next acquire blocked the game thread forever. Observed: the status writer stopped at the moment of death. After the change one in-game death did not freeze. Static reading plus one live run; the leaked-lock mechanism itself was not observed directly.
+- Revisit if: another blocking lock is held across unguarded game-memory reads on a game-thread hook. Inner aimLock/reticleLock spans inside these regions copy mod state only.
+
+## Per-call readability sharing (2026-10-21)
+
+- Decision: within one call with no intervening native call, reuse the last fresh VirtualQuery region (scene walks, self-pick restore, near-plane ancestors, form scans) and skip a repeated query of the same node or range. Head-wear branch verdicts are memoised by index, since parents precede children in the walk. windowProc tests the message type before gameplay predicates.
+- Because: same results with fewer system calls on per-frame and per-message paths. Nothing is retained across calls; this extends the existing per-mesh-callback sharing decision.
+
+## Decal depth offset floor (2026-10-21)
+
+- Decision: keep the near-ratio scaling of authored P10 offsets, but never let a non-terrain offset fall below min(|authored|, 16 depth steps = 16·2^-23 NDC).
+- Because: 1DD50 builds an infinite-far frustum, so an authored P10 addition is a constant NDC shift at any near. Blood (+1e-5, overlay 100820) and scene decals (+2e-5, 4F750) scaled by 3 cm / 100 cm land near one 24-bit step and z-fight. Sixteen steps is about 0.3 cm of poke-through at 1 m with a 3 cm near. Offline: 1e-5 at stock 100 / near 3 becomes 1.91e-6; unbiased P10 untouched. Not yet seen in game.
+- Revisit if: decals show through thin geometry in front of them, or the depth buffer is not 24-bit.
+
+## View effects and VR merged (2026-10-21)
+
+- Decision: merge the post-FX view effects (sampled-views detour 0xA0CE0, world-pass return 0x4BF39) and the OpenXR emulation integration into this tree, porting by intent onto today's fault-safe and dev-build changes. Generated tables are regenerated once from the reviewed EXE; both groups are optional and admitted only on whole-function byte-exact contracts (file and loaded image).
+- Because: the installed Hellmode EXE differs from the reviewed one by 17 bytes outside every hooked function; source-hash gating kept the effects off there. Offline admission passes on both EXEs; the Hellmode title run admits view effects with 333 checks and no faults. VR is compiled only with --openxr-sdk.
+- Open: deleting a non-current context whose DC is gone with live view resources is still refused (reviewed WGL deletion contract). Under supersampling the effects run once on the averaged image (4B6D0), reading the view's own matrices.

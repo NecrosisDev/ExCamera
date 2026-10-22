@@ -31,6 +31,15 @@ public:
         return true;
     }
     void resetGroup(int group) { value.resetGroup(group); value.normalize(); }
+    void resetRows(const int* rows, int count) {
+        const ModSettings defaults;
+        for (int k = 0; k < count; ++k) {
+            const RowInfo& i = rowInfo(rows[k]);
+            if (i.value) value.*i.value = defaults.*i.value;
+            if (i.flag) value.*i.flag = defaults.*i.flag;
+        }
+        value.normalize();
+    }
     bool refreshStatus(const ModSettings& live) {
         if (value.trackingStatus==live.trackingStatus && value.rawMouseFallback==live.rawMouseFallback &&
             value.manualDefenseAvailable==live.manualDefenseAvailable) return false;

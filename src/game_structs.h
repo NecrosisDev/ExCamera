@@ -33,6 +33,8 @@ inline constexpr size_t aimDirection = 0xCC0;   // float[3]: the cursor aim's he
 inline constexpr size_t facing = 0xCFC;         // float[3]
 inline constexpr size_t behaviour = 0xD40;      // its behaviour object (namespace behaviour)
 inline constexpr size_t postureReadiness = 0xD58; // float: native B7560 readiness gate (>= .01)
+inline constexpr size_t health = 0xD5C;          // float: current health
+inline constexpr size_t healthMax = 0x103C;      // float: its maximum
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
 inline constexpr size_t stateFlags =
     0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
@@ -48,13 +50,20 @@ inline constexpr size_t swingBits = 0x1018;  // bounce/block bits (& 0x26)
 inline constexpr size_t gripFlags =
     0x1068; // 0x80: the opposite family uses slot 1; nonzero: the wide threshold
 inline constexpr size_t gripEntry = 0x1070;    // slot 0's entry in the grip table (gripTable)
-inline constexpr size_t balance = 0x10B8;      // float
-inline constexpr size_t balanceMax = 0x10BC;   // float
+inline constexpr size_t stamina = 0x10B8;      // float
+inline constexpr size_t staminaMax = 0x10BC;   // float
 inline constexpr size_t gaitFlags = 0x10F4;    // bit 1: backward gait
 inline constexpr size_t headPart = 0x11E0;     // the head's body part
 inline constexpr size_t walking = 0x12EA;      // u8: exploration travel under way
 inline constexpr size_t actionCallback = 0x1230; // native action dispatcher, owns LMB even outside0x20
 inline constexpr size_t combatStance = 0x12FE; // u8: in combat mode
+inline constexpr size_t partCount = 0x910, parts = 0x918;
+inline constexpr size_t impactVelocity = 0x948, activePartCount = 0x970, activeParts = 0x978;
+inline constexpr size_t legCount = 0x9D8, legs = 0x9E0;     // native lower-leg/support chains
+inline constexpr size_t transform = 0x9F0;   // float[12]: basis then position, as the character move 170810 stores it
+inline constexpr size_t bodyFrame = 0x9F0, balanceFrame = 0xDFC; // native affine frames
+inline constexpr size_t shieldPart = 0xBF8, specialHeldPart = 0xC00; // native alternate constraint owners
+inline constexpr size_t impactKind = 0xC18, impactTarget = 0xC20, impactPoint = 0xC28, impactWeapon = 0xC38;
 } // namespace character
 
 // A character's behaviour (character::behaviour); the player's runs the input step.
@@ -97,11 +106,29 @@ inline constexpr size_t parentPart = 0x428;
 inline constexpr size_t character = 0x580;     // the owner: a freed or reused part no longer names it
 inline constexpr size_t extraRotation = 0x5EC; // float[4] quaternion (x y z w)
 inline constexpr size_t slackCap = 0x77C;      // float: how far the head target may lag (head part)
+inline constexpr size_t restTetra = 0x58;      // float[4][3]: rest-pose tetrahedron, grip anchors weight it
+inline constexpr size_t velocityTetra = 0x180; // float[4][3]: per-step point velocities (0x88D30)
+inline constexpr size_t jointCount = 0x31C, joints = 0x320; // grip joint rows, 0x68 stride
+inline constexpr size_t contactCount = 0x338, contacts = 0x340; // support contacts, 0x98 stride
+inline constexpr size_t targetPose = 0x4F0;    // float[12]: motor target the pose builder assembles
+inline constexpr size_t animationPose = 0x550; // float[12]: composed motor candidate, not achieved physics
+inline constexpr size_t role = 0x5B0;          // int: bind role; support leg 0x10, foot 0x13
+inline constexpr size_t weaponData = 0x6E0;    // derived weapon handling inputs (a shield's is shorter)
 } // namespace bodyPart
+namespace gripJoint {
+inline constexpr size_t connectedAnchor = 0x10, connectedPart = 0x30, flags = 0x38;
+} // namespace gripJoint
+namespace contact {
+inline constexpr size_t flags = 0x10; // support/swing state, read only
+} // namespace contact
 
 // A node in a scene tree: a mesh, a group, a placed object.
 namespace sceneNode {
 inline constexpr size_t queryFlags = 0xC;  // bit 0x200000: native held-body collision query candidate
+inline constexpr size_t boundsCentre = 0x20; // float[3], sector-local: the bounding sphere the visibility tests use
+inline constexpr size_t boundsRadius = 0x2C; // float
+inline constexpr size_t lightHead = 0x1DC; // int: first entry of its strength-sorted light list, -1 for none
+inline constexpr size_t lights = 0x1E0;    // the list's entries (0x18 bytes each), indexed by the sector's light number
 inline constexpr size_t transform = 0x40;  // float[12], local to its sector
 inline constexpr size_t transformOrigin = transform + 0x24;
 inline constexpr size_t localTransform = 0x70; // float[12], relative to its parent
@@ -115,25 +142,44 @@ inline constexpr size_t name = 0x140;     // char[16], not always terminated
 inline constexpr size_t bodyPart = 0x160; // its physics body (a character's part, a loose object's body)
 inline constexpr size_t rayRoutine = 0x3B0; // the mesh type's ray test (game code)
 inline constexpr size_t rayContext = 0x3B8;
+inline constexpr size_t flags = 0x8;              // native pick eligibility and visibility bits
+inline constexpr size_t interactionFlags = 0x184; // 0x8000: a native interaction callback is pending
 } // namespace sceneNode
 
 // A scene sector (sceneNode::sector) and its list of meshes.
 namespace sector {
 inline constexpr size_t scene = 0x220; // owning scene, used by native body release
 inline constexpr size_t origin = 0x64;    // float[3]: add to sector-local positions for global ones
+inline constexpr size_t lightCount = 0x1F0; // int: the sector's lights
 inline constexpr size_t lastMesh = 0x1C8; // int
 inline constexpr size_t meshes = 0x1D0;
+inline constexpr size_t passMask = 0xE0; // cached render-view admission, borrowed for controller picks
 } // namespace sector
 
 namespace scene {
 inline constexpr size_t lifecycleFlags = 0x1C20; // optional native attack-variant ownership
 inline constexpr size_t physicsContext = 0x1C28; // owning native physics context
+inline constexpr size_t lightCount = 0x1C10; // int: the scene's lights
+inline constexpr size_t lights = 0x1C18;     // pointer array of lights
 } // namespace scene
+namespace light {
+inline constexpr size_t kind = 0x260;   // int: 2 directional
+inline constexpr size_t shadow = 0x2C0; // the light's shadow map, 0 for none
+} // namespace light
+namespace shadowMap {
+inline constexpr size_t dirty = 0x10;  // face mask still to render (3F all six cube faces)
+inline constexpr size_t needed = 0x14; // faces needed this frame
+} // namespace shadowMap
 namespace physicsContext {
 inline constexpr size_t scene = 0x48, running = 0x159; // optional native attack-variant ownership
 inline constexpr size_t frequencyHz = 0x6C; // signed int: native simulation frequency
 } // namespace physicsContext
 
+// One entry of a mesh's light list: float weight at +0, then prev, next, active, light*.
+namespace lightEntry {
+inline constexpr size_t next = 0x8;
+inline constexpr size_t active = 0xC;
+} // namespace lightEntry
 namespace camera {
 inline constexpr size_t pose = 0x40;        // float[12]
 inline constexpr size_t pose2 = 0x70;       // float[12]: a second copy the game keeps; written with pose
@@ -147,6 +193,7 @@ inline constexpr size_t target = 0x1D8;     // native camera target node, terrai
 } // namespace camera
 
 namespace viewport {
+inline constexpr size_t scene = 0x10;
 inline constexpr size_t width = 0x19C, height = 0x1A0;
 inline constexpr size_t view = 0x1A8;
 inline constexpr size_t pickCamera = 0x1C0; // the camera the pick rays unproject through
@@ -155,7 +202,16 @@ inline constexpr size_t sceneManager = 0x1F0;
 namespace view {
 inline constexpr size_t pickFarDepth = 0x120; // float: native far unprojection depth
 inline constexpr size_t camera = 0x50;
+inline constexpr size_t pickPassMask = 0x1C4; // native pick pass filter
+inline constexpr size_t offscreenSampling = 0x206; // bool: world renders into the shared sampling target
+inline constexpr size_t renderView = 0x60;         // float[16]: world-to-view the last world pass drew with
+inline constexpr size_t renderProjection = 0xE0;   // float[16]: the projection it drew with
+inline constexpr size_t viewTexture = 0x40;        // texture object: the image presentation draws (and blooms)
+inline constexpr size_t outputWidth = 0x18, outputHeight = 0x1C; // its size; the sampling target resolves to it
 } // namespace view
+namespace texture {
+inline constexpr size_t glName = 0x58; // GL texture name
+} // namespace texture
 namespace sceneManager {
 inline constexpr size_t flags = 0xC; // 0x2000000: it has a level grid
 inline constexpr size_t levelGrid = 0x320;

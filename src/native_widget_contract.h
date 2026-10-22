@@ -17,11 +17,15 @@ inline bool checkboxAction(const NativeElement& e,int row) {
 // Ownership, descriptor identity and thread admission remain the controller's responsibility.
 inline bool activation(const NativeElement& e,int row,bool capture,bool controls) {
     if (e.flags & inactive) return false;
-    if (!controls) return (e.flags & buttonTransient)!=0;
+    // The root form's buttons (tabs, Defaults, Apply, Cancel): the game calls an action only for a click, and
+    // on the widened Hellmode form it no longer carries the transient bit when it does (status: refused 0x1001000).
+    if (!controls) return e.kind==1;
     if (capture) return e.kind==5;
     if (rowInfo(row).checkbox()) return checkboxAction(e,row);
     // Native motion/directional and programmatic slider actions omit transient.
     if (rowInfo(row).range.count) return e.kind==4;
-    return e.kind==1 && (e.flags & buttonTransient)!=0;
+    // A value button in the scrolling pane: the game calls its action only for a click, and does so after
+    // clearing the transient bit the root form's buttons still carry, so it is not required here.
+    return e.kind==1;
 }
 } // namespace panel::widget

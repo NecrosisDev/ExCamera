@@ -19,9 +19,27 @@ static bool settingsSavePending() {
 static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     panel::ModSettings s;
     s.fov = selectedFov.load();
-    s.sensitivity = int(std::lround(sensitivity.load() / 0.0025f * 100.f));
+    s.sensitivity = static_cast<int>(std::lround(sensitivity.load() / 0.0025f * 100.f));
     s.invertY = invertY.load();
     s.indicator = aimIndicator.load();
+    // View effects keep a 0..1 strength (view_effects.inl); these rows store it as before.
+    s.ambientOcclusion = int(std::lround(ambientOcclusion.load() * 100.f)); // percent, as the sliders store it
+    s.depthOfField = int(std::lround(depthOfField.load() * 100.f));
+    s.screenSpaceReflections = int(std::lround(screenSpaceReflections.load() * 100.f));
+    s.edgeSmoothing = edgeSmoothing.load() > 0.f;
+    s.helmetVisor = helmetVisor.load() > 0.f;
+    s.playerGhost = playerGhost.load() > 0.f;
+    s.fingerPoses = fingerPoses.load() != 0;
+    s.fingerPosesOthers = fingerPosesOthers.load() != 0;
+    s.conditionEffects = conditionEffects.load() > 0.f;
+    s.heldDetail = int(std::lround(heldDetail.load() * 100.f));
+    s.armourDetail = int(std::lround(armourDetail.load() * 100.f));
+    s.objectDetail = int(std::lround(objectDetail.load() * 100.f));
+    s.levelDetail = int(std::lround(levelDetail.load() * 100.f));
+    s.drawDistance = drawDistanceM.load();
+    s.objectLights = objectLightCap.load();
+    s.woundMarks = woundMarks.load() > 0.f;
+    s.lightSmoothing = lightSmoothing.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
     s.rawMouseFallback = rawMouse && !rawWanted.load();
@@ -38,11 +56,39 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.tpTight = tpTight.load();
     s.tpCombat = tpCombat.load();
     s.tpFov = tpFov.load();
+    s.vrIpd = vrIpdMm.load();
+    s.vrScale = vrUnitsPerMetre.load();
+    s.vrRenderMode = vrRenderMode.load();
+    s.vrHands = vrHandsDrawn.load();
+    s.vrPosture = vrPosture.load();
+    s.vrHeadset = vrHeadset.load();
+    s.vrTurning = vrTurning.load();
+    s.vrEffects = vrEffects.load();
+    s.vrGripAngle = vrGripAngle.load();
+    s.vrHaptics = vrHapticPercent.load();
+    s.vrPanelWidth = vrPanelWidthCm.load();
+    s.vrPanelDistance = vrPanelDistanceCm.load();
+    s.vrComfort = vrComfort.load();
+    s.vrBody = vrBodyHandsOnly.load();
+    s.vrHeight = vrHeightCm.load();
+    s.vrGripSlide = vrGripSlideCm.load();
+    s.vrKick = vrKick.load();
+    s.vrJump = vrJump.load();
+    s.vrWeaponWeight = vrWeaponWeight.load();
+    s.vrTeleport = vrTeleport.load();
+    s.vrHandPanel = vrHandPanel.load();
+    s.vrPouch = vrPouch.load();
+    s.vrFingerBones = vrFingerBones.load();
+    s.vrGrabTurn = vrGrabTurn.load();
+    s.vrEyeScale = vrEyeScalePercent.load();
     s.tpLag = tpLag.load();
     s.tpBlockers = tpBlockers.load();
     s.tpDown = tpDown.load();
     s.tpCombatAimFree = tpCombatAimFree.load();
     s.attackCue = attackCue.load();
+    s.bladeDrag = bladeDrag.load();
+    s.stabSink = stabSink.load();
+    s.bladeGainPercent = bladeGainPercent.load();
     s.cueSize = cueSize.load();
     s.cueOpacity = cueOpacity.load();
     s.cueThrust = cueThrust.load();
@@ -69,13 +115,15 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.leanRightKey = leanRightKey.load();
     s.eyeSetback = eyeSetback.load();
     s.rotateHeldKey = rotateHeldKey.load();
+    s.kickKey = kickKey.load();
+    s.jumpKey = jumpKey.load();
     s.leanKey = leanKey.load();
     s.holdHeading = holdHeadingOn.load();
     s.autoRecenter = aimAutoRecenter.load();
     s.edgeSoftness = aimEdgeSoftness.load();
     s.tracking = trackingEnabled.load();
     s.trackingKey = trackingRecenterKey.load();
-    s.trackingStatus = int(trackingReceiver.status());
+    s.trackingStatus = static_cast<int>(trackingReceiver.status());
     if (s.trackingStatus == 2) {
         const auto sample = trackingReceiver.snapshot();
         const auto now = GetTickCount64();
@@ -88,8 +136,7 @@ static panel::ModSettings currentSettings() { // a coherent display snapshot (an
     SettingsGuard guard;
     return readLiveSettings();
 }
-static void
-writeLiveSettings(const panel::ModSettings& requested) {
+static void writeLiveSettings(const panel::ModSettings& requested) {
     auto s = requested;
     s.normalize(); // also enforced for bulk/internal callers, not just UI and INI loading
     const bool policyChanged = fpManualGuard.load() != s.fpDefense || tpManualGuard.load() != s.tpDefense ||
@@ -104,9 +151,26 @@ writeLiveSettings(const panel::ModSettings& requested) {
     fpSwingSelection = s.fpSwingSelection;
     tpSwingSelection = s.tpSwingSelection;
     selectedFov.store(s.fov);
-    sensitivity = 0.0025f * float(s.sensitivity) / 100.f;
+    sensitivity = 0.0025f * static_cast<float>(s.sensitivity) / 100.f;
     invertY = s.invertY;
     aimIndicator = s.indicator;
+    ambientOcclusion = effectStrength(s.ambientOcclusion);
+    depthOfField = effectStrength(s.depthOfField);
+    screenSpaceReflections = effectStrength(s.screenSpaceReflections);
+    edgeSmoothing = s.edgeSmoothing ? 0.5f : 0.f; // on/off rows: on is the old look, 0.5
+    helmetVisor = s.helmetVisor ? 0.5f : 0.f;
+    playerGhost = s.playerGhost ? 0.5f : 0.f;
+    fingerPoses = s.fingerPoses ? 1 : 0;
+    fingerPosesOthers = s.fingerPosesOthers ? 1 : 0;
+    conditionEffects = s.conditionEffects ? 0.5f : 0.f;
+    heldDetail = effectStrength(s.heldDetail);
+    armourDetail = effectStrength(s.armourDetail);
+    objectDetail = effectStrength(s.objectDetail);
+    levelDetail = effectStrength(s.levelDetail);
+    drawDistanceM = s.drawDistance;
+    objectLightCap = s.objectLights;
+    woundMarks = s.woundMarks ? 1.f : 0.f;
+    lightSmoothing = s.lightSmoothing;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;
     rawMouse = s.rawMouse;
@@ -123,10 +187,38 @@ writeLiveSettings(const panel::ModSettings& requested) {
     tpCombat = s.tpCombat;
     tpFov = s.tpFov;
     tpLag = s.tpLag;
+    vrIpdMm = s.vrIpd;
+    vrUnitsPerMetre = s.vrScale;
+    vrRenderMode = s.vrRenderMode;
+    vrHandsDrawn = s.vrHands;
+    vrPosture = s.vrPosture;
+    vrHeadset = s.vrHeadset;
+    vrTurning = s.vrTurning;
+    vrEffects = s.vrEffects;
+    vrGripAngle = s.vrGripAngle;
+    vrHapticPercent = s.vrHaptics;
+    vrPanelWidthCm = s.vrPanelWidth;
+    vrPanelDistanceCm = s.vrPanelDistance;
+    vrComfort = s.vrComfort;
+    vrBodyHandsOnly = s.vrBody;
+    vrHeightCm = s.vrHeight;
+    vrGripSlideCm = s.vrGripSlide;
+    vrKick = s.vrKick;
+    vrJump = s.vrJump;
+    vrWeaponWeight = s.vrWeaponWeight;
+    vrTeleport = s.vrTeleport;
+    vrHandPanel = s.vrHandPanel;
+    vrPouch = s.vrPouch;
+    vrFingerBones = s.vrFingerBones;
+    vrGrabTurn = s.vrGrabTurn;
+    vrEyeScalePercent = s.vrEyeScale;
     tpBlockers = s.tpBlockers;
     tpDown = s.tpDown;
     tpCombatAimFree = s.tpCombatAimFree;
     attackCue = s.attackCue;
+    bladeDrag = s.bladeDrag;
+    stabSink = s.stabSink;
+    bladeGainPercent = s.bladeGainPercent;
     cueSize = s.cueSize;
     cueOpacity = s.cueOpacity;
     cueThrust = s.cueThrust;
@@ -148,6 +240,8 @@ writeLiveSettings(const panel::ModSettings& requested) {
     leanRightKey = s.leanRightKey;
     eyeSetback = s.eyeSetback;
     rotateHeldKey = s.rotateHeldKey;
+    kickKey = s.kickKey;
+    jumpKey = s.jumpKey;
     leanKey = s.leanKey;
     holdHeadingOn = s.holdHeading;
     aimAutoRecenter = s.autoRecenter;
@@ -180,7 +274,7 @@ static panel::ModSettings readSettings(const wchar_t* path) {
             const long n = wcstol(text, &end, 10);
             const bool parsed = end != text;
             while (end && (*end == L' ' || *end == L'\t')) ++end;
-            if (parsed && end && !*end) v = int(n);
+            if (parsed && end && !*end) v = static_cast<int>(n);
         }
         if (v == panel::badText) continue;
         if (i.value)
@@ -194,6 +288,15 @@ static panel::ModSettings readSettings(const wchar_t* path) {
                                  path); // before Blockers: HideBlockers, 1 hide, 0 pull in
         const int legacy = GetPrivateProfileIntW(L"ThirdPerson", L"HideBlockers", -1, path);
         if (!t[0] && legacy >= 0) s.tpBlockers = legacy ? fp::blockersHide : fp::blockersPush;
+    }
+    {
+        wchar_t origin[160]{};
+        GetPrivateProfileStringW(L"VR", L"RecenterOrigin", L"", origin, 160, path);
+        float o[7]{};
+        if (origin[0] && swscanf_s(origin, L"%f,%f,%f,%f,%f,%f,%f", &o[0], &o[1], &o[2], &o[3], &o[4], &o[5], &o[6]) == 7) {
+            memcpy(vrRecenterOrigin, o, sizeof o);
+            vrRecenterOriginValid = true;
+        }
     }
     wchar_t indicatorText[24]{};
     GetPrivateProfileStringW(L"View", L"AimIndicator", L"", indicatorText, 24, path);
@@ -250,7 +353,7 @@ static void persistSettingsRow(unsigned row) {
         if (revision == savedSettingsRevision[row]) return;
         snapshot = readLiveSettings();
     }
-    const bool written = saveRow(int(row), snapshot); // no runtime lock across disk I/O
+    const bool written = saveRow(static_cast<int>(row), snapshot); // no runtime lock across disk I/O
     if (written) {
         SettingsGuard guard;
         savedSettingsRevision[row] = revision; // not the potentially newer live revision

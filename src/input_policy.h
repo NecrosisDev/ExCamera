@@ -397,6 +397,49 @@ inline int crouchModeFromText(const wchar_t* t) {
 inline const wchar_t* crouchModeText(int m) {
     return m == 0 ? L"off" : (m == 1 ? L"hold" : L"toggle");
 }
+inline int vrRenderModeFromText(const wchar_t* t) {
+    if (!t) return 0;
+    const wchar_t* w = L"reconstruction";
+    const wchar_t* a = t;
+    while (*a && *w && ((*a | 32) == (*w | 32))) { ++a; ++w; }
+    if (*w) return 0;
+    return !*a ? 1 : (*a | 32) == '-' || (*a | 32) == '_' ? 2 : 0; // reconstruction-filled
+}
+inline const wchar_t* vrRenderModeText(int m) { return m == 2 ? L"reconstruction-filled" : m == 1 ? L"reconstruction" : L"geometry"; }
+inline int vrHandsFromText(const wchar_t* t) {
+    if (!t) return 0;
+    return ((t[0] | 32) == 'd' && (t[1] | 32) == 'r') || ((t[0] | 32) == 'o' && (t[1] | 32) == 'n') || t[0] == '1' ? 1 : 0;
+}
+inline const wchar_t* vrHandsText(int m) { return m ? L"drawn" : L"off"; }
+inline int vrPostureFromText(const wchar_t* t) { return t && (t[0] | 32) == 's' && (t[1] | 32) == 'e' ? 1 : (t && t[0] == '1' ? 1 : 0); }
+inline const wchar_t* vrPostureText(int m) { return m ? L"seated" : L"standing"; }
+inline int vrHeadsetFromText(const wchar_t* t) { return t && (((t[0] | 32) == 'o' && (t[1] | 32) == 'n') || t[0] == '1') ? 1 : 0; }
+inline const wchar_t* vrHeadsetText(int m) { return m ? L"on" : L"off"; }
+inline int vrTurningFromText(const wchar_t* t) {
+    if (!t) return 1;
+    if ((t[0] | 32) == 's' && (t[1] | 32) == 'm') return 3;
+    if ((t[0] | 32) == 's' && (t[1] | 32) == 'n') return t[4] == '4' ? 2 : 1; // snap30 / snap45
+    if ((t[0] | 32) == 'o' && (t[1] | 32) == 'f') return 0;
+    return t[0] >= '0' && t[0] <= '3' && !t[1] ? t[0] - '0' : 1;
+}
+inline const wchar_t* vrTurningText(int m) { return m == 1 ? L"snap30" : m == 2 ? L"snap45" : m == 3 ? L"smooth" : L"off"; }
+inline int vrEffectsFromText(const wchar_t* t) { return t && (((t[0] | 32) == 'o' && (t[1] | 32) == 'n') || t[0] == '1') ? 1 : 0; }
+inline const wchar_t* vrEffectsText(int m) { return m ? L"on" : L"off"; }
+inline int vrComfortFromText(const wchar_t* t) {
+    if (!t) return 0;
+    if ((t[0] | 32) == 'w' || t[0] == '2') return 2; // walking (and turning)
+    if ((t[0] | 32) == 't' || t[0] == '1') return 1; // turning
+    return 0;
+}
+inline const wchar_t* vrComfortText(int m) { return m == 2 ? L"walking" : m == 1 ? L"turning" : L"off"; }
+inline int vrBodyFromText(const wchar_t* t) { return t && ((t[0] | 32) == 'h' || t[0] == '1') ? 1 : 0; } // hands only
+inline const wchar_t* vrBodyText(int m) { return m ? L"hands" : L"full"; }
+inline int vrGrabTurnFromText(const wchar_t* t) { return t && (((t[0] | 32) == 'o' && (t[1] | 32) == 'n') || t[0] == '1') ? 1 : 0; }
+inline const wchar_t* vrGrabTurnText(int m) { return m ? L"on" : L"off"; }
+inline int vrKickFromText(const wchar_t* t) { return t && (((t[0] | 32) == 'o' && (t[1] | 32) == 'n') || t[0] == '1') ? 1 : 0; }
+inline const wchar_t* vrKickText(int m) { return m ? L"on" : L"off"; }
+inline int vrFingerBonesFromText(const wchar_t* t) { return t && (((t[0] | 32) == 'o' && (t[1] | 32) == 'n') || t[0] == '1') ? 1 : 0; }
+inline const wchar_t* vrFingerBonesText(int m) { return m ? L"on" : L"off"; }
 inline void windupStep(Windup& w, bool swinging, int motion, float p, unsigned bits, unsigned long long now) {
     if (!swinging || !std::isfinite(p) || std::fabs(p) > 4.f) {
         if (w.phase == 1) {

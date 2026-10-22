@@ -339,7 +339,7 @@ struct ModSettings {
     // The Settings pages: every row belongs to exactly one (test_controls checks it). A page may have no rows.
     struct Group {
         const char* name;
-        int rows[26];
+        int rows[32];
         int count;
     };
     static constexpr int groupCount = 3, savesGroup = -1;
@@ -1171,14 +1171,27 @@ private:
         return (unscaled * guiScale + 50) / 100;
     } // +25 %
     int guiScale = 100; // percent; from Exanima.ini "GUISize" when the game has one
-    // The game registers GUISize (0x9C820, default 2) and saves settings to %APPDATA%\Exanima\Exanima.ini
-    // as "Key = value" lines; with no GUISize line the game's default is in use.
+    // The game registers GUISize (0x9C820, default 2) and saves settings to Exanima.ini in its save folder,
+    // %APPDATA%\Exanima, or hm_saves beside the executable for a Hellmode install, as "Key = value" lines;
+    // with no GUISize line the game's default is in use.
     // Provisional: the size steps are not read from the game's code (1 = 75 %, 2 = 100 %, 3 = 125 %).
     static int gameGuiScale() {
-        wchar_t app[MAX_PATH];
-        if (!GetEnvironmentVariableW(L"APPDATA", app, MAX_PATH)) return 100;
+        wchar_t path[MAX_PATH];
+        std::wstring ini;
+        const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+        if (length && length < MAX_PATH) {
+            if (wchar_t* slash = wcsrchr(path, L'\\')) {
+                ini.assign(path, slash + 1);
+                ini += L"hm_saves\\Exanima.ini";
+                if (GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES) ini.clear();
+            }
+        }
+        if (ini.empty()) {
+            if (!GetEnvironmentVariableW(L"APPDATA", path, MAX_PATH)) return 100;
+            ini = std::wstring(path) + L"\\Exanima\\Exanima.ini";
+        }
         FILE* f = nullptr;
-        if (_wfopen_s(&f, (std::wstring(app) + L"\\Exanima\\Exanima.ini").c_str(), L"rb") || !f) return 100;
+        if (_wfopen_s(&f, ini.c_str(), L"rb") || !f) return 100;
         char line[256];
         int scale = 100;
         while (fgets(line, sizeof line, f)) {

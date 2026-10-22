@@ -43,6 +43,9 @@ enum : int {
     cueSize,
     cueOpacity,
     cueThrust,
+    bladeDrag,
+    stabSink,
+    bladeGain,
     rmbMode,
     idleCrosshair,
     headRoll,
@@ -58,6 +61,8 @@ enum : int {
     tpCombatAim,
     eyeSetback,
     rotateHeldKey,
+    kickKey,
+    jumpKey,
     leanKey,
     holdHeading,
     autoRecenter,
@@ -77,6 +82,48 @@ enum : int {
     trackingKey,
     invertY,
     indicator,
+    vrIpd,
+    vrScale,
+    vrRenderMode,
+    vrHands,
+    vrPosture,
+    vrHeadset,
+    vrTurning,
+    vrEffects,
+    vrGripAngle,
+    vrHaptics,
+    vrPanelWidth,
+    vrPanelDistance,
+    vrComfort,
+    vrBody,
+    vrHeight,
+    vrGrabTurn,
+    vrEyeScale,
+    vrGripSlide,
+    vrKick,
+    vrJump,
+    vrWeaponWeight,
+    vrTeleport,
+    vrHandPanel,
+    vrPouch,
+    vrFingerBones,
+    ambientOcclusion,
+    depthOfField,
+    screenSpaceReflections,
+    edgeSmoothing,
+    helmetVisor,
+    playerGhost,
+    fingerPoses,
+    fingerPosesOthers,
+    conditionEffects,
+    heldDetail,
+    armourDetail,
+    objectDetail,
+    levelDetail,
+    woundMarks,
+    drawDistance,
+    objectLights,
+    lightSmoothing,
     count
 };
 }
@@ -101,6 +148,24 @@ inline bool stepSchema(ModSettings& settings,int row,int delta);
 struct ModSettings {
     bool invertY = false;
     int indicator = 1;
+    int ambientOcclusion = 0; // optional screen-space contact shading
+    int depthOfField = 0; // optional first-person depth-aware texture softening
+    int screenSpaceReflections = 0; // optional screen-space scene reflections
+    bool edgeSmoothing = false, helmetVisor = false, playerGhost = false; // optional finishing effects
+    bool fingerPoses = true; // finger bones on the skeleton posed to what each hand holds; on by default, as asked
+    bool fingerPosesOthers = true; // the same for other characters in the level
+    bool bladeDrag = true;   // a blade edge drawn across a body deals damage through the game's own impact
+    bool stabSink = true;    // a thrust sinks into a soft target instead of stopping at its surface; experimental, on as asked
+    int bladeGainPercent = 100; // the gain on the draw velocity handed to the game's impact, 10..400
+    bool conditionEffects = false; // optional: the view reacts to wounds and breathlessness
+    int heldDetail = 50; // procedural surface detail on held items, percent; half (the old Subtle) by default (owner's request)
+    int armourDetail = 35; // the same on worn armour and clothing, percent; 35 by default (frame cost)
+    int objectDetail = 35; // the same on loose items and placed objects near you, percent; 35 by default (frame cost)
+    int drawDistance = 60; // metres beyond which small props and far characters are not drawn; 0 draws everything
+    int objectLights = 4;  // lights each mesh takes of the game's six; the strongest are kept
+    int levelDetail = 30; // walls, floors and ceilings within about 3 m, percent; light by default, drops first when slow
+    bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
+    bool woundMarks = true; // cuts, bruises and running blood where weapons got through; on by default (owner's request)
     bool tracking = false;
     int trackingKey = 0;
     int trackingStatus = 0; // runtime only: off/waiting/receiving/unavailable
@@ -127,6 +192,30 @@ struct ModSettings {
     bool freezeWindows = true;        // the game's windows free the cursor and hold look and movement
     int spineFollow = 60; // how far the spine bends with the look (forward looking down, back looking up)
     int crouchMode = 2; // 2=toggle crouch (checkbox on), 1=hold crouch (off); legacy 0 maps to hold
+    int vrIpd = 0;        // mm between the eyes; 0 keeps the headset's own eye poses
+    int vrScale = 100;    // game units per metre of tracked motion
+    int vrRenderMode = 0; // 0 draws each eye; 1 draws the head once and reconstructs both eyes; 2 the same with holes filled
+    int vrHands = 0;      // 1 draws the mod's articulated hands over tracked fingers; off by default
+    int vrPosture = 0;    // 0 standing (room walking and tracked legs); 1 seated (the game's own legs, stick only)
+    int vrHeadset = 0;    // 1 starts the real OpenXR runtime at the next game start; 0 leaves VR off
+    int vrTurning = 1;    // 0 off, 1 snap 30, 2 snap 45, 3 smooth: the right stick turns the body as the mouse does
+    int vrEffects = 0;    // 1 runs the View page's ambient occlusion and reflections on each headset eye; never depth of field
+    int vrGripAngle = 0;  // degrees of pitch added to a controller grip, -45..45
+    int vrHaptics = 100;  // pulse strength in percent, 0..200
+    int vrPanelWidth = 120, vrPanelDistance = 150; // the head-locked UI quad, centimetres
+    int vrComfort = 0;    // 0 off, 1 edges darken while turning smoothly, 2 also while walking on the stick
+    int vrBody = 0;       // 1 hides the character below the head in the headset; hands and held items stay
+    int vrHeight = 0;     // centimetres added to the game head, -50..50
+    int vrGrabTurn = 0;   // 1 lets an empty squeezing hand sweep the body round; off by default, since it rides the pickup squeeze
+    int vrEyeScale = 100; // percent of the native size each eye is drawn at, 50..100
+    int vrGripSlide = 0;  // centimetres the hand slides along a held weapon's hilt, -10..10
+    int vrWeaponWeight = 1; // 1: the hands lag a heavy weapon by its own heft
+    int vrJump = 1;       // 1 lets a physical hop play the game's jump clip with an upward push; on, as asked
+    int vrTeleport = 1;   // 1: right stick forward aims a teleport arc, release moves there
+    int vrHandPanel = 1;  // 1: the inventory and every open menu are held in the left hand
+    int vrPouch = 1;      // 1: the left hip puts items away and takes them back (ScriptRuntime inventory exports)
+    int vrKick = 0;       // 1 lets the stick click play the game's kick clip; experimental, off by default
+    int vrFingerBones = 0; // 1 adds finger bones to the game's own skeleton for the tracked joints; experimental, off by default
     // Fixed engineering parameters. The camera is intentionally mounted at the
     // head's center (16 cm setback) for clearance; visibility must be fixed
     // with first-person-only head rendering, NOT by moving the camera.
@@ -148,6 +237,7 @@ struct ModSettings {
     bool holdHeading = true, autoRecenter = true;
     int edgeSoftness = fp::defaultAimEdgeSoftness; // percent of oval radius used to feather camera turning
     int leanKey = 0x12; // held, the mouse leans the upper body (virtual-key code; 0 unbound)
+    int kickKey = 0, jumpKey = 0; // the game's unused kick and jump clips (virtual-key codes; 0 unbound, the default)
     int rotateHeldKey =
         0x02; // the key that turns a held object (virtual-key code; 0 unbound) // in combat the crosshair moves inside a box; the view turns at its edge // camera lag, hide what is in the way, knockdown follow // closer and centred in combat; third person's own field of view (0 = as first person)
     bool operator==(const ModSettings& o) const; // every row's value
@@ -167,9 +257,25 @@ struct ModSettings {
             return v < lo ? lo : (v > hi ? hi : v);
         };
         const ModSettings before = *this;
+        if (row == setting::fingerPoses) { // Off, You, Everyone: one row over the two saved switches
+            const int next = ((!fingerPoses ? 0 : fingerPosesOthers ? 2 : 1) + (delta < 0 ? 2 : 1)) % 3;
+            fingerPoses = next > 0;
+            fingerPosesOthers = next == 2;
+            return !(*this == before);
+        }
         if (stepSchema(*this,row,delta)) return !(*this == before);
         switch (row) {
         case setting::indicator: indicator = (indicator + (delta < 0 ? 2 : 1)) % 3; break;
+        case setting::ambientOcclusion: ambientOcclusion = std::clamp(ambientOcclusion + delta * 10, 0, 100); break;
+        case setting::depthOfField: depthOfField = std::clamp(depthOfField + delta * 10, 0, 100); break;
+        case setting::screenSpaceReflections:
+            screenSpaceReflections = std::clamp(screenSpaceReflections + delta * 10, 0, 100); break;
+        case setting::heldDetail: heldDetail = std::clamp(heldDetail + delta * 10, 0, 100); break;
+        case setting::armourDetail: armourDetail = std::clamp(armourDetail + delta * 10, 0, 100); break;
+        case setting::objectDetail: objectDetail = std::clamp(objectDetail + delta * 10, 0, 100); break;
+        case setting::levelDetail: levelDetail = std::clamp(levelDetail + delta * 10, 0, 100); break;
+        case setting::drawDistance: drawDistance = std::clamp(drawDistance + delta * 10, 0, 200); break;
+        case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -205,6 +311,12 @@ struct ModSettings {
             break;
         case setting::rotateHeldKey:
             rotateHeldKey = nextKey(rotateHeldKey, delta);
+            break;
+        case setting::kickKey:
+            kickKey = nextKey(kickKey, delta);
+            break;
+        case setting::jumpKey:
+            jumpKey = nextKey(jumpKey, delta);
             break;
         case setting::leanKey:
             leanKey = nextKey(leanKey, delta);
@@ -242,6 +354,81 @@ struct ModSettings {
         case setting::crouchMode:
             crouchMode = crouchMode == 2 ? 1 : 2;
             break; // native checkbox: toggle crouch on or hold to crouch
+        case setting::vrIpd:
+            vrIpd = clamp(vrIpd + delta, 0, 100);
+            break;
+        case setting::vrScale:
+            vrScale = clamp(vrScale + delta * 5, 50, 200);
+            break;
+        case setting::vrRenderMode:
+            vrRenderMode = (vrRenderMode + 1) % 3;
+            break;
+        case setting::vrHands:
+            vrHands = vrHands ? 0 : 1;
+            break;
+        case setting::vrPosture:
+            vrPosture = vrPosture ? 0 : 1;
+            break;
+        case setting::vrHeadset:
+            vrHeadset = vrHeadset ? 0 : 1;
+            break;
+        case setting::vrTurning:
+            vrTurning = (vrTurning + 1) % 4;
+            break;
+        case setting::vrEffects:
+            vrEffects = vrEffects ? 0 : 1;
+            break;
+        case setting::vrGripAngle:
+            vrGripAngle = clamp(vrGripAngle + delta * 5, -45, 45);
+            break;
+        case setting::vrHaptics:
+            vrHaptics = clamp(vrHaptics + delta * 10, 0, 200);
+            break;
+        case setting::vrPanelWidth:
+            vrPanelWidth = clamp(vrPanelWidth + delta * 10, 60, 200);
+            break;
+        case setting::vrPanelDistance:
+            vrPanelDistance = clamp(vrPanelDistance + delta * 10, 80, 300);
+            break;
+        case setting::vrComfort:
+            vrComfort = (vrComfort + 1) % 3;
+            break;
+        case setting::vrBody:
+            vrBody = vrBody ? 0 : 1;
+            break;
+        case setting::vrHeight:
+            vrHeight = clamp(vrHeight + delta * 5, -50, 50);
+            break;
+        case setting::vrGrabTurn:
+            vrGrabTurn = vrGrabTurn ? 0 : 1;
+            break;
+        case setting::vrEyeScale:
+            vrEyeScale = clamp(vrEyeScale + delta * 10, 50, 100);
+            break;
+        case setting::vrGripSlide:
+            vrGripSlide = clamp(vrGripSlide + delta, -10, 10);
+            break;
+        case setting::vrKick:
+            vrKick = vrKick ? 0 : 1;
+            break;
+        case setting::vrJump:
+            vrJump = vrJump ? 0 : 1;
+            break;
+        case setting::vrWeaponWeight:
+            vrWeaponWeight = vrWeaponWeight ? 0 : 1;
+            break;
+        case setting::vrTeleport:
+            vrTeleport = vrTeleport ? 0 : 1;
+            break;
+        case setting::vrHandPanel:
+            vrHandPanel = vrHandPanel ? 0 : 1;
+            break;
+        case setting::vrPouch:
+            vrPouch = vrPouch ? 0 : 1;
+            break;
+        case setting::vrFingerBones:
+            vrFingerBones = vrFingerBones ? 0 : 1;
+            break;
         case setting::nearClip:
             nearClip = fp::clampNearClip(nearClip + delta);
             break;
@@ -258,32 +445,45 @@ struct ModSettings {
     // The Settings pages: every row belongs to exactly one (test_controls checks it). A page may have no rows.
     struct Group {
         const char* name;
-        int rows[26];
+        int rows[32];
         int count;
     };
-    static constexpr int groupCount = 3, savesGroup = -1;
+    // Rows a tab shows; the rest keep their saved values and defaults but have no row. 0..2 and 4 are
+    // the Camera, Controls, Combat and Graphics (effects) tabs, 3 the VR tab.
+    static constexpr int groupCount = 5, savesGroup = -1;
     static const Group& group(int g) {
         static const Group groups[groupCount] = {
             {"Camera",
-             {setting::fov, setting::hideHelmet, setting::flickCatchup,
-              setting::tpFov, setting::tpDistance, setting::tpShoulder, setting::tpHeight,
-              setting::tpLag, setting::tpTight, setting::tpCombat,
-              setting::tpDown, setting::tpCombatAim}, 12},
+             {setting::fov, setting::hideHelmet, setting::helmetVisor,
+              setting::tpFov, setting::tpDistance, setting::tpShoulder, setting::tpHeight, setting::tpLag,
+              setting::tpTight, setting::tpDown}, 10},
             {"Controls",
-             {setting::rotateHeldKey, setting::sensitivity,
+             {setting::rotateHeldKey, setting::kickKey, setting::jumpKey, setting::sensitivity,
               setting::invertY, setting::rawMouse, setting::crouchMode,
-              setting::freezeWindows, setting::tracking, setting::trackingKey}, 8},
+              setting::freezeWindows}, 8},
             {"Combat",
-             {setting::fpDefense, setting::fpSwingSelection, setting::indicator, setting::attackCue,
-              setting::cueSize, setting::cueOpacity, setting::cueThrust}, 7},
+             {setting::fpDefense, setting::fpSwingSelection, setting::indicator, setting::tpCombat, setting::tpCombatAim,
+              setting::attackCue, setting::cueSize, setting::cueOpacity, setting::cueThrust,
+              setting::bladeDrag, setting::stabSink}, 11},
+            {"VR",
+             {setting::vrHeadset, setting::vrIpd, setting::vrScale, setting::vrRenderMode, setting::vrHands, setting::vrPosture,
+              setting::vrTurning, setting::vrEffects, setting::vrGripAngle, setting::vrHaptics, setting::vrPanelWidth,
+              setting::vrPanelDistance, setting::vrComfort, setting::vrBody, setting::vrHeight, setting::vrGrabTurn, setting::vrEyeScale, setting::vrGripSlide, setting::vrKick, setting::vrJump, setting::vrWeaponWeight, setting::vrTeleport, setting::vrHandPanel, setting::vrPouch, setting::vrFingerBones, setting::tracking, setting::trackingKey}, 26},
+            {"Graphics",
+             {setting::ambientOcclusion, setting::screenSpaceReflections, setting::depthOfField, setting::heldDetail,
+              setting::armourDetail, setting::objectDetail, setting::levelDetail, setting::woundMarks,
+              setting::lightSmoothing, setting::edgeSmoothing, setting::conditionEffects, setting::fingerPoses,
+              setting::playerGhost}, 13},
         };
         return groups[g < 0 || g >= groupCount ? 0 : g];
     }
     static const char* groupDescription(int g) {
         static constexpr const char* descriptions[groupCount] = {
-            "Field of view, framing, camera movement and character pose.",
+            "Field of view, headwear and the third-person camera.",
             "Mouse, keys, cursor and interaction. Explicit leaning is disabled.",
-            "Combat policy and attack indicators.",
+            "Defense, attack indicators and blades.",
+            "Headset, hands, comfort and head tracking.",
+            "View effects, held-item detail and finger poses.",
         };
         return descriptions[g < 0 || g >= groupCount ? 0 : g];
     }
@@ -294,6 +494,8 @@ struct ModSettings {
             return L"FIRST PERSON";
         case setting::tpDistance:
             return L"THIRD PERSON";
+        case setting::vrIpd:
+            return L"VR";
         case setting::headSteady:
             return L"HEAD AND BODY";
         case setting::sensitivity:
@@ -318,6 +520,16 @@ struct ModSettings {
         switch (row) {
         case setting::invertY: return invertY ? L"On" : L"Off";
         case setting::indicator: return indicator == 0 ? L"Off" : indicator == 1 ? L"Combat" : L"Always";
+        case setting::ambientOcclusion: return ambientOcclusion ? std::to_wstring(ambientOcclusion) + L"%" : L"Off";
+        case setting::depthOfField: return depthOfField ? std::to_wstring(depthOfField) + L"%" : L"Off";
+        case setting::screenSpaceReflections:
+            return screenSpaceReflections ? std::to_wstring(screenSpaceReflections) + L"%" : L"Off";
+        case setting::heldDetail: return heldDetail ? std::to_wstring(heldDetail) + L"%" : L"Off";
+        case setting::armourDetail: return armourDetail ? std::to_wstring(armourDetail) + L"%" : L"Off";
+        case setting::objectDetail: return objectDetail ? std::to_wstring(objectDetail) + L"%" : L"Off";
+        case setting::levelDetail: return levelDetail ? std::to_wstring(levelDetail) + L"%" : L"Off";
+        case setting::drawDistance: return drawDistance ? std::to_wstring(drawDistance) + L" m" : L"Off";
+        case setting::objectLights: return objectLights >= 6 ? std::wstring(L"6 (game)") : std::to_wstring(objectLights);
         case setting::tracking:
             return !tracking ? L"Off" : trackingStatus == 3 ? L"Unavailable (UDP port in use?)"
                                     : trackingStatus == 2 ? L"OpenTrack UDP - receiving"
@@ -381,6 +593,10 @@ struct ModSettings {
                               : std::wstring(L"at the eyes");
         case setting::rotateHeldKey:
             return fp::heldKeyName(rotateHeldKey);
+        case setting::kickKey:
+            return fp::heldKeyName(kickKey);
+        case setting::jumpKey:
+            return fp::heldKeyName(jumpKey);
         case setting::leanKey:
             return fp::heldKeyName(leanKey);
         case setting::holdHeading:
@@ -396,6 +612,8 @@ struct ModSettings {
             return attackCue ? L"shown while a swing winds up" : L"off";
         case setting::cueSize:
             return std::to_wstring(cueSize) + L"%";
+        case setting::bladeGain:
+            return std::to_wstring(bladeGainPercent) + L"%";
         case setting::cueOpacity:
             return std::to_wstring(cueOpacity) + L"%";
         case setting::cueThrust:
@@ -437,6 +655,56 @@ struct ModSettings {
             swprintf_s(b, L"%d.%d cm", nearClip / 10, nearClip % 10);
             return b;
         }
+        case setting::vrIpd:
+            return vrIpd ? std::to_wstring(vrIpd) + L" mm" : std::wstring(L"headset's own");
+        case setting::vrScale:
+            return std::to_wstring(vrScale) + L" per metre";
+        case setting::vrRenderMode:
+            return vrRenderMode == 2 ? L"reconstruct, holes filled" : vrRenderMode == 1 ? L"reconstruct from depth" : L"draw each eye";
+        case setting::vrHands:
+            return vrHands ? L"drawn" : L"off";
+        case setting::vrPosture:
+            return vrPosture ? L"seated" : L"standing";
+        case setting::vrHeadset:
+            return vrHeadset ? L"on at next start" : L"off";
+        case setting::vrTurning:
+            return vrTurning == 1 ? L"snap 30 degrees" : vrTurning == 2 ? L"snap 45 degrees" : vrTurning == 3 ? L"smooth" : L"off";
+        case setting::vrEffects:
+            return vrEffects ? L"occlusion and reflections per eye" : L"off";
+        case setting::vrGripAngle:
+            return std::to_wstring(vrGripAngle) + L" degrees";
+        case setting::vrHaptics:
+            return std::to_wstring(vrHaptics) + L" %";
+        case setting::vrPanelWidth:
+            return std::to_wstring(vrPanelWidth) + L" cm wide";
+        case setting::vrPanelDistance:
+            return std::to_wstring(vrPanelDistance) + L" cm ahead";
+        case setting::vrComfort:
+            return vrComfort == 2 ? L"turning and walking" : vrComfort == 1 ? L"turning" : L"off";
+        case setting::vrBody:
+            return vrBody ? L"hands only" : L"full";
+        case setting::vrHeight:
+            return std::to_wstring(vrHeight) + L" cm";
+        case setting::vrGrabTurn:
+            return vrGrabTurn ? L"on" : L"off";
+        case setting::vrEyeScale:
+            return std::to_wstring(vrEyeScale) + L" %";
+        case setting::vrGripSlide:
+            return std::to_wstring(vrGripSlide) + L" cm";
+        case setting::vrKick:
+            return vrKick ? L"on" : L"off";
+        case setting::vrJump:
+            return vrJump ? L"on" : L"off";
+        case setting::vrWeaponWeight:
+            return vrWeaponWeight ? L"on" : L"off";
+        case setting::vrTeleport:
+            return vrTeleport ? L"on" : L"off";
+        case setting::vrHandPanel:
+            return vrHandPanel ? L"in hand" : L"in view";
+        case setting::vrPouch:
+            return vrPouch ? L"on" : L"off";
+        case setting::vrFingerBones:
+            return vrFingerBones ? L"on" : L"off";
         case setting::crouchMode:
             return crouchMode == 2
                        ? L"toggle (the game's duck key)"
@@ -551,8 +819,12 @@ struct RowInfo {
     const wchar_t* tip;
     SettingRange range{};
     bool editable() const { return row >= 0 && !fixedSetting(row); }
-    // Headwear uses explicit Show / Hide choices, not an ambiguous negative checkbox.
-    bool checkbox() const { return editable() && row != setting::hideHelmet && (flag || row == setting::crouchMode); }
+    // Two-way rows whose two states have names (Headwear, Knockdown, Aim style, Crouch, Finger grip) are buttons
+    // that step through them, not checkboxes.
+    bool checkbox() const {
+        return editable() && flag && row != setting::hideHelmet && row != setting::tpDown && row != setting::tpCombatAim &&
+               row != setting::fingerPoses;
+    }
 };
 inline const RowInfo& rowInfo(int row) {
     static const RowInfo table[setting::count] = {
@@ -628,6 +900,18 @@ inline const RowInfo& rowInfo(int row) {
          L"Follow the head keeps its usual anchor. Both retain camera collision checks."},
         {setting::attackCue, L"Attack wind-up arc", RowInfo::toggle, nullptr, &ModSettings::attackCue,
          L"View", L"AttackCue", nullptr, nullptr, nullptr},
+        {setting::bladeDrag, L"Blade drag cuts", RowInfo::toggle, nullptr, &ModSettings::bladeDrag,
+         L"Combat", L"BladeDrag", nullptr, nullptr,
+         L"A blade edge drawn across a body deals damage, for everyone: the sliding contact is handed to the game's own "
+         L"weapon impact, which applies its usual edge, speed and armour rules. In VR this is how a throat is cut."},
+        {setting::stabSink, L"Stabs sink in", RowInfo::toggle, nullptr, &ModSettings::stabSink,
+         L"Combat", L"StabSink", nullptr, nullptr,
+         L"Experimental. A thrust that lands point first on a soft, unarmoured part keeps travelling into it for a hand's "
+         L"depth instead of stopping at the surface, cutting as it goes; armour and the head still stop it."},
+        {setting::bladeGain, L"Blade draw gain", RowInfo::number, &ModSettings::bladeGainPercent, nullptr, L"Combat",
+         L"BladeDrawGainPercent", nullptr, nullptr,
+         L"How hard a drawn or sinking blade is taken to move for the game's impact rules: 100 is the true speed. Raise it "
+         L"if slow cuts do nothing, lower it if they cut too deep.", {10,400,10,18}},
         {setting::cueSize, L"Wind-up arc: size", RowInfo::number, &ModSettings::cueSize, nullptr, L"View",
          L"CueSize", nullptr, nullptr, nullptr, {50,200,10,15}},
         {setting::cueOpacity, L"Wind-up arc: opacity", RowInfo::number, &ModSettings::cueOpacity, nullptr,
@@ -697,6 +981,12 @@ inline const RowInfo& rowInfo(int row) {
          L"interaction "
          L"distance use the same shifted eye position. Headwear that blocks the first-person view is hidden; "
          L"its shadow remains."},
+        {setting::kickKey, L"Kick", RowInfo::keyList, &ModSettings::kickKey, nullptr, L"Input", L"KickKey", fp::heldKeyFromText, nullptr,
+         L"Plays the game's own kick, which it never uses itself: in the fighting stance, upright, not mid-swing and with "
+         L"most of your stamina. Unbound until you pick a key; the game does not see that key while it is bound here."},
+        {setting::jumpKey, L"Jump", RowInfo::keyList, &ModSettings::jumpKey, nullptr, L"Input", L"JumpKey", fp::heldKeyFromText, nullptr,
+         L"Plays the game's own jump and pushes your body up: upright, not mid-swing and with half your stamina. "
+         L"Unbound until you pick a key; the game does not see that key while it is bound here."},
         {setting::rotateHeldKey, L"Rotate held object", RowInfo::keyList, &ModSettings::rotateHeldKey,
          nullptr, L"Input", L"RotateHeldKey", fp::heldKeyFromText, nullptr,
          L"Hold it while holding an object to turn the object with the mouse; the view stays still "
@@ -799,12 +1089,189 @@ inline const RowInfo& rowInfo(int row) {
          L"Input", L"InvertY", nullptr, nullptr, L"Reverse vertical mouse look."},
         {setting::indicator, L"Aim indicator", RowInfo::choice, &ModSettings::indicator, nullptr,
          L"View", L"AimIndicator", nullptr, nullptr, L"Show the aim indicator: off, combat only, or always."},
+        {setting::vrIpd, L"VR: eye separation", RowInfo::number, &ModSettings::vrIpd, nullptr, L"VR",
+         L"IpdMillimetres", nullptr, nullptr,
+         L"Distance between the two VR eyes. Zero keeps the headset's own eye poses. The eyes stay rigid "
+         L"with the tracked head; nothing smooths or offsets the camera.", {0,100,1,100}},
+        {setting::vrScale, L"VR: world scale", RowInfo::number, &ModSettings::vrScale, nullptr, L"VR",
+         L"UnitsPerMetre", nullptr, nullptr,
+         L"Game units per metre of real movement. 100 matches the mod's centimetre settings.", {50,200,5,30}},
+        {setting::vrRenderMode, L"VR: rendering", RowInfo::choice, &ModSettings::vrRenderMode, nullptr, L"VR",
+         L"RenderMode", fp::vrRenderModeFromText, fp::vrRenderModeText,
+         L"Draw each eye renders the world twice from the real eye positions. Reconstruct from depth draws "
+         L"the head once and synthesises both eyes from colour and depth; it needs a reconstruction host and "
+         L"otherwise falls back to drawing each eye. Holes filled paints what the head view saw behind an edge "
+         L"instead of leaving a black sliver there."},
+        {setting::vrHands, L"VR: hands", RowInfo::choice, &ModSettings::vrHands, nullptr, L"VR",
+         L"Hands", fp::vrHandsFromText, fp::vrHandsText,
+         L"Drawn replaces the character's hand meshes with the mod's own articulated hands that follow "
+         L"tracked fingers. The game has no finger bones, so off shows its rigid hands."},
+        {setting::vrPosture, L"VR: posture", RowInfo::choice, &ModSettings::vrPosture, nullptr, L"VR",
+         L"Posture", fp::vrPostureFromText, fp::vrPostureText,
+         L"Standing drives the legs from trackers and walks the room. Seated keeps the game's own legs and "
+         L"ignores room walking and crouching, so a chair never reads as a crouch. Recenter after changing it."},
+        {setting::vrHeadset, L"VR: headset", RowInfo::choice, &ModSettings::vrHeadset, nullptr, L"VR",
+         L"Headset", fp::vrHeadsetFromText, fp::vrHeadsetText,
+         L"On starts the OpenXR runtime of the headset the next time the game starts with the mod, using the "
+         L"loader shipped beside the mod. The view is the tracked head; nothing else changes until then."},
+        {setting::vrTurning, L"VR: turning", RowInfo::choice, &ModSettings::vrTurning, nullptr, L"VR",
+         L"Turning", fp::vrTurningFromText, fp::vrTurningText,
+         L"The right stick turns the body the way the mouse does, so the view and the body never part. Snap "
+         L"turns a fixed angle per flick; smooth turns while held. Off leaves turning to the head and mouse."},
+        {setting::vrEffects, L"VR: effects", RowInfo::choice, &ModSettings::vrEffects, nullptr, L"VR",
+         L"Effects", fp::vrEffectsFromText, fp::vrEffectsText,
+         L"On runs the View page's ambient occlusion and screen-space reflections on each headset eye, at their "
+         L"View strengths. Depth of field never runs in the headset: a fixed focus fights your own eyes."},
+        {setting::vrGripAngle, L"VR: grip angle", RowInfo::number, &ModSettings::vrGripAngle, nullptr, L"VR",
+         L"GripAngleDegrees", nullptr, nullptr,
+         L"Tilts the controller's grip so a held hilt sits the way you hold it. Tracked hands are not tilted.", {-45,45,5,18}},
+        {setting::vrHaptics, L"VR: haptics", RowInfo::number, &ModSettings::vrHaptics, nullptr, L"VR",
+         L"HapticPercent", nullptr, nullptr,
+         L"Strength of the controller pulses on grab, on your weapon landing and on being hit. Zero turns them off.", {0,200,10,20}},
+        {setting::vrPanelWidth, L"VR: panel width", RowInfo::number, &ModSettings::vrPanelWidth, nullptr, L"VR",
+         L"PanelWidthCentimetres", nullptr, nullptr,
+         L"Width of the floating panel that shows the game's menus and the F8 panel in the headset.", {60,200,10,14}},
+        {setting::vrPanelDistance, L"VR: panel distance", RowInfo::number, &ModSettings::vrPanelDistance, nullptr, L"VR",
+         L"PanelDistanceCentimetres", nullptr, nullptr,
+         L"How far ahead that panel floats. Nearer is larger and easier to read; farther is easier on the eyes.", {80,300,10,22}},
+        {setting::vrComfort, L"VR: comfort vignette", RowInfo::choice, &ModSettings::vrComfort, nullptr, L"VR",
+         L"Comfort", fp::vrComfortFromText, fp::vrComfortText,
+         L"Darkens the edges of the view while the body turns smoothly, and with walking also while the stick "
+         L"walks, which many people find settles the stomach. The centre stays clear."},
+        {setting::vrBody, L"VR: body", RowInfo::choice, &ModSettings::vrBody, nullptr, L"VR",
+         L"Body", fp::vrBodyFromText, fp::vrBodyText,
+         L"Hands only hides the character's own body and worn armour below the head while the headset drives it; "
+         L"the hands (the mod's own, drawn as if VR hands were on) and anything held stay. Full shows the body."},
+        {setting::vrHeight, L"VR: height", RowInfo::number, &ModSettings::vrHeight, nullptr, L"VR",
+         L"HeightCentimetres", nullptr, nullptr,
+         L"Lifts or lowers the game head by this much, for a chair or a player taller or shorter than the character. "
+         L"Leaning, ducking and turning stay tracked.", {-50,50,5,20}},
+        {setting::vrGrabTurn, L"VR: grab turn", RowInfo::choice, &ModSettings::vrGrabTurn, nullptr, L"VR",
+         L"GrabTurn", fp::vrGrabTurnFromText, fp::vrGrabTurnText,
+         L"On: squeeze an empty hand and sweep it sideways to drag the world round, through the same body turn as the stick. "
+         L"A hand holding something, or any drawn weapon, never turns. Off leaves turning to the stick."},
+        {setting::vrEyeScale, L"VR: eye scale", RowInfo::number, &ModSettings::vrEyeScale, nullptr, L"VR",
+         L"EyeScalePercent", nullptr, nullptr,
+         L"How large each eye is drawn, as a share of the window size: lower is cheaper and softer. Applies to the "
+         L"per-eye draws only; mirror and reconstruction modes and the desktop stay at full size.", {50,100,10,5}},
+        {setting::vrGripSlide, L"VR: grip slide", RowInfo::number, &ModSettings::vrGripSlide, nullptr, L"VR",
+         L"GripSlideCentimetres", nullptr, nullptr,
+         L"Slides the hand along a held weapon's hilt: positive towards the blade, negative towards the pommel.", {-10,10,1,20}},
+        {setting::vrKick, L"VR: kick", RowInfo::choice, &ModSettings::vrKick, nullptr, L"VR",
+         L"Kick", fp::vrKickFromText, fp::vrKickText,
+         L"Experimental. On: pressing a stick in plays the game's own kick, only in the fighting stance, upright, not mid-swing "
+         L"and with most of your stamina. The game never plays this clip itself, so a hit lands by foot contact only."},
+        {setting::vrJump, L"VR: jump", RowInfo::choice, &ModSettings::vrJump, nullptr, L"VR",
+         L"Jump", fp::vrKickFromText, fp::vrKickText,
+         L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright, "
+         L"not mid-swing and with half your stamina. The game never jumps by itself, so landing is its ordinary physics."},
+        {setting::vrWeaponWeight, L"VR: weapon weight", RowInfo::choice, &ModSettings::vrWeaponWeight, nullptr, L"VR",
+         L"WeaponWeight", fp::vrKickFromText, fp::vrKickText,
+         L"On: a held weapon follows your hands with a lag set by its own heft, so a heavy axe trails a fast swing and a "
+         L"dagger does not; a two-handed grip carries it better."},
+        {setting::vrTeleport, L"VR: teleport", RowInfo::choice, &ModSettings::vrTeleport, nullptr, L"VR",
+         L"Teleport", fp::vrKickFromText, fp::vrKickText,
+         L"On: push the right stick forward to aim an arc from your right hand, let go to move there. Walls stop the arc; "
+         L"not while dragging something, attacking, down or out of reach. Walking on the left stick stays as it is."},
+        {setting::vrHandPanel, L"VR: menus in hand", RowInfo::choice, &ModSettings::vrHandPanel, nullptr, L"VR",
+         L"HandPanel", fp::vrKickFromText, fp::vrKickText,
+         L"On: the inventory and every open menu sit on a panel held in your left hand, turned towards you; point at it "
+         L"with the right hand, the trigger clicks and the grip is the right button. Hold the trigger on an item and point "
+         L"out into the world to carry it out; let go to set it down there and pick it up. Off: the menu floats in front of you."},
+        {setting::vrPouch, L"VR: hip pouch", RowInfo::choice, &ModSettings::vrPouch, nullptr, L"VR",
+         L"HipPouch", fp::vrKickFromText, fp::vrKickText,
+         L"On: let go of a held item at your left hip to put it in your inventory; close an empty hand there to take the "
+         L"last one back. Needs the script runtime's inventory exports; without them nothing happens."},
+        {setting::vrFingerBones, L"VR: finger bones", RowInfo::choice, &ModSettings::vrFingerBones, nullptr, L"VR",
+         L"FingerBones", fp::vrFingerBonesFromText, fp::vrFingerBonesText,
+         L"Experimental. On: finger bones are added to your body's own skeleton and the skinned body mesh bends its "
+         L"fingers to the tracked joints. Shows on the full body; the hands-only body hides that mesh."},
+        {setting::ambientOcclusion, L"Ambient occlusion", RowInfo::choice, &ModSettings::ambientOcclusion, nullptr,
+         L"View", L"AmbientOcclusion", nullptr, nullptr,
+         L"Adds restrained screen-space contact shading around nearby geometry. It uses the presented depth buffer, "
+         L"is skipped on unsupported or multisampled frames, and does not alter "
+         L"Exanima's dynamic lights or GI. "
+         L"Subtle is recommended; Strong can darken narrow gaps.", {0,100,5,20}},
+        {setting::depthOfField, L"Depth of field", RowInfo::choice, &ModSettings::depthOfField, nullptr,
+         L"View", L"DepthOfField", nullptr, nullptr,
+         L"Softens near and far textures while keeping the center of the first-person view in focus. "
+         L"This is a restrained screen-space blur, not a physical lens simulation. It is skipped in third person, "
+         L"menus and unsupported or multisampled frames. Subtle is recommended for play.", {0,100,5,20}},
+        {setting::screenSpaceReflections, L"Screen-space reflections", RowInfo::choice,
+         &ModSettings::screenSpaceReflections, nullptr, L"View", L"ScreenSpaceReflections", nullptr, nullptr,
+         L"Adds faint screen-space reflections on camera-up-facing surfaces. This is a camera-relative surface proxy, "
+         L"not a material reflectivity mask; it complements native material reflections and is limited by what is on screen. "
+         L"It is skipped on unsupported or multisampled frames. "
+         L"Off is recommended where screen-space artifacts are visible.", {0,100,5,20}},
+        {setting::edgeSmoothing, L"Edge smoothing", RowInfo::toggle, nullptr, &ModSettings::edgeSmoothing,
+         L"View", L"EdgeSmoothing", nullptr, nullptr,
+         L"Smooths jagged edges in one cheap pass. Fine shimmer on distant patterned walls remains. With "
+         L"Supersample on, which already smooths edges, it lightly sharpens the detail the averaging softens."},
+        {setting::helmetVisor, L"Helmet view", RowInfo::toggle, nullptr, &ModSettings::helmetVisor,
+         L"View", L"HelmetView", nullptr, nullptr,
+         L"Shades the first-person view next to a shown helmet, in that helmet's own shape: an open face, a nasal "
+         L"guard, a great helm's slit. With headwear hidden, a soft opening instead."},
+        {setting::playerGhost, L"See yourself through walls", RowInfo::toggle, nullptr, &ModSettings::playerGhost,
+         L"View", L"PlayerGhost", nullptr, nullptr,
+         L"In third person, shows your character's own outline, faint with a brighter edge, where walls or "
+         L"pillars hide you. Your own limbs and held gear do not show through each other."},
+        {setting::heldDetail, L"Held item detail", RowInfo::choice, &ModSettings::heldDetail, nullptr,
+         L"View", L"HeldItemDetail", nullptr, nullptr,
+         L"Adds fine surface detail to what you hold, in first and third person: metal grain, scratches along the "
+         L"length, small pits and worn edges. The pattern is fixed to the item and only reshapes the light already "
+         L"on it, so an unlit blade stays dark. It adds no new shape. Not in VR.", {0,100,5,20}},
+        {setting::armourDetail, L"Armour and clothing detail", RowInfo::choice, &ModSettings::armourDetail, nullptr,
+         L"View", L"ArmourDetail", nullptr, nullptr,
+         L"The same surface detail on worn armour and clothing, yours and others' within 6 m: plate, mail rings, "
+         L"leather grain, quilted padding. Each piece keeps its pattern on the limb it hangs on. Covers more of the "
+         L"screen than held items, so it costs more. Not in VR.", {0,100,5,20}},
+        {setting::drawDistance, L"Draw distance", RowInfo::number, &ModSettings::drawDistance, nullptr,
+         L"View", L"DrawDistance", nullptr, nullptr,
+         L"Small props and far characters beyond this distance are not drawn; bigger things stay longer. Off draws "
+         L"everything, as the game does.", {0,200,10,20}},
+        {setting::objectLights, L"Lights per object", RowInfo::number, &ModSettings::objectLights, nullptr,
+         L"View", L"LightsPerObject", nullptr, nullptr,
+         L"How many lights each object takes. The game uses six; the strongest are kept.", {1,6,1,5}},
+        {setting::levelDetail, L"Level detail", RowInfo::choice, &ModSettings::levelDetail, nullptr,
+         L"View", L"LevelDetail", nullptr, nullptr,
+         L"Fine surface detail on walls, floors and ceilings: within about 3 m stone grain and mortar, wood fibres, "
+         L"rusted metal, dirt and gravel, cracked plaster; out to about 8 m broad weathering and damp. People are "
+         L"left alone. It turns itself down as the frame rate drops below about "
+         L"55 fps and off below about 40, before anything else. Not in VR.", {0,100,5,20}},
+        {setting::objectDetail, L"World object detail", RowInfo::choice, &ModSettings::objectDetail, nullptr,
+         L"View", L"ObjectDetail", nullptr, nullptr,
+         L"The same surface detail on loose items and placed objects within 6 m: weapons on the floor or a rack, "
+         L"chests, doors, furniture. Walls and floors are not included. Not in VR.", {0,100,5,20}},
+        {setting::fingerPoses, L"Finger poses", RowInfo::toggle, nullptr, &ModSettings::fingerPoses,
+         L"View", L"FingerPoses", nullptr, nullptr,
+         L"Experimental. Adds finger bones to your character's own skeleton and poses them to what each hand holds: "
+         L"round a weapon's hilt, round a carried item, flat under a shield, open otherwise. In play, in first and third "
+         L"person; a headset's tracked hands take over when VR finger bones are on."},
+        {setting::fingerPosesOthers, L"Finger poses: others", RowInfo::toggle, nullptr, &ModSettings::fingerPosesOthers,
+         L"View", L"FingerPosesOthers", nullptr, nullptr,
+         L"The same finger poses for every other character in the level, in play."},
+        {setting::conditionEffects, L"Hurt and winded", RowInfo::toggle, nullptr, &ModSettings::conditionEffects,
+         L"View", L"ConditionEffects", nullptr, nullptr,
+         L"Below half health the view loses colour and darkens at the edges; when out of breath the edges darken "
+         L"with each breath, and the eyes take a moment to adjust between light and darkness. Uses the game's own "
+         L"health and stamina."},
+        {setting::lightSmoothing, L"Smooth lighting", RowInfo::toggle, nullptr, &ModSettings::lightSmoothing,
+         L"View", L"SmoothLighting", nullptr, nullptr,
+         L"Reads the game's bounce-light grid smoothly, so strong lights such as the arena's red torches fall off in "
+         L"round gradients instead of squares. Takes effect from the next level load."},
+        {setting::woundMarks, L"Wounds", RowInfo::toggle, nullptr, &ModSettings::woundMarks,
+         L"View", L"Wounds", nullptr, nullptr,
+         L"Where a weapon gets through, the character keeps the mark and it moves with the limb: a gash along the "
+         L"blade's path for a cut, a deep hole for a thrust, a bruise for a blunt blow, with blood running down "
+         L"from fresh cuts. Blows the armour stops leave nothing. Needs the Lua script runtime."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
     static const auto persisted = [&] {
         std::array<RowInfo, setting::count> rows;
-        std::copy(std::begin(table), std::end(table), rows.begin());
+        rows.fill(none); // placed by row id, so the table's order cannot misroute a row
+        for (const RowInfo& info : table)
+            if (info.row >= 0 && info.row < setting::count) rows[size_t(info.row)] = info;
         for (int i = 0; i < setting::count; ++i)
             if (fixedSetting(i) || i == setting::tpDefense || i == setting::tpSwingSelection ||
                 i == setting::swingCrosshair || i == setting::idleCrosshair || i == setting::aimMarker)
@@ -847,6 +1314,8 @@ inline bool validSettingBinding(int row, int key) {
 inline void ModSettings::normalize() {
     if (!validSettingBinding(setting::trackingKey, trackingKey)) trackingKey = 0;
     if (!validSettingBinding(setting::rotateHeldKey, rotateHeldKey)) rotateHeldKey = 0;
+    if (!validSettingBinding(setting::kickKey, kickKey)) kickKey = 0;
+    if (!validSettingBinding(setting::jumpKey, jumpKey)) jumpKey = 0;
     if (fpDefense != 1) fpDefense = 0;
     if (tpDefense != 1) tpDefense = 0;
     if (fpSwingSelection != 0) fpSwingSelection = 1;
@@ -856,7 +1325,11 @@ inline void ModSettings::normalize() {
         const RowInfo& i = rowInfo(r);
         if (i.kind == RowInfo::number)
             step(r, 0);
-        else if (i.kind == RowInfo::choice && (this->*i.value < 0 || this->*i.value > 2))
+        else if (i.kind == RowInfo::choice && i.range.count) {
+            // An effect strength in percent; the old Subtle and Strong (1 and 2) are 50 and 100.
+            int& v = this->*i.value;
+            v = v == 1 ? 50 : v == 2 ? 100 : std::clamp(v, 0, 100);
+        } else if (i.kind == RowInfo::choice && (this->*i.value < 0 || this->*i.value > 2))
             this->*i.value = defaults.*i.value;
     }
     headSteady = headRoll = headPitch = headYaw = headBob = fp::fixedHeadStabilization;

@@ -1,5 +1,21 @@
 # Changelog
 
+Unreleased
+
+- Dying no longer freezes the game. A hook that faulted while reading your freshly dead character used to keep its lock forever; now it lets go.
+- Blood and decals stop flickering in first person with supersampling on. The depth correction was shrinking their offset to about two depth steps; it now keeps at least sixteen.
+- Screen-space reflections, depth of field and ambient occlusion, drawn before the UI. With supersampling they run once on the averaged image. Admitted only when every hooked function matches byte for byte, so Hellmode qualifies too.
+- New F8 rows, all off by default: edge smoothing, helmet view, a see-through ghost when something blocks the third-person camera, and a hurt/winded overlay read from health and stamina.
+- OpenXR VR, only in `build.py --openxr-sdk` builds: per-eye AO and reflections behind a "VR: effects" row, a stab modifier on the left trigger, a mirror mode, a comfort vignette (off by default), and rows for grip angle, haptics strength, panel width and panel distance. Half-resolution AO/SSR now hands back the framebuffer it found, which the headset eyes needed. Normal builds don't contain it and play exactly as before.
+- Settings gets a VR tab with its own Defaults, CONTROLS is just Controls now, and the window is wider. VR also has a hands-only body mode, and a "VR: main menu" row that shows the title level in stereo with the menu on a panel standing in it.
+- Hellmode is a recognised build now, so it skips the "untested version" banner. Banners that do show wrap instead of getting cut off.
+- Third-person camera stops pumping in and out when a pillar or someone walks past: after a pull-in it waits a quarter second before easing back, and eases back slower the higher Camera lag is set. Its follow point also rides vertical head bob more softly.
+- Fewer pointless memory checks every frame and every mouse message. Same results, less asking Windows if memory is still there.
+- The settings panel reads the game's GUI size from `hm_saves` on Hellmode installs instead of assuming AppData.
+- `build.py --dev`: dev-only build with a readiness file for automation and a save-slot loader driven by `dev-load.ini`. Never packaged; the loader hasn't loaded a slot in game yet.
+- Casts and comments tidied; camera math untouched.
+- Checked with MSVC, the generated tables, offline admission checks on both EXEs, a Hellmode title run and one in-game death. VR, the effects and the decal fix still need eyes in game. FPS gains unmeasured.
+
 v0.2.3 (revision 58)
 
 - Keep ExCamera's native keyboard Controls rows reachable by preserving scrolling while the settings integration is active.

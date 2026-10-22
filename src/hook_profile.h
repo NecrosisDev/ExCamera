@@ -17,7 +17,8 @@ enum class Hook : unsigned {
     pick, grabPick, pickNative, grabNative, cameraPick, selfMask, selfRestore, sceneWalk,
     viewClearance, level, levelNative, tpAim, tpHide, viewFeatures, cue,
     heldIntegrate, heldNative, cameraLock, memoryQuery, frame,
-    wearPass, wearPassNative, wearDraw, wearDrawNative, wearSubmit, wearSubmitNative, count
+    wearPass, wearPassNative, wearDraw, wearDrawNative, wearSubmit, wearSubmitNative,
+    sampledViews, sampledViewsNative, viewEffects, superSampledViews, superSampledViewsNative, count
 };
 struct HookInfo { const char* name; const char* kind; };
 inline constexpr HookInfo hooks[] = {
@@ -34,7 +35,9 @@ inline constexpr HookInfo hooks[] = {
     {"memory_query", "phase"}, {"present_marker", "marker"},
     {"headwear_colour", "hook"}, {"headwear_colour.native", "native"},
     {"headwear_draw", "hook"}, {"headwear_draw.native", "native"},
-    {"headwear_submit", "hook"}, {"headwear_submit.native", "native"}
+    {"headwear_submit", "hook"}, {"headwear_submit.native", "native"},
+    {"sampled_views", "hook"}, {"sampled_views.native", "native"}, {"view_effects", "phase"},
+    {"supersampled_views", "hook"}, {"supersampled_views.native", "native"}
 };
 inline constexpr unsigned hookCount = unsigned(Hook::count), threadLimit = 64, depthLimit = 64;
 inline constexpr unsigned frameBuckets = 1024; // 0.25 ms intervals; last bucket includes overflow.

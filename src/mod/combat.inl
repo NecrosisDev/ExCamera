@@ -24,7 +24,7 @@ static bool ordinaryCombat(uintptr_t root, uintptr_t bh) {
         (manager && *(unsigned*)(manager + field::gui::dragFormat)))
         return false;
     const unsigned interact = nativeBinding(field::bindings::interact / field::bindings::stride);
-    return !(interact > 0 && interact < 256 && (keyState(int(interact)) & 0x8000));
+    return !(interact > 0 && interact < 256 && (keyState(static_cast<int>(interact)) & 0x8000));
 }
 static bool manualCombat(uintptr_t root, uintptr_t bh) {
     return manualDefenseReady.load() &&
@@ -50,13 +50,13 @@ static bool attentionDirection(uintptr_t bh, Aim& a, float (&direction)[3]) {
     double length2 = 0;
     double delta[3];
     for (int i = 0; i < 3; ++i) {
-        delta[i] = double(a.point[i]) - double(a.origin[i]);
+        delta[i] = static_cast<double>(a.point[i]) - static_cast<double>(a.origin[i]);
         if (!std::isfinite(delta[i])) return false;
         length2 += delta[i] * delta[i];
     }
     if (!(length2 > 1e-8) || !std::isfinite(length2)) return false;
     const double length = std::sqrt(length2);
-    for (int i = 0; i < 3; ++i) direction[i] = float(delta[i] / length);
+    for (int i = 0; i < 3; ++i) direction[i] = static_cast<float>(delta[i] / length);
     return true;
 }
 static void combatAttention(uintptr_t bh) {
@@ -65,7 +65,7 @@ static void combatAttention(uintptr_t bh) {
     float* gaze = nullptr;
     __try {
         if (attentionDirection(bh, a, presented)) {
-            gaze = (float*)(a.root + field::character::gaze);
+            gaze = reinterpret_cast<float*>(a.root + field::character::gaze);
             memcpy(saved, gaze, sizeof saved);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -92,7 +92,7 @@ static void publishGuard(const InputOwner::Sample& sample, bool held) {
 // but a released guard tap is never queued for a later native opportunity.
 static void combatInput(uintptr_t root, uintptr_t bh, bool owned, const InputOwner::Sample& ownerSample) {
     const unsigned physical =
-        ((keyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) | ((keyState(VK_RBUTTON) & 0x8000) ? 2u : 0u);
+        ((keyState(VK_LBUTTON) & 0x8000) || trackedAttackHeld() ? 1u : 0u) | ((keyState(VK_RBUTTON) & 0x8000) ? 2u : 0u);
     unsigned& buttons = *(unsigned*)gameAt(fp::sig::buttonWord);
     const bool ordinary = owned && ordinaryCombat(root, bh);
     const bool manual = ordinary && manualCombat(root, bh);
@@ -109,6 +109,7 @@ enum class DefensePermission { native, denied, held };
 static DefensePermission defensePermission(uintptr_t root, bool* known = nullptr) {
     if (known) *known = true;
     if (!root || !base || !manualDefenseReady.load()) return DefensePermission::native;
+    if (trackedBodyOwns(root)) return DefensePermission::denied; // the tracked body guards physically
     __try {
         const uintptr_t bh = *(uintptr_t*)(root + field::character::behaviour);
         if (!manualCombat(root, bh)) return DefensePermission::native;
@@ -138,10 +139,10 @@ static DefensePermission defensePermission(uintptr_t root, bool* known = nullptr
 // defense does not use this gate: its tracking and transitions stay native.
 static bool guardReadiness(uintptr_t root) {
     const float readiness = *(float*)(root + field::character::postureReadiness);
-    const float balance = *(float*)(root + field::character::balance);
-    const float maximum = *(float*)(root + field::character::balanceMax);
+    const float balance = *(float*)(root + field::character::stamina);
+    const float maximum = *(float*)(root + field::character::staminaMax);
     return std::isfinite(readiness) && std::isfinite(balance) && std::isfinite(maximum) &&
-           double(readiness) >= .01 && double(balance) >= double(maximum) - .05;
+           static_cast<double>(readiness) >= .01 && static_cast<double>(balance) >= static_cast<double>(maximum) - .05;
 }
 // B7560 selects the requested posture; BEAC0 publishes it, then 169200
 // accepts it through the ordinary motion/recovery path. A manual hold supplies
@@ -244,6 +245,18 @@ static void combatUpdate(uintptr_t root) {
     for (auto* previous = update.previous; previous; previous = previous->previous)
         nestedActor |= previous->root == root;
     defenseUpdate = &update;
+    // A tracked crouch is lent to the native duck for this update only; the native decay and
+    // any native replacement value win, and a fault retires XR locomotion.
+    float trackedDuck = 0, keptDuck = 0, writtenDuck = 0;
+    bool borrowedDuck = false;
+    if (!nestedActor && trackedDuckInput(root, trackedDuck)) {
+        keptDuck = *(float*)(root + field::character::duckAmount);
+        if (std::isfinite(keptDuck) && keptDuck >= 0 && keptDuck <= 1) {
+            writtenDuck = (std::max)(keptDuck, trackedDuck);
+            *(float*)(root + field::character::duckAmount) = writtenDuck;
+            borrowedDuck = true;
+        }
+    }
     __try {
         // Native 169200 consumes the next attack inside this call. Withdraw a
         // released manual request BEFORE that admission, not in its later
@@ -254,7 +267,11 @@ static void combatUpdate(uintptr_t root) {
         // scene, actor and policy handoffs cannot carry an old hold forward.
         if (!nestedActor && !update.reactiveSeen && manualInterceptionReady(root)) defenseReactive(root);
     } __finally {
-        defenseUpdate = update.previous;
+        if (borrowedDuck && AbnormalTermination()) trackedLocomotionFault();
+        __try {
+            if (borrowedDuck && readable(root, field::character::duckAmount + 4) && *(float*)(root + field::character::duckAmount) == writtenDuck)
+                *(float*)(root + field::character::duckAmount) = keptDuck;
+        } __finally { defenseUpdate = update.previous; }
     }
 }
 // Initial optional admission is complete or withheld. Once created, the hooks
@@ -291,9 +308,9 @@ static void withholdManualDefense(int reason) {
     layout.rva[fp::sig::combatUpdateSlot] = 0; // read-only locator, not a hook/removal entry
 }
 static bool nativeDefenseEntryMatches(const fp::ImageView& file, uint32_t rva) {
-    if (!rva || uint64_t(rva) + 16 > file.size) return false;
+    if (!rva || static_cast<uint64_t>(rva) + 16 > file.size) return false;
     __try {
-        return std::memcmp((const void*)(base + rva), file.data + rva, 16) == 0;
+        return std::memcmp(reinterpret_cast<const void*>(base + rva), file.data + rva, 16) == 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }

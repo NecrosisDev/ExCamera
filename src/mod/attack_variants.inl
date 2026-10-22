@@ -234,8 +234,8 @@ static bool loadedAttackVariantContractsImpl(const fp::ImageView& file) {
         // Overlap the reviewed full-body windows (which begin after the native
         // prologues), leaving no unchecked gap behind the hook's first bytes.
         constexpr size_t entryBytes = 64;
-        if (!rva || uint64_t(rva) + entryBytes > file.size ||
-            memcmp((const void*)(base + rva), file.data + rva, entryBytes))
+        if (!rva || static_cast<uint64_t>(rva) + entryBytes > file.size ||
+            memcmp(reinterpret_cast<const void*>(base + rva), file.data + rva, entryBytes))
             return false;
     }
     if (!loadedOptionalContractsImpl(file, "attackVariants") ||

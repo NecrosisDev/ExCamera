@@ -11,7 +11,7 @@ static void setActivationPhase(fp::ActivationPhase phase) {
 static uint64_t activationProcessStarted() {
     FILETIME created{}, exited{}, kernel{}, user{};
     if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return 0;
-    return (uint64_t(created.dwHighDateTime) << 32) | created.dwLowDateTime;
+    return (static_cast<uint64_t>(created.dwHighDateTime) << 32) | created.dwLowDateTime;
 }
 static void writeActivationStatus(fp::JsonOut& j) {
     AcquireSRWLockShared(&activationLock);

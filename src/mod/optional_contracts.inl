@@ -23,18 +23,18 @@ static bool loadedOptionalContractsImpl(const fp::ImageView& file, const char* g
             if (!fp::parsePattern(owner.pattern, pattern) ||
                 fp::findPattern(file, pattern, file.textBegin, file.textEnd, &at) != 1)
                 return false;
-            const int64_t entry = int64_t(at) + owner.entryOffset;
+            const int64_t entry = static_cast<int64_t>(at) + owner.entryOffset;
             if (entry < file.textBegin || entry >= file.textEnd ||
                 (owner.target < fp::sig::targetCount &&
-                 layout.rva[owner.target] != uint32_t(entry)))
+                 layout.rva[owner.target] != static_cast<uint32_t>(entry)))
                 return false;
-            addresses[field.owner] = uint32_t(entry);
+            addresses[field.owner] = static_cast<uint32_t>(entry);
         }
         fp::Pattern pattern;
-        const uint64_t at = uint64_t(addresses[field.owner]) + field.offset;
+        const uint64_t at = static_cast<uint64_t>(addresses[field.owner]) + field.offset;
         if (!fp::parsePattern(field.pattern, pattern) || at > file.textEnd ||
             pattern.bytes.size() > file.textEnd - at ||
-            memcmp((const void*)(base + uintptr_t(at)), file.data + at, pattern.bytes.size()))
+            memcmp(reinterpret_cast<const void*>(base + static_cast<uintptr_t>(at)), file.data + at, pattern.bytes.size()))
             return false;
         ++checked;
     }

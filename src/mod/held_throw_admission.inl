@@ -45,10 +45,10 @@ static bool loadedHeldThrowContracts(const fp::ImageView& file) {
         // native update slots. Exact file equality also rejects retargeted cells.
         const uint32_t metadata = layout.rva[fp::sig::heldBodyMetadata];
         for (unsigned offset : {0x60u, 0x68u, 0x70u, 0xD8u, 0xE0u}) {
-            const uint64_t at = uint64_t(metadata) + offset;
+            const uint64_t at = static_cast<uint64_t>(metadata) + offset;
             if (!metadata || at > file.size || sizeof(uintptr_t) > file.size - at ||
-                !readable(base + uintptr_t(at), sizeof(uintptr_t)) ||
-                memcmp((const void*)(base + uintptr_t(at)), file.data + at, sizeof(uintptr_t)))
+                !readable(base + static_cast<uintptr_t>(at), sizeof(uintptr_t)) ||
+                memcmp(reinterpret_cast<const void*>(base + static_cast<uintptr_t>(at)), file.data + at, sizeof(uintptr_t)))
                 return false;
         }
         return true;

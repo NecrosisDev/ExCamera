@@ -49,7 +49,7 @@ static std::atomic<uint32_t> healthHits[fp::healthHooks]{};
 static std::atomic<bool> healthRecording{true};
 static void healthHit(fp::HealthHook h) {
     if (healthRecording.load(std::memory_order_relaxed))
-        healthHits[unsigned(h)].fetch_add(1, std::memory_order_relaxed);
+        healthHits[static_cast<unsigned>(h)].fetch_add(1, std::memory_order_relaxed);
 }
 static HMODULE module;
 using Nav = uintptr_t (*)(void*, float);
@@ -198,7 +198,7 @@ static unsigned nativeBinding(size_t index) {
     const size_t offset = index * field::bindings::stride;
     const uintptr_t entry = gameAt(fp::sig::movementKeys) + offset;
     // Native interaction reads a WORD; the other reviewed slots read DWORDs.
-    return offset == field::bindings::interact ? *(const uint16_t*)entry : *(const uint32_t*)entry;
+    return offset == field::bindings::interact ? *reinterpret_cast<const uint16_t*>(entry) : *reinterpret_cast<const uint32_t*>(entry);
 }
 static void movementKeys(unsigned* keys) {
     const unsigned fallback[4] = {'W', 'A', 'S', 'D'};
@@ -208,7 +208,7 @@ static void movementKeys(unsigned* keys) {
 static unsigned keyMask(WPARAM key) {
     unsigned keys[4];
     movementKeys(keys);
-    return fp::movementKey(unsigned(key), keys);
+    return fp::movementKey(static_cast<unsigned>(key), keys);
 }
 // All actions polled by 0xAA080, including crouch/run/alternate attack.
 // A mod-owned lean/rotate binding must not also trigger its native action.
@@ -229,15 +229,14 @@ static unsigned physicalMovement() {
     movementKeys(keys);
     unsigned held = 0;
     for (unsigned k : keys)
-        if (k > 0 && k < 256 && (keyState(int(k)) & 0x8000)) held |= fp::movementKey(k, keys);
+        if (k > 0 && k < 256 && (keyState(static_cast<int>(k)) & 0x8000)) held |= fp::movementKey(k, keys);
     return held;
 }
 using InputOwner = fp::InputOwnership<field::bindings::count>;
 static InputOwner inputOwner;
 static std::atomic<float> sensitivity{
     0.0025f}; // [Input] SensitivityPercent; the F8 settings page changes it live
-// [View] SwingCrosshair=hide|show (the crosshair during an accepted swing). [Camera] HeadBob
-// is gone.
+// [View] SwingCrosshair=hide|show (the crosshair during an accepted swing).
 static std::atomic<bool> hideSwingCrosshair{false};
 // [View] IdleCrosshair=rmb|always: out of combat the crosshair shows only while right mouse frees the cursor.
 static std::atomic<bool> idleCrosshairAlways{false};
@@ -247,6 +246,25 @@ static std::atomic<int> flickCatchup{50};
 // which view F6 shows while the mod owns the camera: 0 first person, 1 third person (F6 cycles
 // first -> third -> the game's overhead). [ThirdPerson] Distance / Shoulder / Height in first-person.ini.
 static std::atomic<int> viewMode{0}, tpDistance{250}, tpShoulder{40}, tpHeight{15};
+// [VR] rows: eye separation in mm (0: the headset's own), game units per metre, render mode.
+static std::atomic<uintptr_t> nativeSettingsFaultAt{0};
+static std::atomic<unsigned> nativeSettingsDispatches{0}, nativeSettingsSteps{0}, nativeSettingsRefused{0};
+static std::atomic<bool> nativeSettingsWidened{false}; // the Settings form carries the five-tab width
+// root x, y, width, height; Graphics, Controls, Controller widths; frame scale in hundredths; UI scale.
+static std::array<std::atomic<int>, 9> nativeSettingsFrames{};
+static std::atomic<int> vrIpdMm{0}, vrUnitsPerMetre{100}, vrRenderMode{0}, vrHandsDrawn{0}, vrPosture{0}, vrHeadset{0}, vrTurning{1}, vrEffects{0}, vrGripAngle{0}, vrHapticPercent{100}, vrPanelWidthCm{120}, vrPanelDistanceCm{150}, vrComfort{0}, vrBodyHandsOnly{0}, vrTitleMenu{1}, vrPointer{1}, vrRecenterMemory{1}, vrWristMenu{1}, vrHaftGrip{1}, vrHeightCm{0}, vrGrabTurn{0}, vrFrameTime{0}, vrEyeScalePercent{100}, vrHandMesh{1}, vrTrackedGrab{1}, vrGripSlideCm{0}, vrKick{0}, vrFingerBones{0}, vrJump{1}, vrWeaponWeight{1}, vrTeleport{1}, vrHandPanel{1}, vrPouch{1};
+static std::atomic<int> drawDistanceM{60}, objectLightCap{4}; // the draw cutoff (m, 0 off); lights per mesh (6: the game's)
+static std::atomic<int> fingerPoses{1}; // the held-item finger poses through the bones, every build
+static std::atomic<int> fingerPosesOthers{1}; // the same for every character the world lists
+// Always on, no row: the title in the headset, the pointer, the remembered recenter, the wrist menu, the haft grip, the
+// game's hand mesh and the closing grab; the frame-time line stays off. Each keeps its switch for the emulation ini.
+// The last recentred origin in the headset's room-fixed space: position, then quaternion x y z w. Written on
+// recenter, read at start, kept in the settings ini beside the rows.
+static float vrRecenterOrigin[7]{0, 0, 0, 0, 0, 0, 1};
+static std::atomic<bool> vrRecenterOriginValid{false};
+static bool saveSetting(const wchar_t* section, const wchar_t* key, const wchar_t* value);
+// Hands only without hands would be nothing: that mode draws the mod hands as if the hands row were on.
+inline bool trackedHandsWanted() { return vrHandsDrawn.load(std::memory_order_relaxed) || vrBodyHandsOnly.load(std::memory_order_relaxed); }
 // Requested modes persist independently. The complete optional hook group must
 // be admitted before either can become effective.
 static std::atomic<int> fpManualGuard{0}, tpManualGuard{0};
@@ -353,6 +371,8 @@ static std::atomic<unsigned> sideFlips{0};
 // [View] AttackCue=1: the wind-up arc around the combat crosshair. CueSize/CueOpacity are percentages;
 // CueThrust=1 draws thrusts below the crosshair.
 static std::atomic<bool> attackCue{true}, cueThrust{true};
+static std::atomic<bool> bladeDrag{true}, stabSink{true}; // blade.inl: the drawn edge cuts; a thrust sinks into a soft target
+static std::atomic<int> bladeGainPercent{100};           // the gain on the draw velocity handed to the game's impact
 static std::atomic<int> cueSize{100}, cueOpacity{100};
 // Published on the behaviour tick (publishCue), read by the frame thread only through these.
 static std::atomic<int> cueArcSide{0}, cueArcPhase{0};
@@ -436,7 +456,7 @@ static void adjustFov(int delta, bool reset = false) {
 static std::atomic<int> nearClip{
     fp::nearClipDefaultTenths};  // [Camera] NearClip: the dynamic near plane's floor, tenths of a cm
 static float renderedFov = 75;   // Protected by cameraLock, paired with lastCamera.
-static float renderedNear = 1.f; // the near plane first person wrote (cameraLock); was always 1
+static float renderedNear = 1.f; // the near plane first person wrote (cameraLock)
 // the view's heading as last drawn (render thread), so an aim that (re)starts begins where
 // the view looks instead of snapping to the body's heading and level pitch.
 static std::atomic<uintptr_t> viewRoot{0};
@@ -452,7 +472,7 @@ static std::wstring userSettingsFile(const std::wstring& moduleIni, const std::w
     if (userDir.empty()) return moduleIni;
     const std::wstring user = userDir + L"\\first-person.ini";
     if (GetFileAttributesW(user.c_str()) != INVALID_FILE_ATTRIBUTES) return user;
-    SHCreateDirectoryExW(nullptr, userDir.c_str(), nullptr); // with any missing parents
+    SHCreateDirectoryExW(nullptr, userDir.c_str(), nullptr);
     std::wstring source = moduleIni;
     const size_t folderEnd = moduleIni.find_last_of(L'\\'),
                  releasesEnd = folderEnd == std::wstring::npos ? folderEnd
@@ -475,9 +495,9 @@ static std::wstring userSettingsFile(const std::wstring& moduleIni, const std::w
                                           GetFileExInfoStandard, &dll))
                     continue;
                 const ULONGLONG edited =
-                    (ULONGLONG(ini.ftLastWriteTime.dwHighDateTime) << 32) | ini.ftLastWriteTime.dwLowDateTime;
+                    (static_cast<ULONGLONG>(ini.ftLastWriteTime.dwHighDateTime) << 32) | ini.ftLastWriteTime.dwLowDateTime;
                 const ULONGLONG built =
-                    (ULONGLONG(dll.ftLastWriteTime.dwHighDateTime) << 32) | dll.ftLastWriteTime.dwLowDateTime;
+                    (static_cast<ULONGLONG>(dll.ftLastWriteTime.dwHighDateTime) << 32) | dll.ftLastWriteTime.dwLowDateTime;
                 constexpr ULONGLONG packingSlack =
                     10ull * 10000000ull; // 10 s in file-time units: the build writes both
                 if (edited > built + packingSlack && edited > newest) {
@@ -583,14 +603,27 @@ static LRESULT CALLBACK noticeProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         HBRUSH edge = CreateSolidBrush(RGB(235, 200, 120));
         FrameRect(dc, &r, edge);
         DeleteObject(edge);
-        HFONT font = CreateFontW(-(r.bottom * 9 / 20), 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
-                                 CLEARTYPE_QUALITY, 0, L"Segoe UI");
-        HGDIOBJ old = SelectObject(dc, font);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(255, 246, 230));
-        DrawTextW(dc, noticeText, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        SelectObject(dc, old);
-        DeleteObject(font);
+        RECT text = r;
+        InflateRect(&text, -r.bottom / 4, -r.bottom / 10);
+        // One line when it fits, otherwise wrapped in a smaller font, centred either way.
+        for (int height = r.bottom * 9 / 20;; height = height * 3 / 4) {
+            HFONT font = CreateFontW(-height, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0,
+                                     L"Segoe UI");
+            HGDIOBJ old = SelectObject(dc, font);
+            RECT need = text;
+            DrawTextW(dc, noticeText, -1, &need, DT_CENTER | DT_WORDBREAK | DT_CALCRECT);
+            const bool fits = need.bottom - need.top <= text.bottom - text.top || height <= r.bottom / 5;
+            if (fits) {
+                RECT at = text;
+                at.top += (text.bottom - text.top - (need.bottom - need.top)) / 2;
+                DrawTextW(dc, noticeText, -1, &at, DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
+            }
+            SelectObject(dc, old);
+            DeleteObject(font);
+            if (fits) break;
+        }
         EndPaint(w, &ps);
         return 0;
     }
@@ -606,7 +639,7 @@ static void showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000) {
     // An early activation fault can precede the first window enumeration.
     if (!hookedWindow || !IsWindow(hookedWindow)) {
         hookedWindow = nullptr;
-        EnumWindows(findWindow, (LPARAM)&hookedWindow);
+        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&hookedWindow));
     }
     if (!hookedWindow) return;
     static ATOM cls = 0;
@@ -700,7 +733,7 @@ static void reportFault(const char* reason, const char* hooks = "unknown",
     const wchar_t* message = fp::faultMessage(verified, removed, strcmp(restoration, "not_required") == 0);
     if (hookedWindow) {
         DWORD_PTR ignored = 0;
-        SendMessageTimeoutW(hookedWindow, WM_SETTEXT, 0, (LPARAM)message, SMTO_ABORTIFHUNG | SMTO_BLOCK, 200,
+        SendMessageTimeoutW(hookedWindow, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(message), SMTO_ABORTIFHUNG | SMTO_BLOCK, 200,
                             &ignored);
     }
     showNotice(notice ? notice : message + fp::faultTitlePrefix);
@@ -814,12 +847,12 @@ static bool awaitRestore(DWORD timeout = 2000) {
             // Stopping while a released camera of the current gameplay is unresolved
             // (never current again, so never reclaimed) cannot be called restored.
             for (const Retired& r : retired)
-                if (r.camera && !r.left && *(uintptr_t*)(gameAt(fp::sig::playerRoot)) == r.root &&
-                    *(uintptr_t*)(gameAt(fp::sig::currentScene)) == r.scene)
+                if (r.camera && !r.left && *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) == r.root &&
+                    *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene)) == r.scene)
                     InterlockedExchange(&restorationUnknown, 1);
             const bool unknown = InterlockedCompareExchange(&restorationUnknown, 0, 0) != 0;
             const bool ready = !unknown && !savedCamera && !InterlockedCompareExchange(&pendingRestore, 0, 0) &&
-                               !InterlockedCompareExchange(&renderScopesInFlight, 0, 0);
+                               !InterlockedCompareExchange(&renderScopesInFlight, 0, 0) && stereoDrained();
             if (ready) InterlockedExchange(&cameraReady, 0);
             ReleaseSRWLockExclusive(&cameraLock);
             if (unknown) return false;
@@ -856,6 +889,8 @@ static std::atomic<float> grabStartDistance{0};
 static std::atomic<bool> hoverOutOfRange{false};
 static std::atomic<ULONGLONG> hoverRangeAt{0};
 static std::atomic<int> rotateHeldKey{0x02};
+static std::atomic<int> kickKey{0}, jumpKey{0}; // motions.inl; unbound until the player picks a key
+static std::atomic<bool> motionKickRequested{false}, motionJumpRequested{false}; // a key press claimed by the window handler, taken on the game thread
 // Preserve legacy INI preferences only. Explicit leaning is disabled; these
 // values never claim input or change torso pose.
 static std::atomic<int> leanKey{0x12};
@@ -898,16 +933,17 @@ static ULONGLONG holdTick = 0;
 static std::atomic<unsigned> dragFlagsStatus{0}; // diagnostic mirror; formatted only by the worker
 static bool readable(uintptr_t address, size_t size);
 static const char* nodeName(uintptr_t node);
+static bool verifiedBuild = false; // the build this release was tested on, by its hash (session.inl sets it)
 static int dragKind(uintptr_t* object = nullptr);
 static int dragKind(uintptr_t* object) {
     // 0x11F610 (the player's input step) reads the manager's flags: 0x2000 an object drag (queried by
     // 0x117AA0 and placed by 0x118000), 0x4000 and 0x10000 a hinged drag released beyond reach (the object's
     // position at +0x128), 0x80000 a hand grab (cursor state 8). Live: a closed door
     // dragged by its face reads 0x4000, a hand grab beside an open door 0x80000.
-    const uintptr_t drag = *(uintptr_t*)(gameAt(fp::sig::dragManager));
+    const uintptr_t drag = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::dragManager));
     if (!readable(drag, 0x20)) return 0;
-    const unsigned flags = *(unsigned*)(drag + 8);
-    const uintptr_t o = *(uintptr_t*)(drag + field::drag::object);
+    const unsigned flags = *reinterpret_cast<unsigned*>(drag + 8);
+    const uintptr_t o = *reinterpret_cast<uintptr_t*>(drag + field::drag::object);
     if (object) *object = o;
     dragFlagsStatus.store(flags, std::memory_order_relaxed);
     if (flags & 0x2000) return readable(o, 0x168) ? 1 : 0;
@@ -922,12 +958,12 @@ static bool playerContext(uintptr_t behavior);
 static bool rmbEligible() {
     if (viewMode.load() >= 2 || InterlockedCompareExchange(&cursorFree, 0, 0) ||
         InterlockedCompareExchange(&windowFree, 0, 0)) return false;
-    const uintptr_t root = *(uintptr_t*)(gameAt(fp::sig::playerRoot));
+    const uintptr_t root = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot));
     if (!readable(root, 0x1300)) return false;
-    const uintptr_t behavior = *(uintptr_t*)(root + field::character::behaviour);
+    const uintptr_t behavior = *reinterpret_cast<uintptr_t*>(root + field::character::behaviour);
     if (!readable(behavior, 0x8a0) || !playerContext(behavior)) return false;
-    if (*(unsigned char*)(root + field::character::combatStance) ||
-        *(unsigned*)(root + field::character::stateFlags) == 0x20)
+    if (*reinterpret_cast<unsigned char*>(root + field::character::combatStance) ||
+        *reinterpret_cast<unsigned*>(root + field::character::stateFlags) == 0x20)
         return false;
     uintptr_t object = 0;
     int kind = 0;
@@ -937,7 +973,7 @@ static bool rmbEligible() {
         return false;
     }
     if (kind == 1)
-        return rotateHeldKey.load() != int(nativeBinding(8)); // held-item rotation has priority
+        return rotateHeldKey.load() != static_cast<int>(nativeBinding(8)); // held-item rotation has priority
     if (kind == 2)
         return doorDistance.load() > 0 &&
                heldDoorDrag(); // a door or lid held in place, never a locked door's rattle
@@ -950,9 +986,9 @@ static int cursorHoldKey = 0;
 static fp::InputStamp cursorHoldOwner;
 static fp::InputStamp cursorHoldStamp() {
     fp::InputStamp s;
-    s.root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
-    s.head = s.root ? *(uintptr_t*)(s.root + field::character::headPart) : 0;
-    s.scene = *(uintptr_t*)gameAt(fp::sig::currentScene);
+    s.root = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot));
+    s.head = s.root ? *reinterpret_cast<uintptr_t*>(s.root + field::character::headPart) : 0;
+    s.scene = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene));
     s.mode = viewMode.load();
     s.generation = inputOwner.generation();
     s.policyRevision = inputOwner.policyRevision();
@@ -1028,7 +1064,7 @@ static bool cursorLookMessage(int key, bool down, bool repeat) {
         __try {
             if (!down && key == cursorHoldKey) {
                 eaten = cursorHoldEvent(fp::RmbEvent::up, false);
-            } else if (down && !repeat && key == int(nativeBinding(8))) {
+            } else if (down && !repeat && key == static_cast<int>(nativeBinding(8))) {
                 // Reserved shortcuts and other mod binding owners get first refusal.
                 if (key != VK_F6 && key != VK_F7 && key != VK_F8 && key != VK_F9 &&
                     key != VK_F10 && key != VK_F11 && key != VK_ESCAPE)
@@ -1048,7 +1084,7 @@ static void cursorLookPoll() {
         __try {
             if (rmbState.on) {
                 const fp::InputStamp now = cursorHoldStamp();
-                if (!rmbEligible() || cursorHoldKey != int(nativeBinding(8)) ||
+                if (!rmbEligible() || cursorHoldKey != static_cast<int>(nativeBinding(8)) ||
                     !(keyState(cursorHoldKey) & 0x8000) ||
                     now.root != cursorHoldOwner.root || now.head != cursorHoldOwner.head ||
                     now.scene != cursorHoldOwner.scene || now.mode != cursorHoldOwner.mode ||

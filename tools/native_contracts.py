@@ -83,7 +83,7 @@ def validate_spec(spec, offsets):
     for field in spec['fields']:
         if field['owner'] not in owners:
             raise ValueError('Missing native owner: ' + field['owner'])
-        if field.get('optional_group') not in (None, 'manualDefense', 'attackVariants', 'physicsOwnership', 'heldThrow', 'settingsRedraw'):
+        if field.get('optional_group') not in (None, 'manualDefense', 'attackVariants', 'physicsOwnership', 'heldThrow', 'settingsRedraw', 'viewEffects'):
             raise ValueError('Unknown optional capability')
     references = {field['name']: field for field in spec.get('references', [])}
     if len(references) != len(spec.get('references', [])):

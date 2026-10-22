@@ -1,66 +1,55 @@
 // The frame hook (wglSwapBuffers), the dispatch slots' install and rollback, third-person hiding and aim.
 // Part of first_person.cpp (one translation unit): included there, in order.
-// View-scoped head draw suppression. Exanima's shared _SKIN node is a sibling
-// of 10Head. Never mask _SKIN: that would remove the rest of the character.
-// In addition to the whole-head sector visibility policy, do NOT enqueue
-// the player's separate 10Head drawable for the
-// first-person MAIN colour pass (4E610 -> 26F230, call return 4E720).
-// Other submission callsites, including 4EE10 -> 26F230 (return 4EF9E), continue unchanged.
-// This queue fallback never modifies collision/body-part data or scene passMask;
-// view.inl separately masks the verified head's render/pick visibility.
+
 using MeshQueue = void (*)(uintptr_t, int, unsigned short);
 static MeshQueue originalMeshQueue = nullptr;
 static std::atomic<unsigned> firstPersonHeadDrawsSkipped{0};
-static bool shouldSkipPlayerHeadDraw(bool mainColorCall, bool ownFirstPerson,
+
+static inline bool shouldSkipPlayerHeadDraw(bool mainColorCall, bool ownFirstPerson,
                                      bool identityVerified, uintptr_t submission,
                                      uintptr_t headNode) {
     return mainColorCall && ownFirstPerson && identityVerified &&
-           submission && submission==headNode;
+           submission && submission == headNode;
 }
+
 static void meshQueueProfileBody(uintptr_t caller, uintptr_t node, int material, unsigned short flags) {
-    // This shared queue has multiple submission callsites.
-    // Check the *specific* native callsite before touching player
-    // state; all other paths are forwarded byte-for-byte.
-    const bool mainColorCall=caller==gameAt(fp::sig::mainMeshQueueReturn);
-    if (mainColorCall && viewMode.load()==0 && supersampleRenderScope.owned) {
-        bool skip=false;
+    const bool mainColorCall = caller == gameAt(fp::sig::mainMeshQueueReturn);
+    if (mainColorCall && viewMode.load() == 0 && supersampleRenderScope.owned) {
+        bool skip = false;
         __try {
             if (supersampleViewMatches()) {
-                const uintptr_t root=supersampleRenderScope.root;
+                const uintptr_t root = supersampleRenderScope.root;
                 MEMORY_BASIC_INFORMATION region{};
-                if (readable(root,field::character::headPart+sizeof(uintptr_t),region)) {
-                    const uintptr_t head=*(uintptr_t*)(root+field::character::headPart);
-                    // Reuse only this live query's complete protection range.
-                    if (readableRegionContains(region,head,field::bodyPart::meshNode+sizeof(uintptr_t)) ||
-                        readable(head,field::bodyPart::meshNode+sizeof(uintptr_t))) {
-                        const uintptr_t headNode=*(uintptr_t*)(head+field::bodyPart::meshNode);
-                        // A dedicated physical head drawable, NOT a generic
-                        // skinned body mesh. A pointer mismatch fails open.
+                if (readable(root, field::character::headPart + sizeof(uintptr_t), region)) {
+                    const uintptr_t head = *reinterpret_cast<const uintptr_t*>(root + field::character::headPart);
+                    if (readableRegionContains(region, head, field::bodyPart::meshNode + sizeof(uintptr_t)) ||
+                        readable(head, field::bodyPart::meshNode + sizeof(uintptr_t))) {
+                        const uintptr_t headNode = *reinterpret_cast<const uintptr_t*>(head + field::bodyPart::meshNode);
                         const bool headValid =
                             node == headNode &&
-                            readable(headNode,field::sceneNode::bodyPart+sizeof(uintptr_t)) &&
-                            *(uintptr_t*)(headNode+field::sceneNode::bodyPart)==head &&
-                            fp::bodyPartNumber(nodeName(headNode))==10;
-                        skip=shouldSkipPlayerHeadDraw(true,true,headValid,node,headNode);
+                            readable(headNode, field::sceneNode::bodyPart + sizeof(uintptr_t)) &&
+                            *reinterpret_cast<const uintptr_t*>(headNode + field::sceneNode::bodyPart) == head &&
+                            fp::bodyPartNumber(nodeName(headNode)) == 10;
+                        skip = shouldSkipPlayerHeadDraw(true, true, headValid, node, headNode);
                     }
                 }
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
-            skip=false; // Uncertain ownership: preserve native rendering.
+            skip = false;
         }
         if (skip) {
-            firstPersonHeadDrawsSkipped.fetch_add(1,std::memory_order_relaxed);
+            firstPersonHeadDrawsSkipped.fetch_add(1, std::memory_order_relaxed);
             return;
         }
     }
     fp::profile::invoke<fp::profile::Hook::meshNative>(originalMeshQueue, node, material, flags);
 }
+
 __declspec(noinline) static void meshQueue(uintptr_t node, int material, unsigned short flags) {
     const uintptr_t caller = (uintptr_t)_ReturnAddress();
     return fp::profile::invoke<fp::profile::Hook::meshQueue>(meshQueueProfileBody, caller, node, material, flags);
 }
-// Only the native presentation pair owns frame bookkeeping and cue resources.
-// Teardown leaves the native globals stale, so current WGL ownership is required too.
+
 static bool ownedNativeSwap(HDC dc) {
     if (!dc || !base || !layout.rva[fp::sig::nativeSwapDC] ||
         !layout.rva[fp::sig::nativeRenderContext]) return false;
@@ -68,107 +57,118 @@ static bool ownedNativeSwap(HDC dc) {
         const uintptr_t dcSlot = gameAt(fp::sig::nativeSwapDC);
         const uintptr_t contextSlot = gameAt(fp::sig::nativeRenderContext);
         if (!readable(dcSlot, sizeof(HDC)) || !readable(contextSlot, sizeof(HGLRC))) return false;
-        const HDC nativeDC = *(HDC*)dcSlot;
-        const HGLRC nativeContext = *(HGLRC*)contextSlot;
+        const HDC nativeDC = *reinterpret_cast<const HDC*>(dcSlot);
+        const HGLRC nativeContext = *reinterpret_cast<const HGLRC*>(contextSlot);
         return nativeDC && nativeContext && dc == nativeDC &&
                cueCurrentDC() == nativeDC && cueCurrentContext() == nativeContext;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
 }
+
+// cameraLock is held by swapProfileBody, which releases it even when a fault unwinds past.
+static void swapLocked(fp::CueSide& cueSideNow, LONG& cueX, LONG& cueY, float& cueFillNow, float& cueAlphaNow) {
+    InterlockedExchange(&swapThread, LONG(GetCurrentThreadId()));
+    if (attackCue && InterlockedCompareExchange(&active, 0, 0) &&
+        !InterlockedCompareExchange(&stopping, 0, 0) && InterlockedCompareExchange(&inputEnabled, 0, 0) &&
+        !cursorFreeNow()) {
+        AcquireSRWLockShared(&reticleLock);
+        const bool drawn = reticleFrame == InterlockedCompareExchange(&swapCalls, 0, 0);
+        cueX = reticleX;
+        cueY = reticleY;
+        ReleaseSRWLockShared(&reticleLock);
+        if (drawn) {
+            const int phase = cueArcPhase.load();
+            cueAlphaNow = fp::windupShown(phase, cueArcFade.load(), cueArcPublished.load(), GetTickCount64());
+            if (cueAlphaNow > 0) {
+                cueSideNow = fp::cueSide(fp::CueSide(cueArcSide.load()), lastCamera[1]);
+                cueFillNow = cueArcFill.load();
+            }
+        }
+    }
+    viewFeatures(savedCamera && InterlockedCompareExchange(&cameraReady, 0, 0) &&
+                 InterlockedCompareExchange(&active, 0, 0) &&
+                 !InterlockedCompareExchange(&stopping, 0, 0));
+    if (!gameWindow() || *reinterpret_cast<const int*>(gameAt(fp::sig::uiOpenCount)) > 0) releaseInput();
+    windowFreeStep();
+    crouchFrame();
+    InterlockedIncrement(&swapCalls);
+    if (savedCamera) {
+        uintptr_t view = 0, camera = 0;
+        currentCamera(view, camera);
+        const uintptr_t viewport = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::mainViewport));
+        if (viewport)
+            pickCamera = *reinterpret_cast<const uintptr_t*>(viewport + field::viewport::pickCamera) == savedCamera ? 1 : 0;
+        if (checkSavedOwner(view, camera) &&
+            (!InterlockedCompareExchange(&active, 0, 0) || InterlockedCompareExchange(&stopping, 0, 0))) {
+            restoreOwnedCamera(view, camera);
+            resetViewHistory();
+        }
+    }
+    {
+        uintptr_t view = 0, camera = 0;
+        currentCamera(view, camera);
+        updatePark(view, camera);
+    }
+}
+
+static void devFrame();
+
 static BOOL WINAPI swapProfileBody(HDC dc) {
+    if (lightTrimCount && GetCurrentThreadId() == DWORD(InterlockedCompareExchange(&sectorThread, 0, 0))) {
+        __try { restoreLightTrims(); } __except (EXCEPTION_EXECUTE_HANDLER) { lightTrimCount = 0; }
+    }
     if (!ownedNativeSwap(dc)) return fp::profile::invoke<fp::profile::Hook::swapNative>(originalSwap, dc);
+    devFrame();
     fp::profile::engine.present(InterlockedCompareExchange(&cameraReady, 0, 0) && InterlockedCompareExchange(&active, 0, 0) ? unsigned(viewMode.load()) : 3u);
     fp::CueSide cueSideNow = fp::CueSide::none;
     LONG cueX = 0, cueY = 0;
     float cueFillNow = 0, cueAlphaNow = 0;
-    {
-        CameraGuard guard;
-        InterlockedExchange(&swapThread, LONG(GetCurrentThreadId()));
-        if (attackCue && InterlockedCompareExchange(&active, 0, 0) &&
-            !InterlockedCompareExchange(&stopping, 0, 0) && InterlockedCompareExchange(&inputEnabled, 0, 0) &&
-            !cursorFreeNow()) {
-            AcquireSRWLockShared(&reticleLock);
-            const bool drawn = reticleFrame == InterlockedCompareExchange(&swapCalls, 0, 0);
-            cueX = reticleX;
-            cueY = reticleY;
-            ReleaseSRWLockShared(&reticleLock);
-            if (drawn) {
-                const int phase = cueArcPhase.load();
-                cueAlphaNow =
-                    fp::windupShown(phase, cueArcFade.load(), cueArcPublished.load(), GetTickCount64());
-                if (cueAlphaNow > 0) {
-                    cueSideNow = fp::cueSide(fp::CueSide(cueArcSide.load()), lastCamera[1]);
-                    cueFillNow = cueArcFill.load();
-                }
-            }
-        }
-        viewFeatures(savedCamera && InterlockedCompareExchange(&cameraReady, 0, 0) &&
-                     InterlockedCompareExchange(&active, 0, 0) &&
-                     !InterlockedCompareExchange(&stopping, 0, 0));
-        if (!gameWindow() || *(int*)(gameAt(fp::sig::uiOpenCount)) > 0) releaseInput();
-        windowFreeStep();
-        crouchFrame();
-        InterlockedIncrement(&swapCalls);
-        if (savedCamera) {
-            uintptr_t view = 0, camera = 0;
-            currentCamera(view, camera);
-            const uintptr_t viewport = *(uintptr_t*)(gameAt(fp::sig::mainViewport));
-            if (viewport)
-                pickCamera = *(uintptr_t*)(viewport + field::viewport::pickCamera) == savedCamera ? 1 : 0;
-            if (checkSavedOwner(view, camera) &&
-                (!InterlockedCompareExchange(&active, 0, 0) || InterlockedCompareExchange(&stopping, 0, 0))) {
-                restoreOwnedCamera(view, camera);
-                resetViewHistory();
-            }
-        }
-        {
-            uintptr_t view = 0, camera = 0;
-            currentCamera(view, camera);
-            updatePark(view, camera);
-        }
+    fp::profile::invoke<fp::profile::Hook::cameraLock>(AcquireSRWLockExclusive, &cameraLock);
+    __try {
+        swapLocked(cueSideNow, cueX, cueY, cueFillNow, cueAlphaNow);
+    } __finally {
+        ReleaseSRWLockExclusive(&cameraLock);
     }
     heldDoorStep();
-    f8MouseStep(); // the panel gets the mouse at the title too
+    f8MouseStep();
     presentCue(cueSideNow, cueX, cueY, cueFillNow, cueAlphaNow);
-    const BOOL presented = fp::profile::invoke<fp::profile::Hook::swapNative>(originalSwap, dc);
-    return presented;
+    stereoBeforePresent();
+    return fp::profile::invoke<fp::profile::Hook::swapNative>(originalSwap, dc);
 }
+
 static BOOL WINAPI swap(HDC dc) {
     return fp::profile::invoke<fp::profile::Hook::swap>(swapProfileBody, dc);
 }
-// The native GUI owns its cursor and capture; there is no second settings HWND.
+
 static void f8MouseStep() {}
+
 static bool replace(uintptr_t address, void* expected, void* value) {
     DWORD old, tmp;
-    if (!VirtualProtect((void*)address, 8, PAGE_READWRITE, &old)) return false;
-    bool ok = InterlockedCompareExchangePointer((void* volatile*)address, value, expected) == expected;
-    if (!VirtualProtect((void*)address, 8, old, &tmp)) InterlockedExchange(&protectionFailure, 1);
+    if (!VirtualProtect(reinterpret_cast<void*>(address), 8, PAGE_READWRITE, &old)) return false;
+    bool ok = InterlockedCompareExchangePointer(reinterpret_cast<void* volatile*>(address), value, expected) == expected;
+    if (!VirtualProtect(reinterpret_cast<void*>(address), 8, old, &tmp)) InterlockedExchange(&protectionFailure, 1);
     return ok;
 }
-// MinHook rejects a changed entry before changing bytes or suspended-thread IPs.
-// If one target was taken over, remove the still-owned hooks individually and
-// retain all trampolines; the caller reports an incomplete removal honestly.
+
 static MH_STATUS(WINAPI* nativeDisableHook)(LPVOID) = MH_DisableHook;
 static BOOL(WINAPI* nativeHookRecoveryPending)() = MH_HasPendingRecovery;
 static MH_STATUS(WINAPI* recoverNativeHookState)() = MH_Recover;
 static void(WINAPI* hookRecoveryWait)(DWORD) = Sleep;
-// Worker only, with no gameplay lock held. A suspended callback may own rawLock
-// or another lock needed by fault reporting: finish this debt before reporting
-// or waiting for callbacks. A timeout must never abandon our suspension count.
+
 static void awaitNativeHookRecovery() {
     while (nativeHookRecoveryPending()) {
         recoverNativeHookState();
         if (nativeHookRecoveryPending()) hookRecoveryWait(100);
     }
 }
+
 static MH_STATUS disableNativeHooks() {
     awaitNativeHookRecovery();
+    disableStereoHooks(); // XR publication stops before the all-hooks transaction
     MH_STATUS status = nativeDisableHook(MH_ALL_HOOKS);
     if (nativeHookRecoveryPending()) {
         awaitNativeHookRecovery();
-        // The first transaction may have failed before or after committing.
-        // One fresh disable establishes its final state after cleanup succeeds.
         status = nativeDisableHook(MH_ALL_HOOKS);
         awaitNativeHookRecovery();
     }
@@ -178,13 +178,13 @@ static MH_STATUS disableNativeHooks() {
     for (const auto& s : fp::sig::signatures) {
         if (!s.hook || seen[s.target] || !layout.rva[s.target]) continue;
         seen[s.target] = true;
-        if (nativeDisableHook((void*)gameAt(s.target)) == MH_ERROR_CONFLICT)
+        if (nativeDisableHook(reinterpret_cast<void*>(gameAt(s.target))) == MH_ERROR_CONFLICT)
             changed = fp::sig::targetNames[s.target];
         awaitNativeHookRecovery();
     }
     for (const char* name : {"wglSwapBuffers", "wglMakeCurrent", "wglDeleteContext"}) {
         const auto entry = GetProcAddress(GetModuleHandleW(L"opengl32.dll"), name);
-        if (entry && nativeDisableHook((void*)entry) == MH_ERROR_CONFLICT) changed = name;
+        if (entry && nativeDisableHook(reinterpret_cast<void*>(entry)) == MH_ERROR_CONFLICT) changed = name;
         awaitNativeHookRecovery();
     }
     snprintf(faultDetail, sizeof faultDetail,
@@ -192,23 +192,22 @@ static MH_STATUS disableNativeHooks() {
              changed);
     return status;
 }
+
 static bool rollbackDispatch(bool installedNav, bool installedPoint, bool installedBehavior) {
     bool ok = true;
-    if (installedNav) ok = replace(gameAt(fp::sig::navSlot), (void*)nav, (void*)originalNav) && ok;
-    if (installedPoint) ok = replace(gameAt(fp::sig::pointSlot), (void*)point, (void*)originalPoint) && ok;
+    if (installedNav) ok = replace(gameAt(fp::sig::navSlot), reinterpret_cast<void*>(nav), reinterpret_cast<void*>(originalNav)) && ok;
+    if (installedPoint) ok = replace(gameAt(fp::sig::pointSlot), reinterpret_cast<void*>(point), reinterpret_cast<void*>(originalPoint)) && ok;
     if (installedBehavior)
-        ok = replace(gameAt(fp::sig::behaviorSlot), (void*)behavior, (void*)originalBehavior) && ok;
-    // Warm dormant contexts still need the WGL adapters to retire on their owner.
+        ok = replace(gameAt(fp::sig::behaviorSlot), reinterpret_cast<void*>(behavior), reinterpret_cast<void*>(originalBehavior)) && ok;
     if (!awaitCueRetirement()) return false;
     const bool unhooked = disableNativeHooks() == MH_OK;
-    // Hook removal does not drain already-entered pose callbacks. They restore
-    // their own scoped borrows; the worker never writes physics part fields.
     const bool posesReturned = awaitPoseBuilders();
     const bool cuesReturned = awaitCueRetirement();
     return unhooked && posesReturned && cuesReturned && ok && !InterlockedCompareExchange(&protectionFailure, 0, 0);
 }
+
 static void normalize(float* v) {
-    float n = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    float n = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     if (!std::isfinite(n) || n < 1.e-6f) {
         v[0] = v[1] = 0;
         v[2] = 1;
@@ -216,22 +215,21 @@ static void normalize(float* v) {
     }
     for (int i = 0; i < 3; i++) v[i] /= n;
 }
-// Only verified placed props may be hidden. Characters and their gear always
-// pull the camera in; the player's own tree is ignored. Never infer actor identity
-// from a mesh type flag: use the native world character roster and scene ancestry.
+
 struct TpHidden {
     uintptr_t top;
     ULONGLONG until;
 };
 static TpHidden tpHiddenTops[16];
-static unsigned tpHiddenCount = 0; // nav thread
+static unsigned tpHiddenCount = 0;
 static SRWLOCK tpHideLock = SRWLOCK_INIT;
 static uintptr_t tpHideTops[16];
-static unsigned tpHideTopCount = 0; // published to the render thread
+static unsigned tpHideTopCount = 0;
 static uintptr_t tpHideScene = 0;
+
 static bool tpAncestry(uintptr_t node, uintptr_t world, uintptr_t* ancestors, unsigned& count) {
     count = 0;
-    for (uintptr_t at = node; at && at != world; at = *(uintptr_t*)(at + field::sceneNode::parent)) {
+    for (uintptr_t at = node; at && at != world; at = *reinterpret_cast<const uintptr_t*>(at + field::sceneNode::parent)) {
         if (count == 64 || !readable(at, field::sceneNode::parent + sizeof(uintptr_t))) return false;
         for (unsigned i = 0; i < count; ++i)
             if (ancestors[i] == at) return false;
@@ -239,44 +237,40 @@ static bool tpAncestry(uintptr_t node, uintptr_t world, uintptr_t* ancestors, un
     }
     return count != 0;
 }
-// 1: verified hideable prop; 2: own tree / loose item ignored; 0: pull in.
-// Also called before retaining or publishing a hide, since ownership may change.
+
 static int tpHideCandidateProfileBody(uintptr_t hitNode, uintptr_t root, bool hideObjects, uintptr_t& target) {
     target = 0;
-    const uintptr_t world = *(uintptr_t*)(gameAt(fp::sig::world));
+    const uintptr_t world = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::world));
     if (!readable(root, field::character::sceneNode + sizeof(uintptr_t))) return 0;
-    const uintptr_t playerMesh = *(uintptr_t*)(root + field::character::sceneNode);
+    const uintptr_t playerMesh = *reinterpret_cast<const uintptr_t*>(root + field::character::sceneNode);
     uintptr_t ancestors[64];
     unsigned count = 0;
     if (!playerMesh || !tpAncestry(hitNode, world, ancestors, count)) return 0;
     for (unsigned i = 0; i < count; ++i)
         if (ancestors[i] == playerMesh) return 2;
     if (!readable(world, field::worldObject::characters + sizeof(uintptr_t))) return 0;
-    const uintptr_t roster = *(uintptr_t*)(world + field::worldObject::characters);
+    const uintptr_t roster = *reinterpret_cast<const uintptr_t*>(world + field::worldObject::characters);
     if (!readable(roster, field::list::items + sizeof(uintptr_t))) return 0;
-    const int characters = *(int*)(roster + field::list::count);
-    const uintptr_t entries = *(uintptr_t*)(roster + field::list::items);
+    const int characters = *reinterpret_cast<const int*>(roster + field::list::count);
+    const uintptr_t entries = *reinterpret_cast<const uintptr_t*>(roster + field::list::items);
     if (characters < 0 || characters > 4096 ||
         (characters && !readable(entries, size_t(characters) * sizeof(uintptr_t)))) return 0;
-    // Choose the placed-object ancestor, but do not admit it until every roster
-    // entry is checked. A character could itself be below that placed subtree.
+
     bool loose = false;
     for (unsigned i = 0; i < count; ++i) {
-        const unsigned flags = *(unsigned*)(ancestors[i] + 8);
+        const unsigned flags = *reinterpret_cast<const unsigned*>(ancestors[i] + 8);
         if ((flags & 0x7000) == 0x4000) loose = true;
         if ((flags & 0x2000) && (flags & 0xfff) != 0x11) target = ancestors[i];
     }
     bool playerListed = false;
     for (int i = 0; i < characters; ++i) {
-        const uintptr_t character = *(uintptr_t*)(entries + size_t(i) * sizeof(uintptr_t));
+        const uintptr_t character = *reinterpret_cast<const uintptr_t*>(entries + size_t(i) * sizeof(uintptr_t));
         if (!readable(character, field::character::sceneNode + sizeof(uintptr_t))) return 0;
-        const uintptr_t mesh = *(uintptr_t*)(character + field::character::sceneNode);
+        const uintptr_t mesh = *reinterpret_cast<const uintptr_t*>(character + field::character::sceneNode);
         if (!readable(mesh, field::sceneNode::parent + sizeof(uintptr_t))) return 0;
         if (character == root && mesh == playerMesh) playerListed = true;
         for (unsigned j = 0; j < count; ++j)
             if (ancestors[j] == mesh) return 0;
-        // Smart never hides props, so ancestry containment cannot admit a hide
-        // there. Avoid native-memory walks that cannot affect its decision.
         if (target && hideObjects) {
             uintptr_t characterAncestors[64];
             unsigned characterCount = 0;
@@ -285,9 +279,7 @@ static int tpHideCandidateProfileBody(uintptr_t hitNode, uintptr_t root, bool hi
                 if (characterAncestors[j] == target) return 0;
         }
     }
-    // An empty/transitional roster cannot establish that a subtree has no actor.
     if (!playerListed) return 0;
-    // Also guard the controlled tree independently of the hit's ancestry.
     if (target && hideObjects) {
         uintptr_t playerAncestors[64];
         unsigned playerCount = 0;
@@ -298,30 +290,33 @@ static int tpHideCandidateProfileBody(uintptr_t hitNode, uintptr_t root, bool hi
     if (loose) return 2;
     return target && hideObjects ? 1 : 0;
 }
+
 static int tpHideCandidate(uintptr_t hitNode, uintptr_t root, bool hideObjects, uintptr_t& target) {
     return fp::profile::invoke<fp::profile::Hook::tpHide>(tpHideCandidateProfileBody, hitNode, root, hideObjects, target);
 }
-// hideLock is already shared by maskSector. Never acquire tpHideLock or cameraLock here.
+
 static bool tpPropMaskCurrent(uintptr_t node, uintptr_t sector, signed char (&verdicts)[16]) {
     const HiddenTpProps& hidden = publishedTpProps;
     if (hidden.count > 16 || hidden.meshCount > 16 * 256) return false;
-    unsigned lo = 0, hi = hidden.meshCount;
-    while (lo < hi) {
-        const unsigned mid = (lo + hi) / 2;
-        if (hidden.meshes[mid].node < node) lo = mid + 1; else hi = mid;
-    }
-    if (lo == hidden.meshCount || hidden.meshes[lo].node != node) return true;
+
+    auto it = std::lower_bound(hidden.meshes, hidden.meshes + hidden.meshCount, node,
+        [](const HiddenTpProps::Entry& entry, uintptr_t targetNode) {
+            return entry.node < targetNode;
+        });
+    if (it == hidden.meshes + hidden.meshCount || it->node != node) return true;
+
     if (!hidden.root || hidden.count > 16 || viewMode.load() == 0 ||
         tpBlockers.load() != fp::blockersHide || !InterlockedCompareExchange(&active, 0, 0) ||
         !InterlockedCompareExchange(&cameraReady, 0, 0) || InterlockedCompareExchange(&stopping, 0, 0) ||
-        *(uintptr_t*)gameAt(fp::sig::playerRoot) != hidden.root ||
-        *(uintptr_t*)gameAt(fp::sig::currentScene) != hidden.scene) return false;
-    const unsigned targets = hidden.meshes[lo].targets;
+        *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) != hidden.root ||
+        *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::currentScene)) != hidden.scene) return false;
+
+    const unsigned targets = it->targets;
     uintptr_t at = node, seen[64];
     unsigned count = 0;
     while (at && count < 64) {
         if (!readable(at, field::sceneNode::sector + sizeof(uintptr_t)) ||
-            *(uintptr_t*)(at + field::sceneNode::sector) != sector) return false;
+            *reinterpret_cast<const uintptr_t*>(at + field::sceneNode::sector) != sector) return false;
         for (unsigned i = 0; i < count; ++i) if (seen[i] == at) return false;
         seen[count++] = at;
         for (unsigned i = 0; i < hidden.count; ++i) {
@@ -333,17 +328,16 @@ static bool tpPropMaskCurrent(uintptr_t node, uintptr_t sector, signed char (&ve
             }
             if (verdicts[i] > 0) return true;
         }
-        // Match native/current candidate ancestry. This does not establish a
-        // universal pointer lifetime or reciprocal child-list/ABA guarantee.
-        at = *(uintptr_t*)(at + field::sceneNode::parent);
+        at = *reinterpret_cast<const uintptr_t*>(at + field::sceneNode::parent);
     }
     return false;
 }
+
 static int tpHideHit(uintptr_t hitNode, uintptr_t root, bool hideObjects) {
     uintptr_t target = 0;
     const int verdict = tpHideCandidate(hitNode, root, hideObjects, target);
     if (verdict != 1) return verdict;
-    const uintptr_t scene = *(uintptr_t*)(gameAt(fp::sig::currentScene));
+    const uintptr_t scene = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::currentScene));
     if (scene != tpHideScene) {
         tpHiddenCount = 0;
         tpHideScene = scene;
@@ -359,26 +353,25 @@ static int tpHideHit(uintptr_t hitNode, uintptr_t root, bool hideObjects) {
     ++tpHidden;
     return 1;
 }
-// Nav thread, after the pose: keep each hidden thing while its place lies within 120 cm of the
-// camera-to-pivot line (an object's origin can sit off the line it blocks), drop it 0.7 s after; a new
-// scene drops them all. Published for the render thread with the scene they belong to.
+
 static uintptr_t tpHidePublishedScene = 0;
 static bool sceneNodeWorldOrigin(uintptr_t node, float* point) {
     if (!readable(node, field::sceneNode::sector + sizeof(uintptr_t))) return false;
-    const uintptr_t sector = *(uintptr_t*)(node + field::sceneNode::sector);
+    const uintptr_t sector = *reinterpret_cast<const uintptr_t*>(node + field::sceneNode::sector);
     if (!readable(sector, field::sector::origin + 3 * sizeof(float))) return false;
     for (unsigned k = 0; k < 3; ++k) {
-        point[k] = *(float*)(node + field::sceneNode::transformOrigin + k * sizeof(float)) +
-                   *(float*)(sector + field::sector::origin + k * sizeof(float));
+        point[k] = *reinterpret_cast<const float*>(node + field::sceneNode::transformOrigin + k * sizeof(float)) +
+                   *reinterpret_cast<const float*>(sector + field::sector::origin + k * sizeof(float));
         if (!std::isfinite(point[k])) return false;
     }
     return true;
 }
+
 static void tpHideKeep(const float* camera, const float* pivot, uintptr_t scene) {
     const ULONGLONG now = GetTickCount64();
     unsigned n = 0;
     if (tpBlockers.load() != fp::blockersHide || scene != tpHideScene ||
-        *(uintptr_t*)(gameAt(fp::sig::currentScene)) != scene)
+        *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::currentScene)) != scene)
         tpHiddenCount = 0;
     for (unsigned i = 0; i < tpHiddenCount; ++i) {
         TpHidden h = tpHiddenTops[i];
@@ -411,14 +404,14 @@ static void tpHideKeep(const float* camera, const float* pivot, uintptr_t scene)
     for (unsigned i = 0; i < n; ++i) tpHideTops[i] = tpHiddenTops[i].top;
     ReleaseSRWLockExclusive(&tpHideLock);
 }
+
 static void tpHideClear() {
     tpHiddenCount = 0;
     AcquireSRWLockExclusive(&tpHideLock);
     tpHideTopCount = 0;
     ReleaseSRWLockExclusive(&tpHideLock);
 }
-// Render thread (viewFeatures): expand admitted prop subtrees into this frame's
-// hide list, only in their owning scene, with a 256-node traversal limit.
+
 static uintptr_t tpWalk[256];
 static unsigned tpWalkParents[256];
 static void tpHideAdd() {
@@ -429,9 +422,9 @@ static void tpHideAdd() {
     AcquireSRWLockShared(&tpHideLock);
     n = tpHideTopCount;
     owner = tpHidePublishedScene;
-    memcpy(tops, tpHideTops, n * sizeof(uintptr_t));
+    std::memcpy(tops, tpHideTops, n * sizeof(uintptr_t));
     ReleaseSRWLockShared(&tpHideLock);
-    if (!n || owner != *(uintptr_t*)(gameAt(fp::sig::currentScene))) return;
+    if (!n || owner != *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::currentScene))) return;
     for (unsigned i = 0; i < n; ++i) {
         uintptr_t target = 0;
         if (tpHideCandidate(tops[i], savedRoot, tpBlockers.load() == fp::blockersHide, target) != 1 ||
@@ -448,21 +441,15 @@ static void tpHideAdd() {
         }
     }
 }
-// Third-person physical head gaze still needs world depth. Combat targeting
-// belongs to AE2E0; this sample is not another opponent/weapon target selector.
-// Reuse the native pick's near origin and direction for both aim-box modes.
+
 static void thirdPersonAimProfileBody(uintptr_t camera, const float* pose, const float* eye, uintptr_t scene,
-                           const TpAimRequest& request) {
-    // A tracked free-look view must never feed its cursor hit back into weapon/head aim.
-    // Keep the existing finite input ray while tracking or its release fade is active.
+                               const TpAimRequest& request) {
     if (trackingEnabled.load() || trackingPresented) {
         AcquireSRWLockExclusive(&aimLock);
         tpAimSet = false;
         ReleaseSRWLockExclusive(&aimLock);
         return;
     }
-    // Keep matching depth available during a valid refresh; only a failed
-    // query retires it so input can fall back without reusing a stale owner.
     auto discard = [&]() {
         AcquireSRWLockExclusive(&aimLock);
         if (sameTpAimRequest(tpAimSample, request)) tpAimSet = false;
@@ -472,9 +459,9 @@ static void thirdPersonAimProfileBody(uintptr_t camera, const float* pose, const
     RECT client{};
     if (!viewport || !originalPickRay || !request.valid || request.sector != scene || !hookedWindow ||
         !GetClientRect(hookedWindow, &client) || client.right != request.width ||
-        client.bottom != request.height || *(int*)(viewport + field::viewport::width) != request.width ||
-        *(int*)(viewport + field::viewport::height) != request.height ||
-        *(float*)(camera + field::camera::fov) != request.fov)
+        client.bottom != request.height || *reinterpret_cast<const int*>(viewport + field::viewport::width) != request.width ||
+        *reinterpret_cast<const int*>(viewport + field::viewport::height) != request.height ||
+        *reinterpret_cast<const float*>(camera + field::camera::fov) != request.fov)
         return discard();
     AcquireSRWLockShared(&aimLock);
     const bool current = tpAimRequestCurrent(request);
@@ -484,19 +471,17 @@ static void thirdPersonAimProfileBody(uintptr_t camera, const float* pose, const
     alignas(8) unsigned char hit[0x40]{};
     bool got = false;
     __try {
-        got = ownedPickRay(viewport, x, y, (uintptr_t)hit) != 0;
+        got = ownedPickRay(viewport, x, y, reinterpret_cast<uintptr_t>(hit)) != 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return discard();
     }
-    const float* fwd = (const float*)(hit + field::pick::direction);
-    const float* from = (const float*)(hit + field::pick::origin);
+    const float* fwd = reinterpret_cast<const float*>(hit + field::pick::direction);
+    const float* from = reinterpret_cast<const float*>(hit + field::pick::origin);
     const float length2 = fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2];
     if (!std::isfinite(length2) || std::fabs(length2 - 1.f) >= .01f || !finiteAimVector(from))
         return discard();
-    // A native miss still supplies the real ray. Its overhead ground-plane
-    // distance can be infinite or behind us, so keep the finite forward fallback.
     float t = 1000.f;
-    const float h = *(float*)(hit + field::pick::distance);
+    const float h = *reinterpret_cast<const float*>(hit + field::pick::distance);
     if (got && std::isfinite(h) && h > 0.f && h < t) {
         float s = 0;
         for (int i = 0; i < 3; ++i) {
@@ -516,25 +501,26 @@ static void thirdPersonAimProfileBody(uintptr_t camera, const float* pose, const
     if (rayForward > 0.01f) t = std::fmax(t, (along + 20.f) / rayForward);
     float local[3];
     for (int i = 0; i < 3; ++i)
-        local[i] = from[i] + fwd[i] * t - *(float*)(scene + field::sector::origin + i * 4);
+        local[i] = from[i] + fwd[i] * t - *reinterpret_cast<const float*>(scene + field::sector::origin + i * 4);
     bool ok = true;
     for (float v : local)
         if (!std::isfinite(v)) ok = false;
     RECT after{};
     ok = ok && pickViewportForCamera(camera) == viewport &&
-         *(int*)(viewport + field::viewport::width) == request.width &&
-         *(int*)(viewport + field::viewport::height) == request.height &&
+         *reinterpret_cast<const int*>(viewport + field::viewport::width) == request.width &&
+         *reinterpret_cast<const int*>(viewport + field::viewport::height) == request.height &&
          GetClientRect(hookedWindow, &after) && after.right == request.width &&
-         after.bottom == request.height && *(float*)(camera + field::camera::fov) == request.fov;
+         after.bottom == request.height && *reinterpret_cast<const float*>(camera + field::camera::fov) == request.fov;
     AcquireSRWLockExclusive(&aimLock);
     if (ok && tpAimRequestCurrent(request)) {
-        memcpy(tpAimLocal, local, 12);
+        std::memcpy(tpAimLocal, local, 12);
         tpAimSample = request;
         tpAimSet = true;
     } else if (sameTpAimRequest(tpAimSample, request))
         tpAimSet = false;
     ReleaseSRWLockExclusive(&aimLock);
 }
+
 static void thirdPersonAim(uintptr_t camera, const float* pose, const float* eye, uintptr_t scene,
                            const TpAimRequest& request) {
     return fp::profile::invoke<fp::profile::Hook::tpAim>(thirdPersonAimProfileBody, camera, pose, eye, scene, request);
