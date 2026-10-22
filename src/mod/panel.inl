@@ -230,10 +230,17 @@ static void publishNativeSettingsRetirement() {
     if (nativeSettings.faultAt && !nativeSettingsFaultAt.load())
         nativeSettingsFaultAt = nativeSettings.faultAt - reinterpret_cast<uintptr_t>(&__ImageBase);
     if (nativeSettings.failed()) nativeSettingsFaulted = true;
-    nativeSettingsRetired = !nativeSettingsFaulted.load() && nativeSettings.retired();
+    nativeSettingsRetired = nativeSettings.retired();
 }
 static void nativeSettingsService() {
-    if (nativeSettingsFaulted.load()) return;
+    if (nativeSettingsFaulted.load()) {
+        // Retry only guarded restoration after an owner refusal; unknown forms
+        // remain untouched and cannot keep the native Settings table blocked.
+        try { nativeSettings.recoverFault(); }
+        catch (...) { nativeSettingsRetired = false; }
+        publishNativeSettingsRetirement();
+        return;
+    }
     try {
         if (!nativeSettingsConfigured) configureNativeSettings();
         const int captured=nativeBindingResult.exchange(-2);

@@ -809,7 +809,14 @@ static char grabPickFor(uintptr_t caller, uintptr_t viewport, float x, float y, 
         return fp::profile::invoke<fp::profile::Hook::grabNative>(originalGrabPick, viewport, x, y, out, filter);
     }
     if (reticleCaller && guiPointerPresentation.active) {
-        if (!guiPointerOwned() || viewport != guiPointerPresentation.viewport) return 0;
+        if (viewport != guiPointerPresentation.viewport) return 0;
+        if (!guiPointerOwned()) {
+            // The displayed-pointer sample became stale during native GUI
+            // dispatch. Let the game's coordinates handle this click instead
+            // of converting an uncertain camera sample into a guaranteed miss.
+            guiPointerNativeFallbacks.fetch_add(1, std::memory_order_relaxed);
+            return fp::profile::invoke<fp::profile::Hook::grabNative>(originalGrabPick, viewport, x, y, out, filter);
+        }
         x = float(guiPointerPresentation.x);
         y = float(guiPointerPresentation.y);
     }

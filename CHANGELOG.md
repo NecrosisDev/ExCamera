@@ -2,6 +2,8 @@
 
 Unreleased
 
+- If the Settings integration refuses a changed native owner, restore the game's original Settings table when ownership is still proven; leave unknown replacement tables untouched.
+- If the displayed-pointer sample becomes stale during a native click, fall back to the game's own pick coordinates instead of consuming the pickup. Record how often that fallback occurs.
 - Dying no longer freezes the game. A hook that faulted while reading your freshly dead character used to keep its lock forever; now it lets go.
 - Blood and decals stop flickering in first person with supersampling on. The depth correction was shrinking their offset to about two depth steps; it now keeps at least sixteen.
 - Screen-space reflections, depth of field and ambient occlusion, drawn before the UI. With supersampling they run once on the averaged image. Admitted only when every hooked function matches byte for byte, so Hellmode qualifies too.

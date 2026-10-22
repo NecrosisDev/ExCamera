@@ -854,6 +854,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         j.fixed("cpu_frame_ms", viewCpuFrameMs.load(std::memory_order_relaxed), 2);
     }
     j.unum("ui_reticle_reads", uiReticleReads.load());
+    j.unum("gui_pointer_native_fallbacks", guiPointerNativeFallbacks.load(std::memory_order_relaxed));
     j.num("pick_camera", pickCamera.load());
     j.unum("notices", notices.load());
     j.str("state", InterlockedCompareExchange(&parkedNow, 0, 0)

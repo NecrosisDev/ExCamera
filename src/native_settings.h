@@ -64,6 +64,9 @@ public:
     bool retired() const;
     bool failed() const;
     void fail();
+    // Restore the game's Settings table after a refusal only if its current
+    // form and root table are still verifiably owned by ExCamera.
+    bool recoverFault();
     uintptr_t faultAt = 0;            // return address of the first fail(), 0 while healthy
     unsigned dispatches = 0, steps = 0, refusedFlags = 0; // ...and the kind<<24 | flags of the last refused one // ExCamera row callbacks reached, value-button steps taken
     int selectedPage() const;

@@ -1048,7 +1048,13 @@ void NativeSettingsIntegration::restore() {
         setContentHeight(children.controls, baselineExtent());
         if (scrollOwned) setScrolling(children.controls,originalScrolling);
     } else if (controlsOwned) {
-        if (!nativeKeyboard(ct) && !nativeController(ct)) { fail(); return; }
+        // A foreign child-table replacement must remain untouched, but it
+        // does not prevent restoring our still-owned root controls.
+        if (!nativeKeyboard(ct) && !nativeController(ct)) {
+            controlsOwned = false;
+            scrollOwned = false;
+            baseSaved = false;
+        }
     }
     const auto live = table(root), canonical = rootBasis();
     std::array<NativeElement, 9> original;
@@ -1073,6 +1079,21 @@ void NativeSettingsIntegration::restore() {
     callbackOwner = nullptr;
     hostedEvent(-1,4);
     tabCount=ownTabs;
+}
+
+bool NativeSettingsIntegration::recoverFault() {
+    if (!fault || callbackActive() || !thread || thread != GetCurrentThreadId()) return false;
+    if (!root) return true;
+    const int member = contains(root);
+    if (member == 0) {
+        retire(); // the native form is gone; never dereference its retired tables
+        return true;
+    }
+    if (member != 1 || !ownedRoot(table(root))) return false;
+    restore(); // restore() independently rechecks root ownership before replacement
+    if (root != 0) return false;
+    if (onClosed) onClosed();
+    return true;
 }
 
 void NativeSettingsIntegration::retire() {

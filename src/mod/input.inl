@@ -139,6 +139,7 @@ struct GuiPointerPresentation {
     bool compare = false, rejected = false, nativeOnly = false;
 };
 static thread_local GuiPointerPresentation guiPointerPresentation;
+static std::atomic<unsigned> guiPointerNativeFallbacks{0};
 
 static WindowInstallation windowInstallationSnapshot() {
     AcquireSRWLockShared(&windowInstallationLock);
