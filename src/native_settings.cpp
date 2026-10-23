@@ -26,7 +26,7 @@ static const OwnSection ownSections[] = {
     {L"Combat", L"Blades", {setting::bladeDrag, setting::stabSink, setting::bladeGain}, 3},
     {L"Controls", L"Keys", {setting::rotateHeldKey, setting::leanKey, setting::kickKey, setting::jumpKey}, 4},
     {L"Controls", L"Mouse and movement", {mouse, setting::sensitivity, setting::invertY, setting::rawMouse, movement,
-                                          setting::crouchMode, setting::freezeWindows}, 7},
+                                          setting::crouchMode}, 6},
     {L"VR", L"Headset", {setting::vrHeadset, setting::vrIpd, setting::vrScale, setting::vrRenderMode, setting::vrHands,
                          setting::vrPosture, setting::vrTurning, setting::vrEffects, setting::vrGripAngle, setting::vrHaptics,
                          setting::vrPanelWidth, setting::vrPanelDistance}, 12},

@@ -90,7 +90,6 @@ enum : int {
     cueSize,
     cueOpacity,
     cueThrust,
-    rmbMode,
     idleCrosshair,
     headRoll,
     headPitch,
@@ -98,7 +97,6 @@ enum : int {
     aimMarker,
     flickCatchup,
     headBob,
-    freezeWindows,
     spineFollow,
     crouchMode,
     nearClip,
@@ -140,9 +138,7 @@ struct ModSettings {
     int fpDefense = 0, tpDefense = 0;               // automatic default, manual holds RMB
     int fpSwingSelection = 1, tpSwingSelection = 1; // mouse direction, or native facing
     bool manualDefenseAvailable = false;            // runtime capability, not a saved row
-    int rmbMode = 1;                                // right mouse frees the cursor: 0 off, 1 hold, 2 toggle
     bool idleCrosshairAlways = false; // normal exploration crosshair; the aim marker is separate
-    bool freezeWindows = true;        // the game's windows free the cursor and hold look and movement
     int spineFollow = 60; // how far the spine bends with the look (forward looking down, back looking up)
     int crouchMode = 2; // the game's duck key out of combat: 0 off (the game's short duck), 1 hold, 2 toggle
     int nearClip = fp::nearClipDefaultTenths; // the near plane's floor, tenths of a centimetre
@@ -290,9 +286,6 @@ struct ModSettings {
         case setting::tpSwingSelection:
             tpSwingSelection = tpSwingSelection == 1 ? 0 : 1;
             break;
-        case setting::rmbMode:
-            rmbMode = (rmbMode + (delta < 0 ? 2 : 1)) % 3;
-            break; // hold -> toggle -> off, or back
         case setting::idleCrosshair:
             idleCrosshairAlways = !idleCrosshairAlways;
             break;
@@ -313,9 +306,6 @@ struct ModSettings {
             break;
         case setting::headBob:
             headBob = clamp(headBob + delta * 10, 0, 100);
-            break;
-        case setting::freezeWindows:
-            freezeWindows = !freezeWindows;
             break;
         case setting::spineFollow:
             spineFollow = clamp(spineFollow + delta * 10, 0, 100);
@@ -355,10 +345,10 @@ struct ModSettings {
               setting::headBob,     setting::spineFollow},
              26},
             {"Controls",
-             {setting::sensitivity, setting::rawMouse, setting::rmbMode, setting::crouchMode,
+             {setting::sensitivity, setting::rawMouse, setting::crouchMode,
               setting::leanKeysMode, setting::leanKey, setting::leanLeftKey, setting::leanRightKey,
-              setting::freezeWindows, setting::grabRange, setting::rotateHeldKey},
-             11},
+              setting::grabRange, setting::rotateHeldKey},
+             10},
             {"Aim & combat",
              {setting::swingCrosshair, setting::idleCrosshair, setting::aimMarker, setting::flickCatchup,
               setting::attackCue, setting::cueSize, setting::cueOpacity, setting::cueThrust,
@@ -486,9 +476,6 @@ struct ModSettings {
             return fpSwingSelection ? L"Mouse direction" : L"Native facing";
         case setting::tpSwingSelection:
             return tpSwingSelection ? L"Mouse direction" : L"Native facing";
-        case setting::rmbMode:
-            return rmbMode == 0 ? L"off"
-                                : (rmbMode == 2 ? L"toggle (click on, click off)" : L"hold (out of combat)");
         case setting::idleCrosshair:
             return idleCrosshairAlways ? L"Show" : L"Hide";
         case setting::headRoll:
@@ -503,8 +490,6 @@ struct ModSettings {
             return flickCatchup ? std::to_wstring(flickCatchup) + L"%" : std::wstring(L"off");
         case setting::headBob:
             return headBob ? std::to_wstring(headBob) + L"%" : std::wstring(L"off");
-        case setting::freezeWindows:
-            return freezeWindows ? L"on" : L"off";
         case setting::spineFollow:
             return spineFollow ? std::to_wstring(spineFollow) + L"%" : std::wstring(L"off");
         case setting::nearClip: {
@@ -700,8 +685,6 @@ inline const RowInfo& rowInfo(int row) {
          L"View", L"CueOpacity", nullptr, nullptr, nullptr},
         {setting::cueThrust, L"Wind-up arc: thrusts", RowInfo::toggle, nullptr, &ModSettings::cueThrust,
          L"View", L"CueThrust", nullptr, nullptr, nullptr},
-        {setting::rmbMode, L"Right mouse frees the cursor", RowInfo::choice, &ModSettings::rmbMode, nullptr,
-         L"Input", L"RightMouseFree", fp::rmbModeFromText, fp::rmbModeText, nullptr},
         {setting::idleCrosshair, L"Crosshair out of combat", RowInfo::toggle, nullptr,
          &ModSettings::idleCrosshairAlways, L"View", L"IdleCrosshair", iniAlways, iniAlwaysText,
          L"Controls only the exploration crosshair. Aim marker can still appear while the head catches up. "
@@ -731,11 +714,6 @@ inline const RowInfo& rowInfo(int row) {
          L"HeadBobSteady", nullptr, nullptr,
          L"First person only. Reduces vertical head movement while balanced. Requires Head stabilisation. "
          L"Hits, falls and held doors retain native motion."},
-        {setting::freezeWindows, L"Release controls for menus", RowInfo::toggle, nullptr,
-         &ModSettings::freezeWindows, L"View", L"FreezeForWindows", nullptr, nullptr,
-         L"Frees the cursor and holds modded look and movement while inventory, loot, shops, dialogue or "
-         L"other supported game panels are open. This does not pause the game. Brief item tooltips are "
-         L"ignored."},
         {setting::spineFollow, L"Spine follows aim", RowInfo::number, &ModSettings::spineFollow, nullptr,
          L"Camera", L"SpineFollowsAim", nullptr, nullptr,
          L"Outside combat in first and third person, your spine bends forward when you look down and back "

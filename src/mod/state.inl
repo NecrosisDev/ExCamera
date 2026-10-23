@@ -163,16 +163,10 @@ static fp::TrackingSample readTrackingSample() { return trackingReceiver.snapsho
 static fp::TrackingSample (*trackingSnapshot)() = readTrackingSample;
 static volatile LONG mouseCaptured = 0;
 static volatile LONG cursorFree = 0;
-// Native Controls > Cursor Look frees the cursor while held in close-view exploration.
-// Keep the legacy publication name: world grabbing already distinguishes this
-// deliberate pointer from Settings/window handoffs. The obsolete RMB option stays off.
+// Native Controls > Cursor Look toggles the free pointer in close view.
 static volatile LONG rmbFree = 0;
-static std::atomic<int> rmbMode{0}; // obsolete RMB free-cursor mode is fixed off
-// The inventory, an item's description, a container or a corpse's loot, or the arena's end-of-match menu
-// (NEXT FIGHT) on screen frees the cursor and holds look and movement, in first and third person, as F8
-// does ([View] FreezeForWindows, F8 Controls). Set once a frame on the game's thread (windowFreeStep).
+// Selected native panels own an automatic cursor-free state, independent of Cursor Look.
 static volatile LONG windowFree = 0;
-static std::atomic<bool> windowsFreeze{true};
 // Crouch: the input thread polls the native duck key, the render thread publishes
 // a request, and poseBuilder admits it only for the same eligible character.
 static std::atomic<int> crouchMode{2};                      // 0 off, 1 hold, 2 toggle
@@ -238,7 +232,7 @@ static std::atomic<float> sensitivity{
     0.0025f}; // [Input] SensitivityPercent; the F8 settings page changes it live
 // [View] SwingCrosshair=hide|show (the crosshair during an accepted swing).
 static std::atomic<bool> hideSwingCrosshair{false};
-// [View] IdleCrosshair=rmb|always: out of combat the crosshair shows only while right mouse frees the cursor.
+// [View] IdleCrosshair=rmb|always: out of combat the crosshair shows only while Cursor Look frees the cursor.
 static std::atomic<bool> idleCrosshairAlways{false};
 // [Input] AimMarker=1 shows the crosshair at the aim while the head catches up; FlickCatchup 0..100 (fp::flickGain).
 static std::atomic<bool> aimMarker{true};
@@ -952,17 +946,26 @@ static int dragKind(uintptr_t* object) {
 }
 static void normalize(float* v);
 static bool playerContext(uintptr_t behavior);
+static bool arenaResultMenuVisible() {
+    const uintptr_t form = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::endMatchMenu));
+    return readable(form, field::form::closing + sizeof(unsigned char)) &&
+           *reinterpret_cast<const unsigned char*>(form + field::form::visible) &&
+           !*reinterpret_cast<const unsigned char*>(form + field::form::closing);
+}
 // Preserve the old free-pointer exploration safety: close-view gameplay only,
 // no Settings/native window, combat, special native RMB state or unsafe drag.
+// The visible arena result form is the sole combat-state exception so Cursor Look
+// can reach Next Fight after the duel.
 // The binding comes from reviewed native slot 8 (Controls > Cursor Look).
 static bool rmbEligible() {
     if (viewMode.load() >= 2 || InterlockedCompareExchange(&cursorFree, 0, 0) ||
         InterlockedCompareExchange(&windowFree, 0, 0)) return false;
+    const bool arenaResults = arenaResultMenuVisible();
     const uintptr_t root = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot));
     if (!readable(root, 0x1300)) return false;
     const uintptr_t behavior = *reinterpret_cast<uintptr_t*>(root + field::character::behaviour);
     if (!readable(behavior, 0x8a0) || !playerContext(behavior)) return false;
-    if (*reinterpret_cast<unsigned char*>(root + field::character::combatStance) ||
+    if ((*reinterpret_cast<unsigned char*>(root + field::character::combatStance) && !arenaResults) ||
         *reinterpret_cast<unsigned*>(root + field::character::stateFlags) == 0x20)
         return false;
     uintptr_t object = 0;
@@ -1034,11 +1037,11 @@ static void keepHeldOffset(bool nowFree) {
     }
     heldOffsetObject = 0;
 }
-// Caller owns cursorHoldLock. Native Cursor Look uses the held-key high bit,
-// not a toggle. releaseInput resets raw deltas/capture, never the camera pose.
+// Caller owns cursorHoldLock. Native Cursor Look is a press-to-toggle binding.
+// releaseInput resets raw deltas/capture, never the camera pose.
 static bool cursorHoldEvent(fp::RmbEvent e, bool eligible, int key = 0) {
     bool changed = false;
-    const bool eaten = fp::rmbStep(rmbState, 1, e, eligible, changed);
+    const bool eaten = fp::rmbStep(rmbState, 2, e, eligible, changed);
     if (changed) {
         keepHeldOffset(rmbState.on);
         InterlockedExchange(&rmbFree, rmbState.on ? 1 : 0);
@@ -1084,8 +1087,7 @@ static void cursorLookPoll() {
         __try {
             if (rmbState.on) {
                 const fp::InputStamp now = cursorHoldStamp();
-                if (!rmbEligible() || cursorHoldKey != static_cast<int>(nativeBinding(8)) ||
-                    !(keyState(cursorHoldKey) & 0x8000) ||
+                if (cursorHoldKey != static_cast<int>(nativeBinding(8)) ||
                     now.root != cursorHoldOwner.root || now.head != cursorHoldOwner.head ||
                     now.scene != cursorHoldOwner.scene || now.mode != cursorHoldOwner.mode ||
                     now.generation != cursorHoldOwner.generation ||

@@ -780,6 +780,8 @@ static constexpr unsigned windowShop = 0xCE1C2023,
 // Their visible lifetime, not the hovered child row, owns the free cursor.
 static constexpr unsigned windowMatches = 0xCE10AE10, windowCompany = 0xCE10AE20,
                           windowCompanyRecords = 0xCE10AE21, windowCompanyStatus = 0xCE10AE22;
+static constexpr unsigned cursorPanelInventory = 1u << 0, cursorPanelCommerce = 1u << 1,
+                          cursorPanelArena = 1u << 2, cursorPanelDescription = 1u << 3;
 // dialogueActive: a u8 flag; dialogueChoices: the choices form (both sit on the game's view, not in a window list).
 static bool formShown(uintptr_t f) {
     return readable(f, 0x120) && *reinterpret_cast<unsigned char*>(f + field::form::visible) &&
@@ -791,7 +793,7 @@ static bool formShown(uintptr_t f, MEMORY_BASIC_INFORMATION& region) {
            *reinterpret_cast<unsigned char*>(f + field::form::visible) &&
            !*reinterpret_cast<unsigned char*>(f + field::form::closing);
 }
-// Both the flag and the choices on screen: a flag left set by a path that skipped its clear never holds the view.
+// Dialogue eligibility is still used by crouch, but dialogue does not auto-release the cursor.
 static bool dialogueOpen() {
     return *reinterpret_cast<unsigned char*>(gameAt(fp::sig::dialogueActive)) &&
            formShown(*reinterpret_cast<uintptr_t*>(gameAt(fp::sig::dialogueChoices)));
@@ -808,12 +810,15 @@ static unsigned taskShowsWindow(uintptr_t task) {
         const uintptr_t f = *reinterpret_cast<uintptr_t*>(forms + static_cast<size_t>(i) * 8);
         if (!formShown(f, region)) continue;
         const unsigned kind = *reinterpret_cast<unsigned*>(f + field::form::kind);
-        if (kind == windowInventory || kind == windowLoot || kind == windowContainer || kind == windowShop ||
-            kind == windowArsenal || kind == windowMatches || kind == windowCompany ||
-            kind == windowCompanyRecords || kind == windowCompanyStatus)
-            shown |= 1;
+        if (kind == windowInventory || kind == windowLoot || kind == windowContainer)
+            shown |= cursorPanelInventory;
+        else if (kind == windowShop || kind == windowArsenal)
+            shown |= cursorPanelCommerce;
+        else if (kind == windowMatches || kind == windowCompany || kind == windowCompanyRecords ||
+                 kind == windowCompanyStatus)
+            shown |= cursorPanelArena;
         else if (kind == windowDescription)
-            shown |= 2;
+            shown |= cursorPanelDescription;
     }
     return shown;
 }
@@ -828,8 +833,7 @@ static unsigned gameWindowOpen() {
     if (desktop != inGame) shown |= taskShowsWindow(desktop);
     if (activeTask != inGame && activeTask != desktop) shown |= taskShowsWindow(activeTask);
     const uintptr_t endMenu = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::endMatchMenu));
-    if (endMenu && formShown(endMenu)) shown |= 1;
-    if (dialogueOpen()) shown |= 1;
+    if (endMenu && formShown(endMenu)) shown |= cursorPanelArena;
     return shown;
 }
 // An item carried by the cursor with the button still held (the manager's capture +0x48 and drag format +0x70).
@@ -844,7 +848,7 @@ static constexpr ULONGLONG descriptionSettleMs =
 static ULONGLONG descriptionSince = 0;
 static void windowFreeStep() {
     bool want = false;
-    if (windowsFreeze.load() && InterlockedCompareExchange(&active, 0, 0) &&
+    if (InterlockedCompareExchange(&active, 0, 0) &&
         !InterlockedCompareExchange(&stopping, 0, 0) && viewMode.load() < 2) {
         unsigned shown = 0;
         bool dragging = false;
@@ -856,12 +860,12 @@ static void windowFreeStep() {
             dragging = false;
         } // a drag out of a window keeps the cursor until it ends
         const ULONGLONG now = GetTickCount64();
-        if (shown & 2) {
+        if (shown & cursorPanelDescription) {
             if (!descriptionSince) descriptionSince = now;
         } else
             descriptionSince = 0;
-        want = (shown & 1) || dragging ||
-               ((shown & 2) && (InterlockedCompareExchange(&windowFree, 0, 0) ||
+        want = (shown & (cursorPanelInventory | cursorPanelCommerce | cursorPanelArena)) || dragging ||
+               ((shown & cursorPanelDescription) && (InterlockedCompareExchange(&windowFree, 0, 0) ||
                                 now - descriptionSince >= descriptionSettleMs));
     } else
         descriptionSince = 0;

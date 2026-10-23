@@ -824,6 +824,15 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("view_effects_draws", viewEffectsDraws.load());
     j.unum("view_effects_unavailable", viewEffectsUnavailable.load());
     j.str("view_effects_reason", viewEffectsReasonSet.load(std::memory_order_acquire) ? viewEffectsReason : "");
+    j.num("view_effects_input_width", viewEffectsInputWidth.load(std::memory_order_relaxed));
+    j.num("view_effects_input_height", viewEffectsInputHeight.load(std::memory_order_relaxed));
+    j.num("view_effects_ao_width", viewEffectsAoWidth.load(std::memory_order_relaxed));
+    j.num("view_effects_ao_height", viewEffectsAoHeight.load(std::memory_order_relaxed));
+    j.num("view_effects_ssr_width", viewEffectsSsrWidth.load(std::memory_order_relaxed));
+    j.num("view_effects_ssr_height", viewEffectsSsrHeight.load(std::memory_order_relaxed));
+    j.num("view_effects_dof_width", viewEffectsDofWidth.load(std::memory_order_relaxed));
+    j.num("view_effects_dof_height", viewEffectsDofHeight.load(std::memory_order_relaxed));
+    j.boolean("view_effects_low_tier", viewEffectsLowTier.load(std::memory_order_relaxed));
     j.fixed("dof_focus_cm", double(viewEffectsFocus.load()), 1);
     j.str("view_effects_skip", viewEffectsSkip.load(std::memory_order_relaxed)); // "" while they draw
     {

@@ -293,7 +293,7 @@ constexpr float aimMarkerShow = 4.f * 0.0174532925f, aimMarkerHide = 1.5f * 0.01
 inline bool aimMarkerStep(bool shown, float lead) {
     return shown ? lead > aimMarkerHide : lead > aimMarkerShow;
 }
-// Right mouse frees the cursor. mode: 0 off, 1 hold, 2 toggle. When the mod takes a press it takes the
+// Cursor Look frees the cursor. mode: 0 off, 1 hold, 2 toggle. When the mod takes a press it takes the
 // matching release too, so the game never sees half a click (a stuck walk or UI button). Returns true when
 // the message is swallowed; changed when .on flipped. lost: F6, F8, Esc, or the game ending it.
 // focusLost: alt-tab, whose release goes to another window, so none is waited for.
@@ -345,21 +345,6 @@ inline bool rmbStep(RightMouseFree& s, int mode, RmbEvent e, bool eligible, bool
         return false;
     }
     return false;
-}
-inline int rmbModeFromText(const wchar_t* t) {
-    if (!t) return 1;
-    auto is = [&](const wchar_t* w) {
-        const wchar_t* a = t;
-        while (*a && *w && ((*a | 32) == (*w | 32))) {
-            ++a;
-            ++w;
-        }
-        return !*a && !*w;
-    };
-    return is(L"off") || is(L"0") ? 0 : (is(L"toggle") ? 2 : 1);
-}
-inline const wchar_t* rmbModeText(int m) {
-    return m == 0 ? L"off" : (m == 2 ? L"toggle" : L"hold");
 }
 // Crouch in exploration (first and third person): the game's own duck key (its duck bit in the key mask)
 // toggles or holds a crouch the game keeps up while walking. mode: 0 off (the game's short duck only),

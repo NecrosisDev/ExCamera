@@ -97,8 +97,6 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.fpSwingSelection = fpSwingSelection.load();
     s.tpSwingSelection = tpSwingSelection.load();
     s.manualDefenseAvailable = manualDefenseReady.load();
-    s.rmbMode = rmbMode.load();
-    s.freezeWindows = windowsFreeze.load();
     s.crouchMode = crouchMode.load();
     s.nearClip = nearClip.load();
     s.headRoll = headSteadyRoll.load();
@@ -140,7 +138,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     auto s = requested;
     s.normalize(); // also enforced for bulk/internal callers, not just UI and INI loading
     const bool policyChanged = fpManualGuard.load() != s.fpDefense || tpManualGuard.load() != s.tpDefense ||
-                               rmbMode.load() != s.rmbMode || rotateHeldKey.load() != s.rotateHeldKey ||
+                               rotateHeldKey.load() != s.rotateHeldKey ||
                                leanKey.load() != s.leanKey || leanKeysMode.load() != s.leanKeysMode ||
                                leanLeftKey.load() != s.leanLeftKey || leanRightKey.load() != s.leanRightKey ||
                                crouchMode.load() != s.crouchMode ||
@@ -222,8 +220,6 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     cueSize = s.cueSize;
     cueOpacity = s.cueOpacity;
     cueThrust = s.cueThrust;
-    rmbMode = s.rmbMode;
-    windowsFreeze = s.freezeWindows;
     crouchMode = s.crouchMode;
     nearClip = s.nearClip;
     headSteadyRoll = s.headRoll;

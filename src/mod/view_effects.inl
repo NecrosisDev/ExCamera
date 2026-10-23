@@ -103,9 +103,8 @@ float distanceAt(vec2 p) {
     return raw >= skyDepth ? 1e5 : viewDepth(raw);
 }
 
-// The occlusion and reflection taps read view distance from a half-resolution
-// image (distanceShader) instead of the full-resolution depth: a quarter of the
-// texels, and no conversion per tap. Programs that never set distanceHalfOn read depth.
+// The occlusion and reflection taps read precomputed view distance from distanceShader
+// instead of converting the full-resolution depth for every tap.
 uniform sampler2D distanceHalf;
 uniform float distanceHalfOn;
 float tapDistance(vec2 p) {
@@ -170,7 +169,7 @@ void main() {
 }
 )glsl";
 
-// Half resolution; writes the occlusion in r and, at Strong, the light the
+// Writes the occlusion in r and, at Strong, the light the
 // occluding surfaces bounce onto this one in gba (see compositeShader).
 static const char* const aoShader = R"glsl(
 uniform int taps;
@@ -231,7 +230,7 @@ void main() {
 }
 )glsl";
 
-// Half resolution; writes premultiplied reflection colour and its weight.
+// Writes premultiplied reflection colour and its weight.
 static const char* const ssrShader = R"glsl(
 uniform float strength; // largest reflection weight, 0..1
 uniform int taps;       // ray steps
@@ -313,11 +312,11 @@ void main() {
 // previous frame's camera. The noise turns every frame, so the blend averages
 // away the grain of a few taps.
 static const char* const resolveShader = R"glsl(
-uniform sampler2D current;       // this frame's half-resolution result
+uniform sampler2D current;       // this frame's effect result
 uniform sampler2D history;       // the blend up to the previous frame, filtered
 uniform mat4 toPrevious;         // this frame's view space to the previous frame's
 uniform vec4 previousProjection; // p0, p5, p8, p9 of the previous frame
-uniform vec2 halfSize;           // half-resolution target size in texels
+uniform vec2 halfSize;           // effect target size in texels
 uniform float historyWeight;     // share of the earlier frames; 0 without a usable history
 uniform sampler2D previousDepth; // the previous frame's depth, where its history was shaded
 
@@ -354,12 +353,12 @@ void main() {
 }
 )glsl";
 
-// Full resolution: applies the half-resolution occlusion and reflections. Shared by
+// Applies the occlusion and reflections. Shared by
 // the composite and, when nothing between them reads neighbouring pixels, the finish pass.
 static const char* const surfaceShading = R"glsl(
 uniform sampler2D aoHalf;   // half resolution: occlusion in r, square-rooted bounced light in gba
 uniform sampler2D ssrHalf;  // half resolution: reflection colour (premultiplied) and weight
-uniform vec2 halfSize;      // half-resolution target size in texels
+uniform vec2 halfSize;      // effect target size in texels
 uniform vec2 ssrSize;       // the reflection target's size in texels (half the above)
 uniform float aoStrength;   // largest darkening, 0 when ambient occlusion is off
 uniform float ssrOn;        // 1 when reflections ran, else 0
@@ -367,9 +366,8 @@ uniform float bounceStrength; // share of the bounced light added, 0 when it was
 
 vec4 shadeSurfaces(vec4 c) {
     float d = distanceAt(uv);
-    // Edge-aware upsample: of the four nearest half-resolution texels (each shaded
-    // the full-resolution depth at its centre), those at this pixel's depth count;
-    // across a silhouette the other side is ignored.
+    // Edge-aware reconstruction: of the four nearest effect texels, those at this
+    // pixel's depth count; across a silhouette the other side is ignored.
     vec2 at = uv * halfSize - 0.5;
     vec2 cell = floor(at), f = at - cell;
     float occlusion = 0.0, weights = 0.0;
@@ -446,7 +444,7 @@ float blurAt(float d) {
 }
 )glsl";
 
-// Half resolution: gathers the full-resolution image (see dofCompositeShader).
+// Gathers the input image (see dofCompositeShader).
 static const char* const dofShader = R"glsl(
 uniform int taps;
 
@@ -491,7 +489,7 @@ void main() {
 )glsl";
 
 // Full resolution: what is in focus stays the sharp image; the rest, and the soft
-// edge of a blurred object in front of it, takes the half-resolution blur.
+// edge of a blurred object in front of it, takes the filtered blur result.
 static const char* const dofCompositeShader = R"glsl(
 uniform sampler2D dofHalf; // half resolution, filtered
 
@@ -1569,7 +1567,13 @@ constexpr unsigned viewAuditFrames = 120;
 
 // Why the last main-view frame drew no effects ("" when it drew), for first-person-status.json.
 static std::atomic<const char*> viewEffectsSkip{""};
-static void skipViewEffects(const char* why) { viewEffectsSkip.store(why, std::memory_order_relaxed); }
+static void publishViewTargetSizes(int width, int height, int aoWidth, int aoHeight, int ssrWidth, int ssrHeight,
+                                   int dofWidth, int dofHeight, bool low);
+static void skipViewEffects(const char* why) {
+    viewEffectsSkip.store(why, std::memory_order_relaxed);
+    if (why && *why)
+        publishViewTargetSizes(0, 0, 0, 0, 0, 0, 0, 0, false);
+}
 
 static void noteViewEffectFailure(unsigned bit, const char* what, const char* detail = "") {
     viewEffectsUnavailable.fetch_or(bit, std::memory_order_relaxed);
@@ -1721,20 +1725,16 @@ static bool prepareViewTargets(gl::Api& g, fp::CueResources& r) {
     return true;
 }
 
-// Half-resolution occlusion, reflection and depth-of-field targets, sized to the
-// viewport, and the half-float occlusion/reflection histories (8 bits would stall a slow blend on a step).
-// Binds on unit 2 and leaves the entry framebuffer bound (0 for the desktop, a VR eye's own target otherwise).
-static bool effectsLowTier();
+// Native-resolution occlusion, reflection and depth-of-field targets, plus half-float
+// occlusion/reflection histories (8 bits would stall a slow blend on a step). Binds on
+// unit 2 and leaves the entry framebuffer bound (0 for desktop, a VR eye target otherwise).
 static bool prepareHalfTargets(gl::Api& g, fp::CueResources& r, int width, int height, GLuint entryFramebuffer) {
-    // A slow frame (effectsLowTier) takes the smaller sizes at any height.
-    const bool low = height > 1200 || effectsLowTier();
-    // Half resolution up to 1080p-class views; a third above, so a 1440p view shades about
-    // as many texels as a 1080p one (the cost of these passes follows their texel count).
-    // Above 1200 px a quarter: blended over frames and upsampled by depth, the soft
-    // occlusion reads the same and costs about half of a third.
-    const int divisor = low ? 4 : 2;
-    const int w = (width + divisor - 1) / divisor, h = (height + divisor - 1) / divisor;
-    if (r.halfFbo[0] && r.halfWidth == w && r.halfHeight == h) return true;
+    constexpr bool low = false;
+    const int w = width, h = height;
+    if (r.halfFbo[0] && r.halfWidth == w && r.halfHeight == h) {
+        publishViewTargetSizes(width, height, w, h, r.ssrWidth, r.ssrHeight, r.dofWidth, r.dofHeight, low);
+        return true;
+    }
     g.activeTexture(glc::texture2);
     r.retireHalf(g);
     g.genTextures(2, r.halfTex);
@@ -1747,21 +1747,17 @@ static bool prepareHalfTargets(gl::Api& g, fp::CueResources& r, int width, int h
     g.genFramebuffers(1, &r.dofFbo);
     g.genTextures(1, &r.distanceTex);
     g.genFramebuffers(1, &r.distanceFbo);
-    // Reflections take half the size again: a quarter of the occlusion's texels. They show only
-    // on floors, blurred by the surface, and blend over frames.
-    // Above 1200 px they keep a sixth of the view, as before the occlusion went to a quarter.
-    const int rw = low ? (width + 5) / 6 : (w + 1) / 2, rh = low ? (height + 5) / 6 : (h + 1) / 2;
-    // The blur keeps the size it had before the occlusion went to a quarter.
-    const int dw = low ? (width + 2) / 3 : w, dh = low ? (height + 2) / 3 : h;
+    const int rw = w, rh = h, dw = w, dh = h;
     enum Size { occlusionSize, reflectionSize, blurSize };
     struct Target { unsigned fbo, texture; GLenum format, layout, type, filter; Size size; };
     const Target targets[8] = {
         // The composite filters the current results by depth itself; the resolve
-        // reads a history between texels, where the camera saw it last frame.
-        {r.halfFbo[0], r.halfTex[0], glc::rgba8, GL_RGBA, GL_UNSIGNED_BYTE, glc::nearest, occlusionSize},
+        // reads a history between texels, where the camera saw it last frame. AO
+        // uses only red (bounced light is disabled), so keep its targets single-channel.
+        {r.halfFbo[0], r.halfTex[0], glc::r8, glc::red, GL_UNSIGNED_BYTE, glc::nearest, occlusionSize},
         {r.halfFbo[1], r.halfTex[1], glc::rgba8, GL_RGBA, GL_UNSIGNED_BYTE, glc::nearest, reflectionSize},
-        {r.historyFbo[0][0], r.historyTex[0][0], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, occlusionSize},
-        {r.historyFbo[0][1], r.historyTex[0][1], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, occlusionSize},
+        {r.historyFbo[0][0], r.historyTex[0][0], glc::r16f, glc::red, GL_FLOAT, glc::linear, occlusionSize},
+        {r.historyFbo[0][1], r.historyTex[0][1], glc::r16f, glc::red, GL_FLOAT, glc::linear, occlusionSize},
         {r.historyFbo[1][0], r.historyTex[1][0], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, reflectionSize},
         {r.historyFbo[1][1], r.historyTex[1][1], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, reflectionSize},
         {r.dofFbo, r.dofTex, glc::rgba8, GL_RGBA, GL_UNSIGNED_BYTE, glc::linear, blurSize},
@@ -1790,6 +1786,7 @@ static bool prepareHalfTargets(gl::Api& g, fp::CueResources& r, int width, int h
     r.ssrHeight = rh;
     r.dofWidth = dw;
     r.dofHeight = dh;
+    publishViewTargetSizes(width, height, w, h, rw, rh, dw, dh, low);
     return true;
 }
 
@@ -2121,20 +2118,23 @@ static std::atomic<float> viewEffectsCpuMs[viewTimerCount];
 // work and was waiting on the CPU (its stage times then include that waiting); tens of ms,
 // it was busy with queued work. And the whole-frame period as the CPU and the GPU each see it.
 static std::atomic<float> viewGpuLagMs{0.f}, viewGpuFrameMs{0.f}, viewCpuFrameMs{0.f};
-// Automatic quality: occlusion, reflections and blur take their smaller sizes while the eased frame period
-// runs over 18 ms (below 60 fps with margin), and go back only once it has stayed under 14 ms for two
-// seconds, so the targets are not rebuilt back and forth.
-static bool effectsLowTier() {
-    static bool low = false;
-    static ULONGLONG calmSince = 0;
-    const float period = viewCpuFrameMs.load(std::memory_order_relaxed);
-    const ULONGLONG now = GetTickCount64();
-    if (period > 18.f) { low = true; calmSince = 0; }
-    else if (low && period > 0.f && period < 14.f) {
-        if (!calmSince) calmSince = now;
-        if (now - calmSince > 2000) low = false;
-    } else calmSince = 0;
-    return low;
+static std::atomic<int> viewEffectsInputWidth{0}, viewEffectsInputHeight{0};
+static std::atomic<int> viewEffectsAoWidth{0}, viewEffectsAoHeight{0};
+static std::atomic<int> viewEffectsSsrWidth{0}, viewEffectsSsrHeight{0};
+static std::atomic<int> viewEffectsDofWidth{0}, viewEffectsDofHeight{0};
+static std::atomic<bool> viewEffectsLowTier{false};
+static bool effectsLowTier() { return viewEffectsLowTier.load(std::memory_order_relaxed); }
+static void publishViewTargetSizes(int width, int height, int aoWidth, int aoHeight, int ssrWidth, int ssrHeight,
+                                   int dofWidth, int dofHeight, bool low) {
+    viewEffectsInputWidth.store(width, std::memory_order_relaxed);
+    viewEffectsInputHeight.store(height, std::memory_order_relaxed);
+    viewEffectsAoWidth.store(aoWidth, std::memory_order_relaxed);
+    viewEffectsAoHeight.store(aoHeight, std::memory_order_relaxed);
+    viewEffectsSsrWidth.store(ssrWidth, std::memory_order_relaxed);
+    viewEffectsSsrHeight.store(ssrHeight, std::memory_order_relaxed);
+    viewEffectsDofWidth.store(dofWidth, std::memory_order_relaxed);
+    viewEffectsDofHeight.store(dofHeight, std::memory_order_relaxed);
+    viewEffectsLowTier.store(low, std::memory_order_relaxed);
 }
 
 static unsigned long long cpuNowNs() {
@@ -2647,7 +2647,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         {float(request.adapt), &r.meterProgram, &owner->meterAttempted, nullptr, meterShader, viewMeterFailed,
          "eye adaptation meter"},
         {float(aoMode || ssrMode), &r.distanceProgram, &owner->distanceAttempted, nullptr, distanceShader,
-         viewDistanceFailed, "half-resolution distances"},
+         viewDistanceFailed, "view-distance target"},
         {float(finishMode && (request.wounds.count || request.wounds.drips || request.wounds.caps)), &r.woundProgram, &owner->woundAttempted, nullptr, woundShader,
          viewWoundsFailed, "wound marks"},
         {float(finishMode && request.fires.count), &r.fireProgram, &owner->fireAttempted, nullptr, fireShader,
@@ -2902,10 +2902,11 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         g.bindFramebuffer(glc::framebuffer, target);
         stampTo(1);
 
-        // Occlusion, reflections and blur are low-frequency: shade a quarter of
-        // the pixels, then upsample in a full-resolution composite.
+        // All screen-space effects start at native resolution; future performance
+        // work must reduce shader or memory cost without silently lowering image size.
         if ((aoMode || ssrMode || dofMode) &&
             !prepareHalfTargets(g, r, viewport[2], viewport[3], target)) {
+            publishViewTargetSizes(0, 0, 0, 0, 0, 0, 0, 0, false);
             halfFailed = true;
             aoMode = ssrMode = dofMode = 0;
         }
@@ -3481,7 +3482,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         if (audit) drainGl();
     }
     if (halfFailed) {
-        failViewTargets(*owner, "could not create the half-resolution targets");
+        failViewTargets(*owner, "could not create the view-effect targets");
         return;
     }
     if (ok) {

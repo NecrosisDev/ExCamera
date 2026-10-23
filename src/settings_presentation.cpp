@@ -32,8 +32,6 @@ std::wstring settingValue(const ModSettings& settings,int id) {
     case setting::armourDetail: return settings.value(id);
     case setting::objectDetail: return settings.value(id);
     case setting::levelDetail: return settings.value(id);
-    case setting::rmbMode: return settings.rmbMode==1 ? L"Hold" :
-        settings.rmbMode==2 ? L"Toggle" : L"Off";
     case setting::crouchMode: return settings.crouchMode==1 ? L"Hold" :
         settings.crouchMode==2 ? L"Toggle" : L"Native";
     case setting::vrIpd: return settings.vrIpd ? std::to_wstring(settings.vrIpd)+L" mm" : L"Headset";
@@ -108,7 +106,6 @@ const wchar_t* settingLabel(int id) {
     case setting::woundMarks: return L"Wounds";
     case setting::lightSmoothing: return L"Smooth light";
     case setting::crouchMode: return L"Crouch";
-    case setting::rmbMode: return L"RMB cursor";
     case setting::rotateHeldKey: return L"Turn item";
     case setting::kickKey: return L"Kick";
     case setting::jumpKey: return L"Jump";
@@ -121,7 +118,6 @@ const wchar_t* settingLabel(int id) {
     case setting::holdHeading: return L"Heading correction";
     case setting::invertY: return L"Invert Y";
     case setting::rawMouse: return L"Raw input";
-    case setting::freezeWindows: return L"Menu cursor";
     case setting::tracking: return L"Head tracking";
     case setting::vrIpd: return L"VR eye spacing";
     case setting::vrScale: return L"VR world scale";
@@ -216,7 +212,6 @@ const wchar_t* settingTip(int id) {
     case setting::invertY: return L"Mouse up looks down.";
     case setting::rawMouse: return L"Reads the mouse directly, without Windows' pointer acceleration.";
     case setting::crouchMode: return L"How the game's duck key (X by default) crouches. Combat, a knockdown or talking stands you up.";
-    case setting::freezeWindows: return L"Inventory, loot, shops and talk free the mouse and hold your look and movement. The game doesn't pause.";
     case setting::drawDistance: return L"Small props and far people past this distance aren't drawn; big things stay longer. Off draws everything.";
     case setting::objectLights: return L"Lights each object takes. The game uses six; fewer runs faster and keeps the strongest.";
     default: return rowInfo(id).tip;

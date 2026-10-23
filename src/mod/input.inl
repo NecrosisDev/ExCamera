@@ -207,7 +207,9 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 inputOwner.windowBegin(bindingKey);
                 if (cursorKey != bindingKey) inputOwner.windowBegin(cursorKey);
             }
-            const bool canTake = !repeat && bindingContextNow();
+            const bool cursorToggleActive = !repeat && bindingKey == static_cast<int>(nativeBinding(8)) &&
+                                            InterlockedCompareExchange(&rmbFree, 0, 0);
+            const bool canTake = !repeat && (bindingContextNow() || cursorToggleActive);
             if (canTake && bindingKey == rotateHeldKey.load() && holdingItem()) {
                 inputOwner.windowClaim(bindingKey);
                 return xbutton ? TRUE : 0;
@@ -439,28 +441,6 @@ static bool manualCombatNow() {
         const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)),
                         bh = root ? *reinterpret_cast<const uintptr_t*>(root + field::character::behaviour) : 0;
         return bh && controls(bh) && manualCombat(root, bh);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
-static bool movementFrozen(uintptr_t behavior) {
-    if (!base || !behavior || viewMode.load() >= 2 || !InterlockedCompareExchange(&active, 0, 0) ||
-        InterlockedCompareExchange(&stopping, 0, 0) || !InterlockedCompareExchange(&cameraReady, 0, 0))
-        return false;
-    __try {
-        const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
-        if (!root || *reinterpret_cast<const uintptr_t*>(root + field::character::behaviour) != behavior ||
-            *reinterpret_cast<const uintptr_t*>(behavior + field::behaviour::character) != root)
-            return false;
-        if (cursorFreeNow() || !gameWindow()) return true;
-        if (!windowsFreeze.load()) return false;
-        const uintptr_t view = *reinterpret_cast<const uintptr_t*>(behavior + field::behaviour::view),
-                        ui = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::uiView)),
-                        manager = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::guiManager));
-        return *reinterpret_cast<const int*>(gameAt(fp::sig::uiOpenCount)) > 0 || (ui && ui != view) ||
-               (manager && *reinterpret_cast<const uintptr_t*>(manager + field::gui::capture) &&
-                *reinterpret_cast<const uintptr_t*>(manager + field::gui::capture) != view);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -962,15 +942,6 @@ static void inputProfileBody() {
         *buttons = inputOwner.bufferedButtons(sample);
     } else
         inputOwner.discardButtons();
-    __try {
-        if (movementFrozen(bh)) {
-            *reinterpret_cast<unsigned*>(gameAt(fp::sig::keyWord)) &= ~movementBits;
-            *reinterpret_cast<unsigned*>(gameAt(fp::sig::buttonWord)) = 0;
-            auto stick = reinterpret_cast<float*>(gameAt(fp::sig::analogStick));
-            stick[0] = stick[1] = stick[2] = 0;
-            *reinterpret_cast<unsigned char*>(bh + field::behaviour::moveIntent) = 0;
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
     sampleHeldBindings(owned, sample);
     trackedControllerInput(root, bh, owned);
     fingerPosesTick(root);
@@ -1324,9 +1295,8 @@ static void partSettle(uintptr_t part) {
 
 static void step(uintptr_t bh) {
     Aim a;
-    const bool frozen = movementFrozen(bh);
-    const bool owned = !frozen && getAim(bh, a);
-    if (!owned && !frozen) {
+    const bool owned = getAim(bh, a);
+    if (!owned) {
         originalStep(bh);
         return;
     }
@@ -1338,7 +1308,7 @@ static void step(uintptr_t bh) {
     const bool analog = !std::isfinite(magnitude) || double(magnitude) > 0.01;
     auto pending = reinterpret_cast<unsigned*>(bh + field::behaviour::pendingMove);
     const bool pendingDigital = *pending && !(*pending & ~movementBits);
-    if ((frozen || (!digital && !analog)) && (pendingDigital || (frozen && *pending == 0x8000))) *pending = 0;
+    if (!digital && !analog && pendingDigital) *pending = 0;
     if (!owned) {
         originalStep(bh);
         return;

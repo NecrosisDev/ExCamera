@@ -41,6 +41,10 @@ The near-plane solver may cap proved-clear results at twice the caller's maximum
 
 Run `python -B tests/run_performance.py` for native regression suites. They compile production owners with owned-memory/native-boundary fixtures and compare against the pinned pre-change oracle in `tests/original_performance.inl`. The retained integration fixtures cover temporal sample order, extra requests, source faults, replacement, TP obstruction ownership and native view boundaries. They do not launch or attach to the game. See `DECISIONS.md` for the reason cross-frame and cross-sample caches are deliberately absent.
 
+## Screen-effect quality diagnostics
+
+`first-person-status.json` reports the screen-effect input and intermediate target dimensions for ambient occlusion, reflections, and depth of field, plus `view_effects_low_tier`. These targets match the full view dimensions; the low-tier flag remains false because screen effects no longer reduce resolution under load. Nonzero dimensions describe the most recently supported rendered view, and are cleared when the effects skip or target creation fails. Use these values with the per-stage CPU/GPU timings to optimize shader and memory work without reducing output resolution.
+
 ## Settings boundaries
 
 The native UI edits a draft. Apply publishes accepted values and queues per-row revisions under a short settings lock; Cancel discards draft edits. Only the session worker persists INI values, outside that lock, then acknowledges the exact revision written. Edits arriving during a write remain pending. Failed writes remain pending: running and cleanly stopped sessions retry on the same worker; a fault exit makes a final best-effort pass after its notice/recovery work ends. Native GUI callbacks never wait for disk I/O. Status files are best-effort snapshots and may remain stale if publication fails. The presentation layer maps internal values to labels without making the native controller Controls table into an ExCamera page. Preferences are external to the source and runtime package.
