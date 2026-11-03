@@ -741,7 +741,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     const auto trackingNow = GetTickCount64();
     j.boolean("tracking_fresh", tracker.valid && trackingNow >= tracker.received &&
                                trackingNow - tracker.received <= fp::trackingStaleMs);
-    j.num("cursor_free", InterlockedCompareExchange(&cursorFree, 0, 0));
+    j.num("cursor_free", cursorFreeNow() ? 1 : 0);
     j.num("raw_mouse", InterlockedCompareExchange(&rawRegistered, 0, 0));
     j.unum("side_flips", sideFlips.load());
     j.str("helmet", helmetMode.load() == fp::HelmetMode::hide ? "hide" : "show");
@@ -1038,6 +1038,19 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("faults", trackedBoneFaults.load())
         .boolean("fault", trackedBoneFault.load())
         .unum("pose_ticks", fingerPoseTicks.load())
+        .unum("player_vertices_left", trackedPlayerVerticesLeft.load())
+        .unum("player_vertices_right", trackedPlayerVerticesRight.load())
+        .num("player_pose_left", trackedPlayerPoseLeft.load())
+        .num("player_pose_right", trackedPlayerPoseRight.load())
+        .boolean("player_gloved_left", trackedPlayerGlovedLeft.load())
+        .boolean("player_gloved_right", trackedPlayerGlovedRight.load())
+        .boolean("player_gripped_left", trackedPlayerGrippedLeft.load())
+        .boolean("player_gripped_right", trackedPlayerGrippedRight.load())
+        .boolean("player_fitted_left", trackedPlayerFittedLeft.load())
+        .boolean("player_fitted_right", trackedPlayerFittedRight.load())
+        .unum("active_wounds", activeWoundsCount.load())
+        .unum("active_drips", activeDripsCount.load())
+        .real("active_weapon_blood", activeWeaponBloodMax.load())
         .end();
     j.finish();
 }
@@ -1261,6 +1274,11 @@ static DWORD runSession() {
         return 3;
     }
     createViewEffectsHook();
+    createNodeMoveHook();
+    createRoomViewHook();
+    createManualPageHook();
+    createWoundHooks();
+    stoneSkinWarmup();
     {
         const char* reason = "";
         const char* hooks = "";
@@ -1309,7 +1327,7 @@ static DWORD runSession() {
                     aim.valid = false;
                     ReleaseSRWLockExclusive(&aimLock);
                 } // no nav frame ended the blend (parked, loading): end it as F6 did
-                f8WindowTick(InterlockedCompareExchange(&cursorFree, 0, 0) &&
+                f8WindowTick(cursorFreeNow() &&
                                  (InterlockedCompareExchange(&active, 0, 0) || title),
                              gameWindow() != nullptr);
             }
@@ -1324,11 +1342,13 @@ static DWORD runSession() {
                         FP_SHOWN_NAME L": another program took over the game's frame hook (an overlay?). "
                                       L"Park, re-arm and F7 may not work; restart Exanima without it.");
             }
+            const bool inLevel = InterlockedCompareExchange(&cameraReady, 0, 0) &&
+                                 *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
             if (i % 5 == 0 && slash) {
-                logSpawn();
+                if (inLevel) logSpawn();
                 logFaults();
             }
-            if (i % 10 == 0 && slash) {
+            if ((inLevel ? (i % 10 == 0) : (i % 50 == 0)) && slash) {
                 Aim a;
                 AcquireSRWLockShared(&aimLock);
                 a = aim;

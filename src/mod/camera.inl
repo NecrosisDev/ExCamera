@@ -20,7 +20,7 @@ inline bool cameraPosePickProfileBody(uintptr_t camera, const float* pose, float
     *(float*)(camera + field::camera::nearPlane) = 0.f;
     __try {
         got = pickPastSelf(ownedPickRay, viewport, x, y, out, ignoredHeld) != 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         got = false;
     }
     *(float*)(camera + field::camera::nearPlane) = keptNear;
@@ -89,7 +89,7 @@ inline bool sampleHeadRenderPose(uintptr_t head, uintptr_t mesh, float offset, f
         for (int row = 0; row < 4; ++row)
             for (int axis = 0; axis < 3; ++axis) pose[row * 3 + axis] = sampled[row * 4 + axis];
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&poseFaults)) {
         return false;
     }
 }
@@ -118,7 +118,7 @@ inline bool cameraEntryYaw(uintptr_t root, uintptr_t sector, float& yaw) noexcep
             direction[0] * direction[0] + direction[2] * direction[2] < 1.e-6f) return false;
         yaw = std::atan2(direction[0], direction[2]);
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         return false;
     }
 }
@@ -371,6 +371,36 @@ inline uintptr_t navLocked(void* self, float offset) {
         for (int i = 0; i < 9; ++i)
             cameraFrame.tracked = cameraFrame.tracked ||
                                   std::fabs(identity[i] - cameraFrame.trackingOffset[i]) > 1.e-5f;
+
+        const float frameDt = (std::min)((std::max)(cameraFrame.seconds, 0.001f), 0.1f);
+        if (mode == 0) {
+            const bool sprinting = ((physicalMovement() & 1) != 0) && (GetAsyncKeyState(VK_SHIFT) & 0x8000) && !cursorFreeNow() && !uiOpen();
+            const float targetFovOffset = sprinting ? 4.0f : 0.0f;
+            sprintFovOffset += (targetFovOffset - sprintFovOffset) * (std::min)(frameDt * 6.0f, 1.0f);
+            cameraFrame.effectiveFov += sprintFovOffset;
+
+            const float decay = std::exp(-frameDt / 0.08f);
+            float curPitch = cameraImpactPitch.load(std::memory_order_relaxed) * decay;
+            float curYaw = cameraImpactYaw.load(std::memory_order_relaxed) * decay;
+            float curRoll = cameraImpactRoll.load(std::memory_order_relaxed) * decay;
+            if (std::abs(curPitch) < 1e-4f) curPitch = 0.f;
+            if (std::abs(curYaw) < 1e-4f) curYaw = 0.f;
+            if (std::abs(curRoll) < 1e-4f) curRoll = 0.f;
+            cameraImpactPitch.store(curPitch, std::memory_order_relaxed);
+            cameraImpactYaw.store(curYaw, std::memory_order_relaxed);
+            cameraImpactRoll.store(curRoll, std::memory_order_relaxed);
+
+            const bool stationary = (physicalMovement() == 0) && !cursorFreeNow() && !uiOpen();
+            if (stationary) {
+                idleBreatheWeight = (std::min)(1.0f, idleBreatheWeight + frameDt * 0.8f);
+                idleBreathePhase += frameDt * 1.57f;
+            } else {
+                idleBreatheWeight = (std::max)(0.0f, idleBreatheWeight - frameDt * 4.0f);
+            }
+        } else {
+            sprintFovOffset = 0.f;
+            idleBreatheWeight = 0.f;
+        }
     }
     const bool evaluateCentre = mode != 2 && (!cameraFrame.centreReady || offset == 0.f);
     float h[12], centreHead[12];
@@ -527,6 +557,18 @@ inline uintptr_t navLocked(void* self, float offset) {
         }
         if (cameraFrame.tracked && mode == 0)
             fp::composeView(evaluatedPose, cameraFrame.trackingOffset, evaluatedPose);
+        if (mode == 0) {
+            const float breathePitch = 0.0015f * std::cos(idleBreathePhase) * idleBreatheWeight;
+            const float breatheVertical = 0.35f * std::sin(idleBreathePhase) * idleBreatheWeight;
+            const float totalPitch = cameraImpactPitch.load(std::memory_order_relaxed) + breathePitch;
+            const float totalYaw = cameraImpactYaw.load(std::memory_order_relaxed);
+            if (std::abs(totalPitch) > 1e-5f || std::abs(totalYaw) > 1e-5f) {
+                float nudge[12]{};
+                fp::basis(totalYaw, totalPitch, nudge);
+                fp::composeView(evaluatedPose, nudge, evaluatedPose);
+            }
+            evaluatedPose[10] += breatheVertical;
+        }
         {
             const float minimumNear = static_cast<float>(nearClip.load()) * 0.1f;
             float clearance = viewClearance(evaluatedPose, cameraFrame.effectiveFov, 2.f * cameraNearMaximum);
@@ -558,7 +600,7 @@ inline uintptr_t navLocked(void* self, float offset) {
     } else {
         const float elapsed = std::isfinite(cameraFrame.seconds) && cameraFrame.seconds >= 0.f &&
                                       cameraFrame.seconds <= 0.5f
-                                  ? std::fmax(0.f, cameraFrame.seconds + offset * 0.001f)
+                                  ? cameraFrame.seconds
                                   : 1.f;
         if (const int problem = evaluate(h, requestedTarget, elapsed, shown, pose, shownNear, cameraAim))
             return reject(problem);
@@ -625,6 +667,7 @@ inline uintptr_t navLocked(void* self, float offset) {
         lastHeadGlobal[i] = h[9 + i] + *(float*)(scene + field::sector::origin + i * 4);
     publishReachHead(lastHeadGlobal);
     for (int i = 0; i < 3; i++) eyeGlobal[i] = requestedTarget[i];
+    cameraOwnershipState.store(1, std::memory_order_relaxed);
     InterlockedExchange(&cameraReady, 1);
     return result;
 }
@@ -634,9 +677,12 @@ inline uintptr_t navProfileBody(void* self, float offset) {
     fp::profile::invoke<fp::profile::Hook::cameraLock>(AcquireSRWLockExclusive, &cameraLock);
     uintptr_t result = 0;
     __try {
-        result = navLocked(self, offset);
-    } __finally {
-        ReleaseSRWLockExclusive(&cameraLock);
+        __try {
+            result = navLocked(self, offset);
+        } __finally {
+            ReleaseSRWLockExclusive(&cameraLock);
+        }
+    } __except (countFaultAndContinue(&cameraFaults)) {
     }
     return result;
 }

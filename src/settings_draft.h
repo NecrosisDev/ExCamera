@@ -2,6 +2,8 @@
 #include "settings_model.h"
 
 namespace panel {
+// One Settings form's pending values. The native form edits this copy and only
+// hands it to the mod on Apply; Cancel restores the values it opened with.
 class SettingsDraft {
 public:
     ModSettings initial, value;
@@ -30,7 +32,6 @@ public:
         value.normalize();
         return true;
     }
-    void resetGroup(int group) { value.resetGroup(group); value.normalize(); }
     void resetRows(const int* rows, int count) {
         const ModSettings defaults;
         for (int k = 0; k < count; ++k) {
@@ -40,12 +41,16 @@ public:
         }
         value.normalize();
     }
+    // Live capabilities can change while the form stays open. The draft keeps
+    // its edits but follows the current availability so rows enable or disable.
     bool refreshStatus(const ModSettings& live) {
         if (value.trackingStatus==live.trackingStatus && value.rawMouseFallback==live.rawMouseFallback &&
-            value.manualDefenseAvailable==live.manualDefenseAvailable) return false;
+            value.manualDefenseAvailable==live.manualDefenseAvailable &&
+            value.scriptRuntimeAvailable==live.scriptRuntimeAvailable) return false;
         value.trackingStatus=live.trackingStatus;
         value.rawMouseFallback=live.rawMouseFallback;
         value.manualDefenseAvailable=live.manualDefenseAvailable;
+        value.scriptRuntimeAvailable=live.scriptRuntimeAvailable;
         return true;
     }
     static float sliderPosition(const ModSettings& m,int id) {

@@ -1,0 +1,205 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_10001ceb0()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.camera.expand_pose",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_e525e88ad2323aef3a6c0f078690985630500418b73e2fdc4a7483b2152bd2cf",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [],
+    "callers": [
+      {
+        "address": "0x100050eb0",
+        "name": "FUN_100050eb0"
+      },
+      {
+        "address": "0x100052ee0",
+        "name": "FUN_100052ee0"
+      },
+      {
+        "address": "0x10008aaf0",
+        "name": "FUN_10008aaf0"
+      },
+      {
+        "address": "0x10008cf10",
+        "name": "FUN_10008cf10"
+      },
+      {
+        "address": "0x100094d80",
+        "name": "FUN_100094d80"
+      },
+      {
+        "address": "0x10009fbe0",
+        "name": "FUN_10009fbe0"
+      },
+      {
+        "address": "0x1000a0820",
+        "name": "FUN_1000a0820"
+      },
+      {
+        "address": "0x1000a0b20",
+        "name": "FUN_1000a0b20"
+      },
+      {
+        "address": "0x1000a0ce0",
+        "name": "FUN_1000a0ce0"
+      },
+      {
+        "address": "0x1000d1340",
+        "name": "FUN_1000d1340"
+      },
+      {
+        "address": "0x1000df320",
+        "name": "FUN_1000df320"
+      },
+      {
+        "address": "0x1000e7370",
+        "name": "FUN_1000e7370"
+      },
+      {
+        "address": "0x1000e81d0",
+        "name": "FUN_1000e81d0"
+      },
+      {
+        "address": "0x100153d50",
+        "name": "FUN_100153d50"
+      },
+      {
+        "address": "0x1001549b0",
+        "name": "FUN_1001549b0"
+      },
+      {
+        "address": "0x100154dc0",
+        "name": "FUN_100154dc0"
+      },
+      {
+        "address": "0x100155c20",
+        "name": "FUN_100155c20"
+      },
+      {
+        "address": "0x1001c60f0",
+        "name": "FUN_1001c60f0"
+      },
+      {
+        "address": "0x1001c6460",
+        "name": "FUN_1001c6460"
+      },
+      {
+        "address": "0x1001c6670",
+        "name": "FUN_1001c6670"
+      },
+      {
+        "address": "0x1001c6ff0",
+        "name": "FUN_1001c6ff0"
+      },
+      {
+        "address": "0x1001e01d0",
+        "name": "FUN_1001e01d0"
+      },
+      {
+        "address": "0x1001e0a50",
+        "name": "FUN_1001e0a50"
+      },
+      {
+        "address": "0x10023d0b0",
+        "name": "FUN_10023d0b0"
+      },
+      {
+        "address": "0x100245870",
+        "name": "FUN_100245870"
+      },
+      {
+        "address": "0x100247f00",
+        "name": "FUN_100247f00"
+      },
+      {
+        "address": "0x1002535a0",
+        "name": "FUN_1002535a0"
+      },
+      {
+        "address": "0x10025b630",
+        "name": "FUN_10025b630"
+      },
+      {
+        "address": "0x100275e10",
+        "name": "FUN_100275e10"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "What are the exact source and destination layouts?",
+      "Which matrix fields remain untouched?",
+      "Can the domain produce this transformation without a native call?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Expands a 12-float affine camera pose into a 16-float native matrix; despite the legacy name, not a matrix inverse."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x10001cf1b",
+          "start": "0x10001ceb0"
+        }
+      ],
+      "span_bytes": 108,
+      "total_bytes": 108
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_10001ceb0",
+    "rva": "0x1ceb0",
+    "va": "0x10001ceb0"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

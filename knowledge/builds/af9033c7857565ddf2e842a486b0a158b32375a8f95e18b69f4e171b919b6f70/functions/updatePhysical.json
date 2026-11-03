@@ -1,0 +1,274 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_1001760f0()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.player.physics_update",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_23bf17bc0f5ad026379fc6950ff62cd73abb14c88c3814b22234ad5df77ae702",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x100017660",
+        "name": "FUN_100017660"
+      },
+      {
+        "address": "0x1000176a0",
+        "name": "FUN_1000176a0"
+      },
+      {
+        "address": "0x100018870",
+        "name": "FUN_100018870"
+      },
+      {
+        "address": "0x100018910",
+        "name": "FUN_100018910"
+      },
+      {
+        "address": "0x100018b00",
+        "name": "FUN_100018b00"
+      },
+      {
+        "address": "0x100018b60",
+        "name": "FUN_100018b60"
+      },
+      {
+        "address": "0x100018f60",
+        "name": "FUN_100018f60"
+      },
+      {
+        "address": "0x1000191a0",
+        "name": "FUN_1000191a0"
+      },
+      {
+        "address": "0x100019390",
+        "name": "FUN_100019390"
+      },
+      {
+        "address": "0x1000193d0",
+        "name": "FUN_1000193d0"
+      },
+      {
+        "address": "0x1000194a0",
+        "name": "FUN_1000194a0"
+      },
+      {
+        "address": "0x1000194e0",
+        "name": "FUN_1000194e0"
+      },
+      {
+        "address": "0x100019520",
+        "name": "FUN_100019520"
+      },
+      {
+        "address": "0x100019680",
+        "name": "FUN_100019680"
+      },
+      {
+        "address": "0x100019890",
+        "name": "FUN_100019890"
+      },
+      {
+        "address": "0x1000198e0",
+        "name": "FUN_1000198e0"
+      },
+      {
+        "address": "0x100019980",
+        "name": "FUN_100019980"
+      },
+      {
+        "address": "0x1000199c0",
+        "name": "FUN_1000199c0"
+      },
+      {
+        "address": "0x100019ae0",
+        "name": "FUN_100019ae0"
+      },
+      {
+        "address": "0x100019b80",
+        "name": "FUN_100019b80"
+      },
+      {
+        "address": "0x10001c010",
+        "name": "FUN_10001c010"
+      },
+      {
+        "address": "0x10001c820",
+        "name": "FUN_10001c820"
+      },
+      {
+        "address": "0x10001c900",
+        "name": "FUN_10001c900"
+      },
+      {
+        "address": "0x10001caf0",
+        "name": "FUN_10001caf0"
+      },
+      {
+        "address": "0x10001cbd0",
+        "name": "FUN_10001cbd0"
+      },
+      {
+        "address": "0x10001ce30",
+        "name": "FUN_10001ce30"
+      },
+      {
+        "address": "0x10001cf20",
+        "name": "FUN_10001cf20"
+      },
+      {
+        "address": "0x10009d570",
+        "name": "FUN_10009d570"
+      },
+      {
+        "address": "0x1000ccf60",
+        "name": "FUN_1000ccf60"
+      },
+      {
+        "address": "0x1000cd1d0",
+        "name": "FUN_1000cd1d0"
+      },
+      {
+        "address": "0x1000cd390",
+        "name": "FUN_1000cd390"
+      },
+      {
+        "address": "0x100151ca0",
+        "name": "FUN_100151ca0"
+      },
+      {
+        "address": "0x10015efb0",
+        "name": "FUN_10015efb0"
+      },
+      {
+        "address": "0x100175bf0",
+        "name": "FUN_100175bf0"
+      },
+      {
+        "address": "0x100175de0",
+        "name": "FUN_100175de0"
+      },
+      {
+        "address": "0x100175e10",
+        "name": "FUN_100175e10"
+      },
+      {
+        "address": "0x100179720",
+        "name": "FUN_100179720"
+      }
+    ],
+    "callers": [
+      {
+        "address": "0x1000b0f90",
+        "name": "FUN_1000b0f90"
+      },
+      {
+        "address": "0x100123d30",
+        "name": "FUN_100123d30"
+      },
+      {
+        "address": "0x1001333b0",
+        "name": "FUN_1001333b0"
+      },
+      {
+        "address": "0x100169200",
+        "name": "FUN_100169200"
+      },
+      {
+        "address": "0x100170810",
+        "name": "FUN_100170810"
+      },
+      {
+        "address": "0x100171ec0",
+        "name": "FUN_100171ec0"
+      },
+      {
+        "address": "0x100186bc0",
+        "name": "FUN_100186bc0"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "Which leg/contact fields are recomputed?",
+      "Does it use a native ground ray, plane, or height field?",
+      "Which fields are safe for a read-only camera support contract?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Character physical pose and support update invoked by placement."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": true,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x100176365",
+          "start": "0x1001760f0"
+        },
+        {
+          "end": "0x100177d5b",
+          "start": "0x100176368"
+        },
+        {
+          "end": "0x100178341",
+          "start": "0x100177d5e"
+        }
+      ],
+      "span_bytes": 8786,
+      "total_bytes": 8782
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_1001760f0",
+    "rva": "0x1760f0",
+    "va": "0x1001760f0"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

@@ -1,0 +1,165 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_10011ef40()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.camera.mouse_input",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_cae197c62a2375ba32194c44c3f55b0b2a25b6d6f64565d4c4276a9327884c12",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x100001a50",
+        "name": "USER32.DLL::GetAsyncKeyState"
+      },
+      {
+        "address": "0x1000191a0",
+        "name": "FUN_1000191a0"
+      },
+      {
+        "address": "0x100019260",
+        "name": "FUN_100019260"
+      },
+      {
+        "address": "0x1000196e0",
+        "name": "FUN_1000196e0"
+      },
+      {
+        "address": "0x100019760",
+        "name": "FUN_100019760"
+      },
+      {
+        "address": "0x100022710",
+        "name": "FUN_100022710"
+      },
+      {
+        "address": "0x100022780",
+        "name": "FUN_100022780"
+      },
+      {
+        "address": "0x1000227c0",
+        "name": "FUN_1000227c0"
+      },
+      {
+        "address": "0x10008f530",
+        "name": "FUN_10008f530"
+      },
+      {
+        "address": "0x100090460",
+        "name": "FUN_100090460"
+      },
+      {
+        "address": "0x100091f00",
+        "name": "FUN_100091f00"
+      },
+      {
+        "address": "0x1000bf260",
+        "name": "FUN_1000bf260"
+      },
+      {
+        "address": "0x1000bf630",
+        "name": "FUN_1000bf630"
+      },
+      {
+        "address": "0x10011e9d0",
+        "name": "FUN_10011e9d0"
+      },
+      {
+        "address": "0x10011eb50",
+        "name": "FUN_10011eb50"
+      },
+      {
+        "address": "0x10011ebe0",
+        "name": "FUN_10011ebe0"
+      }
+    ],
+    "callers": [],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "Which branches belong to overhead and close-view modes?",
+      "Can native input be retained with a sampler-only camera adapter?",
+      "What cursor and window state must an adapter preserve?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Native camera mouse input and camera/player snapshot publication."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": true,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x10011ef65",
+          "start": "0x10011ef40"
+        },
+        {
+          "end": "0x10011f050",
+          "start": "0x10011ef68"
+        },
+        {
+          "end": "0x10011f1b9",
+          "start": "0x10011f054"
+        },
+        {
+          "end": "0x10011f464",
+          "start": "0x10011f1bc"
+        }
+      ],
+      "span_bytes": 1317,
+      "total_bytes": 1310
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_10011ef40",
+    "rva": "0x11ef40",
+    "va": "0x10011ef40"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

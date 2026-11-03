@@ -2,7 +2,7 @@
 
 First- and third-person camera mod for the Windows x64 version of Exanima, with settings integrated into the game's native Settings window.
 
-Download the prebuilt Windows runtime from [Releases](https://github.com/NecrosisDev/ExCamera/releases/latest). Choose `ExCamera-<version>-minimal.zip`, extract it, and keep the launcher, DLL and licenses together. The automatically generated Source code downloads are for developers.
+Download the prebuilt Windows runtime from [Releases](https://github.com/NecrosisDev/ExCamera/releases/latest). Choose `ExCamera-<version>-minimal.zip`, extract it, and keep its files together. The automatically generated Source code downloads are for developers.
 
 ## Compatibility
 
@@ -33,7 +33,7 @@ Outputs:
 
 - `build/ExCamera.exe` — launcher.
 - `build/ExanimaFirstPerson.dll` — mod.
-- `build/ExCamera-<version>-minimal.zip` — runtime ZIP containing those two files, `LICENSE.txt`, and `LICENSE-MinHook.txt`.
+- `build/ExCamera-<version>-minimal.zip` — runtime ZIP containing those two files, `manifest.toml`, `README.txt` (from `docs/PLAYER_README.txt`), `LICENSE.txt`, and `LICENSE-MinHook.txt`.
 
 Use `py build.py` to build without refreshing the ZIP. The package name follows `FP_BUILD` in `src/build_identity.h`. Compilation and validation use isolated staging under `build/`; success publishes the runtime files and replaces the ZIP individually.
 
@@ -41,21 +41,23 @@ On failure, previous outputs are retained or restored, not newly built. If rollb
 
 ## Releases and automatic changelog
 
-Push an existing commit with a new version tag such as `v0.2.1`, `v0.3.0`, or `v0.3.0-rc.1`. The Release workflow validates the tag and sets `FP_BUILD` to its version in the CI checkout before compiling both binaries. It preserves `FP_REVISION` and does not edit your source commit or move the tag. No manual version edit is needed for each release; local builds continue to use the checked-in header.
+**Pushing to `main` publishes a new `FP_BUILD`:** Auto release tags any `FP_BUILD` that has no tag yet and starts Release. Test the exact build first; see [the release checklist](docs/RELEASE_CHECKLIST.md). To publish a version that is not the checked-in `FP_BUILD`, push a new version tag such as `v0.3.1` or `v0.3.1-rc.1` together with `main`; Auto release sees the tag and skips. The Release workflow validates the tag and sets `FP_BUILD` to its version in the CI checkout before compiling both binaries. It preserves `FP_REVISION` and does not edit your source commit or move the tag. Local builds continue to use the checked-in header.
 
 Accepted tags are `vX.Y.Z` with an optional SemVer prerelease suffix. Numeric components cannot have leading zeros. Build metadata (`+...`) is not supported by the package naming convention. Prerelease tags are published as GitHub prereleases.
 
 Release notes automatically list commit subjects since the prior reachable valid version tag selected by `git describe`, with commit links and a full comparison link. This uses Git's bounded candidate search, not version-number sorting or a guarantee of the globally closest tag. It includes direct commits, not only pull requests. The first tagged release lists the initial history. These are raw commit summaries, not inferred feature claims. Use clear commit subjects for useful notes.
 
-Both workflows check generated compatibility tables, build the Windows runtime, check its exports and verify the runtime ZIP.
+The Build and Release workflows check generated compatibility tables, build the Windows runtime, check its exports and verify the runtime ZIP.
 
-Only successful source checks, tooling tests, build, export check, ZIP check, and artifact upload can reach publication. The ZIP contains exactly the two runtime binaries and two licenses. Existing releases are not overwritten. See [release installation instructions](INSTALL.txt) for tagging and failure recovery.
+Only successful source checks, build, export check, ZIP check, and artifact upload can reach publication. The ZIP contains exactly the two runtime binaries, the manifest, the player readme and two licenses. Existing releases are not overwritten. See [release installation instructions](INSTALL.txt) for tagging and failure recovery.
 
 ## Run and configure
 
 1. Extract the runtime ZIP, keeping the launcher and DLL together.
-2. Start the supported Exanima build, then run `ExCamera.exe`.
+2. Run `ExCamera.exe`. It starts Exanima through Steam, or attaches to a running game.
 3. Open the game's Settings window to configure ExCamera.
+
+Wound marks (cuts, thrusts, bruises, and weapon blood) are native and fully integrated; everything runs standalone without external dependencies.
 
 Controls:
 
@@ -63,10 +65,14 @@ Controls:
 - **Hold F7 for one second:** stop the mod. A short press only shows a reminder.
 - **F8 (first/third person or title screen):** open native Settings and free the cursor; press again to dismiss without applying ExCamera edits.
 - **Hold Cursor Look (vanilla Controls binding, default Space):** free the cursor in first-/third-person exploration without opening Settings. Release to resume mouse look; combat and native UI retain their controls. Rebind it in the game's existing Controls row.
+- **Hold RMB (combat):** engage Manual Guard to actively align your parry against incoming strikes.
+- **Hold RMB (dragging objects):** rotate held physics objects along pitch and yaw in true 3D space.
+- **Mouse Wheel:** adjust camera distance in third person; adjust hold reach when dragging objects.
 - **F9 / F10:** decrease or increase the first-person (base) FOV by 5 degrees.
 - **F11:** reset the base FOV to 75 degrees.
+- **In-Game Manual:** open the native MANUAL tab on the main menu to read the complete First Person (ExCamera) reference guide.
 
-FOV shortcuts work in active first/third-person views and apply immediately, outside the Settings draft. A separate third-person FOV overrides the base value; choose Inherit to share it.
+FOV shortcuts work in active first/third-person views and apply immediately, outside the Settings draft. A separate third-person FOV overrides the base value; choose Same to share it.
 
 Camera and Combat settings are available in keyboard and controller modes. All ExCamera Controls options appear only in keyboard mode; the native controller Controls page remains unchanged. Apply commits the ExCamera draft; Cancel discards those draft edits. Preferences are stored in `Documents/ExCamera/first-person.ini`.
 
@@ -85,7 +91,11 @@ The Headwear setting controls helmets and other headwear in first person. **Hide
 - `src/game_*`, `src/native_contracts.h`, `src/native_build.h` — game compatibility data and validation.
 - `src/vendor/minhook/` — bundled x64 hook library.
 
-See [Architecture](docs/ARCHITECTURE.md) for the compilation model and native integration boundaries.
+See [Architecture](docs/ARCHITECTURE.md) for the compilation model and native integration boundaries, and the [documentation map](docs/README.md) for the status of parked and historical notes.
+
+## Development notes
+
+A clean rebuild of the camera core is parked in `src/excamera/`, `src/runtime/`, `src/launcher/` and `src/platform/`; see [its notes](docs/rebuild/REBUILD_README.md). It isn't part of the release. ExanimaLua is not required.
 
 ## License
 

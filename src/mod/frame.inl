@@ -34,7 +34,7 @@ static void meshQueueProfileBody(uintptr_t caller, uintptr_t node, int material,
                     }
                 }
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&poseFaults)) {
             skip = false;
         }
         if (skip) {
@@ -61,7 +61,7 @@ static bool ownedNativeSwap(HDC dc) {
         const HGLRC nativeContext = *reinterpret_cast<const HGLRC*>(contextSlot);
         return nativeDC && nativeContext && dc == nativeDC &&
                cueCurrentDC() == nativeDC && cueCurrentContext() == nativeContext;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&swapFaults)) {
         return false;
     }
 }
@@ -116,7 +116,7 @@ static void devFrame();
 
 static BOOL WINAPI swapProfileBody(HDC dc) {
     if (lightTrimCount && GetCurrentThreadId() == DWORD(InterlockedCompareExchange(&sectorThread, 0, 0))) {
-        __try { restoreLightTrims(); } __except (EXCEPTION_EXECUTE_HANDLER) { lightTrimCount = 0; }
+        __try { restoreLightTrims(); } __except (countFaultAndHandle(&swapFaults)) { lightTrimCount = 0; }
     }
     if (!ownedNativeSwap(dc)) return fp::profile::invoke<fp::profile::Hook::swapNative>(originalSwap, dc);
     devFrame();
@@ -126,9 +126,12 @@ static BOOL WINAPI swapProfileBody(HDC dc) {
     float cueFillNow = 0, cueAlphaNow = 0;
     fp::profile::invoke<fp::profile::Hook::cameraLock>(AcquireSRWLockExclusive, &cameraLock);
     __try {
-        swapLocked(cueSideNow, cueX, cueY, cueFillNow, cueAlphaNow);
-    } __finally {
-        ReleaseSRWLockExclusive(&cameraLock);
+        __try {
+            swapLocked(cueSideNow, cueX, cueY, cueFillNow, cueAlphaNow);
+        } __finally {
+            ReleaseSRWLockExclusive(&cameraLock);
+        }
+    } __except (countFaultAndContinue(&swapFaults)) {
     }
     heldDoorStep();
     f8MouseStep();
@@ -472,7 +475,7 @@ static void thirdPersonAimProfileBody(uintptr_t camera, const float* pose, const
     bool got = false;
     __try {
         got = ownedPickRay(viewport, x, y, reinterpret_cast<uintptr_t>(hit)) != 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         return discard();
     }
     const float* fwd = reinterpret_cast<const float*>(hit + field::pick::direction);

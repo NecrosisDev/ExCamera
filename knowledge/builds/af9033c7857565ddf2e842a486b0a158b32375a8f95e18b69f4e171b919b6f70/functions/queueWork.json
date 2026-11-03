@@ -1,0 +1,258 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_10001a890()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.scheduler.work_ring_push",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_ff0f439c4e908882db7840c159e79b12041f2e070780c1ae1310815ef989aae6",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x10001a410",
+        "name": "FUN_10001a410"
+      },
+      {
+        "address": "0x10001a430",
+        "name": "FUN_10001a430"
+      }
+    ],
+    "callers": [
+      {
+        "address": "0x1000aa540",
+        "name": "FUN_1000aa540"
+      },
+      {
+        "address": "0x1000b4570",
+        "name": "FUN_1000b4570"
+      },
+      {
+        "address": "0x100116a50",
+        "name": "FUN_100116a50"
+      },
+      {
+        "address": "0x100117000",
+        "name": "FUN_100117000"
+      },
+      {
+        "address": "0x1001345d0",
+        "name": "FUN_1001345d0"
+      },
+      {
+        "address": "0x100134ab0",
+        "name": "FUN_100134ab0"
+      },
+      {
+        "address": "0x100134e60",
+        "name": "FUN_100134e60"
+      },
+      {
+        "address": "0x100135360",
+        "name": "FUN_100135360"
+      },
+      {
+        "address": "0x100135570",
+        "name": "FUN_100135570"
+      },
+      {
+        "address": "0x100135810",
+        "name": "FUN_100135810"
+      },
+      {
+        "address": "0x100135a10",
+        "name": "FUN_100135a10"
+      },
+      {
+        "address": "0x100135b00",
+        "name": "FUN_100135b00"
+      },
+      {
+        "address": "0x100135d50",
+        "name": "FUN_100135d50"
+      },
+      {
+        "address": "0x1001360f0",
+        "name": "FUN_1001360f0"
+      },
+      {
+        "address": "0x100139a50",
+        "name": "FUN_100139a50"
+      },
+      {
+        "address": "0x10013f390",
+        "name": "FUN_10013f390"
+      },
+      {
+        "address": "0x10014a3e0",
+        "name": "FUN_10014a3e0"
+      },
+      {
+        "address": "0x10014b520",
+        "name": "FUN_10014b520"
+      },
+      {
+        "address": "0x100156480",
+        "name": "FUN_100156480"
+      },
+      {
+        "address": "0x100158b30",
+        "name": "FUN_100158b30"
+      },
+      {
+        "address": "0x100169200",
+        "name": "FUN_100169200"
+      },
+      {
+        "address": "0x10019c470",
+        "name": "FUN_10019c470"
+      },
+      {
+        "address": "0x1001a1550",
+        "name": "FUN_1001a1550"
+      },
+      {
+        "address": "0x1001a7c90",
+        "name": "FUN_1001a7c90"
+      },
+      {
+        "address": "0x1001d38b0",
+        "name": "FUN_1001d38b0"
+      },
+      {
+        "address": "0x1001e1e30",
+        "name": "FUN_1001e1e30"
+      },
+      {
+        "address": "0x1001e1f00",
+        "name": "FUN_1001e1f00"
+      },
+      {
+        "address": "0x1001e2910",
+        "name": "FUN_1001e2910"
+      },
+      {
+        "address": "0x1001e4950",
+        "name": "FUN_1001e4950"
+      },
+      {
+        "address": "0x10024acc0",
+        "name": "FUN_10024acc0"
+      },
+      {
+        "address": "0x10024b910",
+        "name": "FUN_10024b910"
+      },
+      {
+        "address": "0x10024e510",
+        "name": "FUN_10024e510"
+      },
+      {
+        "address": "0x100255a50",
+        "name": "FUN_100255a50"
+      },
+      {
+        "address": "0x100256190",
+        "name": "FUN_100256190"
+      },
+      {
+        "address": "0x100256ff0",
+        "name": "FUN_100256ff0"
+      },
+      {
+        "address": "0x100257260",
+        "name": "FUN_100257260"
+      },
+      {
+        "address": "0x1002579d0",
+        "name": "FUN_1002579d0"
+      },
+      {
+        "address": "0x100273960",
+        "name": "FUN_100273960"
+      },
+      {
+        "address": "0x10028ef30",
+        "name": "FUN_10028ef30"
+      },
+      {
+        "address": "0x10028f4f0",
+        "name": "FUN_10028f4f0"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "Where is the consumer and on which thread does it run?",
+      "What happens when the ring is full?",
+      "What do the two queued pointers mean and who owns them?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Native bounded work-ring producer; consumer and task ABI remain unknown."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x10001a909",
+          "start": "0x10001a890"
+        }
+      ],
+      "span_bytes": 122,
+      "total_bytes": 122
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_10001a890",
+    "rva": "0x1a890",
+    "va": "0x10001a890"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

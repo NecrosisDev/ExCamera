@@ -58,7 +58,7 @@ static float heldAimGain(uintptr_t root, float width, float height) {
                 }
             }
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         gain = 1.f;
     }
     ReleaseSRWLockShared(&cameraLock);
@@ -416,7 +416,7 @@ static void recordHeldThrow(int wheel, float distance) {
             intent.speed = speed;
             intent.at = GetTickCount64();
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) { clearHeldThrow(); return; }
+    } __except (countFaultAndHandle(&cursorFaults)) { clearHeldThrow(); return; }
     AcquireSRWLockExclusive(&heldThrowLock);
     if (epoch == heldThrowEpoch)
         heldThrowIntent = intent; // cancellation during validation cannot resurrect a gesture
@@ -442,7 +442,7 @@ static InventoryAdmission originalInventoryAdmission;
 static uintptr_t inventoryAdmission(uintptr_t drag, unsigned format) {
     bool owned = false;
     __try {
-        if (format == 0xFB01 && base && onGameThread() && viewMode.load() < 2 &&
+        if ((format == 0xFB01 || format == 0xFB02) && base && onGameThread() && viewMode.load() < 2 &&
             InterlockedCompareExchange(&active, 0, 0) &&
             !InterlockedCompareExchange(&stopping, 0, 0) &&
             InterlockedCompareExchange(&cameraReady, 0, 0) &&
@@ -469,8 +469,7 @@ static uintptr_t inventoryAdmission(uintptr_t drag, unsigned format) {
                 const LONG y = reinterpret_cast<const LONG*>(gui + field::gui::pointerX)[1];
                 alignas(8) unsigned char ray[0x40]{}; // off-viewport native pick leaves output untouched
                 const char hit = pickPastSelf(ownedPickRay, viewport, float(x), float(y), reinterpret_cast<uintptr_t>(ray));
-                const float distance = std::fmin(std::fmax(fp::holdNear * 2.f, fp::holdNear),
-                                                 float(grabRange.load()));
+                const float distance = float(grabRange.load());
                 if (!heldPointAlongViewDistance(hit, reinterpret_cast<uintptr_t>(ray), distance) ||
                     mode != viewMode.load() || generation != holdGeneration.load() ||
                     !InterlockedCompareExchange(&active, 0, 0) ||
@@ -486,7 +485,7 @@ static uintptr_t inventoryAdmission(uintptr_t drag, unsigned format) {
                     gui != *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::guiManager))) return 0;
             }
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         if (owned) return 0;
     }
     const ULONGLONG generation = inventoryAdmissionBegin(drag, format);
@@ -535,7 +534,13 @@ static char heldPick(uintptr_t object, uintptr_t viewport, float x, float y, uin
     holdTick = now;
     holdApplied = fp::holdApproach(holdApplied.load(), holdTarget.load(), dt);
     publishHeldThrowRay(object, dir);
-    if (!heldPointAlongView(hit, out)) { clearHeldThrow(); return 0; }
+    // Against a wall the held distance can be blocked while a closer point on the same ray
+    // is clear. An inventory drag retries there, checked as any other, before it cancels.
+    if (!heldPointAlongView(hit, out) &&
+        (gameplay || !heldPointAlongViewDistance(hit, out, fp::holdNear))) {
+        clearHeldThrow();
+        return 0;
+    }
     ++holdPlacements;
     return 1;
 }
@@ -551,8 +556,14 @@ static bool prepareHeldPlacement(uintptr_t object, uintptr_t viewport, float hei
         x = *reinterpret_cast<const LONG*>(gui + field::gui::pointerX);
         y = reinterpret_cast<const LONG*>(gui + field::gui::pointerX)[1];
     }
-    if (!heldPick(object, viewport, float(x), float(y), reinterpret_cast<uintptr_t>(ray))) return false;
-    // Native 1183C0 must take its hit branch, never its ray/height fallback.
+    if (!heldPick(object, viewport, float(x), float(y), reinterpret_cast<uintptr_t>(ray))) {
+        heldPickFailures.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Native 1183C0 takes its hit branch at or above height. Below it, its height fallback
+    // lands earlier on this already-cleared ray, but only when the ray starts above height.
+    const float hitHeight = reinterpret_cast<const float*>(ray + 8)[1];
+    const float rayHeight = reinterpret_cast<const float*>(ray + field::pick::origin)[1];
     const uintptr_t drag = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::dragManager));
     return viewMode.load() == mode && holdGeneration.load() == generation &&
            InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
@@ -560,7 +571,7 @@ static bool prepareHeldPlacement(uintptr_t object, uintptr_t viewport, float hei
            root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) &&
            viewport == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::mainViewport)) && readable(drag, 0x20) &&
            *reinterpret_cast<const uintptr_t*>(drag + field::drag::object) == object && std::isfinite(height) &&
-           (reinterpret_cast<float*>(ray + 8))[1] >= height;
+           (hitHeight >= height - 5.f || rayHeight > height);
 }
 
 static char pickRayFor(uintptr_t caller, uintptr_t viewport, float x, float y, uintptr_t out) {
@@ -618,7 +629,7 @@ static uintptr_t heldQuery(uintptr_t object, uintptr_t viewport, uintptr_t out, 
         // The configured free-cursor hold uses the game's current pointer.
         // A stale gameplay reticle is otherwise a rejected query.
         const uintptr_t gui = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::guiManager));
-        if (!InterlockedCompareExchange(&rmbFree, 0, 0) ||
+        if (!cursorFreeBitSet(rmbFreeBit) ||
             !readable(gui, field::gui::pointerX + 2 * sizeof(LONG)))
             return 0;
         x = *reinterpret_cast<const LONG*>(gui + field::gui::pointerX);
@@ -720,7 +731,7 @@ static void heldUpdate(uintptr_t context) {
         originalHeldUpdate(context);
         completed = true;
         // Our own bookkeeping never throws into the game's task loop; a fault only drops the proposal.
-        if (outer) __try { observeHeldAcceptance(); } __except (EXCEPTION_EXECUTE_HANDLER) { completed = false; }
+        if (outer) __try { observeHeldAcceptance(); } __except (countFaultAndHandle(&cursorFaults)) { completed = false; }
     } __finally {
         --heldUpdateDepth;
         if (outer && !completed) {
@@ -960,7 +971,7 @@ static bool heldPlanePoint(int slot, uintptr_t drag, uintptr_t viewport, int x, 
     }
     // Native GUI coordinates are deliberate only during the configured free-cursor hold.
     // A stale reticle otherwise freezes the last accepted constraint target.
-    const bool pointer = reticle || InterlockedCompareExchange(&rmbFree, 0, 0);
+    const bool pointer = reticle || cursorFreeBitSet(rmbFreeBit);
     alignas(8) unsigned char ray[0x40]{};
     if (pointer) ownedPickRay(viewport, float(x), float(y), reinterpret_cast<uintptr_t>(ray));
     if (viewMode.load() != mode || holdGeneration.load() != generation || !heldDoorLive() ||
@@ -1065,11 +1076,11 @@ static unsigned long long constrainedHandler(DragHandler native, uintptr_t drag,
     if (message == 0x80 || !heldDoorLive() || heldDoorDrag() != drag) return native(drag, ui, message);
     const uintptr_t viewport = *reinterpret_cast<const uintptr_t*>(drag + field::drag::viewport);
     if (!heldViewportMatches(drag, viewport)) return native(drag, ui, message);
-    if (!closeViewContext() || InterlockedCompareExchange(&cursorFree, 0, 0) ||
-        InterlockedCompareExchange(&windowFree, 0, 0))
+    if (!closeViewContext() || cursorFreeBitSet(cursorFreeBit) ||
+        cursorFreeBitSet(windowFreeBit))
         return 3;
     LONG freshX = 0, freshY = 0;
-    if (!InterlockedCompareExchange(&rmbFree, 0, 0) &&
+    if (!cursorFreeBitSet(rmbFreeBit) &&
         (!reticleForUi(&freshX, &freshY) || freshX < 0 || freshY < 0))
         return 3;
     const unsigned flags = *reinterpret_cast<const unsigned*>(drag + field::drag::flags);
@@ -1147,7 +1158,7 @@ static void sendDoorMessage(uintptr_t drag, int message) {
         const auto handler =
             (flags & 0x4000) ? doorHandler : ((flags & 0x20000) ? constraintHandler : hingeHandler);
         handler(drag, ui, message);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         doorDistance = 0;
     }
 }
@@ -1213,7 +1224,7 @@ static void dragDrop(uintptr_t drag) {
         door = ownView && ui && readable(drag, 0x20) &&
                (*reinterpret_cast<const unsigned*>(drag + 8) & (0x4000 | 0x10000 | 0x20000)) &&
                *reinterpret_cast<const uintptr_t*>(drag + field::drag::object);
-    } __except (EXCEPTION_EXECUTE_HANDLER) { door = false; }
+    } __except (countFaultAndHandle(&cursorFaults)) { door = false; }
     if (door) {
         doorDistance = 0;
         lastDoorObject = 0;
@@ -1228,7 +1239,6 @@ static void f8MouseStep();
 
 // The title screen: no controlled character (root 0, as the park logic reads gameplay) for 2 s, so
 // a load's brief gap does not count. Worker thread.
-static ULONGLONG noPlayerSince = 0;
 
 static bool atTitle() {
     const ULONGLONG now = GetTickCount64();
@@ -1236,8 +1246,8 @@ static bool atTitle() {
         noPlayerSince = 0;
         return false;
     }
-    if (!noPlayerSince) noPlayerSince = now;
-    const bool title = now - noPlayerSince >= 2000;
+    if (!noPlayerSince.load()) noPlayerSince = now;
+    const bool title = now - noPlayerSince.load() >= 2000;
     return title;
 }
 
@@ -1478,6 +1488,8 @@ static void parkCamera(fp::OwnerChange kind) {
     park.scene = savedScene;
     park.stable = 0;
     park.left = identityChanged();
+    invalidateStaleRetired();
+    cameraOwnershipState.store(2, std::memory_order_relaxed);
     savedCamera = savedView = savedController = savedRoot = savedScene = 0;
     InterlockedExchange(&pendingRestore, 0);
     resetViewHistory();
@@ -1542,7 +1554,7 @@ static bool checkSavedOwner(uintptr_t view, uintptr_t camera) {
             if (retired[k].left) slot = k;
         if (slot == retiredSlots) {
             slot = 0;
-            InterlockedExchange(&restorationUnknown, 1);
+            markRestorationUnknown();
         }
         for (unsigned k = slot; k + 1 < retiredSlots; ++k)
             retired[k] = retired[k + 1]; // keep age order: newest last

@@ -1,0 +1,142 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_100022780()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.input.cursor_warp",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_0508fd03dca60acaaec0ba129cdb78ea7413cedda82a8a19ed601f45ebede159",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x100001b20",
+        "name": "USER32.DLL::SetCursorPos"
+      },
+      {
+        "address": "0x100001b60",
+        "name": "USER32.DLL::ClientToScreen"
+      }
+    ],
+    "callers": [
+      {
+        "address": "0x1000bf680",
+        "name": "FUN_1000bf680"
+      },
+      {
+        "address": "0x10010ec70",
+        "name": "FUN_10010ec70"
+      },
+      {
+        "address": "0x100116a50",
+        "name": "FUN_100116a50"
+      },
+      {
+        "address": "0x10011ebe0",
+        "name": "FUN_10011ebe0"
+      },
+      {
+        "address": "0x10011ef40",
+        "name": "FUN_10011ef40"
+      },
+      {
+        "address": "0x100123340",
+        "name": "FUN_100123340"
+      },
+      {
+        "address": "0x100123540",
+        "name": "FUN_100123540"
+      },
+      {
+        "address": "0x100123700",
+        "name": "FUN_100123700"
+      },
+      {
+        "address": "0x10012ab20",
+        "name": "FUN_10012ab20"
+      },
+      {
+        "address": "0x10013e9c0",
+        "name": "FUN_10013e9c0"
+      },
+      {
+        "address": "0x100271bc0",
+        "name": "FUN_100271bc0"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "Are coordinates client or screen space?",
+      "Which callers can cause an unintended view snap?",
+      "When must warps be suppressed or forwarded?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Native cursor repositioning used by camera and interaction code."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x1000227b1",
+          "start": "0x100022780"
+        }
+      ],
+      "span_bytes": 50,
+      "total_bytes": 50
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_100022780",
+    "rva": "0x22780",
+    "va": "0x100022780"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

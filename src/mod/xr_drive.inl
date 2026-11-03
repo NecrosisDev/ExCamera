@@ -172,7 +172,7 @@ static void trackedDrivePublish() {
 }
 static bool trackedDriveRead(uintptr_t root, TrackedDriveFrame& frame) {
     if (!trackedDriveRequested || trackedDriveFault || !active || stopping || !cameraReady || viewMode.load() != 0 ||
-        cursorFree || windowFree || !TryAcquireSRWLockShared(&trackedDriveLock)) return false;
+        cursorFreeBitSet(cursorFreeBit) || cursorFreeBitSet(windowFreeBit) || !TryAcquireSRWLockShared(&trackedDriveLock)) return false;
     frame = trackedDriveFrame;
     ReleaseSRWLockShared(&trackedDriveLock);
     return frame.inputGeneration == inputOwner.generation() && frame.stream == trackedDriveGeneration.load() && frame.root == root && frame.scene && frame.scene == *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene)) &&
@@ -358,7 +358,7 @@ static bool trackedPointerHit(const xd::TrackingFrame& tracked, bool inLevel, fl
 static std::atomic<unsigned> trackedItemCarries{0};
 static bool trackedCarryingItem() {
     const uintptr_t gui = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::guiManager));
-    return readable(gui, field::gui::dragFormat + 4) && *reinterpret_cast<unsigned*>(gui + field::gui::dragFormat) == 0xFB01;
+    return readable(gui, field::gui::dragFormat + 4) && (*reinterpret_cast<unsigned*>(gui + field::gui::dragFormat) == 0xFB01 || *reinterpret_cast<unsigned*>(gui + field::gui::dragFormat) == 0xFB02);
 }
 static bool trackedCarryCursor(const xd::TrackingFrame& tracked, int width, int height, int& x, int& y) {
     const auto& hand = tracked.sample.hands[1];

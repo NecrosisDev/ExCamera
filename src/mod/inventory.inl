@@ -35,11 +35,11 @@ static bool inventoryPreviewOwner(const InventoryPreview& p) {
         !readable(p.drag, field::drag::specialSource + 1) ||
         !readable(p.viewport, field::viewport::sceneManager + sizeof(uintptr_t)) ||
         !readable(p.camera, field::camera::controller + sizeof(uintptr_t)) ||
-        *reinterpret_cast<unsigned*>(p.gui + field::gui::dragFormat) != 0xFB01 ||
+        (*reinterpret_cast<unsigned*>(p.gui + field::gui::dragFormat) != 0xFB01 &&
+         *reinterpret_cast<unsigned*>(p.gui + field::gui::dragFormat) != 0xFB02) ||
         *reinterpret_cast<uintptr_t*>(p.gui + field::gui::dragPayload) != p.payload ||
         *reinterpret_cast<uintptr_t*>(p.gui + field::gui::dragSource) != p.source ||
         *reinterpret_cast<uintptr_t*>(p.drag + field::drag::viewport) != p.viewport ||
-        *reinterpret_cast<unsigned char*>(p.drag + field::drag::specialSource) ||
         *reinterpret_cast<uintptr_t*>(p.viewport + field::viewport::sceneManager) != p.sector ||
         *reinterpret_cast<uintptr_t*>(p.camera + field::camera::controller) != p.controller) return false;
     if (!readable(p.payload, field::inventoryPayload::flags + sizeof(unsigned)) ||
@@ -48,7 +48,6 @@ static bool inventoryPreviewOwner(const InventoryPreview& p) {
         *reinterpret_cast<unsigned*>(p.payload + field::inventoryPayload::flags) != p.flags ||
         !p.source || p.source == p.viewport ||
         !readable(p.source, field::inventorySource::merchant + 1) ||
-        *reinterpret_cast<unsigned char*>(p.source + field::inventorySource::special) ||
         *reinterpret_cast<unsigned char*>(p.source + field::inventorySource::merchant)) return false;
     const uintptr_t table = *reinterpret_cast<uintptr_t*>(p.source);
     return readable(table, field::inventorySource::finishSlot + sizeof(uintptr_t)) &&
@@ -65,7 +64,7 @@ static ULONGLONG inventoryAdmissionBegin(uintptr_t drag, unsigned format) {
         inventoryPreview = {};
         inventoryQueueScope = 0;
         const ULONGLONG generation = ++inventoryGeneration;
-        if (format != 0xFB01 || !base) return 0;
+        if ((format != 0xFB01 && format != 0xFB02) || !base) return 0;
         InventoryPreview p;
         p.generation = generation;
         p.ownerEpoch = inventoryOwnerEpoch.load();
@@ -90,7 +89,7 @@ static ULONGLONG inventoryAdmissionBegin(uintptr_t drag, unsigned format) {
         inventoryPreview = p;
         inventoryQueueScope = generation;
         return generation;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    } __except (countFaultAndHandle(&cursorFaults)) { return 0; }
 }
 static void inventoryAdmissionEnd(ULONGLONG generation) {
     if (generation && inventoryQueueScope == generation) inventoryQueueScope = 0;
@@ -107,7 +106,7 @@ static void resourceQueue(uintptr_t queue, uintptr_t loader, uintptr_t completio
             *reinterpret_cast<unsigned*>(job + field::inventoryJob::flags) == p.flags &&
             *reinterpret_cast<uintptr_t*>(job + field::inventoryJob::sector) == p.sector)
             p.job = job;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } __except (countFaultAndHandle(&cursorFaults)) {}
     originalResourceQueue(queue, loader, completion, job);
 }
 using InventoryComplete = void (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t);
@@ -125,7 +124,7 @@ static void inventoryComplete(uintptr_t job, uintptr_t failed, uintptr_t third, 
             generation = p.generation;
             object = *reinterpret_cast<uintptr_t*>(job + field::inventoryJob::object);
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } __except (countFaultAndHandle(&cursorFaults)) {}
     const auto previous = inventoryCompletionScope;
     const auto previousObject = inventoryCompletionObject;
     inventoryCompletionScope = generation;
@@ -156,7 +155,7 @@ static ULONGLONG inventoryPlacementBegin(uintptr_t object, uintptr_t viewport) {
             p.bounded = false; // publish only after an explicit result, never on exception
             return p.generation;
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } __except (countFaultAndHandle(&cursorFaults)) {}
     return 0;
 }
 static void inventoryPlacementEnd(ULONGLONG generation, uintptr_t object, int result) {
@@ -164,8 +163,8 @@ static void inventoryPlacementEnd(ULONGLONG generation, uintptr_t object, int re
         auto& p = inventoryPreview;
         if (generation && generation == p.generation && p.object == object && inventoryPreviewOwner(p) &&
             *reinterpret_cast<uintptr_t*>(p.drag + field::drag::object) == object)
-            { p.observed = true; p.bounded = result > 0; }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            { p.observed = true; p.bounded = result != 0; }
+    } __except (countFaultAndHandle(&cursorFaults)) {}
 }
 static void inventoryPlacementHandoff() {
     // 11F610 can recover through 117AA0/118000 without calling 1183C0. Its
@@ -182,8 +181,11 @@ static uintptr_t inventoryCommit(uintptr_t drag, uintptr_t data, unsigned code) 
             *reinterpret_cast<uintptr_t*>(data + (field::gui::dragSource - field::gui::dragFormat)) == p.source &&
             *reinterpret_cast<uintptr_t*>(drag + field::drag::object) == p.object &&
             *reinterpret_cast<unsigned*>(drag + field::drag::flags) == 0x2000)
+        {
             code = 0x80000000u; // native cross-source cancel: preview disposal, then source cancel
+            inventoryPlacementCancels.fetch_add(1, std::memory_order_relaxed);
+        }
         if (p.drag == drag && data == p.gui + field::gui::dragFormat) inventoryPreview = {};
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } __except (countFaultAndHandle(&cursorFaults)) {}
     return originalInventoryCommit(drag, data, code);
 }

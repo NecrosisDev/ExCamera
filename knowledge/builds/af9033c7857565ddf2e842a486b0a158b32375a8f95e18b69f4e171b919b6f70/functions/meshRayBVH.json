@@ -1,0 +1,101 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_10026a910()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.collision.mesh_ray_bvh",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_756b9ed4e4f689bfef32fc0aae34098c095c239ca828f2451cbd913286136177",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x100019170",
+        "name": "FUN_100019170"
+      },
+      {
+        "address": "0x100019680",
+        "name": "FUN_100019680"
+      },
+      {
+        "address": "0x10026a7b0",
+        "name": "thunk_FUN_10026a8f2"
+      }
+    ],
+    "callers": [],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "What is the complete query layout and return contract?",
+      "Does it include floor triangles and handle both triangle facings?",
+      "Which scratch bank and coordinate transforms are required?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "General mesh BVH segment query used by scene picking and candidate ground traces."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x10026ae5d",
+          "start": "0x10026a910"
+        }
+      ],
+      "span_bytes": 1358,
+      "total_bytes": 1358
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_10026a910",
+    "rva": "0x26a910",
+    "va": "0x10026a910"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

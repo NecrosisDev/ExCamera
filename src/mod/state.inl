@@ -92,6 +92,25 @@ struct Retired {
 static constexpr unsigned retiredSlots = 4;
 static Retired retired[retiredSlots];
 static std::atomic<unsigned> parks{0}, rearms{0}, reclaims{0}, parkBackoffs{0};
+// Phase 0 diagnostics: hook faults and cursor transitions. These are incremented
+// by the owning code paths; a nonzero value is a regression signal, not a normal
+// operating condition.
+static std::atomic<int> inventoryPlacementLastResult{0};
+static std::atomic<unsigned> inventoryPlacementCancels{0};
+static std::atomic<unsigned> cameraFaults{0}, swapFaults{0}, behaviorFaults{0},
+    poseFaults{0}, windowFaults{0}, cursorFaults{0}, roomViewFaults{0}, nodeMoveFaults{0},
+    cursorTransitions{0}, inventoryPlacementAttempts{0},
+    inventoryPlacementSuccesses{0}, inventoryPlacementFailures{0}, heldPickFailures{0};
+// Count a fault while letting it propagate to the game's own handler.
+static int countFaultAndContinue(std::atomic<unsigned>* counter) {
+    if (counter) counter->fetch_add(1, std::memory_order_relaxed);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+// Count a fault this path contains; the caller takes its documented safe fallback.
+static int countFaultAndHandle(std::atomic<unsigned>* counter) {
+    if (counter) counter->fetch_add(1, std::memory_order_relaxed);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
 // Bad head frames: nav thread, cameraLock. Mirrored for status.
 static fp::HeadHold headHold;
 static std::atomic<unsigned> heldFrames{0}, holds{0}, maxHold{0}, holdParks{0}, holdingNow{0};
@@ -111,6 +130,14 @@ static std::atomic<int> parkKind{0};        // fp::OwnerChange of the last park,
 static volatile LONG parkedNow = 0;
 // Restoration uncertainty is sticky: pointer equality later is not lifetime proof.
 static volatile LONG restorationUnknown = 0, cameraReady = 0;
+static std::atomic<unsigned> restorationUnknownEvents{0};
+static void markRestorationUnknown() {
+    if (InterlockedExchange(&restorationUnknown, 1) == 0)
+        restorationUnknownEvents.fetch_add(1, std::memory_order_relaxed);
+}
+// Observable camera ownership state for diagnostics: 0 unknown, 1 owned, 2 parked,
+// 3 restoring, 4 restored, 5 faulted.
+static std::atomic<int> cameraOwnershipState{0};
 static void releaseInput();
 static bool gameplayOwnsPointer();
 static float stockNear = 100;
@@ -162,11 +189,13 @@ static bool trackingPresented = false; // cameraLock: includes loss/disable fade
 static fp::TrackingSample readTrackingSample() { return trackingReceiver.snapshot(); }
 static fp::TrackingSample (*trackingSnapshot)() = readTrackingSample;
 static volatile LONG mouseCaptured = 0;
-static volatile LONG cursorFree = 0;
+// Unified cursor-free state: one atomic bitset replaces the three independent flags.
+static constexpr unsigned cursorFreeBit = 1u << 0;
 // Native Controls > Cursor Look toggles the free pointer in close view.
-static volatile LONG rmbFree = 0;
+static constexpr unsigned rmbFreeBit = 1u << 1;
 // Selected native panels own an automatic cursor-free state, independent of Cursor Look.
-static volatile LONG windowFree = 0;
+static constexpr unsigned windowFreeBit = 1u << 2;
+static std::atomic<unsigned> cursorFreeMask{0};
 // Crouch: the input thread polls the native duck key, the render thread publishes
 // a request, and poseBuilder admits it only for the same eligible character.
 static std::atomic<int> crouchMode{2};                      // 0 off, 1 hold, 2 toggle
@@ -181,9 +210,19 @@ struct CrouchRequest {
 static SRWLOCK crouchLock = SRWLOCK_INIT;
 static CrouchRequest crouchRequest;
 static bool crouchAppliesTo(uintptr_t root);
+static bool cursorFreeBitSet(unsigned bit) {
+    return (cursorFreeMask.load(std::memory_order_relaxed) & bit) != 0;
+}
+static void setCursorFreeBit(unsigned bit, bool on) {
+    const unsigned before = on ? cursorFreeMask.fetch_or(bit, std::memory_order_relaxed)
+                               : cursorFreeMask.fetch_and(~bit, std::memory_order_relaxed);
+    const unsigned after = on ? before | bit : before & ~bit;
+    // Count aggregate entries into or exits from the free state, not reason changes
+    // while another owner already keeps the pointer free.
+    if ((before == 0) != (after == 0)) cursorTransitions.fetch_add(1, std::memory_order_relaxed);
+}
 static bool cursorFreeNow() {
-    return InterlockedCompareExchange(&cursorFree, 0, 0) || InterlockedCompareExchange(&rmbFree, 0, 0) ||
-           InterlockedCompareExchange(&windowFree, 0, 0);
+    return cursorFreeMask.load(std::memory_order_relaxed) != 0;
 }
 static volatile LONG inputEnabled = 0;
 static constexpr unsigned movementBits = 15u; // forward, left, back, right in the game's key word (0x49CDC0)
@@ -234,6 +273,25 @@ static std::atomic<float> sensitivity{
 static std::atomic<bool> hideSwingCrosshair{false};
 // [View] IdleCrosshair=rmb|always: out of combat the crosshair shows only while Cursor Look frees the cursor.
 static std::atomic<bool> idleCrosshairAlways{false};
+static std::atomic<bool> woundDebug{false};
+// Polish features & diagnostics state
+static std::atomic<unsigned> trackedPlayerVerticesLeft{0}, trackedPlayerVerticesRight{0};
+static std::atomic<int> trackedPlayerPoseLeft{0}, trackedPlayerPoseRight{0};
+static std::atomic<bool> trackedPlayerGlovedLeft{false}, trackedPlayerGlovedRight{false};
+static std::atomic<bool> trackedPlayerGrippedLeft{false}, trackedPlayerGrippedRight{false};
+static std::atomic<bool> trackedPlayerFittedLeft{false}, trackedPlayerFittedRight{false};
+
+static std::atomic<float> playerDamageFlash{0.f};
+static std::atomic<float> cameraImpactPitch{0.f};
+static std::atomic<float> cameraImpactYaw{0.f};
+static std::atomic<float> cameraImpactRoll{0.f};
+static float sprintFovOffset = 0.f;
+static float idleBreathePhase = 0.f;
+static float idleBreatheWeight = 0.f;
+
+static std::atomic<unsigned> activeWoundsCount{0};
+static std::atomic<unsigned> activeDripsCount{0};
+static std::atomic<float> activeWeaponBloodMax{0.f};
 // [Input] AimMarker=1 shows the crosshair at the aim while the head catches up; FlickCatchup 0..100 (fp::flickGain).
 static std::atomic<bool> aimMarker{true};
 static std::atomic<int> flickCatchup{50};
@@ -242,11 +300,13 @@ static std::atomic<int> flickCatchup{50};
 static std::atomic<int> viewMode{0}, tpDistance{250}, tpShoulder{40}, tpHeight{15};
 // [VR] rows: eye separation in mm (0: the headset's own), game units per metre, render mode.
 static std::atomic<uintptr_t> nativeSettingsFaultAt{0};
-static std::atomic<unsigned> nativeSettingsDispatches{0}, nativeSettingsSteps{0}, nativeSettingsRefused{0};
+static std::atomic<unsigned> nativeSettingsDispatches{0}, nativeSettingsSteps{0}, nativeSettingsRefused{0},
+    nativeSettingsRefusals{0};
 static std::atomic<bool> nativeSettingsWidened{false}; // the Settings form carries the five-tab width
 // root x, y, width, height; Graphics, Controls, Controller widths; frame scale in hundredths; UI scale.
 static std::array<std::atomic<int>, 9> nativeSettingsFrames{};
 static std::atomic<int> vrIpdMm{0}, vrUnitsPerMetre{100}, vrRenderMode{0}, vrHandsDrawn{0}, vrPosture{0}, vrHeadset{0}, vrTurning{1}, vrEffects{0}, vrGripAngle{0}, vrHapticPercent{100}, vrPanelWidthCm{120}, vrPanelDistanceCm{150}, vrComfort{0}, vrBodyHandsOnly{0}, vrTitleMenu{1}, vrPointer{1}, vrRecenterMemory{1}, vrWristMenu{1}, vrHaftGrip{1}, vrHeightCm{0}, vrGrabTurn{0}, vrFrameTime{0}, vrEyeScalePercent{100}, vrHandMesh{1}, vrTrackedGrab{1}, vrGripSlideCm{0}, vrKick{0}, vrFingerBones{0}, vrJump{1}, vrWeaponWeight{1}, vrTeleport{1}, vrHandPanel{1}, vrPouch{1};
+static std::atomic<bool> farRooms{true}; // view.inl: one more room through doorways
 static std::atomic<int> drawDistanceM{60}, objectLightCap{4}; // the draw cutoff (m, 0 off); lights per mesh (6: the game's)
 static std::atomic<int> fingerPoses{1}; // the held-item finger poses through the bones, every build
 static std::atomic<int> fingerPosesOthers{1}; // the same for every character the world lists
@@ -337,6 +397,8 @@ static std::atomic<int> aimEdgeSoftness{fp::defaultAimEdgeSoftness};
 static std::atomic<bool> aimAutoRecenter{true};
 // Message thread queues a one-shot click; the game input tick consumes it.
 static std::atomic<unsigned> recenterClicks{0};
+// When the controlled character went away (0 while there is one). Written by the worker's atTitle.
+static std::atomic<ULONGLONG> noPlayerSince{0};
 static std::atomic<int> fpSwingSelection{1}, tpSwingSelection{1}; // 1 mouse direction, 0 native facing
 static void releaseInteractionInput();
 static std::atomic<bool> tpAimFree{false};
@@ -583,6 +645,8 @@ static bool noticeVisible = false;
 static constexpr ULONGLONG noticeLifetimeMs = 120000;
 static ULONGLONG noticeVisibleMs = 10000; // Per notice: faults 10 s, F7 hints shorter.
 static std::atomic<unsigned> notices{0};
+enum class NoticeKind { info, warning, fault };
+static NoticeKind noticeKind = NoticeKind::fault;
 static LRESULT CALLBACK noticeProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     if (message == WM_NCHITTEST) return HTTRANSPARENT;
     if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
@@ -591,14 +655,25 @@ static LRESULT CALLBACK noticeProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         HDC dc = BeginPaint(w, &ps);
         RECT r;
         GetClientRect(w, &r);
-        HBRUSH fill = CreateSolidBrush(RGB(120, 18, 18));
+        COLORREF fillColour = RGB(120, 18, 18), edgeColour = RGB(235, 200, 120),
+                 textColour = RGB(255, 246, 230);
+        if (noticeKind == NoticeKind::info) {
+            fillColour = RGB(16, 55, 82);
+            edgeColour = RGB(120, 190, 235);
+            textColour = RGB(240, 248, 255);
+        } else if (noticeKind == NoticeKind::warning) {
+            fillColour = RGB(84, 58, 10);
+            edgeColour = RGB(245, 200, 100);
+            textColour = RGB(255, 248, 232);
+        }
+        HBRUSH fill = CreateSolidBrush(fillColour);
         FillRect(dc, &r, fill);
         DeleteObject(fill);
-        HBRUSH edge = CreateSolidBrush(RGB(235, 200, 120));
+        HBRUSH edge = CreateSolidBrush(edgeColour);
         FrameRect(dc, &r, edge);
         DeleteObject(edge);
         SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, RGB(255, 246, 230));
+        SetTextColor(dc, textColour);
         RECT text = r;
         InflateRect(&text, -r.bottom / 4, -r.bottom / 10);
         // One line when it fits, otherwise wrapped in a smaller font, centred either way.
@@ -624,7 +699,14 @@ static LRESULT CALLBACK noticeProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(w, message, wp, lp);
 }
 static BOOL CALLBACK findWindow(HWND w, LPARAM out);
-static void showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000) {
+static bool controlsNoticeSeen() {
+    return !settingsPath[0] || GetPrivateProfileIntW(L"Launcher", L"ControlsSeen", 0, settingsPath) != 0;
+}
+static void markControlsNoticeSeen() {
+    if (settingsPath[0]) WritePrivateProfileStringW(L"Launcher", L"ControlsSeen", L"1", settingsPath);
+}
+static bool showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000,
+                       NoticeKind kind = NoticeKind::fault) {
     if (noticeWindow) {
         DestroyWindow(noticeWindow);
         noticeWindow = nullptr;
@@ -635,7 +717,7 @@ static void showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000) {
         hookedWindow = nullptr;
         EnumWindows(findWindow, reinterpret_cast<LPARAM>(&hookedWindow));
     }
-    if (!hookedWindow) return;
+    if (!hookedWindow) return false;
     static ATOM cls = 0;
     if (!cls) {
         WNDCLASSW wc{};
@@ -644,25 +726,32 @@ static void showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000) {
         wc.lpszClassName = L"ExCameraNotice";
         wc.hCursor = nullptr;
         cls = RegisterClassW(&wc);
-        if (!cls) return;
+        if (!cls) return false;
     }
     RECT g;
-    if (!GetWindowRect(hookedWindow, &g)) return;
+    if (!GetWindowRect(hookedWindow, &g)) return false;
     const int gw = g.right - g.left, gh = g.bottom - g.top;
-    if (gw < 200 || gh < 100) return;
-    const int width = gw * 4 / 5 < 1200 ? gw * 4 / 5 : 1200, height = gh / 14 < 40 ? 40 : gh / 14;
+    if (gw < 200 || gh < 100) return false;
+    const int width = gw * 4 / 5 < 1200 ? gw * 4 / 5 : 1200;
+    unsigned lines = 1;
+    for (const wchar_t* c = text; *c; ++c)
+        if (*c == L'\n' && ++lines == 3) break;
+    const int baseHeight = gh / 14 < 40 ? 40 : gh / 14;
+    const int height = baseHeight * int(lines);
+    noticeKind = kind;
     noticeText = text;
     noticeVisibleMs = visibleMs;
     noticeWindow = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
                                        WS_EX_TOOLWINDOW,
                                    L"ExCameraNotice", text, WS_POPUP, g.left + (gw - width) / 2,
                                    g.top + gh / 9, width, height, nullptr, nullptr, module, nullptr);
-    if (!noticeWindow) return;
+    if (!noticeWindow) return false;
     SetLayeredWindowAttributes(noticeWindow, 0, 235, LWA_ALPHA);
     noticeVisible = false;
     noticeShownMs = 0;
     noticeStarted = noticeLastTick = GetTickCount64();
     ++notices;
+    return true;
 }
 // Returns false once the notice is gone. Visible time counts only while the
 // game is frontmost, so a fault during alt-tab is still seen on return.
@@ -702,6 +791,7 @@ static void reportFault(const char* reason, const char* hooks = "unknown",
     InterlockedExchange(&active, 0);
     releaseInput();
     setActivationPhase(fp::ActivationPhase::failed);
+    cameraOwnershipState.store(5, std::memory_order_relaxed);
     const bool verified = strcmp(restoration, "restored") == 0;
     const bool removed = strcmp(hooks, "removed") == 0 || strcmp(hooks, "not_installed") == 0;
     if (FILE* f = openStatus()) {
@@ -828,7 +918,18 @@ using Projection = void (*)(uintptr_t);
 using Inverse = void (*)(uintptr_t, uintptr_t);
 static Projection rebuildProjection;
 static Inverse rebuildInverse;
+// Retired records are only restorable while their gameplay is still current.
+// Once the root or scene changes, mark them left so they cannot be mistaken
+// for a restorable camera of the new gameplay.
+static void invalidateStaleRetired() {
+    if (!base) return;
+    const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
+    const uintptr_t scene = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::currentScene));
+    for (Retired& r : retired)
+        if (r.camera && (r.root != root || r.scene != scene)) r.left = true;
+}
 static bool awaitRestore(DWORD timeout = 2000) {
+    cameraOwnershipState.store(3, std::memory_order_relaxed);
     // Closing the publication gate lasts until a clean stop is re-armed (F6 after
     // F7, runSession). The same lock guards nav/swap publication and this
     // quiescence observation.
@@ -838,19 +939,23 @@ static bool awaitRestore(DWORD timeout = 2000) {
     const ULONGLONG started = GetTickCount64();
     for (;;) {
         if (TryAcquireSRWLockExclusive(&cameraLock)) {
+            invalidateStaleRetired();
             // Stopping while a released camera of the current gameplay is unresolved
             // (never current again, so never reclaimed) cannot be called restored.
             for (const Retired& r : retired)
                 if (r.camera && !r.left && *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) == r.root &&
                     *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene)) == r.scene)
-                    InterlockedExchange(&restorationUnknown, 1);
+                    markRestorationUnknown();
             const bool unknown = InterlockedCompareExchange(&restorationUnknown, 0, 0) != 0;
             const bool ready = !unknown && !savedCamera && !InterlockedCompareExchange(&pendingRestore, 0, 0) &&
                                !InterlockedCompareExchange(&renderScopesInFlight, 0, 0) && stereoDrained();
             if (ready) InterlockedExchange(&cameraReady, 0);
             ReleaseSRWLockExclusive(&cameraLock);
             if (unknown) return false;
-            if (ready) return true;
+            if (ready) {
+                cameraOwnershipState.store(4, std::memory_order_relaxed);
+                return true;
+            }
         }
         if (GetTickCount64() - started >= timeout) return false;
         Sleep(1); // Never hold a lock needed by the restoration callback while waiting.
@@ -958,8 +1063,8 @@ static bool arenaResultMenuVisible() {
 // can reach Next Fight after the duel.
 // The binding comes from reviewed native slot 8 (Controls > Cursor Look).
 static bool rmbEligible() {
-    if (viewMode.load() >= 2 || InterlockedCompareExchange(&cursorFree, 0, 0) ||
-        InterlockedCompareExchange(&windowFree, 0, 0)) return false;
+    if (viewMode.load() >= 2 || cursorFreeBitSet(cursorFreeBit) ||
+        cursorFreeBitSet(windowFreeBit)) return false;
     const bool arenaResults = arenaResultMenuVisible();
     const uintptr_t root = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot));
     if (!readable(root, 0x1300)) return false;
@@ -972,7 +1077,7 @@ static bool rmbEligible() {
     int kind = 0;
     __try {
         kind = dragKind(&object);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         return false;
     }
     if (kind == 1)
@@ -1007,7 +1112,7 @@ static uintptr_t heldThing() {
     uintptr_t o = 0;
     __try {
         if (!dragKind(&o)) o = 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         o = 0;
     }
     return o;
@@ -1044,7 +1149,7 @@ static bool cursorHoldEvent(fp::RmbEvent e, bool eligible, int key = 0) {
     const bool eaten = fp::rmbStep(rmbState, 2, e, eligible, changed);
     if (changed) {
         keepHeldOffset(rmbState.on);
-        InterlockedExchange(&rmbFree, rmbState.on ? 1 : 0);
+        setCursorFreeBit(rmbFreeBit, rmbState.on);
         releaseInput();
         if (rmbState.on) {
             cursorHoldKey = key;
@@ -1073,7 +1178,7 @@ static bool cursorLookMessage(int key, bool down, bool repeat) {
                     key != VK_F10 && key != VK_F11 && key != VK_ESCAPE)
                     eaten = cursorHoldEvent(fp::RmbEvent::down, rmbEligible(), key);
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&cursorFaults)) {
             cursorHoldEvent(fp::RmbEvent::lost, false);
         }
     } __finally { ReleaseSRWLockExclusive(&cursorHoldLock); }
@@ -1081,7 +1186,7 @@ static bool cursorLookMessage(int key, bool down, bool repeat) {
 }
 static void cursorLookPoll() {
     // No held state to retire: retain the previous input hook's cheap idle gate.
-    if (!InterlockedCompareExchange(&rmbFree, 0, 0)) return;
+    if (!cursorFreeBitSet(rmbFreeBit)) return;
     AcquireSRWLockExclusive(&cursorHoldLock);
     __try {
         __try {
@@ -1094,7 +1199,7 @@ static void cursorLookPoll() {
                     now.policyRevision != cursorHoldOwner.policyRevision)
                     cursorHoldEvent(fp::RmbEvent::lost, false);
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&cursorFaults)) {
             cursorHoldEvent(fp::RmbEvent::lost, false);
         }
     } __finally { ReleaseSRWLockExclusive(&cursorHoldLock); }

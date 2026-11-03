@@ -54,6 +54,7 @@ static void writeNativeCheckboxStatus(fp::JsonOut& j) {
 static std::atomic<bool> nativeSettingsWanted{false}, nativeSettingsRetired{true},
     nativeSettingsFaulted{false};
 static bool nativeSettingsConfigured = false;
+
 static thread_local bool inNativeSettingsMaintenance = false;
 static volatile LONG nativeSettingsInFlight = 0, nativeSettingsThread = 0;
 static uintptr_t nativeOptionsDesktop = 0;
@@ -178,7 +179,7 @@ static void configureNativeSettings() {
     nativeSettings.openNative = [] {
         if (InterlockedCompareExchange(&stopping, 0, 0)) return;
         releaseInput();
-        InterlockedExchange(&cursorFree, 1);
+        setCursorFreeBit(cursorFreeBit, true);
         ((void (*)())gameAt(fp::sig::guiOptionsOpen))();
     };
     nativeSettings.closeNative = [](uintptr_t form) {
@@ -214,17 +215,26 @@ static void configureNativeSettings() {
         tabs.event = reinterpret_cast<decltype(tabs.event)>(GetProcAddress(runtime, "settings_tab_host_event"));
         tabs.help = reinterpret_cast<decltype(tabs.help)>(GetProcAddress(runtime, "mod_settings_help"));
         tabs.category = reinterpret_cast<decltype(tabs.category)>(GetProcAddress(runtime, "mod_settings_category"));
-        if (version && claim && tabs.ready() && version() == 1 && claim()) nativeSettings.runtimeTabs = tabs;
+        if (version && claim && tabs.ready() && version() == 1 && claim())
+            nativeSettings.runtimeTabs = tabs;
     }
     nativeSettings.onClosed = [] {
         nativeBindingArmed=0;
         nativeBindingResult=-2;
         nativeSettingsWanted = false;
-        InterlockedExchange(&cursorFree, 0);
+        setCursorFreeBit(cursorFreeBit, false);
         releaseInput();
     };
     nativeSettingsConfigured = true;
 }
+#if FP_DEV_TOOLS
+static void devSelectSettingsPage(int page) { nativeSettings.devSelectPage(page); }
+static void devWriteSettings(fp::JsonOut& j) {
+    j.num("settings_page", nativeSettings.selectedPage());
+    j.boolean("settings_failed", nativeSettings.failed());
+    j.boolean("settings_open", nativeSettings.handle() != 0);
+}
+#endif
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 static void publishNativeSettingsRetirement() {
     if (nativeSettings.faultAt && !nativeSettingsFaultAt.load())
@@ -252,6 +262,7 @@ static void nativeSettingsService() {
         nativeSettingsDispatches=nativeSettings.dispatches;
         nativeSettingsSteps=nativeSettings.steps;
         nativeSettingsRefused=nativeSettings.refusedFlags;
+        nativeSettingsRefusals=nativeSettings.refusals;
         {
             const auto& f=nativeSettings.seenFrames();
             const int v[9]={f[0].x,f[0].y,f[0].width,f[0].height,f[1].width,f[2].width,f[3].width,nativeSettings.seenFrameScale(),
@@ -287,7 +298,7 @@ static void nativeSettingsMaintenance(uintptr_t self) {
     __try {
         __try {
             nativeSettingsService();
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&windowFaults)) {
             nativeSettings.fail();
             nativeSettingsFaulted = true;
             nativeSettingsRetired = false;
@@ -296,7 +307,7 @@ static void nativeSettingsMaintenance(uintptr_t self) {
         __try {
             nativeSettings.observe();
             publishNativeSettingsRetirement();
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&windowFaults)) {
             nativeSettings.fail();
             nativeSettingsFaulted = true;
             nativeSettingsRetired = false;

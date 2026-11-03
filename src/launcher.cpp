@@ -128,8 +128,8 @@ static bool resolveGameFile(const wchar_t* path) {
         fp::ContractReport contracts;
         if (!fp::validateNativeContracts(gameView, candidate, contracts)) {
             swprintf_s(gameProblem,
-                       L"This Exanima version's native layout is not supported: %hs (%hs). "
-                       L"No changes were made.",
+                       L"This Exanima version isn't supported by this ExCamera, so nothing was changed. If the game "
+                       L"updated, look for a new ExCamera release. Details: %hs (%hs).",
                        contracts.firstRequired ? contracts.firstRequired : "field contract",
                        fp::contractFailureText(contracts.firstRequiredReason));
             return false;
@@ -138,7 +138,8 @@ static bool resolveGameFile(const wchar_t* path) {
         return true;
     }
     int at = swprintf_s(gameProblem,
-                        L"This Exanima version is not supported: %u of %u game functions were not found (",
+                        L"This Exanima version isn't supported by this ExCamera, so nothing was changed. If the game "
+                        L"updated, look for a new ExCamera release. Details: %u of %u functions missing (",
                         report.failures, unsigned(fp::sig::targetCount));
     unsigned listed = 0;
     for (unsigned t = 0; t < fp::sig::targetCount && at > 0; ++t)
@@ -146,7 +147,7 @@ static bool resolveGameFile(const wchar_t* path) {
             at += swprintf_s(gameProblem + at, 512 - at, L"%s%hs", listed > 1 ? L", " : L"",
                              fp::sig::targetNames[t]);
     if (at > 0)
-        swprintf_s(gameProblem + at, 512 - at, L"%s). No changes were made.", listed > 4 ? L", ..." : L"");
+        swprintf_s(gameProblem + at, 512 - at, L"%s).", listed > 4 ? L", ..." : L"");
     return false;
 }
 // Resolve against the module actually loaded: a newer DLL on disk can have
@@ -229,11 +230,10 @@ static int activate(HANDLE process, DWORD pid, const std::wstring& directory) {
         !request)
         return fail(L"Could not create an activation request. Activation was not requested.");
     if (!callEnable(process, pid, request))
-        return fail(L"Could not confirm that the loaded camera module accepted this activation request. "
-                    L"A remote call may still be pending. See first-person-status.json; restart Exanima "
-                    L"before retrying if activation remains unconfirmed or a fault is reported.");
+        return fail(L"ExCamera could not confirm it started. Restart Exanima and try again.");
     const std::wstring path = directory + L"first-person-status.json";
-    for (unsigned i = 0; i < 100; ++i) {
+    // The mod waits up to gameReadyWaitMs (5 minutes) for a slow title; give it that and a little more.
+    for (unsigned i = 0; i < 3100; ++i) {
         if (!waitTick()) return 0;
         DWORD code = 0;
         if (!GetExitCodeProcess(process, &code) || code != STILL_ACTIVE)
@@ -243,17 +243,17 @@ static int activate(HANDLE process, DWORD pid, const std::wstring& directory) {
         switch (fp::activationResult(status, pid, processStarted, request, FP_REVISION, FP_BUILD)) {
         case fp::ActivationResult::ready: return 0;
         case fp::ActivationResult::failed:
-            return fail(L"ExCamera refused or failed activation. See first-person-status.json for the cause. "
-                        L"Restart Exanima after correcting the reported problem.");
+            return fail(L"ExCamera could not start, and the game was left unchanged where possible. Restart Exanima "
+                        L"and try again. If it keeps failing, report it with first-person-status.json "
+                        L"and fault-log.txt from this folder.");
         case fp::ActivationResult::versionMismatch:
             return fail(L"The camera module mapped in Exanima differs from this launcher. Restart Exanima "
                         L"to load the current build.");
         case fp::ActivationResult::waiting: break;
         }
     }
-    return fail(L"The camera module did not confirm this activation request within ten seconds. See "
-                L"first-person-status.json. A clean F7 stop can be re-armed with F6; a reported fault "
-                L"requires restarting Exanima.");
+    return fail(L"ExCamera did not finish starting within five minutes. If you stopped it with F7, press F6 "
+                L"in game to restart it. Otherwise restart Exanima and try again.");
 }
 // [Compat] OtherHooks from the player's settings (the per-user file, else the one beside the launcher).
 static fp::OtherHooks otherHooksSetting(const std::wstring& directory) {
@@ -337,6 +337,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     HANDLE launcherMutex = CreateMutexW(nullptr, FALSE, L"Local\\ExanimaFirstPersonLauncher");
     if (!launcherMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
         if (launcherMutex) CloseHandle(launcherMutex);
+        MessageBoxW(nullptr, L"ExCamera is already running. Check its other window, or close it first.", L"ExCamera",
+                    MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
         return 0;
     }
     struct MutexGuard {
@@ -500,7 +502,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     CloseHandle(thread);
     if (wait != WAIT_OBJECT_0) {
         CloseHandle(process);
-        return fail(L"Loading is still pending. Check the status file; do not run a second launcher.");
+        return fail(L"Exanima is taking too long to respond. Close it, then start it and ExCamera again.");
     }
     if (!result) {
         CloseHandle(process);

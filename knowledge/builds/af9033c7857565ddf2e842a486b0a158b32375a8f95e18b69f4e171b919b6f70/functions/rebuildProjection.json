@@ -1,0 +1,118 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_10009f2e0()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.camera.rebuild_projection",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_f62d1a986e5fb552ab581a2f7f64702ee1a396afe04dfc1963b51d9cf2485859",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x100004dd0",
+        "name": "FUN_100004dd0"
+      },
+      {
+        "address": "0x10001c2a0",
+        "name": "FUN_10001c2a0"
+      },
+      {
+        "address": "0x10001dd50",
+        "name": "FUN_10001dd50"
+      }
+    ],
+    "callers": [
+      {
+        "address": "0x100096120",
+        "name": "FUN_100096120"
+      },
+      {
+        "address": "0x1000962d0",
+        "name": "FUN_1000962d0"
+      },
+      {
+        "address": "0x10009f460",
+        "name": "FUN_10009f460"
+      },
+      {
+        "address": "0x100130b30",
+        "name": "FUN_100130b30"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "Which camera and view fields are read?",
+      "When must it run after FOV or near-plane changes?",
+      "What thread and rendering context are required?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Native projection rebuild for a viewport."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x10009f426",
+          "start": "0x10009f2e0"
+        }
+      ],
+      "span_bytes": 327,
+      "total_bytes": 327
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_10009f2e0",
+    "rva": "0x9f2e0",
+    "va": "0x10009f2e0"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

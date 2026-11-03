@@ -1,0 +1,166 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_1000a94d0()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.ui.settings_open",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_71d871eba42223027bc99e346c5a5a2ce7ff8d79b806e0eb0458760ce936e578",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x100008070",
+        "name": "FUN_100008070"
+      },
+      {
+        "address": "0x1000080f0",
+        "name": "FUN_1000080f0"
+      },
+      {
+        "address": "0x100008210",
+        "name": "FUN_100008210"
+      },
+      {
+        "address": "0x10001b000",
+        "name": "FUN_10001b000"
+      },
+      {
+        "address": "0x100028e10",
+        "name": "FUN_100028e10"
+      },
+      {
+        "address": "0x100029470",
+        "name": "FUN_100029470"
+      },
+      {
+        "address": "0x100029660",
+        "name": "FUN_100029660"
+      },
+      {
+        "address": "0x10002a8a0",
+        "name": "FUN_10002a8a0"
+      },
+      {
+        "address": "0x10002c8f0",
+        "name": "FUN_10002c8f0"
+      },
+      {
+        "address": "0x10002da80",
+        "name": "FUN_10002da80"
+      },
+      {
+        "address": "0x1000360f0",
+        "name": "FUN_1000360f0"
+      },
+      {
+        "address": "0x100036440",
+        "name": "FUN_100036440"
+      },
+      {
+        "address": "0x1000a78a0",
+        "name": "FUN_1000a78a0"
+      },
+      {
+        "address": "0x1000a83d0",
+        "name": "FUN_1000a83d0"
+      },
+      {
+        "address": "0x1000a8c60",
+        "name": "FUN_1000a8c60"
+      },
+      {
+        "address": "0x1000a94a0",
+        "name": "FUN_1000a94a0"
+      },
+      {
+        "address": "0x100223a10",
+        "name": "FUN_100223a10"
+      },
+      {
+        "address": "0x10022c740",
+        "name": "FUN_10022c740"
+      }
+    ],
+    "callers": [
+      {
+        "address": "0x100128580",
+        "name": "FUN_100128580"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "What objects and callback tables make up the Settings form?",
+      "How are tabs and rows registered and destroyed?",
+      "What is the narrowest safe integration point for one settings owner?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Native Settings-form construction."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x1000a9822",
+          "start": "0x1000a94d0"
+        }
+      ],
+      "span_bytes": 851,
+      "total_bytes": 851
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_1000a94d0",
+    "rva": "0xa94d0",
+    "va": "0x1000a94d0"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

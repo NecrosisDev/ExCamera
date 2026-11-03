@@ -1,0 +1,122 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_100022710()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.input.cursor_position",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_109ef881e4dc9ff0c7426d3dad1b230aab15929781d544d23ad516b761b06e2f",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x100001b40",
+        "name": "USER32.DLL::GetCursorPos"
+      },
+      {
+        "address": "0x100001b70",
+        "name": "USER32.DLL::ScreenToClient"
+      },
+      {
+        "address": "0x100022530",
+        "name": "FUN_100022530"
+      }
+    ],
+    "callers": [
+      {
+        "address": "0x10002f7e0",
+        "name": "FUN_10002f7e0"
+      },
+      {
+        "address": "0x1000aa080",
+        "name": "FUN_1000aa080"
+      },
+      {
+        "address": "0x10011ebe0",
+        "name": "FUN_10011ebe0"
+      },
+      {
+        "address": "0x10011ef40",
+        "name": "FUN_10011ef40"
+      },
+      {
+        "address": "0x10013e9c0",
+        "name": "FUN_10013e9c0"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "What are the output coordinates and caller-specific meanings?",
+      "When can a mod substitute a reticle position?",
+      "What focus and clipping state must be preserved?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Native cursor-position query used by gameplay and GUI paths."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x10002277d",
+          "start": "0x100022710"
+        }
+      ],
+      "span_bytes": 110,
+      "total_bytes": 110
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_100022710",
+    "rva": "0x22710",
+    "va": "0x100022710"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

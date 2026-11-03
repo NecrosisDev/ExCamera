@@ -102,7 +102,7 @@ static bool devStartLoadGuarded(const char** reason) {
     __try {
         *reason = devStartLoad();
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         return false;
     }
 }
@@ -140,16 +140,20 @@ static bool devInLevel() {
                         InterlockedCompareExchange(&cameraReady, 0, 0) && InterlockedCompareExchange(&active, 0, 0);
         devCharacters = in ? devCharacterCount() : 0;
         return in;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         return false;
     }
 }
+
+static void devSelectSettingsPage(int page); // panel.inl
+static void devWriteSettings(fp::JsonOut& j); // panel.inl
 
 static void devWriteReady(FILE* f) {
     fp::JsonOut j(f);
     const DevLoad state = devLoad.load();
     j.str("state", state == DevLoad::inLevel ? "in_level" : state == DevLoad::failed ? "failed" : "loading");
     j.unum("pid", GetCurrentProcessId());
+    devWriteSettings(j);
     if (state == DevLoad::failed) j.str("reason", devReason);
     if (state == DevLoad::inLevel) {
         j.str("level", "");
@@ -157,6 +161,40 @@ static void devWriteReady(FILE* f) {
         j.unum("characters", devCharacters);
     }
     j.finish();
+}
+
+// dev-rooms.txt beside the DLL, rewritten each second: the level's rooms as the render walk sees them.
+static void devWriteRooms(const std::wstring& path) {
+    FILE* f = nullptr;
+    __try {
+        const uintptr_t level = levelGrid();
+        if (!level || _wfopen_s(&f, path.c_str(), L"w") || !f) return;
+        const int count = *reinterpret_cast<const int*>(level + 0x1c);
+        const uintptr_t entries = *reinterpret_cast<const uintptr_t*>(level + 0x20),
+                        indices = *reinterpret_cast<const uintptr_t*>(level + 0x28);
+        std::fprintf(f, "rooms=%d active=%d opened=%u\n", count, *reinterpret_cast<const int*>(level + 0x60),
+                     roomViewOpened.load());
+        for (int room = 0; room < count && room < 4096; ++room) {
+            const uintptr_t e = entries + size_t(room) * 0x54, s = *reinterpret_cast<const uintptr_t*>(e + 0x34);
+            std::fprintf(f, "%d state=%d load=%d sector=%llx", room, *reinterpret_cast<const int*>(e + 0x30),
+                         *reinterpret_cast<const int*>(e + 0x10), static_cast<unsigned long long>(s));
+            if (s) {
+                const float* origin = reinterpret_cast<const float*>(s + field::sector::origin);
+                std::fprintf(f, " type=%d flags=%x meshes=%d portals=%d at=%.0f,%.0f",
+                             *reinterpret_cast<const int*>(s + 0x318), *reinterpret_cast<const unsigned*>(s + 8),
+                             *reinterpret_cast<const int*>(s + field::sector::lastMesh) + 1,
+                             *reinterpret_cast<const int*>(s + 0x260), origin[0], origin[2]);
+            }
+            const int edges = *reinterpret_cast<const int*>(e + 0x18);
+            const uintptr_t pairs = *reinterpret_cast<const uintptr_t*>(e + 0x1c);
+            std::fprintf(f, " next=");
+            for (int k = 0; k < edges && k < 32 && pairs; ++k)
+                std::fprintf(f, "%d,", *reinterpret_cast<const int*>(
+                                           indices + size_t(*reinterpret_cast<const int*>(pairs + size_t(k) * 8 + 4)) * 4));
+            std::fprintf(f, "\n");
+        }
+    } __except (countFaultAndHandle(&windowFaults)) {}
+    if (f) fclose(f);
 }
 
 // Worker thread, every loop pass.
@@ -171,6 +209,16 @@ static void devPulse() {
     const ULONGLONG now = GetTickCount64();
     if (now < next) return;
     next = now + 1000;
+    // dev-page.txt beside the DLL: the Settings page to show (5 is Mod Settings); read once, then deleted.
+    const std::wstring pageFile = devReadyPath.substr(0, devReadyPath.find_last_of(L'\\') + 1) + L"dev-page.txt";
+    if (FILE* f = nullptr; !_wfopen_s(&f, pageFile.c_str(), L"r") && f) {
+        int page = -1;
+        const int read = fscanf_s(f, "%d", &page);
+        fclose(f);
+        DeleteFileW(pageFile.c_str());
+        if (read == 1 && page >= 0) devSelectSettingsPage(page);
+    }
+    devWriteRooms(devReadyPath.substr(0, devReadyPath.find_last_of(L'\\') + 1) + L"dev-rooms.txt");
     if (devLoad.load() == DevLoad::loading) {
         if (devInLevel()) devLoad = DevLoad::inLevel;
         else if (now - devLoadStarted > 180000) devFail("timeout");

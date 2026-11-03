@@ -101,4 +101,16 @@ inline bool headVertex(const Weights& w,const bool* headBones,unsigned count) {
     }
     return any&&std::fabs(total-1.f)<=0.001f;
 }
+// How much of a vertex follows the head, 0..1; zero for weights that don't validate.
+inline float headShare(const Weights& w,const bool* headBones,unsigned count) {
+    float head=0.f,total=0.f;
+    for(unsigned k=0;k<4;++k) {
+        if(!std::isfinite(w.weight[k])||w.weight[k]<0.f) return 0.f;
+        if(w.bone[k]<1) { if(w.weight[k]!=0.f) return 0.f;continue; }
+        if(unsigned(w.bone[k])>count) return 0.f;
+        total+=w.weight[k];
+        if(headBones[w.bone[k]-1]) head+=w.weight[k];
+    }
+    return std::fabs(total-1.f)<=0.001f?head:0.f;
+}
 } // namespace fp::wear

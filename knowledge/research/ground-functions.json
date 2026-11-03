@@ -1,0 +1,46 @@
+{
+  "game": {"product": "Exanima", "version": "0.9.5.2g", "channel": "standard", "steam_build": "25803178"},
+  "build_id": "exanima-0.9.5.2g-standard-af9033c7",
+  "executable_size": 3981312,
+  "toolchain": [
+    {"name": "REA", "version": "6.8.0"},
+    {"name": "Ghidra", "version": "12.1.4"},
+    {"name": "Node.js", "version": "24.22.1"},
+    {"name": "JDK", "version": "21.0.12.1"}
+  ],
+  "functions": [
+    {
+      "import_name": "meshRayBVH",
+      "contract_id": "exanima.collision.mesh_ray_bvh",
+      "address": "0x10026a910",
+      "role_hypothesis": "General mesh BVH segment query used by scene picking and candidate ground traces.",
+      "questions": ["What is the complete query layout and return contract?", "Does it include floor triangles and handle both triangle facings?", "Which scratch bank and coordinate transforms are required?"]
+    },
+    {
+      "import_name": "meshRayBind",
+      "contract_id": "exanima.scene.mesh_ray_bind",
+      "address": "0x10026a6c0",
+      "role_hypothesis": "Binder that assigns the ordinary mesh ray callback and its traversal context on a scene node.",
+      "questions": ["Which node fields receive the callback and context?", "What lifetime and mesh-type rules apply?", "Can level-sector meshes use the callback directly?"]
+    },
+    {
+      "import_name": "levelGridRay",
+      "contract_id": "exanima.collision.level_grid_ray",
+      "address": "0x1001433d0",
+      "role_hypothesis": "Adjacent level-grid query with potentially different geometry coverage from the bool wrappers.",
+      "questions": ["What are the arguments and outputs?", "Does it cover ground surfaces?", "Which native callers and grid generations use it?"]
+    }
+  ],
+  "unresolved": [
+    {
+      "name": "localPoint",
+      "address": "0x10018960",
+      "reason": "REA/Ghidra reports no procedure at this address. Matrix behavior remains unresolved until an independently reviewed witness establishes a proper function record."
+    },
+    {
+      "name": "localDirection",
+      "address": "0x10018b00",
+      "reason": "REA/Ghidra reports no procedure at this address. Matrix behavior remains unresolved until an independently reviewed witness establishes a proper function record."
+    }
+  ]
+}

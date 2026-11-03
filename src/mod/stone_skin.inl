@@ -110,6 +110,10 @@ static const fp::stone::Maps* stoneSkinMaps() {
     return nullptr;
 }
 
+static void stoneSkinWarmup() {
+    stoneSkinMaps();
+}
+
 // Direct-state uploads, so no unit's binding or the active unit changes; cueLock held.
 static bool stoneSkinTextures(fp::CueResources& r, const StoneGl& s) {
     if (r.stoneTex[0] && r.stoneTex[1] && r.stoneTex[2]) return true;

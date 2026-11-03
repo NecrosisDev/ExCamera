@@ -239,7 +239,8 @@ inline void blendPose(const float* from, const float* to, float t, float* out, b
 // Eyes compensate ordinary simulated head motion without relocating the physical
 // eye or turning large knockdowns into a detached camera. Stateless rotation
 // composition keeps all temporal samples on the same mouse intent and adds no lag.
-inline constexpr float eyeCompensationLimit = 0.5235987756f; // thirty degrees
+inline constexpr float eyeCompensationInner = 0.174532925f;  // ten degrees
+inline constexpr float eyeCompensationLimit = 0.6981317008f; // forty degrees
 inline void stabilizeEyeRotation(float* physical, float yaw, float pitch) {
     if (!std::isfinite(yaw) || !std::isfinite(pitch)) return;
     float desired[12], a[4], b[4];
@@ -249,7 +250,17 @@ inline void stabilizeEyeRotation(float* physical, float yaw, float pitch) {
     float dot = 0.f;
     for (int i = 0; i < 4; ++i) dot += a[i] * b[i];
     const float angle = 2.f * std::acos(std::clamp(std::fabs(dot), 0.f, 1.f));
-    const float share = angle <= eyeCompensationLimit ? 1.f : eyeCompensationLimit / angle;
+    float share = 1.f;
+    if (angle <= eyeCompensationInner) {
+        share = 1.f;
+    } else if (angle >= eyeCompensationLimit) {
+        share = eyeCompensationLimit / angle;
+    } else {
+        const float u = (angle - eyeCompensationInner) / (eyeCompensationLimit - eyeCompensationInner);
+        const float allowed =
+            eyeCompensationInner + (eyeCompensationLimit - eyeCompensationInner) * (u + u * u - u * u * u);
+        share = allowed / angle;
+    }
     blendPose(physical, desired, share, physical, false);
 }
 inline constexpr float tpPivotMargin =
@@ -353,6 +364,41 @@ inline void aimBoxStep(AimBox& box, float& dx, float& dy, float halfWidth, float
     dy = wantY - keptY;
     box.x = keptX;
     box.y = keptY;
+}
+// One frame's mouse move, split as many small ones: a slow frame turns the view as far as fast
+// frames would for the same move. What the oval keeps and what turns the view still add up to it.
+inline void aimBoxMove(AimBox& box, float& dx, float& dy, float halfWidth, float halfHeight,
+                       int edgeSoftness = 0) {
+    const float spanX = std::isfinite(dx) && halfWidth > 0.f ? std::fabs(dx) / halfWidth : 0.f;
+    const float spanY = std::isfinite(dy) && halfHeight > 0.f ? std::fabs(dy) / halfHeight : 0.f;
+    const float span = (std::max)(spanX, spanY);
+    if (edgeSoftness <= 0 || !std::isfinite(span) || span <= 0.1f) {
+        aimBoxStep(box, dx, dy, halfWidth, halfHeight, edgeSoftness);
+        return;
+    }
+    const int steps = (std::min)(int(std::ceil(span / 0.1f)), 32);
+    const float partX = dx / float(steps), partY = dy / float(steps);
+    float restX = 0.f, restY = 0.f;
+    for (int i = 0; i < steps; ++i) {
+        float stepX = partX, stepY = partY;
+        aimBoxStep(box, stepX, stepY, halfWidth, halfHeight, edgeSoftness);
+        restX += stepX;
+        restY += stepY;
+    }
+    dx = restX;
+    dy = restY;
+}
+// The oval shrank (a new window size): pull the cursor back onto it, keeping its direction.
+inline void aimBoxClamp(AimBox& box, float halfWidth, float halfHeight) {
+    if (!(halfWidth > 0.f) || !(halfHeight > 0.f) || !std::isfinite(box.x) || !std::isfinite(box.y)) {
+        box = {};
+        return;
+    }
+    const double r = std::hypot(double(box.x) / double(halfWidth), double(box.y) / double(halfHeight));
+    if (r > 1.) {
+        box.x = float(double(box.x) / r);
+        box.y = float(double(box.y) / r);
+    }
 }
 // A screen offset unprojected through a view orientation. No hit depth or camera/body parallax:
 // looking at nearby ground cannot reverse the horizontal heading.

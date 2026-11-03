@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://excamera.local/schema/capability.schema.json",
+  "title": "Runtime capability and its native contract acceptance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "capability_id", "build_sha256", "required_contracts", "adapter", "evidence_states", "runtime", "acceptance", "limitations"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "capability_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$"},
+    "build_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "required_contracts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^exanima(\\.[a-z0-9_]+)+$"}
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "hook_contract", "helper_contracts"],
+      "properties": {
+        "module": {"type": "string"},
+        "hook_contract": {"type": "string", "pattern": "^exanima(\\.[a-z0-9_]+)+$"},
+        "helper_contracts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^exanima(\\.[a-z0-9_]+)+$"}
+        }
+      }
+    },
+    "evidence_states": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"enum": ["observed_static", "reviewed_static", "byte_validated", "observed_runtime", "validated_runtime", "hypothesis", "rejected"]}
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eligible", "state", "hook_count", "module_faults", "restoration_failed"],
+      "properties": {
+        "eligible": {"type": "boolean"},
+        "state": {"enum": ["research", "development", "validated_practice", "release_candidate", "supported", "rejected"]},
+        "hook_count": {"type": "integer", "minimum": 0},
+        "module_faults": {"type": "integer", "minimum": 0},
+        "restoration_failed": {"type": "boolean"}
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document", "first_person", "third_person", "overhead", "paused_transitions", "clean_stop"],
+      "properties": {
+        "document": {"type": "string"},
+        "first_person": {"type": "boolean"},
+        "third_person": {"type": "boolean"},
+        "overhead": {"type": "boolean"},
+        "paused_transitions": {"type": "boolean"},
+        "clean_stop": {"type": "boolean"}
+      }
+    },
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  }
+}

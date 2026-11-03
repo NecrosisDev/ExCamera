@@ -1,0 +1,90 @@
+{
+  "game": {"product": "Exanima", "version": "0.9.5.2g", "channel": "standard", "steam_build": "25803178"},
+  "build_id": "exanima-0.9.5.2g-standard-af9033c7",
+  "executable_size": 3981312,
+  "toolchain": [
+    {"name": "REA", "version": "6.8.0"},
+    {"name": "Ghidra", "version": "12.1.4"},
+    {"name": "Node.js", "version": "24.22.1"},
+    {"name": "JDK", "version": "21.0.12.1"}
+  ],
+  "functions": [
+    {
+      "import_name": "cameraOrbit",
+      "contract_id": "exanima.camera.orbit",
+      "address": "0x100091f00",
+      "role_hypothesis": "Native camera orbit mutation used by mouse and controller paths.",
+      "questions": ["What are the argument types and angle units?", "Which camera modes and object generations does it accept?", "Can native orbit be reused for third-person control?"]
+    },
+    {
+      "import_name": "cameraZoom",
+      "contract_id": "exanima.camera.zoom",
+      "address": "0x100092630",
+      "role_hypothesis": "Native camera zoom mutation used by controller input.",
+      "questions": ["What does the integer argument mean?", "What zoom bounds and side effects apply?", "Should third-person distance use this contract or a separate domain value?"]
+    },
+    {
+      "import_name": "cameraFade",
+      "contract_id": "exanima.camera.obstruction_fade",
+      "address": "0x100090c00",
+      "role_hypothesis": "Native camera obstruction and fade processing after sampling.",
+      "questions": ["What collision queries and output fields does it use?", "Can third-person obstruction retain this native behavior?", "What camera state must be current before invocation?"]
+    },
+    {
+      "import_name": "fadeBounds",
+      "contract_id": "exanima.collision.segment_sphere",
+      "address": "0x10007a270",
+      "role_hypothesis": "Shared segment/sphere predicate used by native camera fade and scene queries.",
+      "questions": ["What are the exact ray, sphere, and return contracts?", "Is it sufficient for third-person obstruction candidates?", "What numerical edge cases must the domain solver handle?"]
+    },
+    {
+      "import_name": "rebuildProjection",
+      "contract_id": "exanima.camera.rebuild_projection",
+      "address": "0x10009f2e0",
+      "role_hypothesis": "Native projection rebuild for a viewport.",
+      "questions": ["Which camera and view fields are read?", "When must it run after FOV or near-plane changes?", "What thread and rendering context are required?"]
+    },
+    {
+      "import_name": "rebuildInverse",
+      "contract_id": "exanima.camera.expand_pose",
+      "address": "0x10001ceb0",
+      "role_hypothesis": "Expands a 12-float affine camera pose into a 16-float native matrix; despite the legacy name, not a matrix inverse.",
+      "questions": ["What are the exact source and destination layouts?", "Which matrix fields remain untouched?", "Can the domain produce this transformation without a native call?"]
+    },
+    {
+      "import_name": "aimScreenRay",
+      "contract_id": "exanima.interaction.screen_ray",
+      "address": "0x10008f460",
+      "role_hypothesis": "Native near/far screen unprojection without a scene query.",
+      "questions": ["What are the screen coordinate conventions and output layout?", "Which camera matrix is consumed?", "How are invalid dimensions and singular matrices handled?"]
+    },
+    {
+      "import_name": "levelRay",
+      "contract_id": "exanima.collision.level_ray",
+      "address": "0x1001430f0",
+      "role_hypothesis": "Native level collision query used for camera clearance and placement.",
+      "questions": ["What are the full arguments, result layout, and hit semantics?", "Which thread and scene generation are required?", "Can it serve third-person obstruction safely in a hot path?"]
+    },
+    {
+      "import_name": "cursorPosition",
+      "contract_id": "exanima.input.cursor_position",
+      "address": "0x100022710",
+      "role_hypothesis": "Native cursor-position query used by gameplay and GUI paths.",
+      "questions": ["What are the output coordinates and caller-specific meanings?", "When can a mod substitute a reticle position?", "What focus and clipping state must be preserved?"]
+    },
+    {
+      "import_name": "cursorWarp",
+      "contract_id": "exanima.input.cursor_warp",
+      "address": "0x100022780",
+      "role_hypothesis": "Native cursor repositioning used by camera and interaction code.",
+      "questions": ["Are coordinates client or screen space?", "Which callers can cause an unintended view snap?", "When must warps be suppressed or forwarded?"]
+    },
+    {
+      "import_name": "present",
+      "contract_id": "exanima.render.present",
+      "address": "0x100021e60",
+      "role_hypothesis": "Native presentation wrapper and candidate frame-boundary observation point.",
+      "questions": ["What thread and OpenGL context are current?", "What state wraps the native call?", "Can diagnostics run here without changing rendering behavior?"]
+    }
+  ]
+}

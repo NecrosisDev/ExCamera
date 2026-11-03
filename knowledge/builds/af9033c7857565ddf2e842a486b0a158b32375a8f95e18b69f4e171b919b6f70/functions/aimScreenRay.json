@@ -1,0 +1,126 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_10008f460()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.interaction.screen_ray",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_efaca7d606840f63d87e32041daf0c94eb55fe19ebd6c1925952b90cfbb7b4ac",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x1000191a0",
+        "name": "FUN_1000191a0"
+      },
+      {
+        "address": "0x10004c520",
+        "name": "FUN_10004c520"
+      }
+    ],
+    "callers": [
+      {
+        "address": "0x10008f530",
+        "name": "FUN_10008f530"
+      },
+      {
+        "address": "0x10008f640",
+        "name": "FUN_10008f640"
+      },
+      {
+        "address": "0x10008f720",
+        "name": "FUN_10008f720"
+      },
+      {
+        "address": "0x10008fb30",
+        "name": "FUN_10008fb30"
+      },
+      {
+        "address": "0x100090030",
+        "name": "FUN_100090030"
+      },
+      {
+        "address": "0x10011ebe0",
+        "name": "FUN_10011ebe0"
+      },
+      {
+        "address": "0x1001339a0",
+        "name": "FUN_1001339a0"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "What are the screen coordinate conventions and output layout?",
+      "Which camera matrix is consumed?",
+      "How are invalid dimensions and singular matrices handled?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Native near/far screen unprojection without a scene query."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x10008f525",
+          "start": "0x10008f460"
+        }
+      ],
+      "span_bytes": 198,
+      "total_bytes": 198
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_10008f460",
+    "rva": "0x8f460",
+    "va": "0x10008f460"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

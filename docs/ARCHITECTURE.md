@@ -2,11 +2,13 @@
 
 ## Build boundaries
 
-`build.py` builds two Windows x64 binaries: the launcher (`launcher.cpp`) and the DLL (`first_person.cpp`). The DLL also links `native_settings.cpp`, `settings_presentation.cpp`, the bundled MinHook C sources, and `supersampling_shim.asm`.
+`build.py` builds two Windows x64 binaries: the launcher (`src/launcher.cpp`) and the DLL (`src/first_person.cpp`). The DLL also links `src/native_settings.cpp`, `src/settings_presentation.cpp`, the bundled MinHook C sources, and `src/supersampling_shim.asm`.
 
 The files under `src/mod/` intentionally form **one translation unit** through ordered includes in `first_person.cpp`; `state.inl` also includes `activation.inl`. They share private state and helpers. Do not add these `.inl` files to the compiler's source list or reorder them as an organizational cleanup.
 
 ## Where to start
+
+Paths in this section are relative to `src/`.
 
 - `mod/state.inl`, `activation.inl`, `session.inl`: shared state, activation checks, hooks, and session lifetime.
 - `mod/optional_contracts.inl`, `held_throw_admission.inl`: exact loaded optional witnesses and held-body hook admission/retirement.
@@ -39,7 +41,7 @@ The shared mesh queue checks the submitted pointer before validating a possible 
 
 The near-plane solver may cap proved-clear results at twice the caller's maximum near plane. Its initial segment ends at an endpoint of the original six-step bisection tree, so even a quantized result beyond it already saturates the filter. A hit uses the unchanged six-step search; unknown queries retain the original fallback. Props are still queried unless level clearance already forces the minimum plane. Every temporal sample retains current geometry queries and its own physical head pose, camera transform and filter evaluation. Held placement passes its first predicate result into clearance refinement and still checks final clearance before accepting an output.
 
-Run `python -B tests/run_performance.py` for native regression suites. They compile production owners with owned-memory/native-boundary fixtures and compare against the pinned pre-change oracle in `tests/original_performance.inl`. The retained integration fixtures cover temporal sample order, extra requests, source faults, replacement, TP obstruction ownership and native view boundaries. They do not launch or attach to the game. See `DECISIONS.md` for the reason cross-frame and cross-sample caches are deliberately absent.
+The native regression suites used during development compile production owners with owned-memory/native-boundary fixtures and compare against a pinned pre-change oracle. Their retained integration fixtures cover temporal sample order, extra requests, source faults, replacement, TP obstruction ownership and native view boundaries. They do not launch or attach to the game. The local development decisions record explains why cross-frame and cross-sample caches are deliberately absent; that file is not part of the published source tree.
 
 ## Screen-effect quality diagnostics
 
@@ -60,6 +62,16 @@ Diagnostic names are copied under a short leaf lock, drag status uses atomic fla
 Guard priority suppresses attack only during the overlap. Releasing guard admits a still-held native attack without clearing unrelated ownership masks or inventing a queued attack. Native timing and recovery still decide when an attack can execute.
 
 Window callbacks capture their forwarding procedure and installation generation. Native destruction is forwarded before retiring that exact installation, so a recycled HWND does not inherit the old registration. Raw-input retirement retries fresh ownership observations for a bounded interval; unknown or foreign registrations are not removed. This does not make Win32 procedure replacement atomic against arbitrary concurrent subclassers.
+
+## Runtime ownership and diagnostics
+
+Camera ownership is decided under `cameraLock`; native callbacks and status producers observe copies rather than racing the saved frame. The status value `camera_ownership_state` is `0` unknown, `1` owned, `2` parked, `3` restoring, `4` restored, or `5` faulted. A park records the gameplay (root and scene) it belongs to. Released camera records are invalidated when that identity changes. Restoration is sticky-unknown when a released camera of the current gameplay can no longer be reclaimed, when pointer equality cannot prove lifetime, or when an earlier restoration failed. A clean re-arm is the only path back to normal ownership. Stop waits for `savedCamera`, `pendingRestore`, and admitted render scopes to drain before it may report `restored`; a timeout or unknown record reports failure instead.
+
+Cursor freedom is one atomic reason bitmask: Cursor Look, an automatically selected native panel, and the F8 panel. Actions and clipping test the aggregate, while each owner changes only its own bit, so one owner cannot clear another's reason. Native Cursor Look remains user-owned data. The status file reports the aggregate and the cumulative transition counter.
+
+Native Settings owns a form only while its captured root and the applicable child table still match the recorded identities. An Apply publishes one draft transaction; Cancel never mutates native tables. Ownership/action refusals are counted, and the last refused descriptor is reported separately as `kind<<24 | flags`. Recovery restores the original table only when ownership is still proved; an unknown replacement form is left untouched. The atomic status file is a best-effort snapshot, not proof that the game or the mod is healthy.
+
+Hook-fault counters are regression signals, not normal operating conditions. A counter is incremented once at the owning hook boundary, whether that callback contains the fault or lets it propagate to the game's handler; inner helpers do not increment it again. The top-level hook counters are `camera_faults`, `swap_faults`, `behavior_faults`, `pose_faults`, `window_faults`, `cursor_faults`, `view_faults`, `body_part_faults`, `room_view_faults`, and `node_move_faults`; feature-specific counters such as `headwear_render_faults`, `wound_skin_faults`, and the nested `supersampling`, `openxr`, `blade`, and `finger_bones` counters follow the same rule. Every fault counter and flag must stay zero, as must `faults_seen`, `camera_restoration_unknown`, and `settings_fault_at`; `faults_seen` and `fault_last` summarize distinct exception records. A nonzero count with `restoration=failed` or `settings_fault_at` requires a restart, not continued play.
 
 ## Inventory preview boundary
 
@@ -95,4 +107,4 @@ The attack cue owns its OpenGL resources and capability decisions per current na
 
 ## Validation boundary
 
-Compatibility checks and DLL export checks catch specific integration failures; they do not prove camera, input, or rendering behavior in a running game. The prof8 source passed a Windows/MSVC build, native production fixtures and local real-OpenGL checks before import; in-game verification remains outstanding. The optional generator tests under `tools/` are not required to build. Gameplay regression harnesses are kept outside the runtime source and are not part of the release ZIP.
+Compatibility checks and DLL export checks catch specific integration failures; they do not prove camera, input, or rendering behavior in a running game. Current observation status is recorded in `docs/RELEASE_CHECKLIST.md`. The optional generator tests under `tools/` are not required to build. Gameplay regression harnesses are kept outside the runtime source and are not part of the release ZIP.

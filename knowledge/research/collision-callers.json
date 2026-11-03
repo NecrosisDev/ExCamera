@@ -1,0 +1,41 @@
+{
+  "game": {"product": "Exanima", "version": "0.9.5.2g", "channel": "standard", "steam_build": "25803178"},
+  "build_id": "exanima-0.9.5.2g-standard-af9033c7",
+  "executable_size": 3981312,
+  "toolchain": [
+    {"name": "REA", "version": "6.8.0"},
+    {"name": "Ghidra", "version": "12.1.4"},
+    {"name": "Node.js", "version": "24.22.1"},
+    {"name": "JDK", "version": "21.0.12.1"}
+  ],
+  "functions": [
+    {
+      "import_name": "nativeVisibility",
+      "contract_id": "exanima.collision.native_visibility",
+      "address": "0x1002462f0",
+      "role_hypothesis": "Native caller that combines both level-ray functions for visibility; needed to establish their coordinate and filtering semantics.",
+      "questions": ["How are the origin, direction, and distance computed?", "Which geometry sets are enabled before these calls?", "Does a hit mean visible or blocked?"]
+    },
+    {
+      "import_name": "levelMeshTrace",
+      "contract_id": "exanima.collision.mesh_trace",
+      "address": "0x1000602d0",
+      "role_hypothesis": "Shared mesh segment trace called by both level-ray functions.",
+      "questions": ["What is the length representation and coordinate space?", "What does a negative return mean?", "Which mesh types and triangle attributes participate?"]
+    },
+    {
+      "import_name": "cameraLevelTrace",
+      "contract_id": "exanima.camera.level_trace",
+      "address": "0x10011e6f0",
+      "role_hypothesis": "Native camera-adjacent level-ray caller; candidate reference for global scene coordinates and camera boom handling.",
+      "questions": ["Which camera and scene objects supply the ray?", "How are sector origins and distances handled?", "Can this contract replace the unverified legacy adapter?"]
+    },
+    {
+      "import_name": "worldLevelTrace",
+      "contract_id": "exanima.collision.world_trace",
+      "address": "0x100117aa0",
+      "role_hypothesis": "Native world-level segment-query caller with geometry filtering.",
+      "questions": ["Which level-grid fields are prepared before the query?", "What coordinate transform is applied?", "What do the return values mean?"]
+    }
+  ]
+}

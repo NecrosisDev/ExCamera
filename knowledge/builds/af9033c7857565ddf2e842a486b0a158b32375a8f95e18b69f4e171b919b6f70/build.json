@@ -1,0 +1,119 @@
+{
+  "analysis": {
+    "procedure_count": 8550,
+    "string_count": 5147,
+    "toolchain": [
+      {
+        "name": "REA",
+        "version": "6.8.0"
+      },
+      {
+        "name": "Ghidra",
+        "version": "12.1.4"
+      },
+      {
+        "name": "Node.js",
+        "version": "24.22.1"
+      },
+      {
+        "name": "JDK",
+        "version": "21.0.12.1"
+      }
+    ]
+  },
+  "build_id": "exanima-0.9.5.2g-standard-af9033c7",
+  "evidence": [
+    {
+      "analysis_profile_digest": "88ff17e640ad7e6f78309d138f4e008711df06b80e900a10374178088416ed48",
+      "evidence_id": "ev_af12041a603d8c459d34acf8e92724dbf342ca35b39e79a9b7c0d4692c90a0ac",
+      "kind": "rea_ghidra_binary_overview",
+      "operation": "binary_overview",
+      "provider": {
+        "id": "rea-workflow",
+        "name": "REA composed investigation workflow",
+        "version": "1"
+      }
+    }
+  ],
+  "executable": {
+    "architecture": "x86_64",
+    "format": "pe32-plus",
+    "image_base": "0x100000000",
+    "sections": [
+      {
+        "end": "0x100000400",
+        "length": 1024,
+        "name": "Headers",
+        "start": "0x100000000"
+      },
+      {
+        "end": "0x1002a9200",
+        "length": 2785792,
+        "name": ".text",
+        "start": "0x100001000"
+      },
+      {
+        "end": "0x1002f4400",
+        "length": 304128,
+        "name": ".data",
+        "start": "0x1002aa000"
+      },
+      {
+        "end": "0x100376a00",
+        "length": 530944,
+        "name": ".rdata",
+        "start": "0x1002f5000"
+      },
+      {
+        "end": "0x10038ca00",
+        "length": 88576,
+        "name": ".pdata",
+        "start": "0x100377000"
+      },
+      {
+        "end": "0x1005bdc28",
+        "length": 2296872,
+        "name": ".bss",
+        "start": "0x10038d000"
+      },
+      {
+        "end": "0x1005be200",
+        "length": 512,
+        "name": ".CRT",
+        "start": "0x1005be000"
+      },
+      {
+        "end": "0x1005c0e00",
+        "length": 7680,
+        "name": ".idata",
+        "start": "0x1005bf000"
+      },
+      {
+        "end": "0x1005c1200",
+        "length": 512,
+        "name": ".edata",
+        "start": "0x1005c1000"
+      },
+      {
+        "end": "0x100602000",
+        "length": 262144,
+        "name": ".rsrc",
+        "start": "0x1005c2000"
+      }
+    ],
+    "sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+    "size": 3981312
+  },
+  "game": {
+    "channel": "standard",
+    "product": "Exanima",
+    "steam_build": "25803178",
+    "version": "0.9.5.2g"
+  },
+  "schema_version": 1,
+  "support": {
+    "reason": "Static research imported; runtime attachment and gameplay acceptance have not been established.",
+    "release_enabled": false,
+    "status": "research_only"
+  }
+}

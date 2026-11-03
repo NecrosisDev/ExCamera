@@ -32,7 +32,7 @@ static bool holdingItem() {
     int kind = 0;
     __try {
         kind = dragKind();
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         kind = 0;
     }
     return kind == 1;
@@ -157,6 +157,7 @@ static void retireWindowInstallation(const WindowInstallation& owner) {
 }
 
 static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
+    __try {
     const WindowInstallation owner = windowInstallationSnapshot();
     if (owner.window != w || !owner.previous || owner.retired)
         return DefWindowProcW(w, message, wp, lp);
@@ -208,7 +209,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 if (cursorKey != bindingKey) inputOwner.windowBegin(cursorKey);
             }
             const bool cursorToggleActive = !repeat && bindingKey == static_cast<int>(nativeBinding(8)) &&
-                                            InterlockedCompareExchange(&rmbFree, 0, 0);
+                                            cursorFreeBitSet(rmbFreeBit);
             const bool canTake = !repeat && (bindingContextNow() || cursorToggleActive);
             if (canTake && bindingKey == rotateHeldKey.load() && holdingItem()) {
                 inputOwner.windowClaim(bindingKey);
@@ -303,7 +304,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         int kind = 0;
         __try {
             kind = dragKind();
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&cursorFaults)) {
             kind = 0;
         }
         if (kind == 1) {
@@ -336,7 +337,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
-    if (message == WM_KEYDOWN && !(lp & (1LL << 30)) && (wp == VK_F6 || wp == VK_F8 || wp == VK_ESCAPE))
+    if (message == WM_KEYDOWN && !(lp & (1LL << 30)) && (wp == VK_F6 || wp == VK_F8 || wp == VK_F12 || wp == VK_ESCAPE))
         rmbEvent(fp::RmbEvent::lost, false);
 
     if (message == WM_KEYDOWN && !(lp & (1LL << 30))) {
@@ -368,8 +369,31 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (wp == VK_F8) {
-            InterlockedExchange(&cursorFree, !InterlockedCompareExchange(&cursorFree, 0, 0));
+            // The worker opens Settings only in play or at the title. Elsewhere a press would wait and pop up later.
+            const ULONGLONG gone = noPlayerSince.load();
+            if (!cursorFreeBitSet(cursorFreeBit) && !InterlockedCompareExchange(&active, 0, 0) &&
+                !(gone && GetTickCount64() - gone >= 2000))
+                return 0;
+            setCursorFreeBit(cursorFreeBit, !cursorFreeBitSet(cursorFreeBit));
             releaseInput();
+            return 0;
+        }
+        if (wp == VK_F12) {
+            const bool next = !woundDebug.load(std::memory_order_relaxed);
+            woundDebug.store(next, std::memory_order_relaxed);
+            const wchar_t* poseNames[] = { L"Open", L"Fist", L"Hilt", L"Hold", L"Flat", L"Limp" };
+            const int pL = std::clamp(trackedPlayerPoseLeft.load(), 0, 5);
+            const int pR = std::clamp(trackedPlayerPoseRight.load(), 0, 5);
+            const unsigned wCount = activeWoundsCount.load();
+            const unsigned dCount = activeDripsCount.load();
+            const int bSat = int(activeWeaponBloodMax.load() * 100.f);
+            wchar_t msg[256];
+            swprintf_s(msg, L"%s: %s | Wounds: %u | Drips: %u | Blood: %d%% | Hands: [L:%s R:%s]",
+                       FP_SHOWN_NAME,
+                       next ? L"Debug ON (neon)" : L"Debug OFF (natural)",
+                       wCount, dCount, bSat,
+                       poseNames[pL], poseNames[pR]);
+            showNotice(msg, 3500, NoticeKind::info);
             return 0;
         }
         if (wp == VK_ESCAPE) releaseInput();
@@ -381,6 +405,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         releaseInput();
     }
     return CallWindowProcW(owner.previous, w, message, wp, lp);
+    } __except (countFaultAndContinue(&windowFaults)) { return 0; }
 }
 
 static bool consoleWindow(HWND w) {
@@ -430,7 +455,7 @@ static bool controls(uintptr_t behavior) {
 static bool bindingContextNow() {
     __try {
         return gameplayOwnsPointer() && closeViewContext();
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         return false;
     }
 }
@@ -441,7 +466,7 @@ static bool manualCombatNow() {
         const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)),
                         bh = root ? *reinterpret_cast<const uintptr_t*>(root + field::character::behaviour) : 0;
         return bh && controls(bh) && manualCombat(root, bh);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         return false;
     }
 }
@@ -496,7 +521,7 @@ static uintptr_t tpAimSector(uintptr_t head) {
     __try {
         const uintptr_t mesh = *reinterpret_cast<const uintptr_t*>(head + field::bodyPart::meshNode);
         return mesh ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector) : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         return 0;
     }
 }
@@ -518,7 +543,7 @@ static bool tpAimRequestCurrent(const TpAimRequest& request) {
             return false;
         const uintptr_t bh = *reinterpret_cast<const uintptr_t*>(request.root + field::character::behaviour);
         return bh && controls(bh);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         return false;
     }
 }
@@ -604,6 +629,7 @@ static void updateAim(uintptr_t behavior) {
     }
 
     static int boxMode = -1, previousBoxX = -1, previousBoxY = -1;
+    static LONG previousBoxWidth = -1, previousBoxHeight = -1;
     const int mode = viewMode.load();
     const bool combat = *reinterpret_cast<const unsigned char*>(root + field::character::combatStance) != 0;
     const unsigned generation = inputOwner.generation(), policy = inputOwner.policyRevision();
@@ -618,9 +644,15 @@ static void updateAim(uintptr_t behavior) {
     const bool freeAim = mode == 0 || (mode == 1 && tpCombatAimFree.load());
     const int boxX = mode == 0 ? fpDeadzoneX.load() : tpDeadzoneX.load(),
               boxY = mode == 0 ? fpDeadzoneY.load() : tpDeadzoneY.load();
-    if (!freeAim || boxMode != mode || boxX != previousBoxX || boxY != previousBoxY ||
-        !InterlockedCompareExchange(&mouseCaptured, 0, 0))
+    const float boxHalfWidth = float(rect.right) * float(boxX) * 0.01f,
+                boxHalfHeight = float(rect.bottom) * float(boxY) * 0.01f;
+    if (!freeAim || boxMode != mode || !InterlockedCompareExchange(&mouseCaptured, 0, 0))
         tpAimBox = fp::AimBox{};
+    else if (boxX != previousBoxX || boxY != previousBoxY || rect.right != previousBoxWidth ||
+             rect.bottom != previousBoxHeight)
+        fp::aimBoxClamp(tpAimBox, boxHalfWidth, boxHalfHeight);
+    previousBoxWidth = rect.right;
+    previousBoxHeight = rect.bottom;
     if (boxMode != mode) tpAimSet = false;
     boxMode = mode;
     previousBoxX = boxX;
@@ -647,8 +679,7 @@ static void updateAim(uintptr_t behavior) {
         dx *= manipulationGain;
         dy *= manipulationGain;
         if (freeAim) {
-            fp::aimBoxStep(tpAimBox, dx, dy, float(rect.right) * float(boxX) * 0.01f,
-                           float(rect.bottom) * float(boxY) * 0.01f, aimEdgeSoftness.load());
+            fp::aimBoxMove(tpAimBox, dx, dy, boxHalfWidth, boxHalfHeight, aimEdgeSoftness.load());
         }
         float yawStep = -float(dx) * sensitivity,
               pitchStep = -float(dy) * sensitivity * (invertY ? -1.f : 1.f);
@@ -817,7 +848,7 @@ static void analogVectorFor(uintptr_t caller, bool forward, float* out, const fl
                 planar[2] = forward ? std::cos(a.yaw) : std::sin(a.yaw);
                 axis = planar;
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        } __except (countFaultAndHandle(&poseFaults)) {}
     }
     (forward ? originalAnalogAdd : originalAnalogScale)(out, axis, amount);
 }
@@ -1147,7 +1178,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
             // A tracked body owns the spine instead of the look-driven bend.
             __try {
                 if (!trackedMotor) spineBendStep(root, borrowed);
-            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            } __except (countFaultAndHandle(&poseFaults)) {}
         }
         const uintptr_t bh = *reinterpret_cast<const uintptr_t*>(root + field::character::behaviour);
         Aim a;
@@ -1181,10 +1212,13 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
 static void poseBuilderProfileBody(uintptr_t root, float time, unsigned char mode) {
     InterlockedIncrement(&poseBuildsInFlight);
     __try {
-        healthHit(fp::HealthHook::poseBuilder);
-        poseBuilderOwned(root, time, mode);
-    } __finally {
-        InterlockedDecrement(&poseBuildsInFlight);
+        __try {
+            healthHit(fp::HealthHook::poseBuilder);
+            poseBuilderOwned(root, time, mode);
+        } __finally {
+            InterlockedDecrement(&poseBuildsInFlight);
+        }
+    } __except (countFaultAndContinue(&poseFaults)) {
     }
 }
 
@@ -1247,12 +1281,14 @@ static void steadyHeadPart(uintptr_t root, uintptr_t head) {
                                    headBob.load()};
     if (fp::steadyHead(headSteadyState, reinterpret_cast<float(*)[3]>(head + field::bodyPart::points),
                        reinterpret_cast<const float*>(head + field::bodyPart::poseCoefficients),
-                       reinterpret_cast<const float*>(root + field::character::gaze), s))
+                       reinterpret_cast<const float*>(root + field::character::gaze), s,
+                       reinterpret_cast<float(*)[3]>(head + field::bodyPart::history)))
         ++steadyTicks;
     headingTurn = holdHeadingOn.load()
                       ? fp::steadyHeading(reinterpret_cast<float(*)[3]>(head + field::bodyPart::points),
                                           reinterpret_cast<const float*>(head + field::bodyPart::poseCoefficients),
-                                          reinterpret_cast<const float*>(root + field::character::gaze), headSteadyYaw.load())
+                                          reinterpret_cast<const float*>(root + field::character::gaze), headSteadyYaw.load(),
+                                          reinterpret_cast<float(*)[3]>(head + field::bodyPart::history))
                       : 0.f;
 }
 
@@ -1262,31 +1298,35 @@ static void steadyUnderHead(uintptr_t root, int which, uintptr_t part) {
         return;
     }
     fp::steadyBodyPart(bodySteadyState[which], reinterpret_cast<float(*)[3]>(part + field::bodyPart::points),
-                       reinterpret_cast<const float*>(part + field::bodyPart::poseCoefficients), headSteady.load());
+                       reinterpret_cast<const float*>(part + field::bodyPart::poseCoefficients), headSteady.load(),
+                       reinterpret_cast<float(*)[3]>(part + field::bodyPart::history));
 }
 
 static void partSettleProfileBody(uintptr_t part) {
-    healthHit(fp::HealthHook::partSettle);
     __try {
-        const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
-        const uintptr_t head = root ? *reinterpret_cast<const uintptr_t*>(root + field::character::headPart) : 0;
-        if (part && (part == head || part == steadyNeck || part == steadyChest) && trackedMotorOwns(root)) {
-            // Native XR motors own head and chest; the stabiliser's history must not resume stale.
-            headSteadyState = {};
-            bodySteadyState[0] = {};
-            bodySteadyState[1] = {};
-            steadiedHead = steadiedRoot = steadyNeck = steadyChest = 0;
-            headingTurn = 0;
-        } else if (part && part == head)
-            steadyHeadPart(root, head);
-        else if (part && head == steadiedHead && (part == steadyNeck || part == steadyChest)) {
-            if (steadyAllowed(root, head)) steadyUnderHead(root, part == steadyNeck ? 0 : 1, part);
+        healthHit(fp::HealthHook::partSettle);
+        __try {
+            const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
+            const uintptr_t head = root ? *reinterpret_cast<const uintptr_t*>(root + field::character::headPart) : 0;
+            if (part && (part == head || part == steadyNeck || part == steadyChest) && trackedMotorOwns(root)) {
+                // Native XR motors own head and chest; the stabiliser's history must not resume stale.
+                headSteadyState = {};
+                bodySteadyState[0] = {};
+                bodySteadyState[1] = {};
+                steadiedHead = steadiedRoot = steadyNeck = steadyChest = 0;
+                headingTurn = 0;
+            } else if (part && part == head)
+                steadyHeadPart(root, head);
+            else if (part && head == steadiedHead && (part == steadyNeck || part == steadyChest)) {
+                if (steadyAllowed(root, head)) steadyUnderHead(root, part == steadyNeck ? 0 : 1, part);
+            }
+        } __except (countFaultAndHandle(&poseFaults)) {
+            headSteadyState = fp::HeadSteadyState();
+            steadyNeck = steadyChest = 0;
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        headSteadyState = fp::HeadSteadyState();
-        steadyNeck = steadyChest = 0;
+        fp::profile::invoke<fp::profile::Hook::partNative>(originalPartSettle, part);
+    } __except (countFaultAndContinue(&poseFaults)) {
     }
-    fp::profile::invoke<fp::profile::Hook::partNative>(originalPartSettle, part);
 }
 
 static void partSettle(uintptr_t part) {
@@ -1564,37 +1604,34 @@ static void publishCue(uintptr_t self) {
 static void behavior(uintptr_t self) {
     healthHit(fp::HealthHook::playerBehavior);
     __try {
-        updateAim(self);
-    } __finally {
-        if (updateAimLocked) {
-            updateAimLocked = false;
-            ReleaseSRWLockExclusive(&aimLock);
+        __try {
+            updateAim(self);
+        } __finally {
+            if (updateAimLocked) {
+                updateAimLocked = false;
+                ReleaseSRWLockExclusive(&aimLock);
+            }
         }
+    } __except (countFaultAndContinue(&behaviorFaults)) {
     }
     const AttackHeadingPresentation previous = attackHeadingPresentation;
     attackHeadingPresentation = {self};
     __try {
-        originalBehavior(self);
-    } __finally {
-        const AttackHeadingPresentation shown = attackHeadingPresentation;
-        if (shown.behavior == self && shown.borrowed &&
-            *reinterpret_cast<float*>(self + field::behaviour::aimHeading) == shown.presented)
-            *reinterpret_cast<float*>(self + field::behaviour::aimHeading) = shown.heading;
-        attackHeadingPresentation = previous;
-    }
-    Aim a;
-    if (getAim(self, a)) {
-        float heading[3];
-        headingToPoint(a, heading);
-        if ((*reinterpret_cast<const unsigned*>(a.root + field::character::stateFlags) & 0x40204) == 0) {
-            if (!*reinterpret_cast<const unsigned char*>(a.root + field::character::combatStance) ||
-                !*reinterpret_cast<const unsigned*>(self + field::behaviour::swingState)) {
-                std::memcpy(reinterpret_cast<void*>(a.root + field::character::facing), heading, 12);
-                std::memcpy(reinterpret_cast<void*>(a.root + field::character::movementFacing), heading, 12);
-            }
+        __try {
+            originalBehavior(self);
+        } __finally {
+            const AttackHeadingPresentation shown = attackHeadingPresentation;
+            if (shown.behavior == self && shown.borrowed &&
+                *reinterpret_cast<float*>(self + field::behaviour::aimHeading) == shown.presented)
+                *reinterpret_cast<float*>(self + field::behaviour::aimHeading) = shown.heading;
+            attackHeadingPresentation = previous;
         }
+    } __except (countFaultAndContinue(&behaviorFaults)) {
     }
-    publishCue(self);
+    __try {
+        publishCue(self);
+    } __except (countFaultAndContinue(&behaviorFaults)) {
+    }
 }
 
 static constexpr ULONGLONG reticleFreshMs = 250;
@@ -1650,7 +1687,7 @@ static bool guiPointerOwned() {
             point.stamp.mode == now.mode && point.stamp.generation == now.generation &&
             point.stamp.policyRevision == now.policyRevision)
             return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } __except (countFaultAndHandle(&windowFaults)) {}
     point.rejected = true;
     return false;
 }
@@ -1693,7 +1730,7 @@ static bool sampleWorldPointer(uintptr_t gui, WorldPointerSample& sample) {
         sample.centerY = rect.bottom / 2;
         sample.limitX = rect.right / 4;
         sample.limitY = rect.bottom / 4;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         return false;
     }
     AcquireSRWLockExclusive(&worldPointerLock);
@@ -1852,7 +1889,7 @@ static uintptr_t levelGrid() {
 static int levelBlockedProfileBody(uintptr_t level, const float* origin, const float* dir, float length) {
     __try {
         return fp::profile::invoke<fp::profile::Hook::levelNative>(levelRay, level, origin, dir, length) || fp::profile::invoke<fp::profile::Hook::levelNative>(levelRay2, level, origin, dir, length) ? 1 : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         return -1;
     }
 }
@@ -1911,7 +1948,7 @@ static uintptr_t closeWorldHeldObject(uintptr_t viewport) {
         if (!readable(drag, 0x20) || *reinterpret_cast<const unsigned*>(drag + field::drag::flags) != 0x2000) return 0;
         const uintptr_t object = *reinterpret_cast<const uintptr_t*>(drag + field::drag::object);
         return readable(object, field::sceneNode::bodyPart + sizeof(uintptr_t)) ? object : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         return 0;
     }
 }
@@ -1919,12 +1956,12 @@ static uintptr_t closeWorldHeldObject(uintptr_t viewport) {
 static uintptr_t gameplayHeldObject(uintptr_t viewport) {
     const uintptr_t object = closeWorldHeldObject(viewport);
     if (!object ||
-        (!InterlockedCompareExchange(&inputEnabled, 0, 0) && !InterlockedCompareExchange(&rmbFree, 0, 0)) ||
-        InterlockedCompareExchange(&cursorFree, 0, 0) || InterlockedCompareExchange(&windowFree, 0, 0))
+        (!InterlockedCompareExchange(&inputEnabled, 0, 0) && !cursorFreeBitSet(rmbFreeBit)) ||
+        cursorFreeBitSet(cursorFreeBit) || cursorFreeBitSet(windowFreeBit))
         return 0;
     __try {
         return closeViewContext() && *reinterpret_cast<const int*>(gameAt(fp::sig::pointerOverride)) < 1 ? object : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         return 0;
     }
 }
@@ -2123,11 +2160,13 @@ static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
         InterlockedCompareExchange(&cameraReady, 0, 0) && *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) &&
         (flags == 0x1000 || flags == 0x2000) && *reinterpret_cast<const uintptr_t*>(manager + field::drag::object) == object;
     if (closePlacement) {
+        inventoryPlacementAttempts.fetch_add(1, std::memory_order_relaxed);
         const ULONGLONG inventory = inventoryPlacementBegin(object, camera);
         if (flags == 0x1000) resetHeldGrab();
         alignas(8) unsigned char ray[0x40]{};
         if (!prepareHeldPlacement(object, camera, h, ray)) {
             inventoryPlacementEnd(inventory, object, 0);
+            inventoryPlacementFailures.fetch_add(1, std::memory_order_relaxed);
             return 0;
         }
         const DWORD previousThread = placingThread;
@@ -2159,6 +2198,9 @@ static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
             std::memcpy(placingRay, previousRay, sizeof placingRay);
         }
         inventoryPlacementEnd(inventory, object, result);
+        inventoryPlacementLastResult.store(result, std::memory_order_relaxed);
+        if (result) inventoryPlacementSuccesses.fetch_add(1, std::memory_order_relaxed);
+        else inventoryPlacementFailures.fetch_add(1, std::memory_order_relaxed);
         return result;
     }
     inventoryPlacementHandoff();
@@ -2268,12 +2310,21 @@ static char heldPointAlongViewDistance(char hit, uintptr_t out, float distance) 
     if (!std::isfinite(length) || length < 0.5f || !std::isfinite(origin[0] + origin[1] + origin[2]))
         return 0;
     const float eye[3] = {eyeGlobal[0].load(), eyeGlobal[1].load(), eyeGlobal[2].load()};
-    float t = fp::holdAlongRay(origin, dir, eye, distance);
-    if (t < 0.f) return 0;
-    t = holdReachClamp(origin, dir, t);
-    const float reached = *reinterpret_cast<const float*>(out + field::pick::distance);
-    if (hit && (!std::isfinite(reached) || reached < 0.f)) return 0;
-    if (hit) t = std::fmin(t, reached);
+    float t = -1.f;
+    if (hit && !gameplayOwnsPointer()) {
+        const float reached = *reinterpret_cast<const float*>(out + field::pick::distance);
+        if (std::isfinite(reached) && reached >= 1.f) {
+            t = holdReachClamp(origin, dir, reached);
+        }
+    }
+    if (t < 0.f) {
+        t = fp::holdAlongRay(origin, dir, eye, distance);
+        if (t < 0.f) return 0;
+        t = holdReachClamp(origin, dir, t);
+        const float reached = *reinterpret_cast<const float*>(out + field::pick::distance);
+        if (hit && (!std::isfinite(reached) || reached < 0.f)) return 0;
+        if (hit) t = std::fmin(t, reached);
+    }
     const uintptr_t level = levelGrid();
     if (level) {
         if (!levelRay || !levelRay2) return 0;

@@ -18,21 +18,21 @@ static const OwnSection ownSections[] = {
                                   setting::playerGhost}, 11},
     {L"Graphics", L"Screen effects", {light, setting::ambientOcclusion, setting::screenSpaceReflections, setting::lightSmoothing,
                                       image, setting::depthOfField, setting::edgeSmoothing, damage,
-                                      setting::conditionEffects, setting::woundMarks}, 10},
-    {L"Graphics", L"Performance", {setting::drawDistance, setting::objectLights}, 2},
+                                      setting::conditionEffects, setting::woundMarks, setting::woundDebug}, 11},
+    {L"Graphics", L"Performance", {setting::farRooms, setting::drawDistance, setting::objectLights}, 3},
     {L"Graphics", L"Surface detail", {setting::heldDetail, setting::armourDetail, setting::objectDetail, setting::levelDetail}, 4},
     {L"Combat", L"Blocking and aim", {setting::fpDefense, setting::fpSwingSelection, setting::tpCombatAim, setting::indicator}, 4},
     {L"Combat", L"Wind-up arc", {setting::attackCue, setting::cueThrust, setting::cueSize, setting::cueOpacity}, 4},
     {L"Combat", L"Blades", {setting::bladeDrag, setting::stabSink, setting::bladeGain}, 3},
-    {L"Controls", L"Keys", {setting::rotateHeldKey, setting::leanKey, setting::kickKey, setting::jumpKey}, 4},
+    {L"Controls", L"Keys", {setting::rotateHeldKey, setting::kickKey, setting::jumpKey}, 3},
     {L"Controls", L"Mouse and movement", {mouse, setting::sensitivity, setting::invertY, setting::rawMouse, movement,
                                           setting::crouchMode}, 6},
+    {L"Controls", L"Head tracking", {setting::tracking, setting::trackingKey}, 2},
     {L"VR", L"Headset", {setting::vrHeadset, setting::vrIpd, setting::vrScale, setting::vrRenderMode, setting::vrHands,
                          setting::vrPosture, setting::vrTurning, setting::vrEffects, setting::vrGripAngle, setting::vrHaptics,
                          setting::vrPanelWidth, setting::vrPanelDistance}, 12},
     {L"VR", L"Body and comfort", {setting::vrComfort, setting::vrBody, setting::vrHeight, setting::vrGrabTurn, setting::vrEyeScale,
                                   setting::vrGripSlide, setting::vrKick, setting::vrFingerBones}, 8},
-    {L"VR", L"Head tracking", {setting::tracking, setting::trackingKey}, 2},
 };
 
 // Adapt only owned mod checkboxes. The native handler performs the hit test,
@@ -189,7 +189,11 @@ void NativeSettingsIntegration::dispatch(NativeSettingsIntegration* self, Native
         }
         return;
     }
-    if (!widget::activation(*e,action.row,action.capture,Controls)) { self->refusedFlags = e->flags | (unsigned(e->kind) << 24); return; }
+    if (!widget::activation(*e,action.row,action.capture,Controls)) {
+        self->refusedFlags = e->flags | (unsigned(e->kind) << 24);
+        ++self->refusals;
+        return;
+    }
     if constexpr (Controls)
         if (action.row >= 0 && action.row < setting::count && self->ownHelpId != action.row) {
             self->ownHelpId = action.row;
@@ -364,8 +368,7 @@ void NativeSettingsIntegration::row(std::vector<NativeElement>& out,int id,int y
     add<Controls>(out,none,0,x,y,labelWidth,fitLabel(label,labelWidth),5,flags);
     const SettingRange& range=info.range;
     if (range.count) {
-        const std::wstring value=settingValue(transaction.value,id);
-        if (value.size()>10) { fail(); return; }
+        const std::wstring value=settingValue(transaction.value,id).substr(0,10);
         add<Controls>(out,id,1,control,-32768,whole-labelWidth-valueWidth-8,L"",4,flags,true,
                       SettingsDraft::sliderPosition(transaction.value,id),range.count);
         add<Controls>(out,none,0,x+whole-valueWidth,-32768,valueWidth,value,5,flags);
@@ -406,6 +409,20 @@ bool NativeSettingsIntegration::completeCapture(int key) {
         if (runtimeTabs.ready() && hostedCaptureTab >= 0)
             runtimeTabs.change(hostedCaptureTab, 0, hostedCaptureId, 4, 0, 0.f, 0, key);
         hostedCaptureTab = hostedCaptureId = -1;
+        dirty=true;
+        return true;
+    }
+    const auto taken = [&](int row) {
+        const ModSettings& s = transaction.value;
+        return row != id && key == (row == setting::rotateHeldKey ? s.rotateHeldKey :
+                                    row == setting::kickKey ? s.kickKey :
+                                    row == setting::jumpKey ? s.jumpKey : s.trackingKey);
+    };
+    if (key > 0 && (id == setting::rotateHeldKey || id == setting::kickKey || id == setting::jumpKey ||
+                    id == setting::trackingKey) &&
+        (taken(setting::rotateHeldKey) || taken(setting::kickKey) || taken(setting::jumpKey) ||
+         taken(setting::trackingKey))) {
+        captureRow=id; // already one of these actions: keep waiting for another key, Escape cancels
         dirty=true;
         return true;
     }
@@ -588,7 +605,7 @@ void NativeSettingsIntegration::refreshStatusCaptions(const ModSettings& liveSet
         requestRedraw();
     }
     if (fault || closing || callbackActive() || thread != GetCurrentThreadId() ||
-        !controlsOwned || (builtChildPage != 1 && builtChildPage != 4) || !requestRedraw) return;
+        !controlsOwned || (builtChildPage != 1 && builtChildPage != 4 && builtChildPage < ownTabs) || !requestRedraw) return;
     const auto live = table(children.controls);
     if (!ownedControls(live)) return;
     static const auto actions = callbacks<true>(std::make_index_sequence<capacity>{});
@@ -796,7 +813,7 @@ void NativeSettingsIntegration::rebuildControls(Table live) {
 // The game's Graphics and Controls tabs carry nothing of ExCamera's.
 int NativeSettingsIntegration::ownSectionCount() const {
     const int all = int(std::size(ownSections));
-    return vrTab ? all : all - 3; // no headset code in this build: its rows would do nothing
+    return vrTab ? all : all - 2; // no headset code in this build: its rows would do nothing
 }
 const OwnSection& NativeSettingsIntegration::ownSection(int index) { return ownSections[index]; }
 // ExCamera's categories in table order; each is one entry in the list and one page of details.
@@ -836,8 +853,10 @@ void NativeSettingsIntegration::hostedRows(std::vector<NativeElement>& out, int&
     // Left: the layout switch, then headers and section buttons, by category (the default) or by mod.
     struct Left { int section; std::wstring text; };
     std::vector<Left> left;
-    left.push_back({layoutToggle, modsByMod ? L"By mod" : L"By category"});
-    if (modsByMod) left.push_back({-1, L"ExCamera"});
+    if (runtimeTabs.ready()) { // only worth a switch with other mods to list
+        left.push_back({layoutToggle, modsByMod ? L"By mod" : L"By category"});
+        if (modsByMod) left.push_back({-1, L"ExCamera"});
+    }
     for (int k = 0; k < own; ++k) left.push_back({k, categories[size_t(k)]});
     if (modsByMod) {
         if (runtimeSections) left.push_back({-1, L"Mods"});
@@ -923,7 +942,8 @@ void NativeSettingsIntegration::hostedRows(std::vector<NativeElement>& out, int&
     if (ownShown) {
         bool listed = false;
         for (const auto& r : right) listed = listed || (r.first >= 0 && r.first == ownHelpId);
-        const wchar_t* tip = listed ? settingTip(ownHelpId) : nullptr;
+        const wchar_t* reason = listed ? transaction.value.inactiveReason(ownHelpId) : nullptr;
+        const wchar_t* tip = reason ? reason : listed ? settingTip(ownHelpId) : nullptr;
         if (tip) helpFound = wcsncpy_s(text, tip, _TRUNCATE) != EINVAL;
     } else if (runtimeTabs.help && hostedHelpTab == tab) {
         bool listed = false;

@@ -1,0 +1,88 @@
+{
+  "game": {
+    "product": "Exanima",
+    "version": "0.9.5.2g",
+    "channel": "standard",
+    "steam_build": "25803178"
+  },
+  "build_id": "exanima-0.9.5.2g-standard-af9033c7",
+  "executable_size": 3981312,
+  "toolchain": [
+    {"name": "REA", "version": "6.8.0"},
+    {"name": "Ghidra", "version": "12.1.4"},
+    {"name": "Node.js", "version": "24.22.1"},
+    {"name": "JDK", "version": "21.0.12.1"}
+  ],
+  "functions": [
+    {
+      "import_name": "navSampler",
+      "contract_id": "exanima.camera.nav_sampler",
+      "address": "0x100094720",
+      "role_hypothesis": "Native camera sample computation and publication; candidate primary camera adapter seam.",
+      "questions": ["What are the exact arguments and return behavior?", "Which thread invokes the sampler and which objects must remain alive?", "Is a post-native adapter sufficient for correct picking and projection?"]
+    },
+    {
+      "import_name": "headRenderSample",
+      "contract_id": "exanima.camera.head_render_sample",
+      "address": "0x10008b6e0",
+      "role_hypothesis": "Controlled head render-pose sampling and publication.",
+      "questions": ["What object is passed as the first argument?", "What output is written and when is it consumed?", "Does the camera core need this seam or only later stabilization work?"]
+    },
+    {
+      "import_name": "playerBehavior",
+      "contract_id": "exanima.player.behavior_tick",
+      "address": "0x1000c1cf0",
+      "role_hypothesis": "Player behavior tick; candidate lifecycle observation point, not an approved hook.",
+      "questions": ["Which state transitions are observable here?", "What reentrancy and thread rules apply?", "Can lifecycle be established without intercepting behavior?"]
+    },
+    {
+      "import_name": "cameraMouse",
+      "contract_id": "exanima.camera.mouse_input",
+      "address": "0x10011ef40",
+      "role_hypothesis": "Native camera mouse input and camera/player snapshot publication.",
+      "questions": ["Which branches belong to overhead and close-view modes?", "Can native input be retained with a sampler-only camera adapter?", "What cursor and window state must an adapter preserve?"]
+    },
+    {
+      "import_name": "copyCameraSnapshots",
+      "contract_id": "exanima.camera.copy_snapshots",
+      "address": "0x10011eb50",
+      "role_hypothesis": "Copies native camera and player snapshots used by input/camera code.",
+      "questions": ["What are the exact copied layouts?", "When must this run if native camera input is bypassed?", "Which globals are read and what owns their lifetimes?"]
+    },
+    {
+      "import_name": "pickRay",
+      "contract_id": "exanima.interaction.pick_ray",
+      "address": "0x10008f720",
+      "role_hypothesis": "Native viewport ray construction and scene query.",
+      "questions": ["What are the output layout and return semantics?", "Which camera matrices and coordinate spaces does it consume?", "Does the minimal camera adapter preserve native behavior without a hook?"]
+    },
+    {
+      "import_name": "queueWork",
+      "contract_id": "exanima.scheduler.work_ring_push",
+      "address": "0x10001a890",
+      "role_hypothesis": "Native bounded work-ring producer; consumer and task ABI remain unknown.",
+      "questions": ["Where is the consumer and on which thread does it run?", "What happens when the ring is full?", "What do the two queued pointers mean and who owns them?"]
+    },
+    {
+      "import_name": "guiMaintenance",
+      "contract_id": "exanima.ui.maintenance",
+      "address": "0x100032180",
+      "role_hypothesis": "Native GUI maintenance and form-task dispatch.",
+      "questions": ["Which thread and window generation own this call?", "Which virtual calls can execute mod-owned UI code?", "Can settings presentation use a narrower native seam?"]
+    },
+    {
+      "import_name": "guiOptionsOpen",
+      "contract_id": "exanima.ui.settings_open",
+      "address": "0x1000a94d0",
+      "role_hypothesis": "Native Settings-form construction.",
+      "questions": ["What objects and callback tables make up the Settings form?", "How are tabs and rows registered and destroyed?", "What is the narrowest safe integration point for one settings owner?"]
+    },
+    {
+      "import_name": "renderViewport",
+      "contract_id": "exanima.render.viewport",
+      "address": "0x10004bab0",
+      "role_hypothesis": "Native viewport render and presentation orchestration.",
+      "questions": ["Which thread and OpenGL context are current?", "Which frame boundaries are safe for diagnostics or later optional effects?", "Can the core camera remain render-agnostic?"]
+    }
+  ]
+}

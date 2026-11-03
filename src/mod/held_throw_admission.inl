@@ -52,7 +52,7 @@ static bool loadedHeldThrowContracts(const fp::ImageView& file) {
                 return false;
         }
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         return false;
     }
 }

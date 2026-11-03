@@ -275,16 +275,32 @@ inline bool prepareWearPlan(uintptr_t node, uintptr_t material, WearPlan& plan) 
     bool any = false;
     for (unsigned f = 0; f < count; ++f) {
         const unsigned* tri = (const unsigned*)(triangles + (size_t(first) + f) * 12);
-        bool onHead = true;
+        bool onHead = true, mostlyHead = true;
+        float triHeadShare = 0.f;
+        float maxHeadShare = 0.f;
         for (unsigned c = 0; c < 3; ++c) {
             if (tri[c] < static_cast<unsigned>(firstVertex) || tri[c] > static_cast<unsigned>(endVertex)) return false;
             if (aggregate) {
                 const unsigned p = *(unsigned*)(posIndices + size_t(tri[c]) * 4);
                 if (p >= positions.count) return false;
-                if (!fp::wear::headVertex(((const fp::wear::Weights*)weights.data)[p], headBones, boneCount)) onHead = false;
+                const auto& vertexWeights = ((const fp::wear::Weights*)weights.data)[p];
+                if (!fp::wear::headVertex(vertexWeights, headBones, boneCount)) onHead = false;
+                const float share = fp::wear::headShare(vertexWeights, headBones, boneCount);
+                if (share < 0.5f) mostlyHead = false;
+                triHeadShare += share;
+                if (share > maxHeadShare) maxHeadShare = share;
             }
         }
-        auto kind = onHead ? (aggregate && *(unsigned*)(tags + (size_t(first) + f) * 4) == 0 ? fp::wear::Face::head : fp::wear::Face::gear) : fp::wear::Face::native;
+        // Hair and rims are often weighted partly to the neck. Left native they swing against the steady
+        // view, so what mostly follows the head goes with it: worn pieces stay attached to the view, and
+        // hair merged into the head goes with the head, whose hidden scalp it would float off otherwise.
+        // For merged base body faces (tag 0: head, ears, jaw, skull), if the face has any significant head
+        // connection (average share > 15%, max share > 35%, or passing strict vertex tests), it belongs to
+        // the head and must be hidden as Face::head so ears and jaw never clip into first-person view.
+        const bool merged = aggregate && *(unsigned*)(tags + (size_t(first) + f) * 4) == 0;
+        const bool isHeadFace = (merged && (onHead || mostlyHead || (triHeadShare / 3.f) > 0.15f || maxHeadShare > 0.35f)) ||
+                                (!merged && (onHead || mostlyHead));
+        auto kind = isHeadFace ? (merged ? fp::wear::Face::head : fp::wear::Face::gear) : fp::wear::Face::native;
         if (hideAll && kind == fp::wear::Face::gear) kind = fp::wear::Face::blocked;
         wearScratch().faces[f] = kind;
         wearScratch().tags[f] = aggregate ? *(unsigned*)(tags + (size_t(first) + f) * 4) : 1;
@@ -640,7 +656,7 @@ inline void wearSubmitBody(uintptr_t node, int index, uintptr_t caller) {
     __try {
         __try {
             if (single || sampled) submitted = wearSubmission(node, index);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&headwearRenderFaults)) {
             submitted = {};
         }
         if (sampled) wearScope.submission = submitted;
@@ -686,8 +702,7 @@ inline void wearDrawBody(uintptr_t material, bool bind, uintptr_t caller) {
                 if (submitted.index >= 0 && submitted.index <= last && last < 256 &&
                    readable(table, size_t(last + 1) * 8) && *(uintptr_t*)(table + size_t(submitted.index) * 8) == material)
                     prepared = prepareWearPlan(submitted.node, material, plan);
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-                headwearRenderFaults.fetch_add(1, std::memory_order_relaxed);
+            } __except (countFaultAndHandle(&headwearRenderFaults)) {
             }
             if (prepared) {
                 handled = emitWearPlan(plan, bind);
@@ -729,7 +744,7 @@ inline void wearPassBody(uintptr_t list, uintptr_t sector, unsigned flags) {
                     collectWearHints(root, head, sector);
                 }
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&headwearRenderFaults)) {
             wearScope = {};
         }
         wearScope.colourPass = true; // after the scope is settled, so no assignment above clears it
@@ -754,7 +769,7 @@ inline bool admitHeadwearRenderEntries(const fp::ImageView& file, bool sourceVer
     __try {
         admitted = sourceVerified && layout.optionalGroupAvailable("headwearRender") &&
                  loadedOptionalContractsImpl(file, "headwearRender");
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&headwearRenderFaults)) {
         admitted = false;
     }
     if (!admitted) {

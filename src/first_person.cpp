@@ -124,6 +124,7 @@ static MH_STATUS disableStereoHooks() { return MH_OK; }
 #include "mod/xr_hand_render.inl"
 #include "mod/xr_bones_vr.inl"
 #endif
+#include "mod/manual.inl"
 #include "mod/session.inl"
 #include "mod/settings.inl"
 #include "mod/panel.inl"

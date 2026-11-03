@@ -212,6 +212,7 @@ def build_runtime(stage, ver, package, dev=False, openxr_sdk=None):
             'ExanimaFirstPerson.dll': (stage / 'ExanimaFirstPerson.dll').read_bytes(),
             'ExCamera.exe': (stage / 'ExCamera.exe').read_bytes(),
             'manifest.toml': (stage / 'manifest.toml').read_bytes(),
+            'README.txt': (ROOT / 'docs/PLAYER_README.txt').read_bytes(),
             'LICENSE.txt': (ROOT / 'LICENSE').read_bytes(),
             'LICENSE-MinHook.txt': (SRC / 'vendor/minhook/LICENSE.txt').read_bytes(),
         }

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://excamera.local/schema/build.schema.json",
+  "title": "Exanima executable build record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "build_id", "game", "executable", "analysis", "support", "evidence"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "build_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+    "game": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product", "version", "channel", "steam_build"],
+      "properties": {
+        "product": {"const": "Exanima"},
+        "version": {"type": "string"},
+        "channel": {"type": "string"},
+        "steam_build": {"type": ["string", "null"]}
+      }
+    },
+    "executable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "size", "format", "architecture", "image_base", "sections"],
+      "properties": {
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size": {"type": "integer", "minimum": 1},
+        "format": {"const": "pe32-plus"},
+        "architecture": {"const": "x86_64"},
+        "image_base": {"$ref": "#/$defs/address"},
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "start", "end", "length"],
+            "properties": {
+              "name": {"type": "string"},
+              "start": {"$ref": "#/$defs/address"},
+              "end": {"$ref": "#/$defs/address"},
+              "length": {"type": "integer", "minimum": 0}
+            }
+          }
+        }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["procedure_count", "string_count", "toolchain"],
+      "properties": {
+        "procedure_count": {"type": "integer", "minimum": 0},
+        "string_count": {"type": "integer", "minimum": 0},
+        "toolchain": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version"],
+            "properties": {
+              "name": {"type": "string"},
+              "version": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "support": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "release_enabled", "reason"],
+      "properties": {
+        "status": {"enum": ["research_only", "development", "release_candidate", "supported", "retired"]},
+        "release_enabled": {"type": "boolean"},
+        "reason": {"type": "string"}
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["kind", "evidence_id", "provider"],
+        "properties": {
+          "kind": {"type": "string"},
+          "evidence_id": {"type": "string", "pattern": "^ev_[0-9a-f]{64}$"},
+          "provider": {"$ref": "#/$defs/provider"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "address": {"type": "string", "pattern": "^0x[0-9a-f]+$"},
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "version"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "version": {"type": "string"}
+      }
+    }
+  }
+}

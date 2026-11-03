@@ -22,14 +22,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out tagged source and full history
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           architecture: x64
@@ -42,6 +42,10 @@ jobs:
       - name: Check generated compatibility tables
         shell: pwsh
         run: python tools/check_generated.py
+
+      - name: Run unit tests
+        shell: pwsh
+        run: python -m unittest discover tools/tests
 
       # build.py initializes x64 MSVC and checks DLL exports.
       # The CI checks need only source and Python, never a game executable.
@@ -58,10 +62,10 @@ jobs:
         run: python tools/release.py notes
 
       - name: Upload release ZIP
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           path: ${{ steps.release.outputs.asset }}
-          archive: false
+          name: ExCamera-release
           if-no-files-found: error
           retention-days: 14
 

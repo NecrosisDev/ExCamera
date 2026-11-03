@@ -1,0 +1,130 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_1000acc60()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.player.post_physics",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_c08364ab66930442629d51967c3cee17edcd1e3ea6d8d0cb1e5c4a4120b6597a",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x1000191a0",
+        "name": "FUN_1000191a0"
+      },
+      {
+        "address": "0x100019f00",
+        "name": "FUN_100019f00"
+      },
+      {
+        "address": "0x10001c900",
+        "name": "FUN_10001c900"
+      },
+      {
+        "address": "0x1000ac7f0",
+        "name": "FUN_1000ac7f0"
+      }
+    ],
+    "callers": [
+      {
+        "address": "0x1000aedc0",
+        "name": "FUN_1000aedc0"
+      },
+      {
+        "address": "0x1000aeec0",
+        "name": "FUN_1000aeec0"
+      },
+      {
+        "address": "0x1000aef50",
+        "name": "FUN_1000aef50"
+      },
+      {
+        "address": "0x1000aefd0",
+        "name": "FUN_1000aefd0"
+      },
+      {
+        "address": "0x1000b8440",
+        "name": "FUN_1000b8440"
+      },
+      {
+        "address": "0x1000c1cf0",
+        "name": "FUN_1000c1cf0"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "Which physics queries establish support?",
+      "Where are foot contact transforms and flags written?",
+      "Is an authoritative ground height or support plane exposed?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Post-movement character update; candidate for support/contact and ground-height maintenance."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x1000ad32f",
+          "start": "0x1000acc60"
+        }
+      ],
+      "span_bytes": 1744,
+      "total_bytes": 1744
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_1000acc60",
+    "rva": "0xacc60",
+    "va": "0x1000acc60"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

@@ -68,7 +68,7 @@ static void combatAttention(uintptr_t bh) {
             gaze = reinterpret_cast<float*>(a.root + field::character::gaze);
             memcpy(saved, gaze, sizeof saved);
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&behaviorFaults)) {
         gaze = nullptr;
     }
     __try {
@@ -127,7 +127,7 @@ static DefensePermission defensePermission(uintptr_t root, bool* known = nullptr
                           InterlockedCompareExchange(&inputEnabled, 0, 0) && controls(bh) &&
                           (keyState(VK_RBUTTON) & 0x8000);
         return held ? DefensePermission::held : DefensePermission::denied;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&behaviorFaults)) {
         // Existing callers remain native on uncertainty; optional adapters must
         // distinguish an unreadable owner from a legitimate policy change.
         if (known) *known = false;
@@ -161,7 +161,7 @@ static uint32_t combatPosture(uintptr_t bh) {
             *(unsigned char*)(root + field::character::defenseActive))
             return native;
         if (guardReadiness(root)) return 4;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&behaviorFaults)) {
         // Optional ownership/field failure leaves the native result intact.
     }
     return native;
@@ -235,7 +235,7 @@ static bool manualInterceptionReady(uintptr_t root) {
         const int motion = *(int*)(root + field::character::motion);
         if ((state != 0 && state != 8) || (motion != 3 && motion != 4)) return false;
         return guardReadiness(root);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&behaviorFaults)) {
         return false;
     }
 }
@@ -311,7 +311,7 @@ static bool nativeDefenseEntryMatches(const fp::ImageView& file, uint32_t rva) {
     if (!rva || static_cast<uint64_t>(rva) + 16 > file.size) return false;
     __try {
         return std::memcmp(reinterpret_cast<const void*>(base + rva), file.data + rva, 16) == 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&behaviorFaults)) {
         return false;
     }
 }

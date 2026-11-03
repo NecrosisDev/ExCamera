@@ -368,7 +368,7 @@ static bool restoreCueBinding(const CueSavedBinding& binding) {
                 selected = binding.makeRead(binding.draw, binding.read, binding.context) != FALSE;
             restoredBinding = selected && cueBindingMatches(binding);
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } __except (countFaultAndHandle(&windowFaults)) {}
     if (!restoredBinding) {
         cueBindingFailed = true;
         cueRetiring = true;
@@ -391,7 +391,7 @@ static bool retireCueContext(CueContext& owner) {
             if (owner.resources.live()) owner.resources.retire(owner.api);
             owner = CueContext{};
             retiredResources = true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&windowFaults)) {
             owner.failed = true; // Keep incomplete ownership visible to the stop drain.
         }
     } __finally { --cueGlDepth; }
@@ -764,7 +764,7 @@ static void presentCue(fp::CueSide side, LONG x, LONG y, float fill, float alpha
     if (!w || !GetClientRect(w, &rect) || rect.right < 40 || rect.bottom < 40) return;
     __try {
         cueGl = drawCue(side, static_cast<float>(x), static_cast<float>(y), fill, alpha, rect.right, rect.bottom) ? 1 : -1;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         failCurrentCue();
         cueGl = -1;
     }
@@ -854,8 +854,8 @@ static void windowFreeStep() {
         bool dragging = false;
         __try {
             shown = gameWindowOpen();
-            dragging = InterlockedCompareExchange(&windowFree, 0, 0) && guiDragging();
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            dragging = cursorFreeBitSet(windowFreeBit) && guiDragging();
+        } __except (countFaultAndHandle(&windowFaults)) {
             shown = 0;
             dragging = false;
         } // a drag out of a window keeps the cursor until it ends
@@ -865,12 +865,12 @@ static void windowFreeStep() {
         } else
             descriptionSince = 0;
         want = (shown & (cursorPanelInventory | cursorPanelCommerce | cursorPanelArena)) || dragging ||
-               ((shown & cursorPanelDescription) && (InterlockedCompareExchange(&windowFree, 0, 0) ||
+               ((shown & cursorPanelDescription) && (cursorFreeBitSet(windowFreeBit) ||
                                 now - descriptionSince >= descriptionSettleMs));
     } else
         descriptionSince = 0;
-    if (want != (InterlockedCompareExchange(&windowFree, 0, 0) != 0)) {
-        InterlockedExchange(&windowFree, want ? 1 : 0);
+    if (want != cursorFreeBitSet(windowFreeBit)) {
+        setCursorFreeBit(windowFreeBit, want);
         releaseInput();
         if (want) ++windowFreezes;
     } // releaseInput: no view jump when it ends
@@ -916,7 +916,7 @@ static bool crouchAppliesTo(uintptr_t root) {
         return root == *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) && crouchAllowed(root) &&
                request.head == *reinterpret_cast<uintptr_t*>(root + field::character::headPart) &&
                request.scene == *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene));
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         return false;
     }
 }
@@ -934,7 +934,7 @@ static void crouchFrame() {
         const bool rootReadable = readable(next.root, 0x1300);
         if (rootReadable) next.head = *reinterpret_cast<uintptr_t*>(next.root + field::character::headPart);
         allowed = crouchAllowedReadable(next.root, rootReadable);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         next = {};
         allowed = false;
     }
@@ -950,13 +950,13 @@ static void crouchFrame() {
     if (allowed && mode && crouchState.on) {
         __try {
             room = crouchHeadroomClear(next.root);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&windowFaults)) {
             allowed = false; // a failed native query ends this frame's request
         }
     }
     // A press that belonged to a previous character must be released before
     // either hold or toggle can start a new crouch. FP/TP share this request.
-    const bool key = physicalKey && !crouchWaitRelease && !InterlockedCompareExchange(&windowFree, 0, 0);
+    const bool key = physicalKey && !crouchWaitRelease && !cursorFreeBitSet(windowFreeBit);
     next.mode = mode;
     next.held = fp::crouchStep(crouchState, mode, key, allowed, room);
     AcquireSRWLockExclusive(&crouchLock);

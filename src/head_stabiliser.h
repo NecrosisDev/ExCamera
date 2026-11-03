@@ -69,7 +69,8 @@ inline void turn3(const float* r, const float* v, float* o) {
     const float kd = dot3(k, v);
     for (int i = 0; i < 3; ++i) o[i] = v[i] * c + kv[i] * s + k[i] * kd * (1 - c);
 }
-inline float steadyHeading(float (*points)[3], const float* coeffs, const float* gaze, int strength) {
+inline float steadyHeading(float (*points)[3], const float* coeffs, const float* gaze, int strength,
+                           float (*history)[3] = nullptr) {
     float pose[12];
     tetraPose(points, coeffs, pose);
     for (float v : pose)
@@ -96,7 +97,12 @@ inline float steadyHeading(float (*points)[3], const float* coeffs, const float*
         float v[3], out[3];
         for (int i = 0; i < 3; ++i) v[i] = points[k][i] - centre[i];
         turn3(rotation, v, out);
-        for (int i = 0; i < 3; ++i) points[k][i] = centre[i] + out[i];
+        for (int i = 0; i < 3; ++i) {
+            const float newPos = centre[i] + out[i];
+            const float delta = newPos - points[k][i];
+            points[k][i] = newPos;
+            if (history) history[k][i] += delta;
+        }
     }
     return turn;
 }
@@ -113,7 +119,7 @@ inline void frameTurn(const float* const* a, const float* const* b, float* r) {
 // One tick. points: the head's 4 working points (in/out). gaze: the unit direction the mouse commands.
 // Returns false (and resets) when anything is unusable; nothing is changed then.
 inline bool steadyHead(HeadSteadyState& st, float (*points)[3], const float* coeffs, const float* gaze,
-                       const HeadSteadyStrength& s) {
+                       const HeadSteadyStrength& s, float (*history)[3] = nullptr) {
     float pose[12];
     tetraPose(points, coeffs, pose);
     float f[3] = {pose[6], pose[7], pose[8]}, u[3] = {pose[3], pose[4], pose[5]},
@@ -208,7 +214,12 @@ inline bool steadyHead(HeadSteadyState& st, float (*points)[3], const float* coe
         for (int j = 0; j < 3; ++j) d[j] = points[k][j] - centre[j];
         float t[3];
         turn3(c, d, t);
-        for (int j = 0; j < 3; ++j) points[k][j] = centre[j] + t[j] + (j == 1 ? lift : 0.f);
+        for (int j = 0; j < 3; ++j) {
+            const float newPos = centre[j] + t[j] + (j == 1 ? lift : 0.f);
+            const float delta = newPos - points[k][j];
+            points[k][j] = newPos;
+            if (history) history[k][j] += delta;
+        }
     }
     turn3(c, f, st.forward);
     turn3(c, u, st.up);
@@ -223,7 +234,8 @@ struct BodySteadyState {
     bool primed = false;
     float axes[3][3]{};
 };
-inline bool steadyBodyPart(BodySteadyState& st, float (*points)[3], const float* coeffs, int strength) {
+inline bool steadyBodyPart(BodySteadyState& st, float (*points)[3], const float* coeffs, int strength,
+                           float (*history)[3] = nullptr) {
     float pose[12];
     tetraPose(points, coeffs, pose);
     float a[3][3];
@@ -256,7 +268,12 @@ inline bool steadyBodyPart(BodySteadyState& st, float (*points)[3], const float*
         for (int j = 0; j < 3; ++j) d[j] = points[kk][j] - centre[j];
         float t[3];
         turn3(c, d, t);
-        for (int j = 0; j < 3; ++j) points[kk][j] = centre[j] + t[j];
+        for (int j = 0; j < 3; ++j) {
+            const float newPos = centre[j] + t[j];
+            const float delta = newPos - points[kk][j];
+            points[kk][j] = newPos;
+            if (history) history[kk][j] += delta;
+        }
     }
     for (int i = 0; i < 3; ++i) turn3(c, a[i], st.axes[i]);
     return true;

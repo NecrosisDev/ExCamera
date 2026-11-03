@@ -39,7 +39,9 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.drawDistance = drawDistanceM.load();
     s.objectLights = objectLightCap.load();
     s.woundMarks = woundMarks.load() > 0.f;
+    s.woundDebug = woundDebug.load(std::memory_order_relaxed);
     s.lightSmoothing = lightSmoothing.load();
+    s.farRooms = farRooms.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
     s.rawMouseFallback = rawMouse && !rawWanted.load();
@@ -97,6 +99,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.fpSwingSelection = fpSwingSelection.load();
     s.tpSwingSelection = tpSwingSelection.load();
     s.manualDefenseAvailable = manualDefenseReady.load();
+    s.scriptRuntimeAvailable = true;
     s.crouchMode = crouchMode.load();
     s.nearClip = nearClip.load();
     s.headRoll = headSteadyRoll.load();
@@ -168,7 +171,9 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     drawDistanceM = s.drawDistance;
     objectLightCap = s.objectLights;
     woundMarks = s.woundMarks ? 1.f : 0.f;
+    woundDebug.store(s.woundDebug, std::memory_order_relaxed);
     lightSmoothing = s.lightSmoothing;
+    farRooms = s.farRooms;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;
     rawMouse = s.rawMouse;
@@ -374,11 +379,6 @@ static void persistSettingsRows(unsigned budget) {
     }
 }
 static void flushSettings() { persistSettingsRows(panel::setting::count); }
-static void awaitRawRegistration(bool enabling) {
-    for (int i = 0; i < 20 && enabling && !InterlockedCompareExchange(&rawRegistered, 0, 0) && rawWanted.load();
-         ++i)
-        Sleep(25); // the worker registers within 100 ms
-}
 // Native Apply owns a draft. Merge only edited rows into the latest state so a
 // menu opened before a FOV key or raw-input fallback cannot overwrite that work.
 static void commitSettingsDraft(const panel::ModSettings& initial, const panel::ModSettings& draft) {
@@ -397,39 +397,4 @@ static void commitSettingsDraft(const panel::ModSettings& initial, const panel::
     // Registration remains asynchronous on its existing worker. GUI maintenance
     // must never wait for that worker while it owns the native Settings task.
 }
-// Bulk configuration remains available to the owned tests and explicit callers.
-// Interactive controls use applySetting below, which never accepts a stale image.
-[[maybe_unused]] static panel::ModSettings applySettings(const panel::ModSettings& want) {
-    panel::ModSettings s = want;
-    s.normalize();
-    bool enablingRaw;
-    {
-        SettingsGuard guard;
-        const panel::ModSettings was = readLiveSettings();
-        enablingRaw = s.rawMouse && !was.rawMouse;
-        commitSettings(s, was);
-    }
-    awaitRawRegistration(enablingRaw); // worker reconciliation needs settingsLock too
-    return currentSettings();
-}
-// From the F8 window: choose the latest state and apply one row action while the
-// same lock excludes FOV keys, bulk changes, and raw fallback.
-[[maybe_unused]] static panel::SettingsChange applySetting(int row, int delta, int group) {
-    panel::SettingsChange result;
-    bool enablingRaw = false;
-    {
-        SettingsGuard guard;
-        const panel::ModSettings was = readLiveSettings();
-        result.settings = was;
-        if (row != panel::ModSettings::resetControl && was.inactiveReason(row)) return result;
-        result.changed = result.settings.click(row, delta, group);
-        if (!result.changed) return result;
-        result.settings.normalize();
-        enablingRaw = result.settings.rawMouse && !was.rawMouse;
-        result.saved = commitSettings(result.settings, was);
-    }
-    awaitRawRegistration(enablingRaw);
-    result.settings = currentSettings();
-    result.rawUnavailable = enablingRaw && result.settings.rawMouseFallback;
-    return result;
-}
+

@@ -1,0 +1,34 @@
+{
+  "game": {"product": "Exanima", "version": "0.9.5.2g", "channel": "standard", "steam_build": "25803178"},
+  "build_id": "exanima-0.9.5.2g-standard-af9033c7",
+  "executable_size": 3981312,
+  "toolchain": [
+    {"name": "REA", "version": "6.8.0"},
+    {"name": "Ghidra", "version": "12.1.4"},
+    {"name": "Node.js", "version": "24.22.1"},
+    {"name": "JDK", "version": "21.0.12.1"}
+  ],
+  "functions": [
+    {
+      "import_name": "postPhysics",
+      "contract_id": "exanima.player.post_physics",
+      "address": "0x1000acc60",
+      "role_hypothesis": "Post-movement character update; candidate for support/contact and ground-height maintenance.",
+      "questions": ["Which physics queries establish support?", "Where are foot contact transforms and flags written?", "Is an authoritative ground height or support plane exposed?"]
+    },
+    {
+      "import_name": "supportPose",
+      "contract_id": "exanima.player.support_pose",
+      "address": "0x100163bb0",
+      "role_hypothesis": "Character support and balance pose update using leg/contact data.",
+      "questions": ["How are support contacts used to derive posture and root height?", "Do contact fields describe foot targets or actual ground geometry?"]
+    },
+    {
+      "import_name": "updatePhysical",
+      "contract_id": "exanima.player.physics_update",
+      "address": "0x1001760f0",
+      "role_hypothesis": "Character physical pose and support update invoked by placement.",
+      "questions": ["Which leg/contact fields are recomputed?", "Does it use a native ground ray, plane, or height field?", "Which fields are safe for a read-only camera support contract?"]
+    }
+  ]
+}

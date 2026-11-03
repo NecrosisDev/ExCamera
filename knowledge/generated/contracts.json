@@ -1,0 +1,5289 @@
+{
+  "builds": [
+    {
+      "analysis": {
+        "procedure_count": 8550,
+        "string_count": 5147,
+        "toolchain": [
+          {
+            "name": "REA",
+            "version": "6.8.0"
+          },
+          {
+            "name": "Ghidra",
+            "version": "12.1.4"
+          },
+          {
+            "name": "Node.js",
+            "version": "24.22.1"
+          },
+          {
+            "name": "JDK",
+            "version": "21.0.12.1"
+          }
+        ]
+      },
+      "build_id": "exanima-0.9.5.2g-standard-af9033c7",
+      "evidence": [
+        {
+          "analysis_profile_digest": "88ff17e640ad7e6f78309d138f4e008711df06b80e900a10374178088416ed48",
+          "evidence_id": "ev_af12041a603d8c459d34acf8e92724dbf342ca35b39e79a9b7c0d4692c90a0ac",
+          "kind": "rea_ghidra_binary_overview",
+          "operation": "binary_overview",
+          "provider": {
+            "id": "rea-workflow",
+            "name": "REA composed investigation workflow",
+            "version": "1"
+          }
+        }
+      ],
+      "executable": {
+        "architecture": "x86_64",
+        "format": "pe32-plus",
+        "image_base": "0x100000000",
+        "sections": [
+          {
+            "end": "0x100000400",
+            "length": 1024,
+            "name": "Headers",
+            "start": "0x100000000"
+          },
+          {
+            "end": "0x1002a9200",
+            "length": 2785792,
+            "name": ".text",
+            "start": "0x100001000"
+          },
+          {
+            "end": "0x1002f4400",
+            "length": 304128,
+            "name": ".data",
+            "start": "0x1002aa000"
+          },
+          {
+            "end": "0x100376a00",
+            "length": 530944,
+            "name": ".rdata",
+            "start": "0x1002f5000"
+          },
+          {
+            "end": "0x10038ca00",
+            "length": 88576,
+            "name": ".pdata",
+            "start": "0x100377000"
+          },
+          {
+            "end": "0x1005bdc28",
+            "length": 2296872,
+            "name": ".bss",
+            "start": "0x10038d000"
+          },
+          {
+            "end": "0x1005be200",
+            "length": 512,
+            "name": ".CRT",
+            "start": "0x1005be000"
+          },
+          {
+            "end": "0x1005c0e00",
+            "length": 7680,
+            "name": ".idata",
+            "start": "0x1005bf000"
+          },
+          {
+            "end": "0x1005c1200",
+            "length": 512,
+            "name": ".edata",
+            "start": "0x1005c1000"
+          },
+          {
+            "end": "0x100602000",
+            "length": 262144,
+            "name": ".rsrc",
+            "start": "0x1005c2000"
+          }
+        ],
+        "sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+        "size": 3981312
+      },
+      "game": {
+        "channel": "standard",
+        "product": "Exanima",
+        "steam_build": "25803178",
+        "version": "0.9.5.2g"
+      },
+      "schema_version": 1,
+      "support": {
+        "reason": "Static research imported; runtime attachment and gameplay acceptance have not been established.",
+        "release_enabled": false,
+        "status": "research_only"
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "acceptance": {
+        "clean_stop": true,
+        "document": "docs/acceptance/camera-adapter.md",
+        "first_person": true,
+        "overhead": true,
+        "paused_transitions": true,
+        "third_person": true
+      },
+      "adapter": {
+        "helper_contracts": [
+          "exanima.camera.head_render_sample",
+          "exanima.camera.rebuild_projection"
+        ],
+        "hook_contract": "exanima.camera.nav_sampler",
+        "module": "NativeCamera"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "capability_id": "excamera.camera.core",
+      "evidence_states": [
+        "observed_static",
+        "reviewed_static",
+        "byte_validated",
+        "observed_runtime",
+        "validated_runtime"
+      ],
+      "limitations": [
+        "Mouse ownership, settings UI, and rebinding are not implemented.",
+        "Third-person live collision queries and visual filtering remain future work.",
+        "Movement/combat alignment, interaction, death, scene travel, and long soaks are not covered.",
+        "Only the supplied standard Exanima executable is accepted; EMTK, ExanimaLua, Hellmode, and other builds are not covered."
+      ],
+      "required_contracts": [
+        "exanima.camera.head_render_sample",
+        "exanima.camera.nav_sampler",
+        "exanima.camera.rebuild_projection"
+      ],
+      "runtime": {
+        "eligible": true,
+        "hook_count": 1,
+        "module_faults": 0,
+        "restoration_failed": false,
+        "state": "validated_practice"
+      },
+      "schema_version": 1
+    },
+    {
+      "acceptance": {
+        "clean_stop": true,
+        "document": "docs/acceptance/frustum-adapter.md",
+        "first_person": true,
+        "overhead": true,
+        "paused_transitions": true,
+        "third_person": true
+      },
+      "adapter": {
+        "helper_contracts": [
+          "exanima.camera.head_render_sample",
+          "exanima.collision.level_ray",
+          "exanima.collision.level_ray_secondary",
+          "exanima.collision.mesh_trace"
+        ],
+        "hook_contract": "exanima.camera.nav_sampler",
+        "module": "NativeCamera"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "capability_id": "excamera.collision.core",
+      "evidence_states": [
+        "observed_static",
+        "reviewed_static",
+        "byte_validated",
+        "observed_runtime",
+        "validated_runtime"
+      ],
+      "limitations": [
+        "Pivot and near-plane corner logic is implemented and validated for the tested static-level scenes; a dedicated live shoulder/corner-only obstruction has not been isolated.",
+        "Ground protection, actual doorway traversal, dynamic-object policies, and combat interaction remain open.",
+        "The central-boom baseline measured 273.5009 microseconds per query; the pivot/frustum path commonly uses six grid queries per camera sample and measured 647.6174 microseconds per sample in the test room. Full performance acceptance remains open.",
+        "Historical counter bursts did not reproduce in the instrumented baseline session; longer play soaks are still required.",
+        "Other builds, EMTK/ExanimaLua coexistence, and scene travel are not covered."
+      ],
+      "required_contracts": [
+        "exanima.camera.head_render_sample",
+        "exanima.camera.nav_sampler",
+        "exanima.collision.level_ray",
+        "exanima.collision.level_ray_secondary",
+        "exanima.collision.mesh_trace"
+      ],
+      "runtime": {
+        "eligible": true,
+        "hook_count": 3,
+        "module_faults": 0,
+        "restoration_failed": false,
+        "state": "validated_practice"
+      },
+      "schema_version": 1
+    },
+    {
+      "acceptance": {
+        "clean_stop": true,
+        "document": "docs/acceptance/input-adapter.md",
+        "first_person": true,
+        "overhead": true,
+        "paused_transitions": true,
+        "third_person": true
+      },
+      "adapter": {
+        "helper_contracts": [
+          "exanima.camera.copy_snapshots",
+          "exanima.camera.nav_sampler"
+        ],
+        "hook_contract": "exanima.camera.mouse_input",
+        "module": "NativeCamera"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "capability_id": "excamera.input.core",
+      "evidence_states": [
+        "observed_static",
+        "reviewed_static",
+        "byte_validated",
+        "observed_runtime",
+        "validated_runtime"
+      ],
+      "limitations": [
+        "Settings persistence, rebinding, FOV controls, and controller input are not implemented.",
+        "Death, scene travel, resolution changes, inventory/shops/dialogue, and long soaks remain future acceptance work.",
+        "Third-person live collision and visual filtering are not covered.",
+        "Only the supplied standard Exanima executable is accepted; EMTK, ExanimaLua, Hellmode, and other builds are not covered."
+      ],
+      "required_contracts": [
+        "exanima.camera.copy_snapshots",
+        "exanima.camera.mouse_input",
+        "exanima.camera.nav_sampler"
+      ],
+      "runtime": {
+        "eligible": true,
+        "hook_count": 2,
+        "module_faults": 0,
+        "restoration_failed": false,
+        "state": "validated_practice"
+      },
+      "schema_version": 1
+    },
+    {
+      "acceptance": {
+        "clean_stop": true,
+        "document": "docs/acceptance/lifecycle-adapter.md",
+        "first_person": true,
+        "overhead": true,
+        "paused_transitions": true,
+        "third_person": true
+      },
+      "adapter": {
+        "helper_contracts": [
+          "exanima.camera.mouse_input",
+          "exanima.camera.nav_sampler"
+        ],
+        "hook_contract": "exanima.render.present",
+        "module": "NativeCamera/LifecycleTracker"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "capability_id": "excamera.lifecycle.core",
+      "evidence_states": [
+        "observed_static",
+        "reviewed_static",
+        "byte_validated",
+        "observed_runtime",
+        "validated_runtime"
+      ],
+      "limitations": [
+        "The story-to-arena identity change is not proof of every in-game level-exit path.",
+        "Resolution/fullscreen changes, inventory/shops/dialogue, and long soaks remain future acceptance work.",
+        "Only the supplied standard Exanima executable is accepted; EMTK, ExanimaLua, Hellmode, and other builds are not covered."
+      ],
+      "required_contracts": [
+        "exanima.camera.mouse_input",
+        "exanima.camera.nav_sampler",
+        "exanima.render.present"
+      ],
+      "runtime": {
+        "eligible": true,
+        "hook_count": 3,
+        "module_faults": 0,
+        "restoration_failed": false,
+        "state": "validated_practice"
+      },
+      "schema_version": 1
+    },
+    {
+      "acceptance": {
+        "clean_stop": true,
+        "document": "docs/acceptance/settings-adapter.md",
+        "first_person": true,
+        "overhead": true,
+        "paused_transitions": true,
+        "third_person": true
+      },
+      "adapter": {
+        "helper_contracts": [
+          "exanima.camera.nav_sampler",
+          "exanima.camera.rebuild_projection"
+        ],
+        "hook_contract": "exanima.camera.mouse_input",
+        "module": "NativeCamera/SettingsWorker"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "capability_id": "excamera.settings.core",
+      "evidence_states": [
+        "observed_static",
+        "reviewed_static",
+        "byte_validated",
+        "observed_runtime",
+        "validated_runtime"
+      ],
+      "limitations": [
+        "There is no native settings UI; inspection uses --settings and the INI file.",
+        "Sensitivity and third-person placement are persisted but have no dedicated UI or hotkeys.",
+        "Rebinding, collision, death, scene travel, and long soaks remain future acceptance work.",
+        "Only the supplied standard Exanima executable is accepted; EMTK, ExanimaLua, Hellmode, and other builds are not covered."
+      ],
+      "required_contracts": [
+        "exanima.camera.mouse_input",
+        "exanima.camera.nav_sampler",
+        "exanima.camera.rebuild_projection"
+      ],
+      "runtime": {
+        "eligible": true,
+        "hook_count": 2,
+        "module_faults": 0,
+        "restoration_failed": false,
+        "state": "validated_practice"
+      },
+      "schema_version": 1
+    }
+  ],
+  "functions": [
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10011eb50()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.copy_snapshots",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_c01d9f8b9db69324918c76512fa0004cac182d8df89671917a67f746f53f2e24",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [],
+        "callers": [
+          {
+            "address": "0x10011ef40",
+            "name": "FUN_10011ef40"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the exact copied layouts?",
+          "When must this run if native camera input is bypassed?",
+          "Which globals are read and what owns their lifetimes?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Copies native camera and player snapshots used by input/camera code."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10011ebde",
+              "start": "0x10011eb50"
+            }
+          ],
+          "span_bytes": 143,
+          "total_bytes": 143
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10011eb50",
+        "rva": "0x11eb50",
+        "va": "0x10011eb50"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10001ceb0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.expand_pose",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_e525e88ad2323aef3a6c0f078690985630500418b73e2fdc4a7483b2152bd2cf",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [],
+        "callers": [
+          {
+            "address": "0x100050eb0",
+            "name": "FUN_100050eb0"
+          },
+          {
+            "address": "0x100052ee0",
+            "name": "FUN_100052ee0"
+          },
+          {
+            "address": "0x10008aaf0",
+            "name": "FUN_10008aaf0"
+          },
+          {
+            "address": "0x10008cf10",
+            "name": "FUN_10008cf10"
+          },
+          {
+            "address": "0x100094d80",
+            "name": "FUN_100094d80"
+          },
+          {
+            "address": "0x10009fbe0",
+            "name": "FUN_10009fbe0"
+          },
+          {
+            "address": "0x1000a0820",
+            "name": "FUN_1000a0820"
+          },
+          {
+            "address": "0x1000a0b20",
+            "name": "FUN_1000a0b20"
+          },
+          {
+            "address": "0x1000a0ce0",
+            "name": "FUN_1000a0ce0"
+          },
+          {
+            "address": "0x1000d1340",
+            "name": "FUN_1000d1340"
+          },
+          {
+            "address": "0x1000df320",
+            "name": "FUN_1000df320"
+          },
+          {
+            "address": "0x1000e7370",
+            "name": "FUN_1000e7370"
+          },
+          {
+            "address": "0x1000e81d0",
+            "name": "FUN_1000e81d0"
+          },
+          {
+            "address": "0x100153d50",
+            "name": "FUN_100153d50"
+          },
+          {
+            "address": "0x1001549b0",
+            "name": "FUN_1001549b0"
+          },
+          {
+            "address": "0x100154dc0",
+            "name": "FUN_100154dc0"
+          },
+          {
+            "address": "0x100155c20",
+            "name": "FUN_100155c20"
+          },
+          {
+            "address": "0x1001c60f0",
+            "name": "FUN_1001c60f0"
+          },
+          {
+            "address": "0x1001c6460",
+            "name": "FUN_1001c6460"
+          },
+          {
+            "address": "0x1001c6670",
+            "name": "FUN_1001c6670"
+          },
+          {
+            "address": "0x1001c6ff0",
+            "name": "FUN_1001c6ff0"
+          },
+          {
+            "address": "0x1001e01d0",
+            "name": "FUN_1001e01d0"
+          },
+          {
+            "address": "0x1001e0a50",
+            "name": "FUN_1001e0a50"
+          },
+          {
+            "address": "0x10023d0b0",
+            "name": "FUN_10023d0b0"
+          },
+          {
+            "address": "0x100245870",
+            "name": "FUN_100245870"
+          },
+          {
+            "address": "0x100247f00",
+            "name": "FUN_100247f00"
+          },
+          {
+            "address": "0x1002535a0",
+            "name": "FUN_1002535a0"
+          },
+          {
+            "address": "0x10025b630",
+            "name": "FUN_10025b630"
+          },
+          {
+            "address": "0x100275e10",
+            "name": "FUN_100275e10"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the exact source and destination layouts?",
+          "Which matrix fields remain untouched?",
+          "Can the domain produce this transformation without a native call?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Expands a 12-float affine camera pose into a 16-float native matrix; despite the legacy name, not a matrix inverse."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10001cf1b",
+              "start": "0x10001ceb0"
+            }
+          ],
+          "span_bytes": 108,
+          "total_bytes": 108
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10001ceb0",
+        "rva": "0x1ceb0",
+        "va": "0x10001ceb0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10008b6e0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.head_render_sample",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_c78b2f5b48ef0dd3d7c4f97634bf83ab8a1e17d3e8efd2c048fc9b2e0c00b829",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x10007e200",
+            "name": "FUN_10007e200"
+          },
+          {
+            "address": "0x10008b640",
+            "name": "FUN_10008b640"
+          },
+          {
+            "address": "0x10008b7a0",
+            "name": "FUN_10008b7a0"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x10017a2d0",
+            "name": "FUN_10017a2d0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What object is passed as the first argument?",
+          "What output is written and when is it consumed?",
+          "Does the camera core need this seam or only later stabilization work?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Controlled head render-pose sampling and publication."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10008b709",
+              "start": "0x10008b6e0"
+            },
+            {
+              "end": "0x10008b796",
+              "start": "0x10008b70c"
+            }
+          ],
+          "span_bytes": 183,
+          "total_bytes": 181
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10008b6e0",
+        "rva": "0x8b6e0",
+        "va": "0x10008b6e0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10011e6f0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.level_trace",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_b8077a92abff3168557da5bdc304da3b4c5158932b1b5091c1503802a42dfaac",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x10004fcb0",
+            "name": "FUN_10004fcb0"
+          },
+          {
+            "address": "0x10008fb30",
+            "name": "FUN_10008fb30"
+          },
+          {
+            "address": "0x1001041b0",
+            "name": "FUN_1001041b0"
+          },
+          {
+            "address": "0x100104300",
+            "name": "FUN_100104300"
+          },
+          {
+            "address": "0x1001430f0",
+            "name": "FUN_1001430f0"
+          },
+          {
+            "address": "0x100143290",
+            "name": "FUN_100143290"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x10011f610",
+            "name": "FUN_10011f610"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which camera and scene objects supply the ray?",
+          "How are sector origins and distances handled?",
+          "Can this contract replace the unverified legacy adapter?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native camera-adjacent level-ray caller; candidate reference for global scene coordinates and camera boom handling."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10011e8e4",
+              "start": "0x10011e6f0"
+            },
+            {
+              "end": "0x10011e973",
+              "start": "0x10011e8e8"
+            }
+          ],
+          "span_bytes": 644,
+          "total_bytes": 641
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10011e6f0",
+        "rva": "0x11e6f0",
+        "va": "0x10011e6f0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10011ef40()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.mouse_input",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_cae197c62a2375ba32194c44c3f55b0b2a25b6d6f64565d4c4276a9327884c12",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100001a50",
+            "name": "USER32.DLL::GetAsyncKeyState"
+          },
+          {
+            "address": "0x1000191a0",
+            "name": "FUN_1000191a0"
+          },
+          {
+            "address": "0x100019260",
+            "name": "FUN_100019260"
+          },
+          {
+            "address": "0x1000196e0",
+            "name": "FUN_1000196e0"
+          },
+          {
+            "address": "0x100019760",
+            "name": "FUN_100019760"
+          },
+          {
+            "address": "0x100022710",
+            "name": "FUN_100022710"
+          },
+          {
+            "address": "0x100022780",
+            "name": "FUN_100022780"
+          },
+          {
+            "address": "0x1000227c0",
+            "name": "FUN_1000227c0"
+          },
+          {
+            "address": "0x10008f530",
+            "name": "FUN_10008f530"
+          },
+          {
+            "address": "0x100090460",
+            "name": "FUN_100090460"
+          },
+          {
+            "address": "0x100091f00",
+            "name": "FUN_100091f00"
+          },
+          {
+            "address": "0x1000bf260",
+            "name": "FUN_1000bf260"
+          },
+          {
+            "address": "0x1000bf630",
+            "name": "FUN_1000bf630"
+          },
+          {
+            "address": "0x10011e9d0",
+            "name": "FUN_10011e9d0"
+          },
+          {
+            "address": "0x10011eb50",
+            "name": "FUN_10011eb50"
+          },
+          {
+            "address": "0x10011ebe0",
+            "name": "FUN_10011ebe0"
+          }
+        ],
+        "callers": [],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which branches belong to overhead and close-view modes?",
+          "Can native input be retained with a sampler-only camera adapter?",
+          "What cursor and window state must an adapter preserve?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native camera mouse input and camera/player snapshot publication."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10011ef65",
+              "start": "0x10011ef40"
+            },
+            {
+              "end": "0x10011f050",
+              "start": "0x10011ef68"
+            },
+            {
+              "end": "0x10011f1b9",
+              "start": "0x10011f054"
+            },
+            {
+              "end": "0x10011f464",
+              "start": "0x10011f1bc"
+            }
+          ],
+          "span_bytes": 1317,
+          "total_bytes": 1310
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10011ef40",
+        "rva": "0x11ef40",
+        "va": "0x10011ef40"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100094720()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.nav_sampler",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_ba2587e8b9c12562e04f556269f5ffb186bac3777d941e1432fc332433b0a969",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019100",
+            "name": "FUN_100019100"
+          },
+          {
+            "address": "0x1000193d0",
+            "name": "FUN_1000193d0"
+          },
+          {
+            "address": "0x1000194a0",
+            "name": "FUN_1000194a0"
+          },
+          {
+            "address": "0x1000198e0",
+            "name": "FUN_1000198e0"
+          },
+          {
+            "address": "0x100019ae0",
+            "name": "FUN_100019ae0"
+          },
+          {
+            "address": "0x10001d660",
+            "name": "FUN_10001d660"
+          },
+          {
+            "address": "0x10008b7a0",
+            "name": "FUN_10008b7a0"
+          }
+        ],
+        "callers": [],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the exact arguments and return behavior?",
+          "Which thread invokes the sampler and which objects must remain alive?",
+          "Is a post-native adapter sufficient for correct picking and projection?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native camera sample computation and publication; candidate primary camera adapter seam."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100094d13",
+              "start": "0x100094720"
+            }
+          ],
+          "span_bytes": 1524,
+          "total_bytes": 1524
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100094720",
+        "rva": "0x94720",
+        "va": "0x100094720"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100090c00()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.obstruction_fade",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_be1fb74aec9885e5a154be4ea1d127abb35e904fab57c0a7bde9f5ae1520b7ae",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019100",
+            "name": "FUN_100019100"
+          },
+          {
+            "address": "0x100019390",
+            "name": "FUN_100019390"
+          },
+          {
+            "address": "0x100019760",
+            "name": "FUN_100019760"
+          },
+          {
+            "address": "0x100090710",
+            "name": "FUN_100090710"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x100090520",
+            "name": "FUN_100090520"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What collision queries and output fields does it use?",
+          "Can third-person obstruction retain this native behavior?",
+          "What camera state must be current before invocation?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native camera obstruction and fade processing after sampling."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100090d41",
+              "start": "0x100090c00"
+            }
+          ],
+          "span_bytes": 322,
+          "total_bytes": 322
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100090c00",
+        "rva": "0x90c00",
+        "va": "0x100090c00"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100091f00()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.orbit",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_649d94cf2c1cd0423685c51d7f6738ce065741500b3f53d03816be7ff7315f8c",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x10001c010",
+            "name": "FUN_10001c010"
+          },
+          {
+            "address": "0x10001cd60",
+            "name": "FUN_10001cd60"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x10011ef40",
+            "name": "FUN_10011ef40"
+          },
+          {
+            "address": "0x10022e070",
+            "name": "FUN_10022e070"
+          },
+          {
+            "address": "0x10022e2d0",
+            "name": "FUN_10022e2d0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the argument types and angle units?",
+          "Which camera modes and object generations does it accept?",
+          "Can native orbit be reused for third-person control?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native camera orbit mutation used by mouse and controller paths."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100091f84",
+              "start": "0x100091f00"
+            },
+            {
+              "end": "0x100092092",
+              "start": "0x100091f88"
+            }
+          ],
+          "span_bytes": 403,
+          "total_bytes": 400
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100091f00",
+        "rva": "0x91f00",
+        "va": "0x100091f00"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10009f2e0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.rebuild_projection",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_f62d1a986e5fb552ab581a2f7f64702ee1a396afe04dfc1963b51d9cf2485859",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100004dd0",
+            "name": "FUN_100004dd0"
+          },
+          {
+            "address": "0x10001c2a0",
+            "name": "FUN_10001c2a0"
+          },
+          {
+            "address": "0x10001dd50",
+            "name": "FUN_10001dd50"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x100096120",
+            "name": "FUN_100096120"
+          },
+          {
+            "address": "0x1000962d0",
+            "name": "FUN_1000962d0"
+          },
+          {
+            "address": "0x10009f460",
+            "name": "FUN_10009f460"
+          },
+          {
+            "address": "0x100130b30",
+            "name": "FUN_100130b30"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which camera and view fields are read?",
+          "When must it run after FOV or near-plane changes?",
+          "What thread and rendering context are required?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native projection rebuild for a viewport."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10009f426",
+              "start": "0x10009f2e0"
+            }
+          ],
+          "span_bytes": 327,
+          "total_bytes": 327
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10009f2e0",
+        "rva": "0x9f2e0",
+        "va": "0x10009f2e0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100092630()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.camera.zoom",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_a06db68dd055a9df4f25d507da845d3dc62b31a7111655e1d2dbf4727250ad5d",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [],
+        "callers": [
+          {
+            "address": "0x10022e2d0",
+            "name": "FUN_10022e2d0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What does the integer argument mean?",
+          "What zoom bounds and side effects apply?",
+          "Should third-person distance use this contract or a separate domain value?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native camera zoom mutation used by controller input."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100092786",
+              "start": "0x100092630"
+            }
+          ],
+          "span_bytes": 343,
+          "total_bytes": 343
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100092630",
+        "rva": "0x92630",
+        "va": "0x100092630"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_1001433d0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.collision.level_grid_ray",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_19335bfd481e7bfc41171f328436ab7fc4b774adc6eeb1ea05ea18bfe49248d8",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019480",
+            "name": "FUN_100019480"
+          },
+          {
+            "address": "0x10001c070",
+            "name": "FUN_10001c070"
+          },
+          {
+            "address": "0x100143650",
+            "name": "FUN_100143650"
+          }
+        ],
+        "callers": [],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the arguments and outputs?",
+          "Does it cover ground surfaces?",
+          "Which native callers and grid generations use it?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Adjacent level-grid query with potentially different geometry coverage from the bool wrappers."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10014361d",
+              "start": "0x1001433d0"
+            },
+            {
+              "end": "0x10014364b",
+              "start": "0x100143620"
+            }
+          ],
+          "span_bytes": 636,
+          "total_bytes": 634
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_1001433d0",
+        "rva": "0x1433d0",
+        "va": "0x1001433d0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100060580()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.collision.level_mesh_ray_callback",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_b2b7a8f8f23cab8bf140b01c54ec367a77a33bac1757022071c344ad93978931",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x100019680",
+            "name": "FUN_100019680"
+          }
+        ],
+        "callers": [],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What is the callback ABI and query layout?",
+          "Does it delegate to the general BVH query or use another geometry set?",
+          "Does it include floors and how are triangle facings handled?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Actual ray callback on the active level meshes, using the mesh as its context and a nearest-hit query result."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100060807",
+              "start": "0x100060580"
+            }
+          ],
+          "span_bytes": 648,
+          "total_bytes": 648
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100060580",
+        "rva": "0x60580",
+        "va": "0x100060580"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": "windows_x64",
+        "parameters": [
+          {
+            "index": 0,
+            "meaning": "Borrowed level grid from scene manager offset 0x320.",
+            "name": "level",
+            "type": "uintptr_t"
+          },
+          {
+            "index": 1,
+            "meaning": "Global level origin; the wrapper subtracts each mesh origin.",
+            "name": "origin",
+            "type": "const float[3]"
+          },
+          {
+            "index": 2,
+            "meaning": "Unit segment direction.",
+            "name": "direction",
+            "type": "const float[3]"
+          },
+          {
+            "index": 3,
+            "meaning": "Segment length in centimetres.",
+            "name": "length",
+            "type": "float"
+          }
+        ],
+        "provider_signature": "undefined FUN_1001430f0()",
+        "return": {
+          "caveat": "Primary-geometry, one-sided hit predicate; no hit distance is returned.",
+          "clear": false,
+          "hit": true,
+          "type": "bool"
+        },
+        "status": "reviewed"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.collision.level_ray",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_c0f2543681e119cf6c2611ff4d7f529bb1fa924dbe6c1a9985addb1f040ba4b1",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Exact build and prefix checked; used on the camera thread only as a cross-check against the bidirectional mesh trace, not as a standalone two-sided or distance-returning query.",
+        "runtime_eligible": true
+      },
+      "memory": {
+        "lifetime": "Borrowed level and mesh records remain owned by the game and are accessed only for the current synchronized generation.",
+        "reads": [
+          {
+            "meaning": "Record count and 0x54-byte record array.",
+            "region": "level+0x1C and level+0x20"
+          },
+          {
+            "meaning": "Bit-zero enable flag and primary mesh pointer.",
+            "region": "entry+0x10 and entry+0x00"
+          },
+          {
+            "meaning": "Origin subtracted from the global input, followed by read-only triangle intersection.",
+            "region": "mesh+0x64 and nested trace records"
+          }
+        ],
+        "status": "reviewed",
+        "writes": []
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x1000602d0",
+            "name": "FUN_1000602d0"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x100117aa0",
+            "name": "FUN_100117aa0"
+          },
+          {
+            "address": "0x10011e6f0",
+            "name": "FUN_10011e6f0"
+          },
+          {
+            "address": "0x1002462f0",
+            "name": "FUN_1002462f0"
+          },
+          {
+            "address": "0x100246610",
+            "name": "FUN_100246610"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the full arguments, result layout, and hit semantics?",
+          "Which thread and scene generation are required?",
+          "Can it serve third-person obstruction safely in a hot path?"
+        ]
+      },
+      "role": {
+        "state": "validated_runtime",
+        "summary": "Primary-geometry bool segment predicate with global origin input and one-sided hit semantics. It is a native cross-check, not the sole camera boom query."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static",
+        "reviewed_static",
+        "byte_validated",
+        "observed_runtime",
+        "validated_runtime"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x1001431a6",
+              "start": "0x1001430f0"
+            },
+            {
+              "end": "0x1001431bc",
+              "start": "0x1001431a8"
+            }
+          ],
+          "span_bytes": 205,
+          "total_bytes": 204
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_1001430f0",
+        "rva": "0x1430f0",
+        "va": "0x1001430f0"
+      },
+      "thread": {
+        "details": "Called on Exanima's camera sampler thread as a once-per-level cross-check against the reviewed mesh trace; no cross-thread or cross-generation use is admitted.",
+        "status": "validated_runtime"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": "windows_x64",
+        "parameters": [
+          {
+            "index": 0,
+            "meaning": "Borrowed level grid from scene manager offset 0x320.",
+            "name": "level",
+            "type": "uintptr_t"
+          },
+          {
+            "index": 1,
+            "meaning": "Global level origin; the wrapper subtracts each mesh origin.",
+            "name": "origin",
+            "type": "const float[3]"
+          },
+          {
+            "index": 2,
+            "meaning": "Unit segment direction.",
+            "name": "direction",
+            "type": "const float[3]"
+          },
+          {
+            "index": 3,
+            "meaning": "Segment length in centimetres.",
+            "name": "length",
+            "type": "float"
+          }
+        ],
+        "provider_signature": "undefined FUN_1001431c0()",
+        "return": {
+          "caveat": "Secondary-geometry, one-sided hit predicate; no hit distance is returned.",
+          "clear": false,
+          "hit": true,
+          "type": "bool"
+        },
+        "status": "reviewed"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.collision.level_ray_secondary",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_bd7966b469147a128e62cdd08c4f1d177948a63965ba343f6be3d2b5510e6400",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Exact build and prefix checked; used on the camera thread only as a cross-check against the bidirectional mesh trace, not as a standalone two-sided or distance-returning query.",
+        "runtime_eligible": true
+      },
+      "memory": {
+        "lifetime": "Borrowed level and mesh records remain owned by the game and are accessed only for the current synchronized generation.",
+        "reads": [
+          {
+            "meaning": "Record count and 0x54-byte record array.",
+            "region": "level+0x1C and level+0x20"
+          },
+          {
+            "meaning": "Bit-zero enable flag and secondary mesh pointer.",
+            "region": "entry+0x10 and entry+0x08"
+          },
+          {
+            "meaning": "Origin subtracted from the global input, followed by read-only triangle intersection.",
+            "region": "mesh+0x64 and nested trace records"
+          }
+        ],
+        "status": "reviewed",
+        "writes": []
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x1000602d0",
+            "name": "FUN_1000602d0"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x1002462f0",
+            "name": "FUN_1002462f0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the full arguments, result layout, and hit semantics?",
+          "How do the inspected geometry and material flags differ from levelRay?",
+          "Are inputs global level coordinates, a unit direction, and length in centimetres?",
+          "Can the read-only query run on the camera thread without mutating the level?"
+        ]
+      },
+      "role": {
+        "state": "validated_runtime",
+        "summary": "Secondary-geometry bool segment predicate with global origin input and one-sided hit semantics. It complements the primary wrapper as a native cross-check."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static",
+        "reviewed_static",
+        "byte_validated",
+        "observed_runtime",
+        "validated_runtime"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10014328c",
+              "start": "0x1001431c0"
+            }
+          ],
+          "span_bytes": 205,
+          "total_bytes": 205
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_1001431c0",
+        "rva": "0x1431c0",
+        "va": "0x1001431c0"
+      },
+      "thread": {
+        "details": "Called on Exanima's camera sampler thread as a once-per-level cross-check against the reviewed mesh trace; no cross-thread or cross-generation use is admitted.",
+        "status": "validated_runtime"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10026a910()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.collision.mesh_ray_bvh",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_756b9ed4e4f689bfef32fc0aae34098c095c239ca828f2451cbd913286136177",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x100019680",
+            "name": "FUN_100019680"
+          },
+          {
+            "address": "0x10026a7b0",
+            "name": "thunk_FUN_10026a8f2"
+          }
+        ],
+        "callers": [],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What is the complete query layout and return contract?",
+          "Does it include floor triangles and handle both triangle facings?",
+          "Which scratch bank and coordinate transforms are required?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "General mesh BVH segment query used by scene picking and candidate ground traces."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10026ae5d",
+              "start": "0x10026a910"
+            }
+          ],
+          "span_bytes": 1358,
+          "total_bytes": 1358
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10026a910",
+        "rva": "0x26a910",
+        "va": "0x10026a910"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": "windows_x64",
+        "parameters": [
+          {
+            "index": 0,
+            "meaning": "Borrowed enabled level mesh; internal records are read through 0x2A8.",
+            "name": "mesh",
+            "type": "uintptr_t"
+          },
+          {
+            "index": 1,
+            "meaning": "Sector-local origin: the global point minus the mesh origin at 0x64.",
+            "name": "origin",
+            "type": "const float[3]"
+          },
+          {
+            "index": 2,
+            "meaning": "Unit direction; mesh-origin translation does not change it.",
+            "name": "direction",
+            "type": "const float[3]"
+          },
+          {
+            "index": 3,
+            "meaning": "Input maximum length in centimetres; receives the nearest accepted hit distance.",
+            "name": "distance",
+            "type": "float*"
+          }
+        ],
+        "provider_signature": "undefined FUN_1000602d0()",
+        "return": {
+          "caveat": "One-sided triangle intersection.",
+          "clear": "Negative",
+          "hit": "Non-negative triangle index",
+          "type": "int32"
+        },
+        "status": "reviewed"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.collision.mesh_trace",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_43aa21acb68ce32b18570ac97a9a62c553fd81a84645bf2ca6b39f1117b45489",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Exact build and instruction prefix checked. Called synchronously on the camera thread with bounded records, local-origin conversion, exception containment, and a live cross-check against both original wrappers.",
+        "runtime_eligible": true
+      },
+      "memory": {
+        "lifetime": "Borrowed mesh, batch, triangle, and vertex records belong to the current level generation and synchronized native call; never retain them.",
+        "reads": [
+          {
+            "meaning": "Three caller-owned floats each; origin is already sector-local.",
+            "region": "origin and direction",
+            "size": 12
+          },
+          {
+            "meaning": "Batch count and batch-array pointer.",
+            "region": "mesh+0x1C8 and mesh+0x1D0"
+          },
+          {
+            "meaning": "Triangle records and their vertex data.",
+            "region": "mesh+0x2A8 and indexed records"
+          }
+        ],
+        "status": "reviewed",
+        "writes": [
+          {
+            "meaning": "Caller-owned float receives the nearest accepted hit distance; no game-state output buffer is written.",
+            "region": "distance",
+            "size": 4
+          }
+        ]
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x100019680",
+            "name": "FUN_100019680"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x1001430f0",
+            "name": "FUN_1001430f0"
+          },
+          {
+            "address": "0x1001431c0",
+            "name": "FUN_1001431c0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What is the length representation and coordinate space?",
+          "What does a negative return mean?",
+          "Which mesh types and triangle attributes participate?"
+        ]
+      },
+      "role": {
+        "state": "validated_runtime",
+        "summary": "One-sided mesh triangle-segment intersection with a caller-owned nearest distance. The camera adapter uses both segment directions and both enabled geometry sets."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static",
+        "reviewed_static",
+        "byte_validated",
+        "observed_runtime",
+        "validated_runtime"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100060579",
+              "start": "0x1000602d0"
+            }
+          ],
+          "span_bytes": 682,
+          "total_bytes": 682
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_1000602d0",
+        "rva": "0x602d0",
+        "va": "0x1000602d0"
+      },
+      "thread": {
+        "details": "Validated synchronously on Exanima's camera sampler thread. The adapter holds its camera lock and checks the current level generation; this is not a general cross-thread guarantee.",
+        "status": "validated_runtime"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_1002462f0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.collision.native_visibility",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_a43dc06c9a8c291bf4fa4a1dd85fd04ad2c9f410558bf9c894476e2f99379937",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x10000bd70",
+            "name": "FUN_10000bd70"
+          },
+          {
+            "address": "0x100018960",
+            "name": "FUN_100018960"
+          },
+          {
+            "address": "0x100018b00",
+            "name": "FUN_100018b00"
+          },
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x100019240",
+            "name": "FUN_100019240"
+          },
+          {
+            "address": "0x1000196e0",
+            "name": "FUN_1000196e0"
+          },
+          {
+            "address": "0x10007a270",
+            "name": "FUN_10007a270"
+          },
+          {
+            "address": "0x1001430f0",
+            "name": "FUN_1001430f0"
+          },
+          {
+            "address": "0x1001431c0",
+            "name": "FUN_1001431c0"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x100246610",
+            "name": "FUN_100246610"
+          },
+          {
+            "address": "0x100246760",
+            "name": "FUN_100246760"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "How are the origin, direction, and distance computed?",
+          "Which geometry sets are enabled before these calls?",
+          "Does a hit mean visible or blocked?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native caller that combines both level-ray functions for visibility; needed to establish their coordinate and filtering semantics."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100246404",
+              "start": "0x1002462f0"
+            },
+            {
+              "end": "0x10024642d",
+              "start": "0x100246408"
+            },
+            {
+              "end": "0x1002465c9",
+              "start": "0x100246430"
+            },
+            {
+              "end": "0x100246608",
+              "start": "0x1002465cc"
+            }
+          ],
+          "span_bytes": 793,
+          "total_bytes": 786
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_1002462f0",
+        "rva": "0x2462f0",
+        "va": "0x1002462f0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10007a270()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.collision.segment_sphere",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_cae92fff19f1c1dba86ce6168ce6bebd678e8ad362fecbf019c8e2ba7b4435ff",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x100019ae0",
+            "name": "FUN_100019ae0"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x10008f720",
+            "name": "FUN_10008f720"
+          },
+          {
+            "address": "0x10008fb30",
+            "name": "FUN_10008fb30"
+          },
+          {
+            "address": "0x100090030",
+            "name": "FUN_100090030"
+          },
+          {
+            "address": "0x100090710",
+            "name": "FUN_100090710"
+          },
+          {
+            "address": "0x100093fe0",
+            "name": "FUN_100093fe0"
+          },
+          {
+            "address": "0x1001170f0",
+            "name": "FUN_1001170f0"
+          },
+          {
+            "address": "0x100117aa0",
+            "name": "FUN_100117aa0"
+          },
+          {
+            "address": "0x100121150",
+            "name": "FUN_100121150"
+          },
+          {
+            "address": "0x10014e400",
+            "name": "FUN_10014e400"
+          },
+          {
+            "address": "0x10014fbc0",
+            "name": "FUN_10014fbc0"
+          },
+          {
+            "address": "0x10014ffa0",
+            "name": "FUN_10014ffa0"
+          },
+          {
+            "address": "0x1001502f0",
+            "name": "FUN_1001502f0"
+          },
+          {
+            "address": "0x100150880",
+            "name": "FUN_100150880"
+          },
+          {
+            "address": "0x100150ff0",
+            "name": "FUN_100150ff0"
+          },
+          {
+            "address": "0x1002462f0",
+            "name": "FUN_1002462f0"
+          },
+          {
+            "address": "0x100249420",
+            "name": "FUN_100249420"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the exact ray, sphere, and return contracts?",
+          "Is it sufficient for third-person obstruction candidates?",
+          "What numerical edge cases must the domain solver handle?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Shared segment/sphere predicate used by native camera fade and scene queries."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10007a39a",
+              "start": "0x10007a270"
+            }
+          ],
+          "span_bytes": 299,
+          "total_bytes": 299
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10007a270",
+        "rva": "0x7a270",
+        "va": "0x10007a270"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100117aa0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.collision.world_trace",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_242719c0ef7369cbb821cafc7fb44cd09be9a82a66a2efec12c5ad25d157c354",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100018870",
+            "name": "FUN_100018870"
+          },
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x100019240",
+            "name": "FUN_100019240"
+          },
+          {
+            "address": "0x100019390",
+            "name": "FUN_100019390"
+          },
+          {
+            "address": "0x10001bc20",
+            "name": "FUN_10001bc20"
+          },
+          {
+            "address": "0x10001c900",
+            "name": "FUN_10001c900"
+          },
+          {
+            "address": "0x10007a270",
+            "name": "FUN_10007a270"
+          },
+          {
+            "address": "0x100082fa0",
+            "name": "FUN_100082fa0"
+          },
+          {
+            "address": "0x10008f720",
+            "name": "FUN_10008f720"
+          },
+          {
+            "address": "0x1001026d0",
+            "name": "FUN_1001026d0"
+          },
+          {
+            "address": "0x1001179d0",
+            "name": "FUN_1001179d0"
+          },
+          {
+            "address": "0x100117a40",
+            "name": "FUN_100117a40"
+          },
+          {
+            "address": "0x1001430f0",
+            "name": "FUN_1001430f0"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x10011f610",
+            "name": "FUN_10011f610"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which level-grid fields are prepared before the query?",
+          "What coordinate transform is applied?",
+          "What do the return values mean?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native world-level segment-query caller with geometry filtering."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100117b7d",
+              "start": "0x100117aa0"
+            },
+            {
+              "end": "0x100117bf4",
+              "start": "0x100117b80"
+            },
+            {
+              "end": "0x100117f30",
+              "start": "0x100117bf8"
+            },
+            {
+              "end": "0x100117ff4",
+              "start": "0x100117f34"
+            }
+          ],
+          "span_bytes": 1365,
+          "total_bytes": 1357
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100117aa0",
+        "rva": "0x117aa0",
+        "va": "0x100117aa0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100022710()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.input.cursor_position",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_109ef881e4dc9ff0c7426d3dad1b230aab15929781d544d23ad516b761b06e2f",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100001b40",
+            "name": "USER32.DLL::GetCursorPos"
+          },
+          {
+            "address": "0x100001b70",
+            "name": "USER32.DLL::ScreenToClient"
+          },
+          {
+            "address": "0x100022530",
+            "name": "FUN_100022530"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x10002f7e0",
+            "name": "FUN_10002f7e0"
+          },
+          {
+            "address": "0x1000aa080",
+            "name": "FUN_1000aa080"
+          },
+          {
+            "address": "0x10011ebe0",
+            "name": "FUN_10011ebe0"
+          },
+          {
+            "address": "0x10011ef40",
+            "name": "FUN_10011ef40"
+          },
+          {
+            "address": "0x10013e9c0",
+            "name": "FUN_10013e9c0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the output coordinates and caller-specific meanings?",
+          "When can a mod substitute a reticle position?",
+          "What focus and clipping state must be preserved?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native cursor-position query used by gameplay and GUI paths."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10002277d",
+              "start": "0x100022710"
+            }
+          ],
+          "span_bytes": 110,
+          "total_bytes": 110
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100022710",
+        "rva": "0x22710",
+        "va": "0x100022710"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100022780()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.input.cursor_warp",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_0508fd03dca60acaaec0ba129cdb78ea7413cedda82a8a19ed601f45ebede159",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100001b20",
+            "name": "USER32.DLL::SetCursorPos"
+          },
+          {
+            "address": "0x100001b60",
+            "name": "USER32.DLL::ClientToScreen"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x1000bf680",
+            "name": "FUN_1000bf680"
+          },
+          {
+            "address": "0x10010ec70",
+            "name": "FUN_10010ec70"
+          },
+          {
+            "address": "0x100116a50",
+            "name": "FUN_100116a50"
+          },
+          {
+            "address": "0x10011ebe0",
+            "name": "FUN_10011ebe0"
+          },
+          {
+            "address": "0x10011ef40",
+            "name": "FUN_10011ef40"
+          },
+          {
+            "address": "0x100123340",
+            "name": "FUN_100123340"
+          },
+          {
+            "address": "0x100123540",
+            "name": "FUN_100123540"
+          },
+          {
+            "address": "0x100123700",
+            "name": "FUN_100123700"
+          },
+          {
+            "address": "0x10012ab20",
+            "name": "FUN_10012ab20"
+          },
+          {
+            "address": "0x10013e9c0",
+            "name": "FUN_10013e9c0"
+          },
+          {
+            "address": "0x100271bc0",
+            "name": "FUN_100271bc0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Are coordinates client or screen space?",
+          "Which callers can cause an unintended view snap?",
+          "When must warps be suppressed or forwarded?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native cursor repositioning used by camera and interaction code."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x1000227b1",
+              "start": "0x100022780"
+            }
+          ],
+          "span_bytes": 50,
+          "total_bytes": 50
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100022780",
+        "rva": "0x22780",
+        "va": "0x100022780"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10008f720()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.interaction.pick_ray",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_b935efc73272a2a9618b067ad270378fbc204afa26dc9e3e13e650c134c19111",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x1000025c0",
+            "name": "FUN_1000025c0"
+          },
+          {
+            "address": "0x100018870",
+            "name": "FUN_100018870"
+          },
+          {
+            "address": "0x100018910",
+            "name": "FUN_100018910"
+          },
+          {
+            "address": "0x100018960",
+            "name": "FUN_100018960"
+          },
+          {
+            "address": "0x100018b00",
+            "name": "FUN_100018b00"
+          },
+          {
+            "address": "0x100019170",
+            "name": "FUN_100019170"
+          },
+          {
+            "address": "0x100019240",
+            "name": "FUN_100019240"
+          },
+          {
+            "address": "0x100019260",
+            "name": "FUN_100019260"
+          },
+          {
+            "address": "0x100019390",
+            "name": "FUN_100019390"
+          },
+          {
+            "address": "0x1000196e0",
+            "name": "FUN_1000196e0"
+          },
+          {
+            "address": "0x1000779f0",
+            "name": "FUN_1000779f0"
+          },
+          {
+            "address": "0x10007a270",
+            "name": "FUN_10007a270"
+          },
+          {
+            "address": "0x10008f460",
+            "name": "FUN_10008f460"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x10006c140",
+            "name": "FUN_10006c140"
+          },
+          {
+            "address": "0x1000929c0",
+            "name": "FUN_1000929c0"
+          },
+          {
+            "address": "0x100092cd0",
+            "name": "FUN_100092cd0"
+          },
+          {
+            "address": "0x1000ae2e0",
+            "name": "FUN_1000ae2e0"
+          },
+          {
+            "address": "0x100117aa0",
+            "name": "FUN_100117aa0"
+          },
+          {
+            "address": "0x1001183c0",
+            "name": "FUN_1001183c0"
+          },
+          {
+            "address": "0x10011cb70",
+            "name": "FUN_10011cb70"
+          },
+          {
+            "address": "0x100246610",
+            "name": "FUN_100246610"
+          },
+          {
+            "address": "0x100249420",
+            "name": "FUN_100249420"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the output layout and return semantics?",
+          "Which camera matrices and coordinate spaces does it consume?",
+          "Does the minimal camera adapter preserve native behavior without a hook?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native viewport ray construction and scene query."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10008fb21",
+              "start": "0x10008f720"
+            }
+          ],
+          "span_bytes": 1026,
+          "total_bytes": 1026
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10008f720",
+        "rva": "0x8f720",
+        "va": "0x10008f720"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10008f460()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.interaction.screen_ray",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_efaca7d606840f63d87e32041daf0c94eb55fe19ebd6c1925952b90cfbb7b4ac",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x1000191a0",
+            "name": "FUN_1000191a0"
+          },
+          {
+            "address": "0x10004c520",
+            "name": "FUN_10004c520"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x10008f530",
+            "name": "FUN_10008f530"
+          },
+          {
+            "address": "0x10008f640",
+            "name": "FUN_10008f640"
+          },
+          {
+            "address": "0x10008f720",
+            "name": "FUN_10008f720"
+          },
+          {
+            "address": "0x10008fb30",
+            "name": "FUN_10008fb30"
+          },
+          {
+            "address": "0x100090030",
+            "name": "FUN_100090030"
+          },
+          {
+            "address": "0x10011ebe0",
+            "name": "FUN_10011ebe0"
+          },
+          {
+            "address": "0x1001339a0",
+            "name": "FUN_1001339a0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What are the screen coordinate conventions and output layout?",
+          "Which camera matrix is consumed?",
+          "How are invalid dimensions and singular matrices handled?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native near/far screen unprojection without a scene query."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10008f525",
+              "start": "0x10008f460"
+            }
+          ],
+          "span_bytes": 198,
+          "total_bytes": 198
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10008f460",
+        "rva": "0x8f460",
+        "va": "0x10008f460"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_1000c1cf0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.player.behavior_tick",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_bf4806eaf2c8d8e25818b53111b78654f9e452eeaabf357f4ba9ca6496a954c5",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019390",
+            "name": "FUN_100019390"
+          },
+          {
+            "address": "0x100019840",
+            "name": "FUN_100019840"
+          },
+          {
+            "address": "0x100019ae0",
+            "name": "FUN_100019ae0"
+          },
+          {
+            "address": "0x10001c8c0",
+            "name": "FUN_10001c8c0"
+          },
+          {
+            "address": "0x1000877e0",
+            "name": "FUN_1000877e0"
+          },
+          {
+            "address": "0x100087870",
+            "name": "FUN_100087870"
+          },
+          {
+            "address": "0x1000878d0",
+            "name": "FUN_1000878d0"
+          },
+          {
+            "address": "0x1000aa080",
+            "name": "FUN_1000aa080"
+          },
+          {
+            "address": "0x1000ac020",
+            "name": "FUN_1000ac020"
+          },
+          {
+            "address": "0x1000ac2a0",
+            "name": "FUN_1000ac2a0"
+          },
+          {
+            "address": "0x1000ac570",
+            "name": "FUN_1000ac570"
+          },
+          {
+            "address": "0x1000acc60",
+            "name": "FUN_1000acc60"
+          },
+          {
+            "address": "0x1000ae0f0",
+            "name": "FUN_1000ae0f0"
+          },
+          {
+            "address": "0x1000ae9d0",
+            "name": "FUN_1000ae9d0"
+          },
+          {
+            "address": "0x1000af630",
+            "name": "FUN_1000af630"
+          },
+          {
+            "address": "0x1000af810",
+            "name": "FUN_1000af810"
+          },
+          {
+            "address": "0x1000b7cd0",
+            "name": "FUN_1000b7cd0"
+          },
+          {
+            "address": "0x1000be710",
+            "name": "FUN_1000be710"
+          },
+          {
+            "address": "0x1000beac0",
+            "name": "FUN_1000beac0"
+          },
+          {
+            "address": "0x1000bf000",
+            "name": "FUN_1000bf000"
+          },
+          {
+            "address": "0x1000bf480",
+            "name": "FUN_1000bf480"
+          },
+          {
+            "address": "0x1000bf680",
+            "name": "FUN_1000bf680"
+          },
+          {
+            "address": "0x1000bfc70",
+            "name": "FUN_1000bfc70"
+          },
+          {
+            "address": "0x1000bfea0",
+            "name": "FUN_1000bfea0"
+          },
+          {
+            "address": "0x1000c13f0",
+            "name": "FUN_1000c13f0"
+          },
+          {
+            "address": "0x1001549b0",
+            "name": "FUN_1001549b0"
+          },
+          {
+            "address": "0x100162e80",
+            "name": "FUN_100162e80"
+          },
+          {
+            "address": "0x100171ec0",
+            "name": "FUN_100171ec0"
+          },
+          {
+            "address": "0x100179de0",
+            "name": "FUN_100179de0"
+          },
+          {
+            "address": "0x100179ee0",
+            "name": "FUN_100179ee0"
+          }
+        ],
+        "callers": [],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which state transitions are observable here?",
+          "What reentrancy and thread rules apply?",
+          "Can lifecycle be established without intercepting behavior?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Player behavior tick; candidate lifecycle observation point, not an approved hook."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x1000c1df4",
+              "start": "0x1000c1cf0"
+            },
+            {
+              "end": "0x1000c2071",
+              "start": "0x1000c1df8"
+            },
+            {
+              "end": "0x1000c27dc",
+              "start": "0x1000c2074"
+            },
+            {
+              "end": "0x1000c2d4d",
+              "start": "0x1000c27e0"
+            },
+            {
+              "end": "0x1000c2db5",
+              "start": "0x1000c2dac"
+            }
+          ],
+          "span_bytes": 4294,
+          "total_bytes": 4192
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_1000c1cf0",
+        "rva": "0xc1cf0",
+        "va": "0x1000c1cf0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100170810()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.player.character_move",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_fb53f448d52983b508413816b4c4eb757bb861da113196c55e748dadd24dc1fc",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100018870",
+            "name": "FUN_100018870"
+          },
+          {
+            "address": "0x100018b60",
+            "name": "FUN_100018b60"
+          },
+          {
+            "address": "0x100019100",
+            "name": "FUN_100019100"
+          },
+          {
+            "address": "0x1000191a0",
+            "name": "FUN_1000191a0"
+          },
+          {
+            "address": "0x100019260",
+            "name": "FUN_100019260"
+          },
+          {
+            "address": "0x100019890",
+            "name": "FUN_100019890"
+          },
+          {
+            "address": "0x100019f00",
+            "name": "FUN_100019f00"
+          },
+          {
+            "address": "0x10007ecd0",
+            "name": "FUN_10007ecd0"
+          },
+          {
+            "address": "0x1000e5b10",
+            "name": "FUN_1000e5b10"
+          },
+          {
+            "address": "0x100151db0",
+            "name": "FUN_100151db0"
+          },
+          {
+            "address": "0x100163bb0",
+            "name": "FUN_100163bb0"
+          },
+          {
+            "address": "0x1001706d0",
+            "name": "FUN_1001706d0"
+          },
+          {
+            "address": "0x1001760f0",
+            "name": "FUN_1001760f0"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x1000b6a50",
+            "name": "FUN_1000b6a50"
+          },
+          {
+            "address": "0x100123d30",
+            "name": "FUN_100123d30"
+          },
+          {
+            "address": "0x100124480",
+            "name": "FUN_100124480"
+          },
+          {
+            "address": "0x100125a20",
+            "name": "FUN_100125a20"
+          },
+          {
+            "address": "0x100126050",
+            "name": "FUN_100126050"
+          },
+          {
+            "address": "0x100180160",
+            "name": "FUN_100180160"
+          },
+          {
+            "address": "0x100182340",
+            "name": "FUN_100182340"
+          },
+          {
+            "address": "0x100186bc0",
+            "name": "FUN_100186bc0"
+          },
+          {
+            "address": "0x100189c60",
+            "name": "FUN_100189c60"
+          },
+          {
+            "address": "0x1001a0710",
+            "name": "FUN_1001a0710"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "How does the routine derive the character's position and ground height?",
+          "Which physics objects or floor queries establish support?",
+          "What coordinate frame is used for the resulting transform?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native character placement routine; a read-only reference for position and ground semantics, never a camera mutation API."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x1001710a1",
+              "start": "0x100170810"
+            }
+          ],
+          "span_bytes": 2194,
+          "total_bytes": 2194
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100170810",
+        "rva": "0x170810",
+        "va": "0x100170810"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_1001760f0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.player.physics_update",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_23bf17bc0f5ad026379fc6950ff62cd73abb14c88c3814b22234ad5df77ae702",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100017660",
+            "name": "FUN_100017660"
+          },
+          {
+            "address": "0x1000176a0",
+            "name": "FUN_1000176a0"
+          },
+          {
+            "address": "0x100018870",
+            "name": "FUN_100018870"
+          },
+          {
+            "address": "0x100018910",
+            "name": "FUN_100018910"
+          },
+          {
+            "address": "0x100018b00",
+            "name": "FUN_100018b00"
+          },
+          {
+            "address": "0x100018b60",
+            "name": "FUN_100018b60"
+          },
+          {
+            "address": "0x100018f60",
+            "name": "FUN_100018f60"
+          },
+          {
+            "address": "0x1000191a0",
+            "name": "FUN_1000191a0"
+          },
+          {
+            "address": "0x100019390",
+            "name": "FUN_100019390"
+          },
+          {
+            "address": "0x1000193d0",
+            "name": "FUN_1000193d0"
+          },
+          {
+            "address": "0x1000194a0",
+            "name": "FUN_1000194a0"
+          },
+          {
+            "address": "0x1000194e0",
+            "name": "FUN_1000194e0"
+          },
+          {
+            "address": "0x100019520",
+            "name": "FUN_100019520"
+          },
+          {
+            "address": "0x100019680",
+            "name": "FUN_100019680"
+          },
+          {
+            "address": "0x100019890",
+            "name": "FUN_100019890"
+          },
+          {
+            "address": "0x1000198e0",
+            "name": "FUN_1000198e0"
+          },
+          {
+            "address": "0x100019980",
+            "name": "FUN_100019980"
+          },
+          {
+            "address": "0x1000199c0",
+            "name": "FUN_1000199c0"
+          },
+          {
+            "address": "0x100019ae0",
+            "name": "FUN_100019ae0"
+          },
+          {
+            "address": "0x100019b80",
+            "name": "FUN_100019b80"
+          },
+          {
+            "address": "0x10001c010",
+            "name": "FUN_10001c010"
+          },
+          {
+            "address": "0x10001c820",
+            "name": "FUN_10001c820"
+          },
+          {
+            "address": "0x10001c900",
+            "name": "FUN_10001c900"
+          },
+          {
+            "address": "0x10001caf0",
+            "name": "FUN_10001caf0"
+          },
+          {
+            "address": "0x10001cbd0",
+            "name": "FUN_10001cbd0"
+          },
+          {
+            "address": "0x10001ce30",
+            "name": "FUN_10001ce30"
+          },
+          {
+            "address": "0x10001cf20",
+            "name": "FUN_10001cf20"
+          },
+          {
+            "address": "0x10009d570",
+            "name": "FUN_10009d570"
+          },
+          {
+            "address": "0x1000ccf60",
+            "name": "FUN_1000ccf60"
+          },
+          {
+            "address": "0x1000cd1d0",
+            "name": "FUN_1000cd1d0"
+          },
+          {
+            "address": "0x1000cd390",
+            "name": "FUN_1000cd390"
+          },
+          {
+            "address": "0x100151ca0",
+            "name": "FUN_100151ca0"
+          },
+          {
+            "address": "0x10015efb0",
+            "name": "FUN_10015efb0"
+          },
+          {
+            "address": "0x100175bf0",
+            "name": "FUN_100175bf0"
+          },
+          {
+            "address": "0x100175de0",
+            "name": "FUN_100175de0"
+          },
+          {
+            "address": "0x100175e10",
+            "name": "FUN_100175e10"
+          },
+          {
+            "address": "0x100179720",
+            "name": "FUN_100179720"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x1000b0f90",
+            "name": "FUN_1000b0f90"
+          },
+          {
+            "address": "0x100123d30",
+            "name": "FUN_100123d30"
+          },
+          {
+            "address": "0x1001333b0",
+            "name": "FUN_1001333b0"
+          },
+          {
+            "address": "0x100169200",
+            "name": "FUN_100169200"
+          },
+          {
+            "address": "0x100170810",
+            "name": "FUN_100170810"
+          },
+          {
+            "address": "0x100171ec0",
+            "name": "FUN_100171ec0"
+          },
+          {
+            "address": "0x100186bc0",
+            "name": "FUN_100186bc0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which leg/contact fields are recomputed?",
+          "Does it use a native ground ray, plane, or height field?",
+          "Which fields are safe for a read-only camera support contract?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Character physical pose and support update invoked by placement."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100176365",
+              "start": "0x1001760f0"
+            },
+            {
+              "end": "0x100177d5b",
+              "start": "0x100176368"
+            },
+            {
+              "end": "0x100178341",
+              "start": "0x100177d5e"
+            }
+          ],
+          "span_bytes": 8786,
+          "total_bytes": 8782
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_1001760f0",
+        "rva": "0x1760f0",
+        "va": "0x1001760f0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_1000acc60()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.player.post_physics",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_c08364ab66930442629d51967c3cee17edcd1e3ea6d8d0cb1e5c4a4120b6597a",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x1000191a0",
+            "name": "FUN_1000191a0"
+          },
+          {
+            "address": "0x100019f00",
+            "name": "FUN_100019f00"
+          },
+          {
+            "address": "0x10001c900",
+            "name": "FUN_10001c900"
+          },
+          {
+            "address": "0x1000ac7f0",
+            "name": "FUN_1000ac7f0"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x1000aedc0",
+            "name": "FUN_1000aedc0"
+          },
+          {
+            "address": "0x1000aeec0",
+            "name": "FUN_1000aeec0"
+          },
+          {
+            "address": "0x1000aef50",
+            "name": "FUN_1000aef50"
+          },
+          {
+            "address": "0x1000aefd0",
+            "name": "FUN_1000aefd0"
+          },
+          {
+            "address": "0x1000b8440",
+            "name": "FUN_1000b8440"
+          },
+          {
+            "address": "0x1000c1cf0",
+            "name": "FUN_1000c1cf0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which physics queries establish support?",
+          "Where are foot contact transforms and flags written?",
+          "Is an authoritative ground height or support plane exposed?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Post-movement character update; candidate for support/contact and ground-height maintenance."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x1000ad32f",
+              "start": "0x1000acc60"
+            }
+          ],
+          "span_bytes": 1744,
+          "total_bytes": 1744
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_1000acc60",
+        "rva": "0xacc60",
+        "va": "0x1000acc60"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100163bb0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.player.support_pose",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_2683e98d65aee20df676faf51be7a42a1a91fa1feb20df9d31df017feaa0bb7a",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100019100",
+            "name": "FUN_100019100"
+          },
+          {
+            "address": "0x100019260",
+            "name": "FUN_100019260"
+          },
+          {
+            "address": "0x10001c900",
+            "name": "FUN_10001c900"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x100162af0",
+            "name": "FUN_100162af0"
+          },
+          {
+            "address": "0x100169200",
+            "name": "FUN_100169200"
+          },
+          {
+            "address": "0x100170810",
+            "name": "FUN_100170810"
+          },
+          {
+            "address": "0x1001710b0",
+            "name": "FUN_1001710b0"
+          },
+          {
+            "address": "0x100171ec0",
+            "name": "FUN_100171ec0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "How are support contacts used to derive posture and root height?",
+          "Do contact fields describe foot targets or actual ground geometry?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Character support and balance pose update using leg/contact data."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100163cb7",
+              "start": "0x100163bb0"
+            }
+          ],
+          "span_bytes": 264,
+          "total_bytes": 264
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100163bb0",
+        "rva": "0x163bb0",
+        "va": "0x100163bb0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100021e60()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.render.present",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_49f8e789e40f039c9acfeb722a95889859adda190fddc7644726a4765d54f09e",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [],
+        "callers": [
+          {
+            "address": "0x1000263c0",
+            "name": "FUN_1000263c0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What thread and OpenGL context are current?",
+          "What state wraps the native call?",
+          "Can diagnostics run here without changing rendering behavior?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native presentation wrapper and candidate frame-boundary observation point."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x100021e91",
+              "start": "0x100021e60"
+            }
+          ],
+          "span_bytes": 50,
+          "total_bytes": 50
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100021e60",
+        "rva": "0x21e60",
+        "va": "0x100021e60"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10004bab0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.render.viewport",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_d9232250ad2e226fdde6919558d300123cc759d2d96cea955f7a0772a47a88ad",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x1000080f0",
+            "name": "FUN_1000080f0"
+          },
+          {
+            "address": "0x100008210",
+            "name": "FUN_100008210"
+          },
+          {
+            "address": "0x100018490",
+            "name": "FUN_100018490"
+          },
+          {
+            "address": "0x10001a850",
+            "name": "FUN_10001a850"
+          },
+          {
+            "address": "0x10001b110",
+            "name": "FUN_10001b110"
+          },
+          {
+            "address": "0x100024db0",
+            "name": "FUN_100024db0"
+          },
+          {
+            "address": "0x100025250",
+            "name": "FUN_100025250"
+          },
+          {
+            "address": "0x100025350",
+            "name": "FUN_100025350"
+          },
+          {
+            "address": "0x100027080",
+            "name": "FUN_100027080"
+          },
+          {
+            "address": "0x100027180",
+            "name": "FUN_100027180"
+          },
+          {
+            "address": "0x10002a350",
+            "name": "FUN_10002a350"
+          },
+          {
+            "address": "0x10004b6d0",
+            "name": "FUN_10004b6d0"
+          },
+          {
+            "address": "0x10004ba90",
+            "name": "FUN_10004ba90"
+          },
+          {
+            "address": "0x10004c9d0",
+            "name": "FUN_10004c9d0"
+          },
+          {
+            "address": "0x10006ab40",
+            "name": "FUN_10006ab40"
+          },
+          {
+            "address": "0x100073f20",
+            "name": "FUN_100073f20"
+          },
+          {
+            "address": "0x10009f430",
+            "name": "FUN_10009f430"
+          },
+          {
+            "address": "0x10009fa10",
+            "name": "FUN_10009fa10"
+          },
+          {
+            "address": "0x10009fef0",
+            "name": "FUN_10009fef0"
+          },
+          {
+            "address": "0x10009ff90",
+            "name": "FUN_10009ff90"
+          },
+          {
+            "address": "0x1000a0640",
+            "name": "FUN_1000a0640"
+          },
+          {
+            "address": "0x1000a0ce0",
+            "name": "FUN_1000a0ce0"
+          },
+          {
+            "address": "0x1001f9aa0",
+            "name": "FUN_1001f9aa0"
+          },
+          {
+            "address": "0x1001f9ab0",
+            "name": "FUN_1001f9ab0"
+          },
+          {
+            "address": "0x1001f9ad0",
+            "name": "FUN_1001f9ad0"
+          },
+          {
+            "address": "0x100202620",
+            "name": "FUN_100202620"
+          },
+          {
+            "address": "0x100202760",
+            "name": "FUN_100202760"
+          },
+          {
+            "address": "0x1002143b0",
+            "name": "FUN_1002143b0"
+          }
+        ],
+        "callers": [],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which thread and OpenGL context are current?",
+          "Which frame boundaries are safe for diagnostics or later optional effects?",
+          "Can the core camera remain render-agnostic?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native viewport render and presentation orchestration."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10004c3b6",
+              "start": "0x10004bab0"
+            }
+          ],
+          "span_bytes": 2311,
+          "total_bytes": 2311
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10004bab0",
+        "rva": "0x4bab0",
+        "va": "0x10004bab0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10026a6c0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.scene.mesh_ray_bind",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_f3f5155add831f1923751d930051b8ef7a6c2637af0d7c78f3503a81201dfbec",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [],
+        "callers": [
+          {
+            "address": "0x100060110",
+            "name": "FUN_100060110"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which node fields receive the callback and context?",
+          "What lifetime and mesh-type rules apply?",
+          "Can level-sector meshes use the callback directly?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Binder that assigns the ordinary mesh ray callback and its traversal context on a scene node."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10026a756",
+              "start": "0x10026a6c0"
+            }
+          ],
+          "span_bytes": 151,
+          "total_bytes": 151
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10026a6c0",
+        "rva": "0x26a6c0",
+        "va": "0x10026a6c0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_10001a890()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.scheduler.work_ring_push",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_ff0f439c4e908882db7840c159e79b12041f2e070780c1ae1310815ef989aae6",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x10001a410",
+            "name": "FUN_10001a410"
+          },
+          {
+            "address": "0x10001a430",
+            "name": "FUN_10001a430"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x1000aa540",
+            "name": "FUN_1000aa540"
+          },
+          {
+            "address": "0x1000b4570",
+            "name": "FUN_1000b4570"
+          },
+          {
+            "address": "0x100116a50",
+            "name": "FUN_100116a50"
+          },
+          {
+            "address": "0x100117000",
+            "name": "FUN_100117000"
+          },
+          {
+            "address": "0x1001345d0",
+            "name": "FUN_1001345d0"
+          },
+          {
+            "address": "0x100134ab0",
+            "name": "FUN_100134ab0"
+          },
+          {
+            "address": "0x100134e60",
+            "name": "FUN_100134e60"
+          },
+          {
+            "address": "0x100135360",
+            "name": "FUN_100135360"
+          },
+          {
+            "address": "0x100135570",
+            "name": "FUN_100135570"
+          },
+          {
+            "address": "0x100135810",
+            "name": "FUN_100135810"
+          },
+          {
+            "address": "0x100135a10",
+            "name": "FUN_100135a10"
+          },
+          {
+            "address": "0x100135b00",
+            "name": "FUN_100135b00"
+          },
+          {
+            "address": "0x100135d50",
+            "name": "FUN_100135d50"
+          },
+          {
+            "address": "0x1001360f0",
+            "name": "FUN_1001360f0"
+          },
+          {
+            "address": "0x100139a50",
+            "name": "FUN_100139a50"
+          },
+          {
+            "address": "0x10013f390",
+            "name": "FUN_10013f390"
+          },
+          {
+            "address": "0x10014a3e0",
+            "name": "FUN_10014a3e0"
+          },
+          {
+            "address": "0x10014b520",
+            "name": "FUN_10014b520"
+          },
+          {
+            "address": "0x100156480",
+            "name": "FUN_100156480"
+          },
+          {
+            "address": "0x100158b30",
+            "name": "FUN_100158b30"
+          },
+          {
+            "address": "0x100169200",
+            "name": "FUN_100169200"
+          },
+          {
+            "address": "0x10019c470",
+            "name": "FUN_10019c470"
+          },
+          {
+            "address": "0x1001a1550",
+            "name": "FUN_1001a1550"
+          },
+          {
+            "address": "0x1001a7c90",
+            "name": "FUN_1001a7c90"
+          },
+          {
+            "address": "0x1001d38b0",
+            "name": "FUN_1001d38b0"
+          },
+          {
+            "address": "0x1001e1e30",
+            "name": "FUN_1001e1e30"
+          },
+          {
+            "address": "0x1001e1f00",
+            "name": "FUN_1001e1f00"
+          },
+          {
+            "address": "0x1001e2910",
+            "name": "FUN_1001e2910"
+          },
+          {
+            "address": "0x1001e4950",
+            "name": "FUN_1001e4950"
+          },
+          {
+            "address": "0x10024acc0",
+            "name": "FUN_10024acc0"
+          },
+          {
+            "address": "0x10024b910",
+            "name": "FUN_10024b910"
+          },
+          {
+            "address": "0x10024e510",
+            "name": "FUN_10024e510"
+          },
+          {
+            "address": "0x100255a50",
+            "name": "FUN_100255a50"
+          },
+          {
+            "address": "0x100256190",
+            "name": "FUN_100256190"
+          },
+          {
+            "address": "0x100256ff0",
+            "name": "FUN_100256ff0"
+          },
+          {
+            "address": "0x100257260",
+            "name": "FUN_100257260"
+          },
+          {
+            "address": "0x1002579d0",
+            "name": "FUN_1002579d0"
+          },
+          {
+            "address": "0x100273960",
+            "name": "FUN_100273960"
+          },
+          {
+            "address": "0x10028ef30",
+            "name": "FUN_10028ef30"
+          },
+          {
+            "address": "0x10028f4f0",
+            "name": "FUN_10028f4f0"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Where is the consumer and on which thread does it run?",
+          "What happens when the ring is full?",
+          "What do the two queued pointers mean and who owns them?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native bounded work-ring producer; consumer and task ABI remain unknown."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x10001a909",
+              "start": "0x10001a890"
+            }
+          ],
+          "span_bytes": 122,
+          "total_bytes": 122
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_10001a890",
+        "rva": "0x1a890",
+        "va": "0x10001a890"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_100032180()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.ui.maintenance",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_d8326ae6a99fe29e85d990b63ff722c8024c878f9d6c299a14e7b9dd01b8c463",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x1000080f0",
+            "name": "FUN_1000080f0"
+          },
+          {
+            "address": "0x100008b60",
+            "name": "FUN_100008b60"
+          },
+          {
+            "address": "0x10002b790",
+            "name": "FUN_10002b790"
+          },
+          {
+            "address": "0x10002da50",
+            "name": "FUN_10002da50"
+          },
+          {
+            "address": "0x100031f10",
+            "name": "FUN_100031f10"
+          },
+          {
+            "address": "0x100032130",
+            "name": "FUN_100032130"
+          },
+          {
+            "address": "0x100032160",
+            "name": "FUN_100032160"
+          }
+        ],
+        "callers": [],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "Which thread and window generation own this call?",
+          "Which virtual calls can execute mod-owned UI code?",
+          "Can settings presentation use a narrower native seam?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native GUI maintenance and form-task dispatch."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": true,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x1000323fd",
+              "start": "0x100032180"
+            },
+            {
+              "end": "0x10003242c",
+              "start": "0x10003241d"
+            }
+          ],
+          "span_bytes": 685,
+          "total_bytes": 654
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_100032180",
+        "rva": "0x32180",
+        "va": "0x100032180"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    },
+    {
+      "abi": {
+        "calling_convention": null,
+        "parameters": null,
+        "provider_signature": "undefined FUN_1000a94d0()",
+        "return": null,
+        "status": "unknown"
+      },
+      "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+      "contract_id": "exanima.ui.settings_open",
+      "evidence": [
+        {
+          "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+          "evidence_id": "ev_71d871eba42223027bc99e346c5a5a2ce7ff8d79b806e0eb0458760ce936e578",
+          "kind": "rea_ghidra_function_dossier",
+          "operation": "analyze_function",
+          "provider": {
+            "id": "ghidra",
+            "name": "Ghidra",
+            "version": "12.1.4"
+          }
+        }
+      ],
+      "generation": {
+        "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+        "runtime_eligible": false
+      },
+      "memory": {
+        "lifetime": null,
+        "reads": null,
+        "status": "unknown",
+        "writes": null
+      },
+      "relationships": {
+        "callees": [
+          {
+            "address": "0x100008070",
+            "name": "FUN_100008070"
+          },
+          {
+            "address": "0x1000080f0",
+            "name": "FUN_1000080f0"
+          },
+          {
+            "address": "0x100008210",
+            "name": "FUN_100008210"
+          },
+          {
+            "address": "0x10001b000",
+            "name": "FUN_10001b000"
+          },
+          {
+            "address": "0x100028e10",
+            "name": "FUN_100028e10"
+          },
+          {
+            "address": "0x100029470",
+            "name": "FUN_100029470"
+          },
+          {
+            "address": "0x100029660",
+            "name": "FUN_100029660"
+          },
+          {
+            "address": "0x10002a8a0",
+            "name": "FUN_10002a8a0"
+          },
+          {
+            "address": "0x10002c8f0",
+            "name": "FUN_10002c8f0"
+          },
+          {
+            "address": "0x10002da80",
+            "name": "FUN_10002da80"
+          },
+          {
+            "address": "0x1000360f0",
+            "name": "FUN_1000360f0"
+          },
+          {
+            "address": "0x100036440",
+            "name": "FUN_100036440"
+          },
+          {
+            "address": "0x1000a78a0",
+            "name": "FUN_1000a78a0"
+          },
+          {
+            "address": "0x1000a83d0",
+            "name": "FUN_1000a83d0"
+          },
+          {
+            "address": "0x1000a8c60",
+            "name": "FUN_1000a8c60"
+          },
+          {
+            "address": "0x1000a94a0",
+            "name": "FUN_1000a94a0"
+          },
+          {
+            "address": "0x100223a10",
+            "name": "FUN_100223a10"
+          },
+          {
+            "address": "0x10022c740",
+            "name": "FUN_10022c740"
+          }
+        ],
+        "callers": [
+          {
+            "address": "0x100128580",
+            "name": "FUN_100128580"
+          }
+        ],
+        "limitations": [
+          "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+          "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+          "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+          "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        ]
+      },
+      "research": {
+        "questions": [
+          "What objects and callback tables make up the Settings form?",
+          "How are tabs and rows registered and destroyed?",
+          "What is the narrowest safe integration point for one settings owner?"
+        ]
+      },
+      "role": {
+        "state": "hypothesis",
+        "summary": "Native Settings-form construction."
+      },
+      "schema_version": 1,
+      "states": [
+        "observed_static"
+      ],
+      "symbol": {
+        "body": {
+          "available": true,
+          "contains_entry": true,
+          "non_contiguous": false,
+          "provenance": "ghidra-function-body-address-set",
+          "ranges": [
+            {
+              "end": "0x1000a9822",
+              "start": "0x1000a94d0"
+            }
+          ],
+          "span_bytes": 851,
+          "total_bytes": 851
+        },
+        "classification": {
+          "external": false,
+          "provenance": "ghidra-function-manager",
+          "thunk": false,
+          "thunk_target": null
+        },
+        "provider_name": "FUN_1000a94d0",
+        "rva": "0xa94d0",
+        "va": "0x1000a94d0"
+      },
+      "thread": {
+        "details": null,
+        "status": "unknown"
+      }
+    }
+  ],
+  "schema_version": 1
+}

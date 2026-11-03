@@ -8,6 +8,18 @@
 *.zip
 __pycache__/
 .claude/
+/.venv/
+/.vs/
+/.vscode/
+*.user
+*.suo
+Thumbs.db
+.DS_Store
+
+# Local-only research inputs and toolchains; never package or commit them.
+/game/
+/reference/
+/.tools/
 
 # Kept on disk, not published: development notes, tests and tools that do not build the mod
 /DECISIONS.md

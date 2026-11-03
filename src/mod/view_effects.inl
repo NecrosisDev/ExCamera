@@ -8,8 +8,8 @@
 // whose exact-context GL owner and retirement path it reuses.
 // Each effect's strength, 0..1; 0 skips its passes. The look the settings used to call Subtle
 // (and an on/off effect's on) is 0.5, Strong is 1 (see effectStrength, settings.inl).
-static std::atomic<float> ambientOcclusion{0.f}, depthOfField{0.f}, screenSpaceReflections{0.f};
-static std::atomic<float> edgeSmoothing{0.f}, helmetVisor{0.f}, playerGhost{0.f}, conditionEffects{0.f};
+static std::atomic<float> ambientOcclusion{0.5f}, depthOfField{0.5f}, screenSpaceReflections{0.5f};
+static std::atomic<float> edgeSmoothing{0.5f}, helmetVisor{0.f}, playerGhost{0.f}, conditionEffects{0.5f};
 static std::atomic<float> heldDetail{0.5f}; // procedural surface detail on held items; Subtle by default
 static std::atomic<float> armourDetail{0.35f}; // the same on worn armour and clothing; 35% by default (frame cost)
 static std::atomic<float> objectDetail{0.35f}; // the same on loose items and placed objects near the player; 35%
@@ -42,7 +42,7 @@ constexpr GLenum texture0 = 0x84C0, texture1 = 0x84C1, texture2 = 0x84C2, textur
 constexpr GLenum activeTexture = 0x84E0, textureBinding2D = 0x8069;
 constexpr GLenum samplerBinding = 0x8919, currentProgram = 0x8B8D, vertexArrayBinding = 0x85B5;
 constexpr GLenum arrayBuffer = 0x8892, arrayBufferBinding = 0x8894, staticDraw = 0x88E4, streamRead = 0x88E1;
-constexpr GLenum elementArrayBuffer = 0x8893, dynamicDraw = 0x88E8; // the VR hand stream
+constexpr GLenum elementArrayBuffer = 0x8893, elementArrayBufferBinding = 0x8895, dynamicDraw = 0x88E8; // the VR hand stream
 constexpr GLenum pixelPackBuffer = 0x88EB, pixelPackBufferBinding = 0x88ED;
 constexpr GLenum packRowLength = 0x0D02, packSkipRows = 0x0D03, packSkipPixels = 0x0D04;
 constexpr GLenum drawFramebufferBinding = 0x8CA6, readFramebufferBinding = 0x8CAA, readBuffer = 0x0C02, back = 0x0405;
@@ -191,12 +191,12 @@ float occlusion(vec3 origin, vec3 normal, vec2 p, bool gather, inout vec3 bounce
     if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) return 0.0; // past the screen edge
     p = distanceCell(p);
     float d = tapDistance(p);
-    if (d >= 5e4) return 0.0; // sky
+    if (d >= 5e4 || d < -origin.z - 15.0) return 0.0; // sky or foreground occluder edge
     vec3 delta = positionFrom(p, d) - origin;
     float distanceSq = dot(delta, delta);
     if (distanceSq >= radius * radius || distanceSq < 1e-4) return 0.0;
     // The bias keeps flat, tessellated floors from shading themselves.
-    float facing = max(dot(normal, delta) * inversesqrt(distanceSq) - 0.1, 0.0);
+    float facing = max(dot(normal, delta) * inversesqrt(distanceSq) - 0.2, 0.0);
     float weight = facing * (1.0 - distanceSq / (radius * radius));
     if (gather) bounce += weight * toLight(texture2D(sceneTex, p).rgb);
     return weight;
@@ -319,6 +319,8 @@ uniform vec4 previousProjection; // p0, p5, p8, p9 of the previous frame
 uniform vec2 halfSize;           // effect target size in texels
 uniform float historyWeight;     // share of the earlier frames; 0 without a usable history
 uniform sampler2D previousDepth; // the previous frame's depth, where its history was shaded
+uniform sampler2D silhouette;    // 0 where the player's body lies behind something, else 1
+uniform float silhouetteOn;      // 1: the mask holds this frame's body; it replaces the capsule shape
 
 void main() {
     vec4 now = finite(texture2D(current, uv));
@@ -334,6 +336,10 @@ void main() {
     }
     now = clamp(now, low, high);
     gl_FragColor = now;
+    if (silhouetteOn > 0.5) {
+        float maskCode = floor(texture2D(silhouette, uv).g * 255.0 + 0.5) - 1.0;
+        if (maskCode >= 0.0 && maskCode < 240.0) return;
+    }
     float raw = texture2D(depthTex, uv).r;
     if (raw >= skyDepth || historyWeight <= 0.0) return;
     vec4 q = toPrevious * vec4(viewPosition(uv, raw), 1.0);
@@ -377,15 +383,16 @@ vec4 shadeSurfaces(vec4 c) {
         vec2 corner = vec2(mod(float(i), 2.0), floor(0.5 * float(i)));
         vec2 p = (cell + corner + 0.5) / halfSize;
         vec2 bilinear = mix(1.0 - f, f, corner);
-        // Depth tolerance: 2 % of the distance plus 1 cm.
-        float w = bilinear.x * bilinear.y * exp(-abs(tapDistance(p) - d) / (0.02 * d + 1.0)) + 1e-5;
+        float depthDiff = abs(tapDistance(p) - d);
+        float depthTol = 0.03 * d + 2.0;
+        float w = depthDiff < depthTol * 3.0 ? bilinear.x * bilinear.y * exp(-depthDiff / depthTol) : 0.0;
         vec4 ao = texture2D(aoHalf, p);
         occlusion += ao.r * w;
         bounce += ao.gba * ao.gba * w;
         weights += w;
     }
-    occlusion = finite(occlusion / weights);
-    bounce /= weights;
+    occlusion = weights > 1e-4 ? finite(occlusion / weights) : 0.0;
+    bounce = weights > 1e-4 ? bounce / weights : vec3(0.0);
     // Reflections are shaded on a grid half as fine again (ssrSize), upsampled the same way.
     if (ssrOn > 0.0) {
         at = uv * ssrSize - 0.5;
@@ -396,11 +403,13 @@ vec4 shadeSurfaces(vec4 c) {
             vec2 corner = vec2(mod(float(i), 2.0), floor(0.5 * float(i)));
             vec2 p = (cell + corner + 0.5) / ssrSize;
             vec2 bilinear = mix(1.0 - f, f, corner);
-            float w = bilinear.x * bilinear.y * exp(-abs(tapDistance(p) - d) / (0.02 * d + 1.0)) + 1e-5;
+            float depthDiff = abs(tapDistance(p) - d);
+            float depthTol = 0.03 * d + 2.0;
+            float w = depthDiff < depthTol * 3.0 ? bilinear.x * bilinear.y * exp(-depthDiff / depthTol) : 0.0;
             reflection += texture2D(ssrHalf, p) * w;
             weights += w;
         }
-        reflection = clamp(finite(reflection / weights), 0.0, 1.0);
+        reflection = weights > 1e-4 ? clamp(finite(reflection / weights), 0.0, 1.0) : vec4(0.0);
     }
     if (bounceStrength > 0.0) {
         // The bounced light lands on this surface's own colour: its hue at a mid
@@ -417,7 +426,7 @@ vec4 shadeSurfaces(vec4 c) {
     }
     if (ssrOn > 0.0) {
         float keep = 1.0 - smoothstep(0.35, 0.75, dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)));
-        c.rgb = c.rgb * (1.0 - reflection.a * keep) + reflection.rgb * keep;
+        c.rgb = c.rgb * (1.0 - 0.15 * reflection.a * keep) + reflection.rgb * keep;
     }
     return c;
 }
@@ -495,6 +504,11 @@ uniform sampler2D dofHalf; // half resolution, filtered
 
 void main() {
     vec4 c = texture2D(sceneTex, uv);
+    float d = distanceAt(uv);
+    if (blurAt(d) <= 0.2) {
+        gl_FragColor = c;
+        return;
+    }
     vec4 blurred = texture2D(dofHalf, uv); // alpha: how much of the blur this pixel takes
     gl_FragColor = blurred.a <= 0.0 ? c : vec4(mix(c.rgb, blurred.rgb, blurred.a), c.a);
 }
@@ -529,7 +543,7 @@ uniform vec4 ghostA;       // view-space capsule end at the eye; w: radius, 0 wh
 uniform vec4 ghostB;       // view-space capsule end at the feet; w: the ghost's strength, 1 for the old on
 uniform sampler2D silhouette; // 0 where the player's body lies behind something, else 1
 uniform float silhouetteOn;   // 1: the mask holds this frame's body; it replaces the capsule shape
-uniform vec2 condition;    // x: how hurt, y: how winded right now (breath already applied), 0..1
+uniform vec4 condition;    // x: how hurt, y: how winded right now, z: damage flash, 0..1
 uniform float exposure;    // eye adaptation: 1 as the game drew it, below 1 just after darkness falls
 uniform vec4 heldDetail;   // x: strength, 0 when off
 // Per held item or body part (a row each, 40 rows of 16 texels): texels 0-2 the rows taking view
@@ -547,6 +561,7 @@ uniform vec4 levelDetail;
 uniform vec4 levelRow0;
 uniform vec4 levelRow1;
 uniform vec4 levelRow2;
+uniform float woundDebug;
 uniform vec4 levelPeople[6];
 // The two strongest game lights near the player: view-space position (xyz), weight 0..1 (w, 0 none);
 // and their colour (rgb, brightest 1).
@@ -621,7 +636,8 @@ vec3 sharpened(vec3 c) {
     vec3 lo = min(c, min(min(n, s), min(e, w))), hi = max(c, max(max(n, s), max(e, w)));
     vec3 amount = sqrt(clamp(min(lo, 1.0 - hi) / max(hi, vec3(1e-4)), 0.0, 1.0));
     vec3 weight = amount * (-1.0 / mix(8.0, 5.0, sharpen));
-    return clamp((c + (n + s + e + w) * weight) / (1.0 + 4.0 * weight), 0.0, 1.0);
+    vec3 res = (c + (n + s + e + w) * weight) / (1.0 + 4.0 * weight);
+    return clamp(res, lo, hi);
 }
 
 // Distance along a camera ray (from the view origin) to a capsule, or -1.
@@ -757,6 +773,10 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     if (raw >= skyDepth) return color;
     vec3 p = viewPosition(uv, raw);
     float range = -p.z;
+    float itemDepth = heldDatum(slot, 10.0).y;
+    if (itemDepth > 0.0 && abs(range - itemDepth) > 85.0) return color;
+    vec3 q = vec3(dot(rowX, vec4(p, 1.0)), dot(rowY, vec4(p, 1.0)), dot(rowZ, vec4(p, 1.0)));
+    if (dot(q, q) > 175.0 * 175.0) return color;
     float footprint = 2.0 * range * texel.y / projection.y; // cm a pixel spans here
     // Distance tiers, by how much surface one pixel covers: the detail fades out between 0.6 and
     // 1 cm a pixel (about 4 to 7 m at 1080p), where its finest features were already gone.
@@ -768,7 +788,6 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     // quad's own derivatives, which cost nothing.
     vec3 n = closeUp ? viewNormal(uv, p) : normalize(cross(dFdx(p), dFdy(p)));
     if (dot(n, p) > 0.0) n = -n;
-    vec3 q = vec3(dot(rowX, vec4(p, 1.0)), dot(rowY, vec4(p, 1.0)), dot(rowZ, vec4(p, 1.0)));
     float pixelsPerCm = 1.0 / max(footprint, 1e-3);
     // One fetch, four independent noises at a 6 mm grain, shared by the pits, wear, dirt, paint
     // chips, grind lines and blood rims below instead of a fetch each.
@@ -783,6 +802,7 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     // falls back to this spot's own colour, which torchlight can tint.
     bool warm = base.r > base.b * 1.15 && base.g > base.r * 0.45; // brown, not a strong red
     float kind = code - 1.0;
+    if (slotKind < 0.5 && kind > 2.5) kind = 0.0; // held weapons/items are steel (0), wood (1), leather (2); never mail or cloth
     if (kind < -0.5)
         kind = saturationOf(base) < 0.25 ? 0.0 : !warm ? 3.0 :
                dot(base, vec3(0.2126, 0.7152, 0.0722)) < 0.04 ? 2.0 : 1.0;
@@ -849,7 +869,7 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     vec3 r1 = cross(dpy, n), r2 = cross(n, dpx);
     float det = dot(dpx, r1);
     vec3 slope = sign(det) * (dFdx(h) * r1 + dFdy(h) * r2);
-    vec3 bumped = abs(det) > 1e-8 ? normalize(abs(det) * n - slope) : n;
+    vec3 bumped = abs(det) > 1e-6 && maskEdge < 0.5 ? normalize(abs(det) * n - slope) : n;
     if (dot(bumped, n) < 0.3) bumped = n; // a quad straddling the item's outline
     // The game's own lights closeUp the item when found, else from above and from the
     // viewer's side, the way torches and lanterns sit.
@@ -937,13 +957,15 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
         float amount = fract(spot.w), wetness = floor(spot.w) * 0.1;
         vec3 d = q - spot.xyz;
         float spread = length(vec3(d.x, d.y, d.z * 0.35)) + (shared.b - 0.5) * 1.6;
-        float radius = 1.2 + 3.0 * amount;
-        float here = smoothstep(radius, radius * 0.45, spread) * (0.55 + 0.45 * amount);
+        float edgeAffinity = 1.0 + 0.45 * honed + 0.3 * hollow;
+        float radius = (1.2 + 3.0 * amount) * edgeAffinity;
+        float here = smoothstep(radius, radius * 0.4, spread) * (0.55 + 0.45 * amount);
         blood = max(blood, here);
         wet = max(wet, here * wetness);
     }
     if (blood > 0.0) {
-        tint = mix(tint, luma * mix(vec3(0.75, 0.22, 0.12), vec3(1.7, 0.1, 0.06), wet), blood * 0.9);
+        tint = mix(tint, luma * mix(vec3(0.24, 0.07, 0.045), vec3(1.5, 0.08, 0.05), wet), blood * 0.92);
+        if (woundDebug > 0.5) tint = mix(tint, vec3(0.0, 1.0, 0.95) * 2.5, blood * 0.95);
         mirror = mix(mirror, 1.0, blood);
         honed *= 1.0 - blood;
     }
@@ -985,12 +1007,16 @@ vec3 levelSurface(vec3 color) {
     float far = 1.0 - smoothstep(600.0, 800.0, range);
     if (far <= 0.0 || range < 20.0) return color;
     float near = 1.0 - smoothstep(levelDetail.y, levelDetail.z, range);
+    if (silhouetteOn > 0.5) {
+        float mask = floor(texture2D(silhouette, uv).g * 255.0 + 0.5) - 1.0;
+        if (mask >= 0.0 && mask < 240.0) return color;
+    }
     for (int i = 0; i < 6; ++i) {
-        vec4 person = levelPeople[i];
-        if (person.w < 0.5) continue;
-        vec3 a = person.xyz - worldUp.xyz * 110.0, axis = worldUp.xyz * 220.0;
-        vec3 nearest = a + axis * clamp(dot(p - a, axis) / dot(axis, axis), 0.0, 1.0);
-        if (length(p - nearest) < 50.0) return color;
+        if (levelPeople[i].w <= 0.0) continue;
+        vec3 d = p - levelPeople[i].xyz;
+        float h = clamp(d.y, -110.0, 110.0);
+        vec3 nearest = vec3(0.0, h, 0.0);
+        if (length(d - nearest) < 65.0) return color;
     }
     vec3 q = vec3(dot(levelRow0, vec4(p, 1.0)), dot(levelRow1, vec4(p, 1.0)), dot(levelRow2, vec4(p, 1.0)));
     vec3 light = toLight(color);
@@ -1011,7 +1037,7 @@ vec3 levelSurface(vec3 color) {
     float saturation = hi > 1e-4 ? (hi - min(light.r, min(light.g, light.b))) / hi : 0.0;
     float stored = dot(color, vec3(0.2126, 0.7152, 0.0722));   // as stored (lighting-independent cut-offs below are rough)
     bool warm = light.r > light.b * 1.2 && light.g > light.r * 0.45;
-    bool wood = warm && saturation > 0.3 && abs(up) < 0.95;
+    bool wood = warm && saturation > 0.15;
     bool dirt = !wood && up > 0.7 && warm && saturation > 0.15;
     bool metal = !wood && !dirt && saturation < 0.12 && light.b >= light.r * 0.95 && stored < 0.3;
     bool plaster = !wood && !dirt && !metal && saturation < 0.12 && stored > 0.45;
@@ -1045,22 +1071,25 @@ vec3 levelSurface(vec3 color) {
         vec3 around = 0.5 * (toLight(texture2D(sceneTex, uv + vec2(4.0 * texel.x, 0.0)).rgb) +
                              toLight(texture2D(sceneTex, uv + vec2(0.0, 4.0 * texel.y)).rgb));
         float joint = smoothstep(0.82, 0.6, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
-        float pit = smoothstep(0.78, 0.9, grain.b);
-        h = (grain.r - 0.5) * 0.5 - 0.7 * pit * (1.0 - joint) - 0.8 * joint;
-        albedo = mix((0.9 + 0.2 * grain.g) * (1.0 - 0.25 * pit), 0.85 + 0.3 * grain.a, joint);
+        float pit = smoothstep(0.82, 0.94, grain.b) * 0.25;
+        h = (grain.r - 0.5) * 0.2 - pit * 0.3 * (1.0 - joint) - 0.3 * joint;
+        albedo = mix((0.96 + 0.08 * grain.g) * (1.0 - 0.12 * pit), 0.92 + 0.12 * grain.a, joint);
     }
     // The 4 mm grain only where a pixel is finer than it (within a metre or two): coarser pixels each
     // take an unrelated grain value, which read as a darker, noisy oval around the view on the floor
     // in front. Its colour and bump both fade to the plain surface there; the broad look stays.
     float fine = clamp(0.2 / max(footprint, 1e-3) - 0.5, 0.0, 1.0);
+    fine = fine * fine * (3.0 - 2.0 * fine);
     albedo = mix(1.0, albedo, fine);
     albedo *= weather * (1.0 - 0.22 * damp * (wood ? 0.4 : 1.0));
     h *= 0.15 * fine;
     vec3 dpx = dFdx(p), dpy = dFdy(p);
     vec3 r1 = cross(dpy, n), r2 = cross(n, dpx);
     float det = dot(dpx, r1);
-    vec3 bumped = abs(det) > 1e-8 ? normalize(abs(det) * n - sign(det) * (dFdx(h) * r1 + dFdy(h) * r2)) : n;
-    if (dot(bumped, n) < 0.3) bumped = n;
+    vec2 dh = clamp(vec2(dFdx(h), dFdy(h)), vec2(-0.35), vec2(0.35));
+    vec3 v = abs(det) > 1e-6 ? (abs(det) * n - sign(det) * (dh.x * r1 + dh.y * r2)) : n;
+    vec3 bumped = dot(v, v) > 1e-6 ? normalize(v) : n;
+    if (dot(bumped, n) < 0.55) bumped = n;
 )glsl" R"glsl(    // Light from the nearest real lights, each from its own position, weighted by how near and
     // strong it is; the fixed top/viewer light fills in where none is found.
     vec3 lightDir = normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6));
@@ -1116,7 +1145,7 @@ void main() {
     // Occlusion and reflections are low-frequency: applied after the edge passes they look
     // the same as before them, and this pass then needs no neighbouring shaded pixels.
     // Sharpened or smoothed first, then blurred where out of focus: blurred areas need neither.
-    if (dofOn > 0.5) {
+    if (dofOn > 0.5 && !(maskCode >= 0.0 && maskCode < 240.0)) {
         vec4 blurred = texture2D(dofHalf, uv);
         if (blurred.a > 0.0) color = mix(color, blurred.rgb, blurred.a);
     }
@@ -1152,7 +1181,7 @@ void main() {
             color = mix(color, vec3(0.62, 0.72, 0.9), min((0.12 + 0.38 * rim * rim) * ghostB.w, 0.9));
         }
     }
-    if (condition.x > 0.0 || condition.y > 0.0) {
+    if (condition.x > 0.0 || condition.y > 0.0 || condition.z > 0.0) {
         // Wounds drain colour and close in the edges; breathlessness darkens
         // the edges in time with each breath.
         float grey = dot(color, vec3(0.299, 0.587, 0.114));
@@ -1160,6 +1189,11 @@ void main() {
         vec2 q = (uv - 0.5) * vec2(texel.y / texel.x, 1.0);
         float edge = smoothstep(0.25, 0.9, length(q));
         color *= 1.0 - edge * (0.35 * condition.x + 0.45 * condition.y);
+        if (condition.z > 0.0) {
+            float flashEdge = smoothstep(0.28, 0.95, length(q));
+            vec3 crimson = vec3(0.68, 0.03, 0.02);
+            color = mix(color, crimson, flashEdge * condition.z * 0.75);
+        }
     }
     if (visor < 0.0) {
         // The helmet is hidden, so there is no rim to take the shape of: a soft opening instead.
@@ -1199,11 +1233,12 @@ uniform vec4 woundC[12];   // severity 0..1, seed (negative: the skin part is ba
                            // length of the blood runs (cm)
 uniform float woundCount;
 uniform vec4 woundRect;    // screen box (uv min xy, max zw) that holds every wound's reach; outside it nothing to do
-uniform vec4 dripA[24];    // a drop of blood: view-space point it fell from; w: radius (cm) + 10 x dryness step (0..9)
+uniform vec4 dripA[32];    // a drop of blood: view-space point it fell from; w: radius (cm) + 10 x dryness step (0..9)
 uniform float dripCount;
 uniform vec4 capA[8];      // a flesh cap on a severed limb: view-space centre; w: radius (cm)
 uniform vec4 capB[8];      // its facing (view space); w: 0 the stump, 1 the severed end
 uniform float capCount;
+uniform float woundDebug;
 
 float woundHash(float x) {
     return fract(sin(x * 12.9898) * 43758.5453);
@@ -1297,6 +1332,7 @@ vec3 woundMarks(vec3 color) {
             vec3 outer = mix(mix(vec3(0.85, 0.42, 0.4), vec3(0.62, 0.45, 0.62), aux), vec3(0.5, 0.33, 0.5), fracture);
             vec3 inner = mix(mix(vec3(0.6, 0.18, 0.16), vec3(0.42, 0.17, 0.2), aux), vec3(0.26, 0.08, 0.13), fracture);
             vec3 bruise = mix(outer, inner, 1.0 - smoothstep(0.0, 0.7, r));
+            if (woundDebug > 0.5) bruise = vec3(1.0, 0.05, 0.9) * 2.2;
             float graze = severity > 0.6 ? step(0.8, woundHash(floor(q.x * 2.0) + floor(q.y * 2.0) * 57.0 + seed * 101.0)) *
                                                (1.0 - smoothstep(0.0, 0.45, r)) : 0.0;
             tint *= mix(vec3(1.0), mix(bruise, vec3(0.35, 0.05, 0.04), graze), w);
@@ -1336,7 +1372,7 @@ vec3 woundMarks(vec3 color) {
         fabric = mix(fabric, fabric * 0.65, fray);
         fabric = mix(fabric, vec3(0.1, 0.02, 0.02), slit);
         vec3 plate = mix(vec3(1.0), blood * 1.6, smear * 0.6);
-        // Healing into a scar: a pale, thin line with a faint pink halo.
+)glsl" R"glsl(        // Healing into a scar: a pale, thin line with a faint pink halo.
         float scarLine = taper * (1.0 - smoothstep(0.25, 0.6, x)), scarHalo = taper * (1.0 - smoothstep(0.6, 2.0, x));
         cut = mix(cut, mix(mix(vec3(1.0), vec3(1.05, 0.9, 0.88), scarHalo * 0.45), vec3(1.14, 1.02, 0.97), scarLine * 0.85), scar);
         inside *= 1.0 - scar;
@@ -1366,35 +1402,87 @@ vec3 woundMarks(vec3 color) {
             }
             cut = mix(cut, blood, run * 0.9 * (1.0 - 0.7 * cloth)); // cloth drinks most of it
         }
+        if (woundDebug > 0.5) {
+            vec3 neonCut = vec3(0.0, 1.0, 0.95);
+            cut = mix(cut, neonCut * 2.5, inside);
+            cut = mix(cut, neonCut * 2.0, run);
+        }
         tint *= mix(vec3(1.0), cut, stick);
         wet += (inside * (0.5 + 0.5 * severity) + 0.6 * run) * stick * (0.15 + 0.85 * aux) * (1.0 - 0.6 * cloth);
     }
-    // Drops of blood on the first upward surface 20..200 cm below where they fell from: a round drop with a
-    // softly uneven rim, bright and wet at first, dark brown once dry. Smooth everywhere: no hard thresholds,
-    // which flicker as the floor's depth wobbles from frame to frame.
-    for (int j = 0; j < 24; ++j) {
+    // Drops and spatters of blood on floors 15..220 cm below or vertical surfaces within 25 cm:
+    // satellite micro-droplets, coffee-ring perimeter drying, crusted oxidation, and wet highlights.
+    vec3 uFloor = normalize(worldUp.xyz);
+    vec3 tFloor1 = normalize(abs(uFloor.y) < 0.9 ? cross(uFloor, vec3(0.0, 1.0, 0.0)) : cross(uFloor, vec3(1.0, 0.0, 0.0)));
+    vec3 tFloor2 = cross(uFloor, tFloor1);
+    for (int j = 0; j < 32; ++j) {
         if (float(j) >= dripCount) break;
         vec4 D = dripA[j];
         float dryStep = floor(D.w / 10.0), radius = D.w - 10.0 * dryStep, dry = dryStep / 9.0;
         vec3 d = p - D.xyz;
-        float h = dot(d, worldUp.xyz);
-        if (h > -20.0 || h < -200.0) continue;
-        vec3 spread = d - worldUp.xyz * h;
-        float r = length(spread);
-        if (r > radius * 1.3) continue;
-        if (!near) {
-            n = viewNormal(uv, p);
-            near = true;
-            vec3 base = toLight(color);
-            float brightest = max(base.r, max(base.g, base.b)), darkest = min(base.r, min(base.g, base.b));
-            grey = 1.0 - smoothstep(0.08, 0.2, (brightest - darkest) / max(brightest, 1e-4));
+        float h = dot(d, uFloor);
+        vec3 spread = vec3(0.0);
+        float r = 999.0;
+        if (h <= -15.0 && h >= -220.0) {
+            vec3 sFloor = d - uFloor * h;
+            float rFloor = length(sFloor);
+            if (rFloor < radius * 2.5) {
+                if (!near) {
+                    n = viewNormal(uv, p);
+                    near = true;
+                    vec3 base = toLight(color);
+                    float brightest = max(base.r, max(base.g, base.b)), darkest = min(base.r, min(base.g, base.b));
+                    grey = 1.0 - smoothstep(0.08, 0.2, (brightest - darkest) / max(brightest, 1e-4));
+                }
+                if (dot(n, uFloor) >= 0.5) {
+                    r = rFloor;
+                    spread = sFloor;
+                }
+            }
         }
-        if (dot(n, worldUp.xyz) < 0.6) continue;
-        float angle = atan(spread.z, spread.x);
-        float rim = 1.0 + 0.1 * sin(angle * 5.0 + D.x * 0.37) + 0.05 * sin(angle * 11.0 - D.y * 0.53);
-        float m = 1.0 - smoothstep(0.7, 1.0, r / (radius * rim));
-        tint *= mix(vec3(1.0), mix(vec3(0.33, 0.025, 0.02), vec3(0.28, 0.1, 0.06), dry), m);
-        wet += m * (1.0 - dry) * 0.35; // a little shine: the floor's normal, read from depth, is noisy
+        if (r > radius * 2.2 && h <= 20.0 && h >= -120.0) {
+            if (!near) {
+                n = viewNormal(uv, p);
+                near = true;
+                vec3 base = toLight(color);
+                float brightest = max(base.r, max(base.g, base.b)), darkest = min(base.r, min(base.g, base.b));
+                grey = 1.0 - smoothstep(0.08, 0.2, (brightest - darkest) / max(brightest, 1e-4));
+            }
+            if (abs(dot(n, uFloor)) < 0.45) {
+                float normDist = abs(dot(d, n));
+                if (normDist < 25.0) {
+                    vec3 sWall = d - n * dot(d, n);
+                    float wallVert = dot(sWall, uFloor);
+                    float wallHoriz = length(sWall - uFloor * wallVert);
+                    float rWall = length(vec2(wallHoriz, wallVert > 0.0 ? wallVert * 1.5 : wallVert * 0.45));
+                    if (rWall < radius * 2.2) {
+                        r = rWall;
+                        spread = sWall;
+                    }
+                }
+            }
+        }
+        if (r > radius * 2.2) continue;
+        float angle = atan(dot(spread, tFloor2), dot(spread, tFloor1));
+        float rim = 1.0 + 0.12 * sin(angle * 5.0 + D.x * 0.37) + 0.06 * sin(angle * 11.0 - D.y * 0.53);
+        float mainDrop = 1.0 - smoothstep(0.65, 1.0, r / (radius * rim));
+        float a1 = D.x * 1.7 + D.y * 2.3;
+        vec3 sat1Offset = (tFloor1 * cos(a1) + tFloor2 * sin(a1)) * (radius * 1.65);
+        float sat1 = 1.0 - smoothstep(0.5, 1.0, length(spread - sat1Offset) / (radius * 0.22));
+        float a2 = a1 + 2.4;
+        vec3 sat2Offset = (tFloor1 * cos(a2) + tFloor2 * sin(a2)) * (radius * 1.95);
+        float sat2 = 1.0 - smoothstep(0.5, 1.0, length(spread - sat2Offset) / (radius * 0.18));
+        float m = max(mainDrop, max(sat1 * 0.85, sat2 * 0.75));
+        if (m <= 0.001) continue;
+        float rimFrac = clamp(r / (radius * rim), 0.0, 1.0);
+        float localDry = clamp(dry + rimFrac * 0.35, 0.0, 1.0);
+        float coffeeRing = 1.0 + 0.3 * smoothstep(0.65, 0.95, rimFrac);
+        vec3 freshBlood = vec3(0.36, 0.015, 0.012);
+        vec3 driedBlood = vec3(0.11, 0.025, 0.018);
+        vec3 bloodColor = mix(freshBlood, driedBlood, localDry) * (1.0 - 0.2 * coffeeRing * localDry);
+        if (woundDebug > 0.5) bloodColor = vec3(0.1, 1.0, 0.35) * 2.2;
+        tint *= mix(vec3(1.0), bloodColor, m);
+        wet += m * (1.0 - localDry) * 0.45;
     }
     if (!near) return color;
     vec3 lit = toLight(color);
@@ -1531,7 +1619,7 @@ enum ViewUniform : unsigned {
     uFrameOffset, uCurrent, uHistory, uToPrevious, uPreviousProjection, uHistoryWeight, uDofHalf, uCells, uExposure,
     uSilhouette, uSilhouetteOn, uHeldDetail, uHeldNoise, uHeldData, uLevelDetail, uLevelRow0, uLevelRow1, uLevelRow2, uLevelPeople, uLevelLight, uLevelLightColour,
     uWoundA, uWoundB, uWoundC, uWoundCount, uWoundRect, uDripA, uDripCount,
-    uFireA, uFireB, uFireC, uFireCount, uFireRect, uFireLook, uFireRight, uFireNoise, uCapA, uCapB, uCapCount, viewUniformCount
+    uFireA, uFireB, uFireC, uFireCount, uFireRect, uFireLook, uFireRight, uFireNoise, uCapA, uCapB, uCapCount, uWoundDebug, viewUniformCount
 };
 static const char* const viewUniformNames[viewUniformCount] = {
     "sceneTex", "depthTex", "texel", "projection", "depthLinear", "pixelScale", "encoded",
@@ -1540,7 +1628,7 @@ static const char* const viewUniformNames[viewUniformCount] = {
     "frameOffset", "current", "history", "toPrevious", "previousProjection", "historyWeight", "dofHalf", "cells", "exposure",
     "silhouette", "silhouetteOn", "heldDetail", "heldNoise", "heldData", "levelDetail", "levelRow0", "levelRow1", "levelRow2", "levelPeople", "levelLight", "levelLightColour",
     "woundA", "woundB", "woundC", "woundCount", "woundRect", "dripA", "dripCount",
-    "fireA", "fireB", "fireC", "fireCount", "fireRect", "fireLook", "fireRight", "fireNoise", "capA", "capB", "capCount"};
+    "fireA", "fireB", "fireC", "fireCount", "fireRect", "fireLook", "fireRight", "fireNoise", "capA", "capB", "capCount", "woundDebug"};
 struct ViewProgramUniforms { GLint at[viewUniformCount]; };
 enum ViewProgram : unsigned {
     programAo, programSsr, programDof, programFinish, programComposite, programResolve, programDofComposite,
@@ -2194,22 +2282,6 @@ struct ViewFrame {
 };
 
 using WoundBarrier = void(APIENTRY*)();
-static WoundBarrier woundBarrier = nullptr;
-static void woundTextureBarrier() {
-    if (woundBarrier) woundBarrier();
-}
-// The wound pass's framebuffer and quad, and the barrier that lets a pixel read and rewrite itself
-// (GL 4.5 or NV_texture_barrier); without it the pass stays off.
-static bool woundPassReady(gl::Api& g, fp::CueResources& r) {
-    if (!woundBarrier && !loadGl(woundBarrier, "glTextureBarrier") && !loadGl(woundBarrier, "glTextureBarrierNV")) {
-        woundBarrier = nullptr;
-        return false;
-    }
-    if (!r.woundFbo && g.genFramebuffers) g.genFramebuffers(1, &r.woundFbo);
-    if (!r.woundQuadVao) g.genVertexArrays(1, &r.woundQuadVao);
-    if (!r.woundQuadVbo) g.genBuffers(1, &r.woundQuadVbo);
-    return r.woundFbo && r.woundQuadVao && r.woundQuadVbo;
-}
 
 static void setViewUniforms(gl::Api& g, const ViewProgramUniforms& u, const ViewFrame& f) {
     g.uniform1i(u.at[uScene], 0);
@@ -2291,7 +2363,7 @@ static bool readViewMatrices(uintptr_t view, ViewEffectProjectionSnapshot& out) 
     memcpy(out.view, m, sizeof out.view);
     out.p0 = p[0]; out.p5 = p[5]; out.p8 = p[8]; out.p9 = p[9]; out.p10 = p[10]; out.p14 = p[14];
     const float upLengthSq = m[4] * m[4] + m[5] * m[5] + m[6] * m[6];
-    out.worldUpValid = std::isfinite(upLengthSq) && upLengthSq >= 0.96f && upLengthSq <= 1.04f;
+    out.worldUpValid = std::isfinite(upLengthSq) && upLengthSq >= 0.25f && upLengthSq <= 4.0f;
     if (out.worldUpValid) {
         const float inverse = 1.f / std::sqrt(upLengthSq);
         out.worldUpX = m[4] * inverse; out.worldUpY = m[5] * inverse; out.worldUpZ = m[6] * inverse;
@@ -2333,7 +2405,7 @@ struct ViewRequest {
     GLuint viewTexture = 0, sceneFramebuffer = 0;
     int outputWidth = 0, outputHeight = 0, sceneWidth = 0, sceneHeight = 0;
     float ghostEye[3]{}, ghostFeet[3]{}; // world space, cm
-    float hurt = 0.f, winded = 0.f;      // 0..1
+    float hurt = 0.f, winded = 0.f, damageFlash = 0.f; // 0..1
     bool adapt = false;                  // eye adaptation (desktop view only): the finish pass only while adjusting
     bool silhouette = false;             // the ghost takes the mask the camera pass drew this frame
     float detail = 0.f;                  // held-item detail strength; only with a mask slot below
@@ -2369,7 +2441,7 @@ static void toView(const float* m, const float* p, float* out) {
 // does, and the item gets no detail that frame.
 static std::atomic<unsigned> heldDetailFrames{0}, heldDetailUnanchored{0};
 constexpr float heldReachCm = 600.f;
-static bool heldViewFrame(const float* view, const HeldPose& h, float* out) {
+static bool heldViewFrame(const float* view, const HeldPose& h, float* out, float* viewDepth = nullptr) {
     float origin[3], best[3], bestSq = heldReachCm * heldReachCm;
     bool found = false;
     for (int candidate = 0; candidate < 2; ++candidate) {
@@ -2384,6 +2456,7 @@ static bool heldViewFrame(const float* view, const HeldPose& h, float* out) {
         }
     }
     if (!found) return false;
+    if (viewDepth) *viewDepth = -best[2];
     memset(out, 0, 16 * sizeof(float));
     out[15] = 1.f;
     for (int a = 0; a < 3; ++a) {
@@ -2401,29 +2474,41 @@ static bool heldViewFrame(const float* view, const HeldPose& h, float* out) {
     return true;
 }
 
-// This frame's view space to the previous frame's: inverse(current) * previous,
-// both native row-major view matrices (rotation and translation). The result
-// uploads untransposed: GLSL's column-major matrix times a column vector is the
-// same product. False for a matrix that is not an invertible affine one.
+// This frame's view space to the previous frame's: previous * inverse(current),
+// both native OpenGL column-major view matrices (rotation in columns 0..2, translation in column 3).
+// In GLSL: toPrevious * vec4(P_view_curr, 1.0) maps P_view_curr -> P_world -> P_view_prev.
 static bool viewToPrevious(const float* m, const float* previous, float* out) {
     if (std::abs(m[3]) > 1e-4f || std::abs(m[7]) > 1e-4f || std::abs(m[11]) > 1e-4f || std::abs(m[15] - 1.f) > 1e-4f)
         return false;
-    const float det = m[0] * (m[5] * m[10] - m[6] * m[9]) - m[1] * (m[4] * m[10] - m[6] * m[8]) +
-                      m[2] * (m[4] * m[9] - m[5] * m[8]);
+    const float det = m[0] * (m[5] * m[10] - m[6] * m[9]) - m[4] * (m[1] * m[10] - m[2] * m[9]) +
+                      m[8] * (m[1] * m[6] - m[2] * m[5]);
     if (!std::isfinite(det) || std::abs(det) < 1e-6f) return false;
     const float k = 1.f / det;
-    float inverse[16] = {
-        (m[5] * m[10] - m[6] * m[9]) * k, (m[2] * m[9] - m[1] * m[10]) * k, (m[1] * m[6] - m[2] * m[5]) * k, 0.f,
-        (m[6] * m[8] - m[4] * m[10]) * k, (m[0] * m[10] - m[2] * m[8]) * k, (m[2] * m[4] - m[0] * m[6]) * k, 0.f,
-        (m[4] * m[9] - m[5] * m[8]) * k,  (m[1] * m[8] - m[0] * m[9]) * k,  (m[0] * m[5] - m[1] * m[4]) * k, 0.f,
-        0.f, 0.f, 0.f, 1.f};
-    for (int c = 0; c < 3; ++c)
-        inverse[12 + c] = -(m[12] * inverse[c] + m[13] * inverse[4 + c] + m[14] * inverse[8 + c]);
-    for (int row = 0; row < 4; ++row)
-        for (int c = 0; c < 4; ++c) {
+    float invM[16]{};
+    invM[0] = (m[5] * m[10] - m[6] * m[9]) * k;
+    invM[1] = (m[2] * m[9] - m[1] * m[10]) * k;
+    invM[2] = (m[1] * m[6] - m[2] * m[5]) * k;
+    invM[3] = 0.f;
+
+    invM[4] = (m[6] * m[8] - m[4] * m[10]) * k;
+    invM[5] = (m[0] * m[10] - m[2] * m[8]) * k;
+    invM[6] = (m[2] * m[4] - m[0] * m[6]) * k;
+    invM[7] = 0.f;
+
+    invM[8] = (m[4] * m[9] - m[5] * m[8]) * k;
+    invM[9] = (m[1] * m[8] - m[0] * m[9]) * k;
+    invM[10] = (m[0] * m[5] - m[1] * m[4]) * k;
+    invM[11] = 0.f;
+
+    for (int r = 0; r < 3; ++r)
+        invM[12 + r] = -(invM[r] * m[12] + invM[4 + r] * m[13] + invM[8 + r] * m[14]);
+    invM[15] = 1.f;
+
+    for (int col = 0; col < 4; ++col)
+        for (int row = 0; row < 4; ++row) {
             float sum = 0.f;
-            for (int i = 0; i < 4; ++i) sum += inverse[row * 4 + i] * previous[i * 4 + c];
-            out[row * 4 + c] = sum;
+            for (int i = 0; i < 4; ++i) sum += previous[i * 4 + row] * invM[col * 4 + i];
+            out[col * 4 + row] = sum;
         }
     for (int i = 0; i < 16; ++i)
         if (!std::isfinite(out[i])) return false;
@@ -2648,9 +2733,9 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
          "eye adaptation meter"},
         {float(aoMode || ssrMode), &r.distanceProgram, &owner->distanceAttempted, nullptr, distanceShader,
          viewDistanceFailed, "view-distance target"},
-        {float(finishMode && (request.wounds.count || request.wounds.drips || request.wounds.caps)), &r.woundProgram, &owner->woundAttempted, nullptr, woundShader,
+        {float(finishMode), &r.woundProgram, &owner->woundAttempted, nullptr, woundShader,
          viewWoundsFailed, "wound marks"},
-        {float(finishMode && request.fires.count), &r.fireProgram, &owner->fireAttempted, nullptr, fireShader,
+        {float(finishMode), &r.fireProgram, &owner->fireAttempted, nullptr, fireShader,
          viewFireFailed, "fire and smoke"}};
     for (unsigned i = 0; i < programCount; ++i) {
         if (!effects[i].mode || *effects[i].attempted) continue;
@@ -2658,6 +2743,9 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         *effects[i].program = buildViewProgram(g, effects[i].shared, effects[i].body, effects[i].failure, effects[i].name,
                                               viewUniforms[contextIndex][i]);
         drainGl(); // compile errors stay with the failed effect
+    }
+    if (finishMode && woundMarks.load(std::memory_order_relaxed) > 0.f) {
+        initWoundBakeResources(g, r);
     }
     if (!r.aoProgram) aoMode = 0;
     if (!r.ssrProgram) ssrMode = 0;
@@ -3006,13 +3094,20 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniformMatrix4fv(u.at[uToPrevious], 1, 0, toPrevious);
                 g.uniform4f(u.at[uPreviousProjection], owner->previousProjection[0], owner->previousProjection[1],
                             owner->previousProjection[2], owner->previousProjection[3]);
+                if (r.silhouetteMask) {
+                    g.activeTexture(glc::texture0 + 5);
+                    g.bindTexture(GL_TEXTURE_2D, r.silhouetteMask);
+                    g.uniform1i(u.at[uSilhouette], 5);
+                    g.uniform1f(u.at[uSilhouetteOn], 1.f);
+                } else {
+                    g.uniform1f(u.at[uSilhouetteOn], 0.f);
+                }
                 const float modes[2] = {aoMode, ssrMode};
                 for (unsigned e = 0; e < 2; ++e) {
                     if (!modes[e]) continue;
-                    // About ten frames carry the blend, a sixth of a second at 60 fps; the
-                    // neighbourhood clamp lets a real change through at once.
+                    // Responsive 0.65 history weight prevents smearing and ghosting during movement.
                     const bool usable = cameraContinues && r.historyFrame[e] == frameIndex;
-                    g.uniform1f(u.at[uHistoryWeight], usable ? 0.9f : 0.f);
+                    g.uniform1f(u.at[uHistoryWeight], usable ? 0.65f : 0.f);
                     const int width = e ? r.ssrWidth : r.halfWidth, height = e ? r.ssrHeight : r.halfHeight;
                     setViewport(g, 0, 0, width, height);
                     g.uniform2f(u.at[uHalfSize], float(width), float(height));
@@ -3098,61 +3193,59 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         stampTo(4);
         // Wound marks first, on the image the finishing pass reads, only inside their screen box.
         if (finishMode && (request.wounds.count || request.wounds.drips || request.wounds.caps) && r.woundProgram && g.uniform4fv &&
-            projection.worldUpValid &&
-            (source == r.viewColor || source == r.chainTex) && woundPassReady(g, r)) {
+            (source == r.viewColor || source == r.chainTex)) {
             const WoundUniforms& wounds = request.wounds;
-        // The screen box of every wound's reach (centre +- half length + runs + 6 cm, as the shader
-        // tests); a wound the camera stands within covers the whole view.
-        float box[4] = {1.f, 1.f, 0.f, 0.f};
-        for (unsigned k = 0; k < wounds.count; ++k) {
-            const float* c = wounds.a[k];
-            const float reach = c[3] + wounds.c[k][3] + 6.f, depth = -c[2];
-            if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
-            const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
-            const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
-            const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
-            const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
-            box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
-            box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
-        }
-        // Each cap's disc.
-        for (unsigned k = 0; k < wounds.caps && box[2] - box[0] < 1.f; ++k) {
-            const float* c = wounds.capA[k];
-            const float reach = c[3] * 1.5f, depth = -c[2];
-            if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
-            const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
-            const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
-            const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
-            const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
-            box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
-            box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
-        }
-        // Each drop's reach: from 20 to 200 cm below where it fell, three radii across.
-        for (unsigned k = 0; k < wounds.drips && box[2] - box[0] < 1.f; ++k) {
-            const float* d = wounds.d[k];
-            const float radius = d[3] - 10.f * std::floor(d[3] / 10.f);
-            const float c[3] = {d[0] - projection.worldUpX * 110.f, d[1] - projection.worldUpY * 110.f,
-                                d[2] - projection.worldUpZ * 110.f};
-            const float reach = 90.f + radius * 3.f, depth = -c[2];
-            if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
-            const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
-            const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
-            const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
-            const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
-            box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
-            box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
-        }
-        box[0] = std::clamp(box[0], 0.f, 1.f); box[1] = std::clamp(box[1], 0.f, 1.f);
+            const float upX = projection.worldUpValid ? projection.worldUpX : 0.f;
+            const float upY = projection.worldUpValid ? projection.worldUpY : 1.f;
+            const float upZ = projection.worldUpValid ? projection.worldUpZ : 0.f;
+            // The screen box of every wound's reach (centre +- half length + runs + 6 cm, as the shader
+            // tests); a wound the camera stands within covers the whole view.
+            float box[4] = {1.f, 1.f, 0.f, 0.f};
+            for (unsigned k = 0; k < wounds.count; ++k) {
+                const float* c = wounds.a[k];
+                const float reach = c[3] + wounds.c[k][3] + 6.f, depth = -c[2];
+                if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
+                const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
+                const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
+                const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
+                const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
+                box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
+                box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
+            }
+            // Each cap's disc.
+            for (unsigned k = 0; k < wounds.caps && box[2] - box[0] < 1.f; ++k) {
+                const float* c = wounds.capA[k];
+                const float reach = c[3] * 1.5f, depth = -c[2];
+                if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
+                const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
+                const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
+                const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
+                const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
+                box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
+                box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
+            }
+            // Each drop's reach: from 20 to 200 cm below where it fell, three radii across.
+            for (unsigned k = 0; k < wounds.drips && box[2] - box[0] < 1.f; ++k) {
+                const float* d = wounds.d[k];
+                const float radius = d[3] - 10.f * std::floor(d[3] / 10.f);
+                const float c[3] = {d[0] - upX * 110.f, d[1] - upY * 110.f,
+                                    d[2] - upZ * 110.f};
+                const float reach = 90.f + radius * 3.f, depth = -c[2];
+                if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
+                const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
+                const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
+                const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
+                const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
+                box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
+                box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
+            }
+            box[0] = std::clamp(box[0], 0.f, 1.f); box[1] = std::clamp(box[1], 0.f, 1.f);
             box[2] = std::clamp(box[2], 0.f, 1.f); box[3] = std::clamp(box[3], 0.f, 1.f);
             if (box[2] > box[0] && box[3] > box[1]) {
                 const auto& u = viewUniforms[contextIndex][programWounds];
+                beginPass(false);
                 g.activeTexture(glc::texture1);
                 g.bindTexture(GL_TEXTURE_2D, r.viewDepth);
-                g.activeTexture(glc::texture0);
-                g.bindTexture(GL_TEXTURE_2D, source);
-                g.bindFramebuffer(glc::framebuffer, r.woundFbo);
-                g.framebufferTexture2D(glc::framebuffer, glc::colorAttachment0, GL_TEXTURE_2D, source, 0);
-                setViewport(g, 0, 0, viewport[2], viewport[3]);
                 glDisable(GL_BLEND);
                 g.useProgram(r.woundProgram);
                 setViewUniforms(g, u, frame);
@@ -3168,24 +3261,15 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                     g.uniform4fv(u.at[uCapA], GLsizei(wounds.caps), &wounds.capA[0][0]);
                     g.uniform4fv(u.at[uCapB], GLsizei(wounds.caps), &wounds.capB[0][0]);
                 }
-                g.uniform4f(u.at[uWorldUp], projection.worldUpX, projection.worldUpY, projection.worldUpZ, 0.f);
-                // The box as a quad, in the vertex shader's -1..1 position (uv = position * 0.5 + 0.5).
-                const float quad[8] = {box[0] * 2.f - 1.f, box[1] * 2.f - 1.f, box[2] * 2.f - 1.f, box[1] * 2.f - 1.f,
-                                       box[0] * 2.f - 1.f, box[3] * 2.f - 1.f, box[2] * 2.f - 1.f, box[3] * 2.f - 1.f};
-                g.bindVertexArray(r.woundQuadVao);
-                g.bindBuffer(glc::arrayBuffer, r.woundQuadVbo);
-                g.bufferData(glc::arrayBuffer, ptrdiff_t(sizeof quad), quad, glc::dynamicDraw);
-                g.vertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
-                g.enableVertexAttribArray(0);
-                woundTextureBarrier();
+                g.uniform4f(u.at[uWorldUp], upX, upY, upZ, 0.f);
+                g.uniform1f(u.at[uWoundDebug], woundDebug.load(std::memory_order_relaxed) ? 1.f : 0.f);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-                woundTextureBarrier(); // the finishing pass reads what was just written
-                g.bindVertexArray(r.viewVao);
+                endPass(false);
             }
         }
         // Fire and smoke (fire.inl) next, on the same image, only inside the box that holds every volume.
-        if (finishMode && request.fires.count && r.fireProgram && g.uniform4fv && projection.worldUpValid &&
-            (source == r.viewColor || source == r.chainTex) && woundPassReady(g, r) && prepareHeldNoise(g, r)) {
+        if (finishMode && request.fires.count && r.fireProgram && g.uniform4fv &&
+            (source == r.viewColor || source == r.chainTex) && prepareHeldNoise(g, r)) {
             const FireUniforms& fires = request.fires;
             // Each volume's bounding sphere, as the shader builds it; a volume the camera stands in covers the view.
             float box[4] = {1.f, 1.f, 0.f, 0.f};
@@ -3210,16 +3294,12 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             box[2] = std::clamp(box[2], 0.f, 1.f); box[3] = std::clamp(box[3], 0.f, 1.f);
             if (box[2] > box[0] && box[3] > box[1]) {
                 const auto& u = viewUniforms[contextIndex][programFire];
+                beginPass(false);
                 g.activeTexture(glc::texture0 + heldNoiseUnit);
                 noiseTouched = true;
                 g.bindTexture(texture3D, r.heldNoise);
                 g.activeTexture(glc::texture1);
                 g.bindTexture(GL_TEXTURE_2D, r.viewDepth);
-                g.activeTexture(glc::texture0);
-                g.bindTexture(GL_TEXTURE_2D, source);
-                g.bindFramebuffer(glc::framebuffer, r.woundFbo);
-                g.framebufferTexture2D(glc::framebuffer, glc::colorAttachment0, GL_TEXTURE_2D, source, 0);
-                setViewport(g, 0, 0, viewport[2], viewport[3]);
                 glDisable(GL_BLEND);
                 g.useProgram(r.fireProgram);
                 setViewUniforms(g, u, frame);
@@ -3233,17 +3313,8 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform4f(u.at[uFireLook], float(now % 1000000ull) / 1000.f, fires.steps, fires.smoke, 0.f);
                 g.uniform4f(u.at[uFireRight], fires.right[0], fires.right[1], fires.right[2], 0.f);
                 g.uniform1f(u.at[uFrameOffset], float(frameIndex % 64u));
-                const float quad[8] = {box[0] * 2.f - 1.f, box[1] * 2.f - 1.f, box[2] * 2.f - 1.f, box[1] * 2.f - 1.f,
-                                       box[0] * 2.f - 1.f, box[3] * 2.f - 1.f, box[2] * 2.f - 1.f, box[3] * 2.f - 1.f};
-                g.bindVertexArray(r.woundQuadVao);
-                g.bindBuffer(glc::arrayBuffer, r.woundQuadVbo);
-                g.bufferData(glc::arrayBuffer, ptrdiff_t(sizeof quad), quad, glc::dynamicDraw);
-                g.vertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
-                g.enableVertexAttribArray(0);
-                woundTextureBarrier();
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-                woundTextureBarrier(); // the finishing pass reads what was just written
-                g.bindVertexArray(r.viewVao);
+                endPass(false);
             }
         }
         if (finishMode) {
@@ -3290,7 +3361,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             const bool ghost = request.ghost && std::isfinite(eye[0] + eye[1] + eye[2] + feet[0] + feet[1] + feet[2]);
             g.uniform4f(u.at[uGhostA], eye[0], eye[1], eye[2], ghost ? playerRadiusCm : 0.f);
             g.uniform4f(u.at[uGhostB], feet[0], feet[1], feet[2], request.ghostStrength * 2.f);
-            g.uniform2f(u.at[uCondition], request.hurt, request.winded);
+            g.uniform4f(u.at[uCondition], request.hurt, request.winded, request.damageFlash, 0.f);
             // The mask is at the scene's own size: the view's, or the sampling target's offscreen.
             const bool maskFits = r.silhouetteMask &&
                 (request.offscreen ? r.silhouetteWidth == r.offscreenSceneWidth && r.silhouetteHeight == r.offscreenSceneHeight
@@ -3305,9 +3376,9 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                     if (!(request.heldSlots & (uint64_t(1) << k))) continue;
                     const HeldPose& h = request.held[k];
                     const float strength = h.object ? request.objects : h.apparel ? request.armour : request.detail;
-                    float itemFrame[16];
+                    float itemFrame[16], itemDepth = 0.f;
                     if (!(strength > 0.f)) continue;
-                    if (!heldViewFrame(projection.view, h, itemFrame)) {
+                    if (!heldViewFrame(projection.view, h, itemFrame, &itemDepth)) {
                         heldDetailUnanchored.fetch_add(1, std::memory_order_relaxed);
                         continue;
                     }
@@ -3332,6 +3403,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                     memcpy(rows[k][5], h.blood, sizeof h.blood);
             memcpy(rows[k][9], h.condition, sizeof h.condition);
             rows[k][10][0] = h.object ? 2.f : h.apparel ? 1.f : 0.f;
+            rows[k][10][1] = itemDepth;
             // z: the blood spots in use, so clean items skip the blood loop (spots fill from the front).
             rows[k][9][2] = 0.f;
             for (unsigned spot = 0; spot < 4; ++spot)
@@ -3439,6 +3511,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             g.uniform4f(u.at[uWorldUp], up[0], up[1], up[2], 0.f);
             if (held) heldDetailFrames.fetch_add(1, std::memory_order_relaxed);
             g.uniform1f(u.at[uExposure], exposure);
+            g.uniform1f(u.at[uWoundDebug], woundDebug.load(std::memory_order_relaxed) ? 1.f : 0.f);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             // Wound skins for the next frame's body draws; the snapshot's restore covers its state.
             if (request.wounds.any()) bakeWoundSkins(g, r);
@@ -3670,7 +3743,9 @@ static void collectHeldNodes(SilhouetteScope& s) {
     for (unsigned k = 0; k < own && s.heldCount < heldItemLimit; ++k) s.heldNodes[s.heldCount++] = found[k];
     s.slotCount = s.heldCount;
     float* const centre = s.centre;
-    if (!s.centreValid) return;
+    if (!s.centreValid || !InterlockedCompareExchange(&cameraReady, 0, 0) ||
+        !InterlockedCompareExchange(&active, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0)) return;
     const uintptr_t world = *(const uintptr_t*)gameAt(fp::sig::world);
     if (!readable(world, field::worldObject::characters + 8)) return;
     const uintptr_t roster = *(const uintptr_t*)(world + field::worldObject::characters);
@@ -3828,7 +3903,7 @@ struct HeldTextureKind { GLuint texture; GLint width; float code; };
 static HeldTextureKind heldTextureKinds[128];
 static unsigned heldTextureKindNext = 0;
 static std::atomic<unsigned> heldTextureReads{0};
-static float heldMaterialCode(gl::Api& g) {
+static float heldMaterialCode(gl::Api& g, bool isApparel) {
     GLint unit = 0, texture = 0, packBuffer = 0, pack[3]{};
     glGetIntegerv(glc::activeTexture, &unit);
     g.activeTexture(glc::texture0);
@@ -3880,9 +3955,8 @@ static float heldMaterialCode(gl::Api& g) {
             const float hi = (std::max)(r, (std::max)(gr, b)), lo = (std::min)(r, (std::min)(gr, b));
             const float saturation = hi > 1e-4f ? (hi - lo) / hi : 0.f;
             const float luma = 0.2126f * r + 0.7152f * gr + 0.0722f * b;
-            // PROVISIONAL(2026-10-22, mail told from plate by its rings' fine contrast; the 0.06
-            // threshold is a guess until mail and plate textures are compared, ratify-by: 2026-11-05)
-            if (saturation < 0.22f) code = contrast / count > 0.06 ? 0.55f : 0.15f; // grey: mail or steel
+            // Held weapons/items are steel (0.15), never mail (0.55). Only apparel with prominent ring contrast (> 0.18) is mail.
+            if (saturation < 0.22f) code = (isApparel && contrast / count > 0.18f) ? 0.55f : 0.15f; // grey: mail or steel
             // Warm brown (not a strong red or a paint): leather when dark, else wood.
             else if (r > b * 1.2f && gr > r * 0.45f && saturation < 0.8f) code = luma < 0.22f ? 0.35f : 0.25f;
             else code = 0.45f;                                     // cloth, paint, anything else
@@ -3902,11 +3976,11 @@ static float heldMaterialCode(gl::Api& g) {
 struct HeldMaterialKind { uintptr_t material, texture; float code; };
 static HeldMaterialKind heldMaterialKinds[64];
 static unsigned heldMaterialKindNext = 0;
-static float heldMaterialCodeFor(gl::Api& g, uintptr_t material) {
+static float heldMaterialCodeFor(gl::Api& g, uintptr_t material, bool isApparel = false) {
     const uintptr_t texture = readable(material, 0x50) ? *(const uintptr_t*)(material + 0x48) : 0;
     for (const HeldMaterialKind& k : heldMaterialKinds)
         if (k.material == material && k.texture == texture) return k.code;
-    const float code = heldMaterialCode(g);
+    const float code = heldMaterialCode(g, isApparel);
     if (code > 0.f) heldMaterialKinds[heldMaterialKindNext++ % 64] = {material, texture, code};
     return code;
 }
@@ -4141,6 +4215,19 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
     if (owner->viewApiFailed || owner->viewTargetsFailed || !cueOutputReady(g)) return false;
 
     // Everything changed below without the game's caches, read first.
+    const uintptr_t priorMaterial = *(const uintptr_t*)gameAt(fp::sig::currentMaterial);
+    GLint priorProgram = 0, priorActiveTexture = 0, priorVao = 0, priorArrayBuffer = 0, priorElementBuffer = 0;
+    glGetIntegerv(glc::currentProgram, &priorProgram);
+    glGetIntegerv(glc::activeTexture, &priorActiveTexture);
+    glGetIntegerv(glc::vertexArrayBinding, &priorVao);
+    glGetIntegerv(glc::arrayBufferBinding, &priorArrayBuffer);
+    glGetIntegerv(glc::elementArrayBufferBinding, &priorElementBuffer);
+    GLint priorTextures[8]{};
+    for (int u = 0; u < 8; ++u) {
+        g.activeTexture(glc::texture0 + u);
+        glGetIntegerv(glc::textureBinding2D, &priorTextures[u]);
+    }
+    g.activeTexture(priorActiveTexture);
     GLint unitTexture = 0, depthFunc = 0, blend[6]{};
     GLboolean depthMask = 0, colorMask[4]{}, depthTest = 0, blending = 0, scissor = 0, offsetFill = 0;
     GLfloat clear[4]{}, offset[2]{}, blendColor[4]{};
@@ -4236,7 +4323,7 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
             if (overBudget[k]) held = false;
             if (!body && !held) continue;
             bind(e.material);
-            const float material = held && heldBlendColor ? heldMaterialCodeFor(g, e.material) : 0.f;
+            const float material = held && heldBlendColor ? heldMaterialCodeFor(g, e.material, e.slot >= int(s.heldCount)) : 0.f;
             // The single path submits (uniforms) then draws. A multi-sample entry is replayed as its
             // first sample only, through the single-sample submit (0x200770, which the dispatcher
             // calls when there is one sample) at sample 0's viewport: one draw instead of one per sample.
@@ -4305,6 +4392,16 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
             else weaponBloodFor(node, h.blood);
         }
     } __finally {
+        for (int u = 0; u < 8; ++u) {
+            g.activeTexture(glc::texture0 + u);
+            g.bindTexture(GL_TEXTURE_2D, GLuint(priorTextures[u]));
+        }
+        g.activeTexture(priorActiveTexture);
+        g.useProgram(GLuint(priorProgram));
+        g.bindVertexArray(GLuint(priorVao));
+        g.bindBuffer(glc::arrayBuffer, GLuint(priorArrayBuffer));
+        g.bindBuffer(glc::elementArrayBuffer, GLuint(priorElementBuffer));
+        *(uintptr_t*)gameAt(fp::sig::currentMaterial) = priorMaterial;
         (offsetFill ? glEnable : glDisable)(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(offset[0], offset[1]);
         if (heldBlendColor) heldBlendColor(blendColor[0], blendColor[1], blendColor[2], blendColor[3]);
@@ -4357,6 +4454,7 @@ static void silhouettePassBody(uintptr_t camera, uintptr_t caller) {
             offscreenSceneFramebuffer = 0;
         }
     }
+    originalSilhouettePass(camera);
     SilhouetteScope* const s = silhouetteScope;
     // With Supersample the world is drawn once per jittered sample into the default
     // framebuffer and the last sample's depth stays for the finish pass, so only the
@@ -4365,7 +4463,7 @@ static void silhouettePassBody(uintptr_t camera, uintptr_t caller) {
         __try {
             // Offscreen sampling draws up to four samples a pass (index = first sample of the pass).
             const int index = *(const int*)gameAt(fp::sig::supersampleIndex);
-            if (index + (offscreenPassArmed ? 4 : 1) < *(const int*)gameAt(fp::sig::supersampleCount)) __leave;
+            if (index + (offscreenPassArmed ? 4 : 1) < *(const int*)gameAt(fp::sig::supersampleCount)) return;
             silhouetteMaskReady = drawSilhouetteMask(*s);
             silhouetteMaskFromEye = viewEffectsEyeDraw;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -4373,7 +4471,6 @@ static void silhouettePassBody(uintptr_t camera, uintptr_t caller) {
             silhouetteFaults.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    originalSilhouettePass(camera);
 }
 static void silhouettePass(uintptr_t camera) {
     silhouettePassBody(camera, (uintptr_t)_ReturnAddress());
@@ -4431,6 +4528,11 @@ static void readCondition(ViewRequest& request) {
         const float phase = float(GetTickCount64() % ULONGLONG(breathPeriodMs)) / breathPeriodMs;
         const float breath = 0.5f + 0.5f * std::sin(6.2831853f * phase);
         request.winded = shortfall * (0.6f + 0.4f * breath);
+    }
+    const float flash = playerDamageFlash.load(std::memory_order_relaxed);
+    request.damageFlash = flash;
+    if (flash > 0.f) {
+        playerDamageFlash.store((std::max)(0.f, flash - 0.045f), std::memory_order_relaxed);
     }
 }
 
@@ -4490,6 +4592,9 @@ static void levelLightsFor(ViewRequest& request) {
 }
 
 static void levelDetailFor(ViewRequest& request) {
+    if (!InterlockedCompareExchange(&cameraReady, 0, 0) ||
+        !InterlockedCompareExchange(&active, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0)) return;
     const float wanted = levelDetail.load(std::memory_order_relaxed);
     if (!(wanted > 0.f) || request.eye) return; // desktop view only (a headset's two eyes would double it)
     const float period = viewCpuFrameMs.load(std::memory_order_relaxed);
@@ -4585,17 +4690,29 @@ static CreateShaderFn smoothCreateShader = nullptr;
 static CompileShaderFn smoothCompileShader = nullptr;
 static GetShaderivFn smoothGetShaderiv = nullptr;
 static DeleteShaderFn smoothDeleteShader = nullptr;
+static std::atomic<int> smoothDriverSupported{0}; // 0 = unprobed, 1 = supported, -1 = unsupported
+
 static bool rewriteCompiles(GLuint shader, const char* text) {
-    if (!smoothCreateShader || !smoothCompileShader || !smoothGetShaderiv || !smoothDeleteShader) return false;
+    const int status = smoothDriverSupported.load(std::memory_order_relaxed);
+    if (status == 1) return true;
+    if (status == -1) return false;
+    if (!smoothCreateShader || !smoothCompileShader || !smoothGetShaderiv || !smoothDeleteShader) {
+        smoothDriverSupported.store(-1, std::memory_order_relaxed);
+        return false;
+    }
     GLint type = 0, ok = 0;
     smoothGetShaderiv(shader, 0x8B4F /*SHADER_TYPE*/, &type);
     if (type != 0x8B30 && type != 0x8B31) return false;
     const GLuint scratch = smoothCreateShader(GLenum(type));
-    if (!scratch) return false;
+    if (!scratch) {
+        smoothDriverSupported.store(-1, std::memory_order_relaxed);
+        return false;
+    }
     originalShaderSource(scratch, 1, &text, nullptr);
     smoothCompileShader(scratch);
     smoothGetShaderiv(scratch, 0x8B81 /*COMPILE_STATUS*/, &ok);
     smoothDeleteShader(scratch);
+    smoothDriverSupported.store(ok ? 1 : -1, std::memory_order_relaxed);
     return ok != 0;
 }
 

@@ -1,0 +1,162 @@
+{
+  "abi": {
+    "calling_convention": null,
+    "parameters": null,
+    "provider_signature": "undefined FUN_10007a270()",
+    "return": null,
+    "status": "unknown"
+  },
+  "build_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
+  "contract_id": "exanima.collision.segment_sphere",
+  "evidence": [
+    {
+      "analysis_profile_digest": "8229b10ef75c45af19aff3faa78eaa061bc7a56074ca1e8bca09dfb8f0e40e71",
+      "evidence_id": "ev_cae92fff19f1c1dba86ce6168ce6bebd678e8ad362fecbf019c8e2ba7b4435ff",
+      "kind": "rea_ghidra_function_dossier",
+      "operation": "analyze_function",
+      "provider": {
+        "id": "ghidra",
+        "name": "Ghidra",
+        "version": "12.1.4"
+      }
+    }
+  ],
+  "generation": {
+    "reason": "Imported static observations only; ABI, thread, memory, and runtime behavior require independent review.",
+    "runtime_eligible": false
+  },
+  "memory": {
+    "lifetime": null,
+    "reads": null,
+    "status": "unknown",
+    "writes": null
+  },
+  "relationships": {
+    "callees": [
+      {
+        "address": "0x100019170",
+        "name": "FUN_100019170"
+      },
+      {
+        "address": "0x100019ae0",
+        "name": "FUN_100019ae0"
+      }
+    ],
+    "callers": [
+      {
+        "address": "0x10008f720",
+        "name": "FUN_10008f720"
+      },
+      {
+        "address": "0x10008fb30",
+        "name": "FUN_10008fb30"
+      },
+      {
+        "address": "0x100090030",
+        "name": "FUN_100090030"
+      },
+      {
+        "address": "0x100090710",
+        "name": "FUN_100090710"
+      },
+      {
+        "address": "0x100093fe0",
+        "name": "FUN_100093fe0"
+      },
+      {
+        "address": "0x1001170f0",
+        "name": "FUN_1001170f0"
+      },
+      {
+        "address": "0x100117aa0",
+        "name": "FUN_100117aa0"
+      },
+      {
+        "address": "0x100121150",
+        "name": "FUN_100121150"
+      },
+      {
+        "address": "0x10014e400",
+        "name": "FUN_10014e400"
+      },
+      {
+        "address": "0x10014fbc0",
+        "name": "FUN_10014fbc0"
+      },
+      {
+        "address": "0x10014ffa0",
+        "name": "FUN_10014ffa0"
+      },
+      {
+        "address": "0x1001502f0",
+        "name": "FUN_1001502f0"
+      },
+      {
+        "address": "0x100150880",
+        "name": "FUN_100150880"
+      },
+      {
+        "address": "0x100150ff0",
+        "name": "FUN_100150ff0"
+      },
+      {
+        "address": "0x1002462f0",
+        "name": "FUN_1002462f0"
+      },
+      {
+        "address": "0x100249420",
+        "name": "FUN_100249420"
+      }
+    ],
+    "limitations": [
+      "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
+      "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",
+      "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.",
+      "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+    ]
+  },
+  "research": {
+    "questions": [
+      "What are the exact ray, sphere, and return contracts?",
+      "Is it sufficient for third-person obstruction candidates?",
+      "What numerical edge cases must the domain solver handle?"
+    ]
+  },
+  "role": {
+    "state": "hypothesis",
+    "summary": "Shared segment/sphere predicate used by native camera fade and scene queries."
+  },
+  "schema_version": 1,
+  "states": [
+    "observed_static"
+  ],
+  "symbol": {
+    "body": {
+      "available": true,
+      "contains_entry": true,
+      "non_contiguous": false,
+      "provenance": "ghidra-function-body-address-set",
+      "ranges": [
+        {
+          "end": "0x10007a39a",
+          "start": "0x10007a270"
+        }
+      ],
+      "span_bytes": 299,
+      "total_bytes": 299
+    },
+    "classification": {
+      "external": false,
+      "provenance": "ghidra-function-manager",
+      "thunk": false,
+      "thunk_target": null
+    },
+    "provider_name": "FUN_10007a270",
+    "rva": "0x7a270",
+    "va": "0x10007a270"
+  },
+  "thread": {
+    "details": null,
+    "status": "unknown"
+  }
+}

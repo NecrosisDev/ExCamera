@@ -1,0 +1,30 @@
+{
+  "game": {
+    "product": "Exanima",
+    "version": "0.9.5.2g",
+    "channel": "standard",
+    "steam_build": "25803178"
+  },
+  "build_id": "exanima-0.9.5.2g-standard-af9033c7",
+  "executable_size": 3981312,
+  "toolchain": [
+    {"name": "REA", "version": "6.8.0"},
+    {"name": "Ghidra", "version": "12.1.4"},
+    {"name": "Node.js", "version": "24.22.1"},
+    {"name": "JDK", "version": "21.0.12.1"}
+  ],
+  "functions": [
+    {
+      "import_name": "levelRay2",
+      "contract_id": "exanima.collision.level_ray_secondary",
+      "address": "0x1001431c0",
+      "role_hypothesis": "Companion native level-grid segment query paired with levelRay for camera clearance; the distinction between the two geometry sets remains to be established.",
+      "questions": [
+        "What are the full arguments, result layout, and hit semantics?",
+        "How do the inspected geometry and material flags differ from levelRay?",
+        "Are inputs global level coordinates, a unit direction, and length in centimetres?",
+        "Can the read-only query run on the camera thread without mutating the level?"
+      ]
+    }
+  ]
+}

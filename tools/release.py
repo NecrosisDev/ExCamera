@@ -9,7 +9,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TAG_RE = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
-EXPECTED_FILES = {'ExCamera.exe', 'ExanimaFirstPerson.dll', 'manifest.toml', 'LICENSE.txt', 'LICENSE-MinHook.txt'}
+EXPECTED_FILES = {'ExCamera.exe', 'ExanimaFirstPerson.dll', 'manifest.toml', 'README.txt', 'LICENSE.txt', 'LICENSE-MinHook.txt'}
 
 
 def version_from_tag(tag):
@@ -103,7 +103,7 @@ def notes(path):
     records = git('log', '--reverse', '--format=%H%x09%s', revision_range, '--').splitlines()
     url = 'https://github.com/' + repository
     lines = [f'# ExCamera {tag}', '',
-             'Windows x64 runtime. Extract the ZIP and keep the launcher, DLL, and license files together.', '',
+             'Windows x64 runtime. Extract the ZIP and keep its files together.', '',
              '## Commit changelog', '',
              f'Commit subjects since {previous} (including direct commits and merges):' if previous else
              'Commit subjects from the initial history (including direct commits and merges):', '']

@@ -546,22 +546,44 @@ static void woundSkinAssign() {
         if (!wanted[k] && woundSkinSlots[k].actor) woundSkinSlots[k] = {}; // its texture is kept for the next one
 }
 
-// Called by the view-effects pass inside its state snapshot (it restores framebuffer, viewport,
-// program, vertex array, buffer, texture units, samplers and capabilities). cueLock held.
-static void bakeWoundSkins(gl::Api& g, fp::CueResources& r) {
-    if (woundSkinBroken || woundMarks.load(std::memory_order_relaxed) <= 0.f) return;
+static bool initWoundBakeResources(gl::Api& g, fp::CueResources& r) {
+    if (r.woundBakeProgram && r.woundBakeFbo && r.woundBakeVao && r.woundBakeVbo) return true;
+    if (woundSkinBroken || woundMarks.load(std::memory_order_relaxed) <= 0.f) return false;
     WoundSkinGl s{};
-    if (!loadWoundSkinGl(s) || !g.uniform4fv || !g.genFramebuffers) { woundSkinBroken = true; return; }
+    if (!loadWoundSkinGl(s) || !g.uniform4fv || !g.genFramebuffers) { woundSkinBroken = true; return false; }
     if (!r.woundBakeProgram) {
         r.woundBakeProgram = woundSkinProgram(g, woundSkinFragment);
         r.woundBakeNormalProgram = woundSkinProgram(g, woundSkinNormalFragment); // none: colour only
         r.woundBakeSpecProgram = woundSkinProgram(g, woundSkinSpecFragment);     // none: the skin's own sheen
-        if (!r.woundBakeProgram) { woundSkinBroken = true; return; }
-        g.genVertexArrays(1, &r.woundBakeVao);
-        g.genBuffers(1, &r.woundBakeVbo);
-        g.genFramebuffers(1, &r.woundBakeFbo);
-        if (!r.woundBakeVao || !r.woundBakeVbo || !r.woundBakeFbo) { woundSkinBroken = true; return; }
     }
+    if (!r.woundBakeProgram) { woundSkinBroken = true; return false; }
+    if (!r.woundBakeVao) g.genVertexArrays(1, &r.woundBakeVao);
+    if (!r.woundBakeVbo) g.genBuffers(1, &r.woundBakeVbo);
+    if (!r.woundBakeFbo) g.genFramebuffers(1, &r.woundBakeFbo);
+    if (!r.woundBakeVao || !r.woundBakeVbo || !r.woundBakeFbo) { woundSkinBroken = true; return false; }
+    return true;
+}
+
+// Called by the view-effects pass inside its state snapshot (it restores framebuffer, viewport,
+// program, vertex array, buffer, texture units, samplers and capabilities). cueLock held.
+static void bakeWoundSkins(gl::Api& g, fp::CueResources& r) {
+    if (!initWoundBakeResources(g, r)) return;
+    if (!r.woundBakeFbo) return;
+    WoundSkinGl s{};
+    if (!loadWoundSkinGl(s)) { woundSkinBroken = true; return; }
+    GLint prevDrawFbo = 0, prevReadFbo = 0, prevVao = 0, prevVbo = 0, prevProg = 0, prevViewport[4]{};
+    glGetIntegerv(glc::drawFramebufferBinding, &prevDrawFbo);
+    glGetIntegerv(glc::readFramebufferBinding, &prevReadFbo);
+    glGetIntegerv(0x82DF /* GL_VERTEX_ARRAY_BINDING */, &prevVao);
+    glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &prevVbo);
+    glGetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &prevProg);
+    glGetIntegerv(GL_VIEWPORT, prevViewport);
+    const GLboolean prevBlend = glIsEnabled(GL_BLEND);
+    const GLboolean prevDepth = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean prevCull = glIsEnabled(GL_CULL_FACE);
+    const GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+    const GLboolean prevStencil = glIsEnabled(GL_STENCIL_TEST);
+    const GLboolean prevSrgb = glIsEnabled(glc::framebufferSrgb);
     const ULONGLONG now = GetTickCount64();
     AcquireSRWLockExclusive(&woundLock);
     __try {
@@ -623,12 +645,12 @@ static void bakeWoundSkins(gl::Api& g, fp::CueResources& r) {
                 vertices += 6;
             }
             // Each map: the original into the copy, then the marks over it in UV space, then mipmaps.
-            auto bakeMap = [&](WoundSkinMap& map, unsigned& copy, GLuint program, bool known) -> bool {
-                if (!program || !map.source || map.failed || !woundSkinTexture(s, map, copy)) return false;
+            auto bakeMap = [&](WoundSkinMap& map, unsigned& copy, GLuint program, bool /* known */) -> bool {
+                if (!program || !map.source || map.failed || !r.woundBakeFbo || !woundSkinTexture(s, map, copy)) return false;
                 s.copy(map.source, GL_TEXTURE_2D, 0, 0, 0, 0, copy, GL_TEXTURE_2D, 0, 0, 0, 0, map.width, map.height, 1);
                 g.bindFramebuffer(glc::framebuffer, r.woundBakeFbo);
                 g.framebufferTexture2D(glc::framebuffer, glc::colorAttachment0, GL_TEXTURE_2D, copy, 0);
-                if (!known && g.checkFramebufferStatus(glc::framebuffer) != glc::framebufferComplete) { map.failed = true; return false; }
+                if (g.checkFramebufferStatus(glc::framebuffer) != glc::framebufferComplete) { map.failed = true; return false; }
                 setViewport(g, 0, 0, map.width, map.height);
                 glDisable(GL_BLEND);
                 glDisable(GL_DEPTH_TEST);
@@ -671,6 +693,28 @@ static void bakeWoundSkins(gl::Api& g, fp::CueResources& r) {
         }
     } __finally {
         ReleaseSRWLockExclusive(&woundLock);
+        if (r.woundBakeFbo) {
+            g.bindFramebuffer(glc::framebuffer, r.woundBakeFbo);
+            g.framebufferTexture2D(glc::framebuffer, glc::colorAttachment0, GL_TEXTURE_2D, 0, 0);
+        }
+        if (g.bindFramebuffer) {
+            if (prevDrawFbo == prevReadFbo) {
+                g.bindFramebuffer(glc::framebuffer, GLuint(prevDrawFbo));
+            } else {
+                g.bindFramebuffer(glc::drawFramebuffer, GLuint(prevDrawFbo));
+                g.bindFramebuffer(glc::readFramebuffer, GLuint(prevReadFbo));
+            }
+        }
+        setViewport(g, prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+        if (prevVao) g.bindVertexArray(GLuint(prevVao));
+        if (prevVbo) g.bindBuffer(glc::arrayBuffer, GLuint(prevVbo));
+        if (prevProg) g.useProgram(GLuint(prevProg));
+        if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+        if (prevDepth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+        if (prevCull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+        if (prevScissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+        if (prevStencil) glEnable(GL_STENCIL_TEST); else glDisable(GL_STENCIL_TEST);
+        if (prevSrgb) glEnable(glc::framebufferSrgb); else glDisable(glc::framebufferSrgb);
     }
 }
 
@@ -932,6 +976,12 @@ static bool woundSkinCurrent(WoundSkinSlot& slot, uintptr_t material, const GLui
 static bool woundSkinDrawBody(uintptr_t node, uintptr_t material, bool bind) {
     const int found = woundSkinSlotOf(node);
     if (found < 0) return false;
+    // Strictly verify that this material is material index 0 (the primary body skin) of the node.
+    // In Exanima, a character's _SKIN node has index 0 as the body skin, while hair, beard,
+    // and accessories are sub-materials (indices 1+). Wounds only belong on the body skin.
+    if (!readable(node, 0x1d8)) return false;
+    const uintptr_t table = *(uintptr_t*)(node + 0x1d0);
+    if (!table || !readable(table, sizeof(uintptr_t)) || *(uintptr_t*)table != material) return false;
     WoundSkinSlot& slot = woundSkinSlots[found];
     GLuint originals[3]{};
     if (!stoneSkinOriginals(material, originals)) return false;

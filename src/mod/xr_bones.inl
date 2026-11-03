@@ -105,10 +105,14 @@ static float heldRadius(uintptr_t root, unsigned side) {
     if (!root || !readable(root, 0x1300)) return 0;
     const uintptr_t hand = trackedHandPart(root, side);
     uintptr_t part = *reinterpret_cast<uintptr_t*>(root + field::character::heldItems + (1 - side) * 8);
-    if (!part && *reinterpret_cast<int*>(root + field::character::weaponCount) > 0) {
-        const uintptr_t weapon = *reinterpret_cast<uintptr_t*>(root + field::character::weapons);
-        if (readable(weapon, field::bodyPart::parentPart + 8) && *reinterpret_cast<uintptr_t*>(weapon + field::bodyPart::parentPart) == hand) part = weapon;
+    const int weaponCount = *reinterpret_cast<int*>(root + field::character::weaponCount);
+    if (!part && weaponCount > 0) {
+        for (int w = 0; w < (std::min)(weaponCount, 2); ++w) {
+            const uintptr_t weapon = *reinterpret_cast<uintptr_t*>(root + field::character::weapons + w * 8);
+            if (readable(weapon, field::bodyPart::parentPart + 8) && *reinterpret_cast<uintptr_t*>(weapon + field::bodyPart::parentPart) == hand) { part = weapon; break; }
+        }
     }
+    if (!part && weaponCount > 0) part = *reinterpret_cast<uintptr_t*>(root + field::character::weapons);
     if (!part || !readable(part, field::bodyPart::meshNode + 8)) return 0;
     const uintptr_t node = *reinterpret_cast<uintptr_t*>(part + field::bodyPart::meshNode);
     if (!readable(node, 0x40)) return 0;
@@ -123,12 +127,31 @@ static xd::HandPose heldHandPose(uintptr_t root, unsigned side) {
     if (!root || !readable(root, 0x1300)) return xd::HandPose::open;
     const uintptr_t hand = trackedHandPart(root, side);
     const uintptr_t shield = *reinterpret_cast<uintptr_t*>(root + field::character::shieldPart);
-    if (shield && readable(shield, field::bodyPart::parentPart + 8) && *reinterpret_cast<uintptr_t*>(shield + field::bodyPart::parentPart) == hand) return xd::HandPose::flat;
-    if (*reinterpret_cast<int*>(root + field::character::weaponCount) > 0) {
-        const uintptr_t weapon = *reinterpret_cast<uintptr_t*>(root + field::character::weapons);
+    if (shield && readable(shield, field::bodyPart::parentPart + 8) && (*reinterpret_cast<uintptr_t*>(shield + field::bodyPart::parentPart) == hand || side == 0)) return xd::HandPose::flat;
+    const int weaponCount = *reinterpret_cast<int*>(root + field::character::weaponCount);
+    for (int w = 0; w < (std::min)(weaponCount, 2); ++w) {
+        const uintptr_t weapon = *reinterpret_cast<uintptr_t*>(root + field::character::weapons + w * 8);
         if (readable(weapon, field::bodyPart::parentPart + 8) && *reinterpret_cast<uintptr_t*>(weapon + field::bodyPart::parentPart) == hand) return xd::HandPose::hilt;
     }
-    if (*reinterpret_cast<uintptr_t*>(root + field::character::heldItems + (1 - side) * 8)) return xd::HandPose::hold;
+    const uintptr_t held = *reinterpret_cast<uintptr_t*>(root + field::character::heldItems + (1 - side) * 8);
+    if (held) {
+        for (int w = 0; w < (std::min)(weaponCount, 2); ++w) {
+            if (held == *reinterpret_cast<uintptr_t*>(root + field::character::weapons + w * 8)) return xd::HandPose::hilt;
+        }
+        return xd::HandPose::hold;
+    }
+    // Two-handed secondary hand check: if weapon is wielded with 2 hands, the other hand grips the hilt too when not holding a shield
+    if (weaponCount > 0 && !shield) {
+        if (readable(root, field::character::gripFlags + 4)) {
+            const unsigned grip = *reinterpret_cast<const unsigned*>(root + field::character::gripFlags);
+            if (grip == 0x20 || grip == 0x30) return xd::HandPose::hilt;
+        }
+    }
+    // Combat stance without weapons: clenched fist; outside combat stance: relaxed open
+    if (readable(root, field::character::combatStance + 1) &&
+        *reinterpret_cast<const unsigned char*>(root + field::character::combatStance) != 0) {
+        return xd::HandPose::fist;
+    }
     return xd::HandPose::open;
 }
 namespace fingerbones {
@@ -229,7 +252,7 @@ static void skinMarkPieces(uintptr_t node, unsigned depth) {
         const uintptr_t child = *reinterpret_cast<uintptr_t*>(children + size_t(k) * 8);
         if (!child || !readable(child, 0x2a0)) continue;
         unsigned& flags = *reinterpret_cast<unsigned*>(child + 0x204);
-        if (merged && skinPiece(child) && (flags & skinMask) == 0 && skinMarkedCount < skinMarked.size()) {
+        if (merged && skinPiece(child) && (flags & skinMask) != skinnedBit && skinMarkedCount < skinMarked.size()) {
             // a rigid hand piece the build would leave out
             skinMarked[skinMarkedCount++] = {child, flags};
             flags = (flags & ~skinMask) | skinnedBit;
@@ -545,9 +568,8 @@ static void trackedBonePose(fingerbones::Hand& hand, const fingerbones::Joints& 
 // The common gate of both drivers: the row's say, no earlier fault, the targets resolved, and play:
 // the mod's camera live in a level and no UI open. Never the title, a preview or a menu.
 static bool trackedBonesWanted(bool rowOn) {
-    return rowOn && !trackedBoneFault.load() && layout.optionalGroupAvailable("fingerBones") &&
-           InterlockedCompareExchange(&active, 0, 0) && InterlockedCompareExchange(&cameraReady, 0, 0) &&
-           readable(gameAt(fp::sig::uiOpenCount), 4) && *reinterpret_cast<int*>(gameAt(fp::sig::uiOpenCount)) == 0;
+    return rowOn && nodeMoveHooked.load() && !trackedBoneFault.load() && layout.optionalGroupAvailable("fingerBones") &&
+           InterlockedCompareExchange(&active, 0, 0) && InterlockedCompareExchange(&cameraReady, 0, 0);
 }
 static fingerbones::Root& trackedBoneEntry(uintptr_t root) {
     for (auto& entry : trackedBoneTable)
@@ -635,13 +657,23 @@ static uintptr_t heldItemNode(uintptr_t root, unsigned side) {
     if (!root || !readable(root, 0x1300)) return 0;
     const uintptr_t hand = trackedHandPart(root, side);
     uintptr_t part = *reinterpret_cast<uintptr_t*>(root + field::character::heldItems + (1 - side) * 8);
-    if (!part && *reinterpret_cast<int*>(root + field::character::weaponCount) > 0) {
-        const uintptr_t weapon = *reinterpret_cast<uintptr_t*>(root + field::character::weapons);
-        if (readable(weapon, field::bodyPart::parentPart + 8) && *reinterpret_cast<uintptr_t*>(weapon + field::bodyPart::parentPart) == hand) part = weapon;
+    const int weaponCount = *reinterpret_cast<int*>(root + field::character::weaponCount);
+    if (!part && weaponCount > 0) {
+        for (int w = 0; w < (std::min)(weaponCount, 2); ++w) {
+            const uintptr_t weapon = *reinterpret_cast<uintptr_t*>(root + field::character::weapons + w * 8);
+            if (readable(weapon, field::bodyPart::parentPart + 8) && *reinterpret_cast<uintptr_t*>(weapon + field::bodyPart::parentPart) == hand) { part = weapon; break; }
+        }
     }
+    if (!part && weaponCount > 0) part = *reinterpret_cast<uintptr_t*>(root + field::character::weapons);
     if (!part || !readable(part, field::bodyPart::meshNode + 8) || !hand || !readable(hand, field::bodyPart::meshNode + 8)) return 0;
     const uintptr_t node = *reinterpret_cast<uintptr_t*>(part + field::bodyPart::meshNode), own = *reinterpret_cast<uintptr_t*>(hand + field::bodyPart::meshNode);
-    if (!node || !own || !readable(node, field::sceneNode::name + 16) || *reinterpret_cast<uintptr_t*>(node + field::sceneNode::parent) != own) return 0;
+    if (!node || !own || !readable(node, field::sceneNode::name + 16)) return 0;
+    const uintptr_t parent = *reinterpret_cast<uintptr_t*>(node + field::sceneNode::parent);
+    if (parent != own) {
+        const uintptr_t otherHand = trackedHandPart(root, 1 - side);
+        const uintptr_t otherOwn = otherHand && readable(otherHand, field::bodyPart::meshNode + 8) ? *reinterpret_cast<uintptr_t*>(otherHand + field::bodyPart::meshNode) : 0;
+        if (parent != otherOwn) return 0;
+    }
     return node;
 }
 // The long axis of the held item in the hand part's frame: its longest half extent's local axis taken
@@ -666,15 +698,17 @@ static bool heldItemAxis(uintptr_t root, unsigned side, XrVector3f& axis) {
     return true;
 }
 // The pose of one character's hand for the held-pose driver: what it holds; a dead hand holding
-// nothing falls slack; a gloved hand stays at rest under its rigid glove.
+// nothing falls slack.
 static xd::HandPose heldDrivenPose(uintptr_t root, unsigned side) {
-    if (handGloved(root, side)) return xd::HandPose::open;
     const xd::HandPose held = heldHandPose(root, side);
-    if (held == xd::HandPose::open && readable(root, field::character::lifeFlags + 4) && (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100)) return xd::HandPose::limp;
+    if (held == xd::HandPose::open) {
+        if (readable(root, field::character::lifeFlags + 4) && (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100)) return xd::HandPose::limp;
+        return xd::HandPose::open;
+    }
     return held;
 }
 // The held-item poses of one character's two hands, laid out by the joint model, into its bones.
-static void trackedBoneDriveHeld(fingerbones::Root& entry, const fingerbones::Skin& skin, float units, unsigned& count) {
+static void trackedBoneDriveHeld(fingerbones::Root& entry, const fingerbones::Skin& skin, float units, unsigned& count, uintptr_t player) {
     for (unsigned side = 0; side < 2; ++side) {
         fingerbones::Joints rest{}, posed{};
         float reach = 0, unused = 0;
@@ -683,12 +717,14 @@ static void trackedBoneDriveHeld(fingerbones::Root& entry, const fingerbones::Sk
                           fingerbones::modelJoints(pose, side == 1, heldRadius(entry.root, side), units, posed, reach);
         XrVector3f axis{};
         const bool gripped = laid && (pose == xd::HandPose::hilt || pose == xd::HandPose::hold);
+        bool hasAxis = false;
         if (gripped && heldItemAxis(entry.root, side, axis)) {
+            hasAxis = true;
             // each finger's curl turns about its own base so the fingers wrap round the item's axis; the
             // bases stay on the palm, and the turn is capped where a real hand would move the wrist instead
             const float thumbSide = side == 1 ? 1.f : -1.f;
             const XrVector3f from = {thumbSide, 0, 0};
-            const float angle = std::acos((std::min)(1.f, (std::max)(-1.f, xd::dot(from, axis)))), cap = 35.f * 3.14159265f / 180.f;
+            const float angle = std::acos((std::min)(1.f, (std::max)(-1.f, xd::dot(from, axis)))), cap = 80.f * 3.14159265f / 180.f;
             const float t = angle > cap ? cap / angle : 1.f;
             const XrQuaternionf q = xd::directionRotation(from, xd::unit(xd::add(xd::scale(from, 1 - t), xd::scale(axis, t)), from));
             for (unsigned finger = 0; finger < 5; ++finger) {
@@ -714,6 +750,21 @@ static void trackedBoneDriveHeld(fingerbones::Root& entry, const fingerbones::Sk
                 }
         }
         trackedBoneDrive(entry.root, side, entry.hands[side], skin, laid ? &rest : nullptr, laid ? &posed : nullptr, reach, count);
+        if (entry.root == player) {
+            if (side == 0) {
+                trackedPlayerPoseLeft = static_cast<int>(pose);
+                trackedPlayerGlovedLeft = handGloved(entry.root, side);
+                trackedPlayerGrippedLeft = hasAxis;
+                trackedPlayerFittedLeft = entry.hands[side].fitted;
+                trackedPlayerVerticesLeft = static_cast<unsigned>(entry.hands[side].saved.size());
+            } else {
+                trackedPlayerPoseRight = static_cast<int>(pose);
+                trackedPlayerGlovedRight = handGloved(entry.root, side);
+                trackedPlayerGrippedRight = hasAxis;
+                trackedPlayerFittedRight = entry.hands[side].fitted;
+                trackedPlayerVerticesRight = static_cast<unsigned>(entry.hands[side].saved.size());
+            }
+        }
         if (trackedBoneFault.load()) return;
     }
 }
@@ -782,7 +833,7 @@ static void fingerPosesTick(uintptr_t player) {
         }
         fingerbones::Skin skin{};
         if (!trackedBoneSkin(root, skin)) continue;
-        trackedBoneDriveHeld(trackedBoneEntry(root), skin, units, count);
+        trackedBoneDriveHeld(trackedBoneEntry(root), skin, units, count, player);
         ++driven;
         if (trackedBoneFault.load()) break;
     }
