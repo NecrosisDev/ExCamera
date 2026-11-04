@@ -9,8 +9,8 @@ ExCamera ships from a single runtime source tree on `main`. Use the status label
 
 | Document | Purpose |
 | --- | --- |
-| [README.md](../README.md) | Player overview, compatibility, build summary, controls, and release behavior. |
-| [CONTRIBUTING.md](../CONTRIBUTING.md) | Developer setup, `build.py` flags, Python & C++ unit tests, profiling, tagging, and release recovery. |
+| [README.md](../README.md) | Player overview: features, install, keys, compatibility. |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | Supported game build, source layout, `build.py` flags, tests, profiling, tagging, and release recovery. |
 | [CHANGELOG.md](../CHANGELOG.md) | Release history through v0.3.0. |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Shipped single-translation-unit build, `ScriptRuntime.dll` coexistence, and native integration boundaries. |
 | [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) | v0.3.0 release validation, including in-game verification items. |
@@ -27,7 +27,7 @@ ExCamera operates **100% standalone** with zero external dependencies, including
 
 | Item | Status |
 | --- | --- |
-| [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Historical v0.3.0 hardening plan. Phase 5 (ExanimaLua-hosted ExCamera settings) was abandoned; Phase 6 is tracked in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md). |
+| `IMPLEMENTATION_PLAN.md` | Historical v0.3.0 hardening plan, removed from `main`; read it in git history. Its open items are tracked in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md). |
 | Branch `archive/rebuild-prototype` | Preserves the parked clean-room CMake prototype and its acceptance notes outside `main`. Not built or shipped with releases. |
 | `docs/HEADWEAR-RENDER-REVIEW.md` | Local-only historical review of an earlier headwear renderer iteration; excluded by `.gitignore`. |
 

@@ -9,6 +9,27 @@ ExCamera ships as two Windows x64 binaries built from a single runtime tree: `Ex
 - **Python:** Python 3.10 or newer (3.12 used in CI). Building, unit testing, offline contract verification, profiling, and release packaging use only the Python standard library.
 - **Optional binary-review packages:** `pip install pefile capstone` is needed **only** when running `tools/signatures.py`, `tools/native_contracts.py`, or `tools/xr_contracts.py generate` against a local `Exanima.exe`.
 
+## Supported game build
+
+This source targets **Exanima 0.9.5.2g, Steam build 25803178**. The launcher checks the game executable's SHA-256:
+
+```text
+af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70  0.9.5.2g
+9a7839d5f948d3c3fa94d57de2a047fed77c8319007519ea6946d91ad6e85815  0.9.5.2g Hellmode
+```
+
+## Source layout
+
+- `build.py` — Windows x64 build, export verification, and runtime packaging.
+- `src/first_person.cpp`, `src/mod/` — DLL entry point and camera/input/rendering/game integration (one translation unit; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+- `src/launcher.cpp` — launcher and activation flow.
+- `src/native_settings.*`, `src/settings_*` — native settings UI, presentation, and draft model.
+- `src/game_*`, `src/native_contracts.h`, `src/native_build.h`, `src/xr/` — game compatibility data, validation, and optional OpenXR host/contracts.
+- `src/vendor/minhook/` — bundled x64 hook library.
+- `tools/` — contract verification, C++ test runner, release checks, profiling, and Python unit tests (`tools/tests/`).
+- `tests/` — C++ header unit tests.
+- `docs/PLAYER_README.txt` — becomes `README.txt` in the release ZIP.
+
 ## Building
 
 Run `build.py` from the repository root:
