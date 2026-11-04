@@ -469,6 +469,105 @@ static TrackedWristState trackedWrist;
 static bool trackedWristDown = false;
 static std::atomic<int> trackedWristHighlight{-1};
 static std::atomic<unsigned> trackedWristActions{0};
+// Save report (the last wrist line): the session worker zips the status file, the fault log and the settings
+// onto the Desktop for a tester to send back. The wrist line only queues it; the worker alone touches disk and
+// is the only one to leave reportQueued, and the line shows how it went for a few seconds.
+enum TrackedReport : int { reportIdle, reportQueued, reportSaved, reportFailed };
+static std::atomic<int> trackedReportState{reportIdle};
+static std::atomic<uint64_t> trackedReportAt{0};
+static std::atomic<unsigned> trackedReportsSaved{0};
+static constexpr uint64_t reportShownMs = 6000;
+static bool trackedReportRead(const wchar_t* path, std::vector<unsigned char>& out) {
+    out.clear();
+    if (!path || !path[0]) return false;
+    const HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER size{};
+    bool ok = GetFileSizeEx(file, &size) && size.QuadPart >= 0 && size.QuadPart <= 16 * 1024 * 1024; // the fault log rolls over at 256 KB
+    if (ok) {
+        out.resize(static_cast<size_t>(size.QuadPart));
+        DWORD read = 0;
+        ok = out.empty() || (ReadFile(file, out.data(), DWORD(out.size()), &read, nullptr) && read == out.size());
+    }
+    CloseHandle(file);
+    return ok;
+}
+static uint32_t trackedReportCrc(const std::vector<unsigned char>& data) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (const unsigned char byte : data) {
+        crc ^= byte;
+        for (unsigned k = 0; k < 8; ++k) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+// A plain stored (uncompressed) ZIP: Windows opens it without anything installed, and the files are small.
+static bool trackedReportZip(const wchar_t* path, const std::vector<std::pair<std::string, std::vector<unsigned char>>>& files, const SYSTEMTIME& t) {
+    std::vector<unsigned char> zip, central;
+    auto put16 = [](std::vector<unsigned char>& v, unsigned x) { v.push_back(static_cast<unsigned char>(x)); v.push_back(static_cast<unsigned char>(x >> 8)); };
+    auto put32 = [&](std::vector<unsigned char>& v, uint32_t x) { put16(v, x & 0xFFFF); put16(v, x >> 16); };
+    const unsigned time = (unsigned(t.wHour) << 11) | (unsigned(t.wMinute) << 5) | (unsigned(t.wSecond) / 2);
+    const unsigned date = (unsigned(t.wYear < 1980 ? 0 : t.wYear - 1980) << 9) | (unsigned(t.wMonth) << 5) | unsigned(t.wDay);
+    for (const auto& [name, data] : files) {
+        const uint32_t crc = trackedReportCrc(data), offset = uint32_t(zip.size()), size = uint32_t(data.size());
+        put32(zip, 0x04034B50); put16(zip, 20); put16(zip, 0); put16(zip, 0); put16(zip, time); put16(zip, date); // local header, stored
+        put32(zip, crc); put32(zip, size); put32(zip, size); put16(zip, unsigned(name.size())); put16(zip, 0);
+        zip.insert(zip.end(), name.begin(), name.end());
+        zip.insert(zip.end(), data.begin(), data.end());
+        put32(central, 0x02014B50); put16(central, 20); put16(central, 20); put16(central, 0); put16(central, 0); put16(central, time); put16(central, date);
+        put32(central, crc); put32(central, size); put32(central, size); put16(central, unsigned(name.size())); put16(central, 0); put16(central, 0);
+        put16(central, 0); put16(central, 0); put32(central, 0); put32(central, offset);
+        central.insert(central.end(), name.begin(), name.end());
+    }
+    const uint32_t centralAt = uint32_t(zip.size());
+    zip.insert(zip.end(), central.begin(), central.end());
+    put32(zip, 0x06054B50); put16(zip, 0); put16(zip, 0); put16(zip, unsigned(files.size())); put16(zip, unsigned(files.size()));
+    put32(zip, uint32_t(central.size())); put32(zip, centralAt); put16(zip, 0);
+    const HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const bool ok = WriteFile(file, zip.data(), DWORD(zip.size()), &written, nullptr) && written == zip.size();
+    CloseHandle(file);
+    if (!ok) DeleteFileW(path);
+    return ok;
+}
+// Session worker only, after it has written a fresh status file.
+static void trackedReportSave() {
+    if (trackedReportState.load() != reportQueued) return;
+    bool ok = false;
+    try {
+        SYSTEMTIME t{};
+        GetLocalTime(&t);
+        std::vector<std::pair<std::string, std::vector<unsigned char>>> files;
+        auto add = [&](const char* name, const wchar_t* path) {
+            std::vector<unsigned char> data;
+            if (trackedReportRead(path, data)) files.emplace_back(name, std::move(data));
+        };
+        wchar_t faults[MAX_PATH]{};
+        wcscpy_s(faults, statusPath);
+        if (wchar_t* slash = wcsrchr(faults, L'\\')) wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - faults), L"fault-log.txt");
+        else faults[0] = 0;
+        add("first-person-status.json", statusPath); // both beside the DLL
+        add("fault-log.txt", faults);                // only there after a fault
+        add("first-person.ini", settingsPath);       // Documents\ExCamera
+        PWSTR desktop = nullptr;
+        const bool found = SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop)) && desktop;
+        const std::wstring folder = found ? desktop : L"";
+        if (desktop) CoTaskMemFree(desktop);
+        wchar_t name[64];
+        swprintf_s(name, L"\\ExCamera-report-%04u%02u%02u-%02u%02u%02u.zip", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+        ok = found && !files.empty() && trackedReportZip((folder + name).c_str(), files, t);
+    } catch (const std::exception&) { ok = false; }
+    if (ok) trackedReportsSaved.fetch_add(1, std::memory_order_relaxed);
+    trackedReportAt = GetTickCount64();
+    trackedReportState = ok ? reportSaved : reportFailed;
+}
+static const wchar_t* trackedReportLine() {
+    const int state = trackedReportState.load(std::memory_order_relaxed);
+    if (state == reportQueued) return L"Saving report...";
+    if (state != reportIdle && GetTickCount64() - trackedReportAt.load(std::memory_order_relaxed) < reportShownMs)
+        return state == reportSaved ? L"Report saved to Desktop" : L"Report failed";
+    return L"Save report";
+}
 static void trackedWristNarrow(char* out, size_t size, const wchar_t* prefix, const wchar_t* value) {
     size_t n = 0;
     for (const wchar_t* w = prefix; *w && n + 1 < size; ++w) out[n++] = char(*w);
@@ -487,6 +586,11 @@ static void trackedWristAct(int row) {
         vrHapticPercent = (vrHapticPercent.load() + 50) % 250;
         vrQuickSaves.fetch_or(vrQuickHaptics);
         break;
+    case 7: { // queued for the session worker; a press while one is queued does nothing
+        int state = trackedReportState.load();
+        if (state == reportQueued || !trackedReportState.compare_exchange_strong(state, reportQueued)) return;
+        break;
+    }
     default: return;
     }
     trackedWristActions.fetch_add(1, std::memory_order_relaxed);
@@ -511,7 +615,7 @@ static void trackedWristTick(const xd::TrackingFrame& tracked, bool live) {
                 if (dir.z < -pointerGrazing && rel.position.z > 0) {
                     const float t = -rel.position.z / dir.z, x = rel.position.x + dir.x * t, y = rel.position.y + dir.y * t;
                     if (std::fabs(x) <= xd::wristPanelWidth / 2 && std::fabs(y) <= xd::wristPanelHeight / 2)
-                        next.highlight = (std::min)(int(xd::wristPanelLines) - 2, (std::max)(0, int((xd::wristPanelHeight / 2 - y) / wristLineHeight)));
+                        next.highlight = (std::min)(int(xd::wristPanelLines) - 1, (std::max)(0, int((xd::wristPanelHeight / 2 - y) / wristLineHeight)));
                 }
             }
             const bool trigger = right.aimTracked && right.trigger;
@@ -527,6 +631,7 @@ static void trackedWristTick(const xd::TrackingFrame& tracked, bool live) {
     trackedWristNarrow(next.lines[4], 32, L"Body: ", fp::vrBodyText(vrBodyHandsOnly.load(std::memory_order_relaxed)));
     trackedWristNarrow(next.lines[5], 32, L"Comfort: ", fp::vrComfortText(vrComfort.load(std::memory_order_relaxed)));
     trackedWristNarrow(next.lines[6], 32, L"Haptics: ", (std::to_wstring(vrHapticPercent.load(std::memory_order_relaxed)) + L"%").c_str());
+    trackedWristNarrow(next.lines[7], 32, trackedReportLine(), nullptr);
     trackedWristHighlight = next.shown ? next.highlight : -1;
     AcquireSRWLockExclusive(&trackedWristLock);
     trackedWrist = next;
@@ -540,7 +645,7 @@ static void trackedWristPresent() {
     state = trackedWrist;
     ReleaseSRWLockShared(&trackedWristLock);
     const char* lines[xd::wristPanelLines] = {state.lines[0], state.lines[1], state.lines[2], state.lines[3], state.lines[4], state.lines[5], state.lines[6], state.lines[7]};
-    stereoBackend.wrist(state.shown, state.pose, lines, xd::wristPanelLines - 1, state.highlight); // seven lines on the eight-line panel
+    stereoBackend.wrist(state.shown, state.pose, lines, xd::wristPanelLines, state.highlight); // all eight lines; the last saves a report
 }
 // Teleport: the right stick pushed forward aims an arc from the right hand's aim pose, shown by the pointer
 // beam to where it meets the floor under the player; letting the stick go moves the character there with the

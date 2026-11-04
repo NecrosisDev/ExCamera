@@ -3,6 +3,7 @@
 Unreleased
 
 - VR: new setting "VR: weapons follow hands (experimental)", off by default. On, a wielded weapon is moved by your tracked hands instead of the game's swing poses. It switches straight away; the game takes the weapon back while blocking, mid-swing or with a shield.
+- VR: the wrist menu has a new last line, "Save report". It puts a ZIP named ExCamera-report-<date>-<time>.zip on your Desktop with the mod's status file, its fault log (if there is one) and your settings, ready to send. The line says when it's saved.
 - Finger poses and VR finger bones now stay off on game versions other than the supported one, instead of guessing at a changed skeleton.
 
 v0.3.0 (revision 60)

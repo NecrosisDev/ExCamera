@@ -1034,6 +1034,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("runtime_losses", stereoRuntimeLosses.load())
         .boolean("recenter_remembered", vrRecenterOriginValid.load())
         .unum("wrist_actions", trackedWristActions.load())
+        .unum("reports_saved", trackedReportsSaved.load())
         .unum("grab_turns", trackedGrabTurns.load())
         .unum("hand_bends", trackedHandBends.load())
         .unum("teleports", trackedTeleports.load())
@@ -1410,6 +1411,20 @@ static DWORD runSession() {
                     publishStatus(f);
                 }
             }
+#ifdef FP_OPENXR_EMULATION
+            if (trackedReportState.load() == reportQueued && slash) { // the wrist's Save report: fresh status and fault log first
+                logFaults();
+                Aim a;
+                AcquireSRWLockShared(&aimLock);
+                a = aim;
+                ReleaseSRWLockShared(&aimLock);
+                if (FILE* f = openStatus()) {
+                    writeRunningStatus(f, a);
+                    publishStatus(f);
+                }
+                trackedReportSave();
+            }
+#endif
         }
         InterlockedExchange(&stopping, 1);
         profileStop("mod_stopped");
