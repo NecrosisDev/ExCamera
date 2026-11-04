@@ -967,6 +967,21 @@ inline bool heldPointOnPlane(const float* origin, const float* dir, float distan
     }
     return true;
 }
+// F6. The full cycle goes first -> third -> the game's overhead camera (a blend, viewMode 2) and off; any
+// press while the mod is off or the blend has settled toggles it. "First and third only" decides on release:
+// a tap flips the two views, a hold of f6HoldMs (or longer) blends out to the game's camera instead.
+inline constexpr uint64_t f6HoldMs = 500, f6BlendSettleMs = 600;
+enum class F6Step { none, holdPending, toThird, toFirst, toOverhead, toggle };
+inline F6Step f6PressStep(bool twoWay, bool running, int mode, uint64_t blendAgeMs) {
+    if (!running) return F6Step::toggle;
+    if (mode == 0) return twoWay ? F6Step::holdPending : F6Step::toThird;
+    if (mode == 1) return twoWay ? F6Step::holdPending : F6Step::toOverhead;
+    return blendAgeMs < f6BlendSettleMs ? F6Step::none : F6Step::toggle;
+}
+inline F6Step f6ReleaseStep(uint64_t heldMs, int mode) {
+    if (mode != 0 && mode != 1) return F6Step::none;
+    return heldMs >= f6HoldMs ? F6Step::toOverhead : mode == 0 ? F6Step::toThird : F6Step::toFirst;
+}
 // the F6 press that re-armed the mod (polled) may still
 // arrive as WM_KEYDOWN after the window procedure is back; ignore F6 that soon.
 inline constexpr uint64_t rearmF6GuardMs = 250;

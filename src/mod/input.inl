@@ -258,6 +258,32 @@ static void retireWindowInstallation(const WindowInstallation& owner) {
     ReleaseSRWLockExclusive(&windowInstallationLock);
 }
 
+// F6's view changes (fp::f6PressStep): from the window procedure, and from the worker for a two-way hold.
+static bool f6Running() {
+    return InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0);
+}
+static void applyF6Step(fp::F6Step step) {
+    switch (step) {
+    case fp::F6Step::toThird:
+    case fp::F6Step::toFirst:
+    case fp::F6Step::toOverhead:
+        if (!f6Running()) return; // stopped while a two-way press was held
+        if (step == fp::F6Step::toOverhead) tpBlendStart = GetTickCount64();
+        viewMode = step == fp::F6Step::toThird ? 1 : step == fp::F6Step::toFirst ? 0 : 2;
+        releaseInput();
+        return;
+    case fp::F6Step::toggle:
+        viewMode = 0;
+        InterlockedExchange(&active, !InterlockedCompareExchange(&active, 0, 0));
+        releaseInput();
+        AcquireSRWLockExclusive(&aimLock);
+        aim.valid = false;
+        ReleaseSRWLockExclusive(&aimLock);
+        return;
+    default: return; // none, or a two-way press waiting for its release
+    }
+}
+
 static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     __try {
     const WindowInstallation owner = windowInstallationSnapshot();
@@ -460,33 +486,24 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
 
     if (message == WM_KEYDOWN && !(lp & (1LL << 30)) && (wp == VK_F6 || wp == VK_F8 || wp == VK_F12 || wp == VK_ESCAPE))
         rmbEvent(fp::RmbEvent::lost, false);
+    if (message == WM_KEYUP && wp == VK_F6) { // a two-way press decides here unless the worker saw the hold first
+        ULONGLONG start = f6HoldStart.load();
+        if (start && f6HoldStart.compare_exchange_strong(start, 0)) {
+            applyF6Step(fp::f6ReleaseStep(GetTickCount64() - start, viewMode.load()));
+            return 0;
+        }
+    }
 
     if (message == WM_KEYDOWN && !(lp & (1LL << 30))) {
         if (wp == VK_F6 && !fp::rearmF6Accepted(GetTickCount64(), rearmedAt.load()))
             return 0;
         if (wp == VK_F6) { ++inventoryOwnerEpoch; releaseHeldDoor(); }
         if (wp == VK_F6) {
-            if (InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
-                viewMode.load() == 0) {
-                viewMode = 1;
-                releaseInput();
-                return 0;
-            }
-            if (InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
-                viewMode.load() == 1) {
-                tpBlendStart = GetTickCount64();
-                viewMode = 2;
-                releaseInput();
-                return 0;
-            }
-            if (viewMode.load() == 2 && GetTickCount64() - tpBlendStart.load() < 600)
-                return 0;
-            viewMode = 0;
-            InterlockedExchange(&active, !InterlockedCompareExchange(&active, 0, 0));
-            releaseInput();
-            AcquireSRWLockExclusive(&aimLock);
-            aim.valid = false;
-            ReleaseSRWLockExclusive(&aimLock);
+            const ULONGLONG now = GetTickCount64();
+            const fp::F6Step step = fp::f6PressStep(f6Cycle.load() == 1, f6Running(), viewMode.load(),
+                                                    now - tpBlendStart.load());
+            f6HoldStart = step == fp::F6Step::holdPending ? (std::max)(now, 1ull) : 0;
+            applyF6Step(step);
             return 0;
         }
         if (wp == VK_F8) {
@@ -526,6 +543,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     }
 
     if (message == WM_KILLFOCUS || message == WM_CANCELMODE || (message == WM_ACTIVATEAPP && !wp)) {
+        f6HoldStart = 0; // its key-up may never come: no overhead from a press made before focus left
         ++inventoryOwnerEpoch;
         rmbEvent(fp::RmbEvent::focusLost, false);
         clearPointerClipCache(false);

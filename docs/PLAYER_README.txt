@@ -12,6 +12,8 @@ this folder and Documents\ExCamera.
 
 KEYS & CONTROLS
 F6            Switch between first person, third person and the game's camera
+              (Settings > Camera > F6 cycle "1st/3rd only": a tap flips first and
+              third person, holding F6 half a second shows the game's camera)
 F7 (hold 1s)  Stop the mod
 F8            Open Settings and free the cursor; press again to close without saving
               (first person, third person and the title screen only)

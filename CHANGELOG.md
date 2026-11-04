@@ -3,6 +3,7 @@
 Unreleased
 
 - Safe start: hold Shift while starting ExCamera.exe (or start it with `--safe`) to play with default settings. Your current settings are copied to `first-person.backup-<date>-<time>.ini` beside them first. If the last session ran into an error, the launcher offers the same, with a note that it may not help.
+- F6 can switch between first and third person only: set Settings > Camera > F6 cycle to "1st/3rd only". Then a tap flips the two views, and holding F6 for half a second shows the game's own camera. The default still steps through all three.
 
 v0.3.0 (revision 60)
 

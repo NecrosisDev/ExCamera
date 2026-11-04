@@ -32,7 +32,7 @@ To remove it, delete the folder and `Documents\ExCamera`. Your preferences live 
 
 | Key | What it does |
 | --- | --- |
-| **F6** | Cycle first person, third person and the game's camera |
+| **F6** | Cycle first person, third person and the game's camera. With F6 cycle set to first and third only, a tap flips the two and holding F6 shows the game's camera |
 | **F7** (hold 1 s) | Stop the mod |
 | **F8** | Open Settings and free the cursor; press again to close without saving |
 | **F9 / F10** | Lower / raise the field of view |

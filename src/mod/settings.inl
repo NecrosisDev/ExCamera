@@ -42,6 +42,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.woundDebug = woundDebug.load(std::memory_order_relaxed);
     s.lightSmoothing = lightSmoothing.load();
     s.farRooms = farRooms.load();
+    s.f6Cycle = f6Cycle.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
     s.rawMouseFallback = rawMouse && !rawWanted.load();
@@ -174,6 +175,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     woundDebug.store(s.woundDebug, std::memory_order_relaxed);
     lightSmoothing = s.lightSmoothing;
     farRooms = s.farRooms;
+    f6Cycle = s.f6Cycle;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;
     rawMouse = s.rawMouse;

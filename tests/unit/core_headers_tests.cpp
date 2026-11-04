@@ -111,6 +111,29 @@ bool input_angle_wrapping_and_vr_turning_text() {
     return true;
 }
 
+bool input_f6_cycle_policy() {
+    using fp::F6Step;
+    // The full cycle acts on the press, as before: first -> third -> overhead blend, then off once it settles.
+    CHECK(fp::f6PressStep(false, true, 0, 9999) == F6Step::toThird);
+    CHECK(fp::f6PressStep(false, true, 1, 9999) == F6Step::toOverhead);
+    CHECK(fp::f6PressStep(false, true, 2, 100) == F6Step::none);
+    CHECK(fp::f6PressStep(false, true, 2, fp::f6BlendSettleMs) == F6Step::toggle);
+    CHECK(fp::f6PressStep(false, false, 0, 0) == F6Step::toggle);
+    // Two-way: first and third wait for the release; off and the blend behave as in the full cycle.
+    CHECK(fp::f6PressStep(true, true, 0, 9999) == F6Step::holdPending);
+    CHECK(fp::f6PressStep(true, true, 1, 9999) == F6Step::holdPending);
+    CHECK(fp::f6PressStep(true, true, 2, 100) == F6Step::none);
+    CHECK(fp::f6PressStep(true, false, 1, 0) == F6Step::toggle);
+    // A tap flips the two views; a hold of f6HoldMs or longer goes to the game's camera; never from the blend.
+    CHECK(fp::f6ReleaseStep(120, 0) == F6Step::toThird);
+    CHECK(fp::f6ReleaseStep(120, 1) == F6Step::toFirst);
+    CHECK(fp::f6ReleaseStep(fp::f6HoldMs - 1, 1) == F6Step::toFirst);
+    CHECK(fp::f6ReleaseStep(fp::f6HoldMs, 0) == F6Step::toOverhead);
+    CHECK(fp::f6ReleaseStep(5000, 1) == F6Step::toOverhead);
+    CHECK(fp::f6ReleaseStep(120, 2) == F6Step::none);
+    return true;
+}
+
 bool input_combat_cues_cursor_and_ray_helpers() {
     fp::SwingGesture gesture;
     gesture.move(2.5f, 0.f, 1000.f);
@@ -758,6 +781,7 @@ int main() {
         {"input ButtonHandoff and RawLook", input_button_handoff_and_raw_look},
         {"input angle wrapping and vrTurningFromText", input_angle_wrapping_and_vr_turning_text},
         {"input combat cues, cursor, and ray helpers", input_combat_cues_cursor_and_ray_helpers},
+        {"input F6 cycle policy", input_f6_cycle_policy},
         {"camera motion FOV, AimBox, NearPlane, and eye stabilization",
          camera_motion_fov_aimbox_nearplane_and_eye_stabilization},
         {"hook health menu immunity and stalled pollInput",

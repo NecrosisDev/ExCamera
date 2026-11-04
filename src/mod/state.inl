@@ -299,6 +299,11 @@ static std::atomic<int> flickCatchup{50};
 // which view F6 shows while the mod owns the camera: 0 first person, 1 third person (F6 cycles
 // first -> third -> the game's overhead). [ThirdPerson] Distance / Shoulder / Height in first-person.ini.
 static std::atomic<int> viewMode{0}, tpDistance{250}, tpShoulder{40}, tpHeight{15};
+// [Camera] F6Cycle: 0 first, third and the game's camera; 1 first and third, the game's camera on a held F6
+// (fp::f6PressStep). f6HoldStart: the tick of a two-way press not yet decided (0 none), window procedure and
+// worker.
+static std::atomic<int> f6Cycle{0};
+static std::atomic<ULONGLONG> f6HoldStart{0};
 // [VR] rows: eye separation in mm (0: the headset's own), game units per metre, render mode.
 static std::atomic<uintptr_t> nativeSettingsFaultAt{0};
 static std::atomic<unsigned> nativeSettingsDispatches{0}, nativeSettingsSteps{0}, nativeSettingsRefused{0},

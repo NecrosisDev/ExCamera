@@ -124,6 +124,7 @@ enum : int {
     objectLights,
     lightSmoothing,
     farRooms,
+    f6Cycle,
     count
 };
 }
@@ -166,6 +167,7 @@ struct ModSettings {
     int levelDetail = 30; // walls, floors and ceilings within about 3 m, percent; light by default, drops first when slow
     bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
     bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
+    int f6Cycle = 0; // 0: F6 steps first, third, the game's camera; 1: first and third, the game's camera held
     bool woundMarks = true; // cuts, bruises and running blood where weapons got through; on by default (owner's request)
     bool woundDebug = false; // neon debug highlight for wounds, blade blood and spatters
     bool tracking = false;
@@ -278,6 +280,7 @@ struct ModSettings {
         case setting::woundDebug: woundDebug = !woundDebug; break;
         case setting::drawDistance: drawDistance = std::clamp(drawDistance + delta * 10, 0, 200); break;
         case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
+        case setting::f6Cycle: f6Cycle = f6Cycle ? 0 : 1; break;
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -455,6 +458,8 @@ struct ModSettings {
         case setting::levelDetail: return levelDetail ? std::to_wstring(levelDetail) + L"%" : L"Off";
         case setting::drawDistance: return drawDistance ? std::to_wstring(drawDistance) + L" m" : L"Off";
         case setting::objectLights: return objectLights >= 6 ? std::wstring(L"6 (game)") : std::to_wstring(objectLights);
+        case setting::f6Cycle:
+            return f6Cycle ? L"first and third; hold F6 for the game's camera" : L"first, third and the game's camera";
         case setting::tracking:
             return !tracking ? L"Off" : trackingStatus == 3 ? L"Unavailable (UDP port in use?)"
                                     : trackingStatus == 2 ? L"OpenTrack UDP - receiving"
@@ -698,6 +703,12 @@ inline int iniFree(const wchar_t* t) {
 }
 inline const wchar_t* iniFreeText(int v) {
     return v ? L"free" : L"centre";
+}
+inline int iniF6Cycle(const wchar_t* text) {
+    return iniIs(text, L"two") ? 1 : iniIs(text, L"three") ? 0 : badText;
+}
+inline const wchar_t* iniF6CycleText(int mode) {
+    return mode ? L"two" : L"three";
 }
 inline int iniSwingSelection(const wchar_t* text) {
     return iniIs(text, L"mouse") ? 1 : iniIs(text, L"native") ? 0 : badText;
@@ -1177,6 +1188,11 @@ inline const RowInfo& rowInfo(int row) {
          L"The game only draws rooms next to the one you're in, built for its overhead camera. This draws one "
          L"more room through doorways, so a far doorway doesn't show solid black. Turn off if it costs too much "
          L"frame rate."},
+        {setting::f6Cycle, L"F6 cycle", RowInfo::choice, &ModSettings::f6Cycle, nullptr, L"Camera", L"F6Cycle",
+         iniF6Cycle, iniF6CycleText,
+         L"What F6 switches between. First, third, game camera: each press moves on to the next view. First and "
+         L"third only: a press flips between first and third person, and holding F6 for half a second hands the "
+         L"view to the game's own camera. Hold F7 still stops the mod."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
@@ -1232,6 +1248,7 @@ inline void ModSettings::normalize() {
     if (tpDefense != 1) tpDefense = 0;
     if (fpSwingSelection != 0) fpSwingSelection = 1;
     if (tpSwingSelection != 0) tpSwingSelection = 1;
+    if (f6Cycle != 1) f6Cycle = 0;
     const ModSettings defaults;
     for (int r = 0; r < setting::count; ++r) {
         const RowInfo& i = rowInfo(r);

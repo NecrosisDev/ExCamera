@@ -1361,6 +1361,11 @@ static DWORD runSession() {
                     FP_SHOWN_NAME L": view feature error. Helmet handling stopped; first person continues.");
             }
             stopKeyTick();
+            { // a two-way F6 still held at f6HoldMs: the game's camera, without waiting for the key-up
+                ULONGLONG start = f6HoldStart.load();
+                if (start && GetTickCount64() - start >= fp::f6HoldMs && f6HoldStart.compare_exchange_strong(start, 0))
+                    applyF6Step(fp::f6ReleaseStep(GetTickCount64() - start, viewMode.load()));
+            }
             hookHealthTick();
             if (i % 10 == 0) {
                 static unsigned stepsBefore = 0;

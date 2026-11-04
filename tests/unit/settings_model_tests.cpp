@@ -165,6 +165,25 @@ bool normalize_sanitizes_invalid_lean_bindings() {
     return true;
 }
 
+bool f6_cycle_row_steps_saves_and_normalizes() {
+    ModSettings settings;
+    CHECK(settings.f6Cycle == 0);
+    CHECK(settings.step(panel::setting::f6Cycle, 1));
+    CHECK(settings.f6Cycle == 1);
+    CHECK(settings.step(panel::setting::f6Cycle, 1));
+    CHECK(settings.f6Cycle == 0);
+    const auto& info = panel::rowInfo(panel::setting::f6Cycle);
+    CHECK(info.key != nullptr && info.fromText && info.toText);
+    CHECK(info.fromText(L"two") == 1);
+    CHECK(info.fromText(L" Three ") == 0);
+    CHECK(info.fromText(L"four") == panel::badText);
+    CHECK(info.fromText(info.toText(1)) == 1);
+    settings.f6Cycle = 7;
+    settings.normalize();
+    CHECK(settings.f6Cycle == 0);
+    return true;
+}
+
 bool every_row_has_valid_presentation_labels_and_tips() {
     const ModSettings defaults;
     for (int row = 0; row < count; ++row) {
@@ -188,6 +207,7 @@ int main() {
         {"fixed rows do not step", fixed_rows_do_not_step},
         {"normalize clamps and repairs values", normalize_clamps_and_repairs_values},
         {"normalize sanitizes invalid lean bindings", normalize_sanitizes_invalid_lean_bindings},
+        {"F6 cycle row steps, saves and normalizes", f6_cycle_row_steps_saves_and_normalizes},
         {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });
 }

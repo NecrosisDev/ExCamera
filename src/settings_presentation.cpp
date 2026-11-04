@@ -231,6 +231,8 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return L"";
     case setting::farRooms:
         return L"";
+    case setting::f6Cycle:
+        return settings.f6Cycle ? L"1st/3rd only" : L"1st/3rd/game";
     default: return L"";
     }
 }
@@ -338,6 +340,7 @@ const wchar_t* settingLabel(int id) {
     case setting::objectLights: return L"Object lights";
     case setting::lightSmoothing: return L"Smooth light";
     case setting::farRooms: return L"Far rooms";
+    case setting::f6Cycle: return L"F6 cycle";
     default: return L"";
     }
 }
@@ -445,6 +448,7 @@ const wchar_t* settingTip(int id) {
     case setting::objectLights: return L"Lights each object takes. The game uses six; fewer runs faster and keeps the strongest.";
     case setting::lightSmoothing: return L"Strong lights fall off in round gradients instead of squares. From the next level load.";
     case setting::farRooms: return L"Draws one more room through doorways, so far doorways don't show solid black. Off if it costs too much frame rate.";
+    case setting::f6Cycle: return L"What F6 switches between. 1st/3rd/game: each press moves on. 1st/3rd only: a press flips first and third person; hold F6 half a second for the game's camera.";
     default: return L"";
     }
 }

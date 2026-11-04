@@ -16,6 +16,7 @@ static const OwnSection ownSections[] = {
     {L"Camera", L"Third person", {framing, setting::tpFov, setting::tpDistance, setting::tpShoulder, setting::tpHeight,
                                   setting::tpCombat, behaviour, setting::tpLag, setting::tpTight, setting::tpDown,
                                   setting::playerGhost}, 11},
+    {L"Camera", L"Switching views", {setting::f6Cycle}, 1},
     {L"Graphics", L"Screen effects", {light, setting::ambientOcclusion, setting::screenSpaceReflections, setting::lightSmoothing,
                                       image, setting::depthOfField, setting::edgeSmoothing, damage,
                                       setting::conditionEffects, setting::woundMarks, setting::woundDebug}, 11},
