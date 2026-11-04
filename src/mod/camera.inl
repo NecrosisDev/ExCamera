@@ -557,6 +557,12 @@ inline uintptr_t navLocked(void* self, float offset) {
             fp::basis(totalYaw, totalPitch, nudge);
             fp::composeView(evaluatedPose, nudge, evaluatedPose);
         }
+        // The hit's roll, scaled with the rest at its source: right and up turn about the view axis.
+        if (const float roll = cameraImpactRoll.load(std::memory_order_relaxed); std::abs(roll) > 1e-5f) {
+            const float c = std::cos(roll), s = std::sin(roll);
+            const float tilt[12] = {-c, s, 0.f, s, c, 0.f, 0.f, 0.f, -1.f, 0.f, 0.f, 0.f};
+            fp::composeView(evaluatedPose, tilt, evaluatedPose);
+        }
         evaluatedPose[10] += breatheVertical;
     };
 

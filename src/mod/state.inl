@@ -286,6 +286,11 @@ static std::atomic<float> playerDamageFlash{0.f};
 static std::atomic<float> cameraImpactPitch{0.f};
 static std::atomic<float> cameraImpactYaw{0.f};
 static std::atomic<float> cameraImpactRoll{0.f};
+// [Camera] HitReaction: percent of those kicks a hit adds (wounds.inl), 0..100.
+static std::atomic<int> hitReactionPercent{100};
+// A headset session is live (xr_stereo.inl; never set in builds without OpenXR). Its anchor takes the camera's
+// yaw, so a hit's kick would turn the headset's view: none are added while it is.
+static std::atomic<bool> stereoLive{false};
 static float sprintFovOffset = 0.f;
 static float idleBreathePhase = 0.f;
 static float idleBreatheWeight = 0.f;

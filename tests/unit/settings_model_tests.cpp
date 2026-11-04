@@ -184,6 +184,21 @@ bool f6_cycle_row_steps_saves_and_normalizes() {
     return true;
 }
 
+bool hit_reaction_row_is_a_percent_slider() {
+    ModSettings settings;
+    CHECK(settings.hitReaction == 100);
+    CHECK(!settings.step(panel::setting::hitReaction, 1));
+    CHECK(settings.step(panel::setting::hitReaction, -3));
+    CHECK(settings.hitReaction == 70);
+    CHECK(settings.step(panel::setting::hitReaction, -100));
+    CHECK(settings.hitReaction == 0);
+    settings.hitReaction = 999;
+    settings.normalize();
+    CHECK(settings.hitReaction == 100);
+    CHECK(panel::rowInfo(panel::setting::hitReaction).key != nullptr);
+    return true;
+}
+
 bool every_row_has_valid_presentation_labels_and_tips() {
     const ModSettings defaults;
     for (int row = 0; row < count; ++row) {
@@ -208,6 +223,7 @@ int main() {
         {"normalize clamps and repairs values", normalize_clamps_and_repairs_values},
         {"normalize sanitizes invalid lean bindings", normalize_sanitizes_invalid_lean_bindings},
         {"F6 cycle row steps, saves and normalizes", f6_cycle_row_steps_saves_and_normalizes},
+        {"hit reaction row is a percent slider", hit_reaction_row_is_a_percent_slider},
         {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });
 }

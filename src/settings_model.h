@@ -125,6 +125,7 @@ enum : int {
     lightSmoothing,
     farRooms,
     f6Cycle,
+    hitReaction,
     count
 };
 }
@@ -167,6 +168,7 @@ struct ModSettings {
     int levelDetail = 30; // walls, floors and ceilings within about 3 m, percent; light by default, drops first when slow
     bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
     bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
+    int hitReaction = 100; // percent of the first-person view's kick when a hit lands; 100 as before
     int f6Cycle = 0; // 0: F6 steps first, third, the game's camera; 1: first and third, the game's camera held
     bool woundMarks = true; // cuts, bruises and running blood where weapons got through; on by default (owner's request)
     bool woundDebug = false; // neon debug highlight for wounds, blade blood and spatters
@@ -458,6 +460,8 @@ struct ModSettings {
         case setting::levelDetail: return levelDetail ? std::to_wstring(levelDetail) + L"%" : L"Off";
         case setting::drawDistance: return drawDistance ? std::to_wstring(drawDistance) + L" m" : L"Off";
         case setting::objectLights: return objectLights >= 6 ? std::wstring(L"6 (game)") : std::to_wstring(objectLights);
+        case setting::hitReaction:
+            return hitReaction ? std::to_wstring(hitReaction) + L"%" : std::wstring(L"off");
         case setting::f6Cycle:
             return f6Cycle ? L"first and third; hold F6 for the game's camera" : L"first, third and the game's camera";
         case setting::tracking:
@@ -1193,6 +1197,10 @@ inline const RowInfo& rowInfo(int row) {
          L"What F6 switches between. First, third, game camera: each press moves on to the next view. First and "
          L"third only: a press flips between first and third person, and holding F6 for half a second hands the "
          L"view to the game's own camera. Hold F7 still stops the mod."},
+        {setting::hitReaction, L"Hit reaction", RowInfo::number, &ModSettings::hitReaction, nullptr, L"Camera",
+         L"HitReaction", nullptr, nullptr,
+         L"First person only. How hard the view jolts and tilts when a blow lands on you. Zero keeps the view "
+         L"still; the damage flash stays. Never in a VR headset.", {0,100,10,10}},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};

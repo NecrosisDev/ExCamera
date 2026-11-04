@@ -43,6 +43,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.lightSmoothing = lightSmoothing.load();
     s.farRooms = farRooms.load();
     s.f6Cycle = f6Cycle.load();
+    s.hitReaction = hitReactionPercent.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
     s.rawMouseFallback = rawMouse && !rawWanted.load();
@@ -176,6 +177,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     lightSmoothing = s.lightSmoothing;
     farRooms = s.farRooms;
     f6Cycle = s.f6Cycle;
+    hitReactionPercent = s.hitReaction;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;
     rawMouse = s.rawMouse;

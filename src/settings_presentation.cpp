@@ -231,6 +231,8 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return L"";
     case setting::farRooms:
         return L"";
+    case setting::hitReaction:
+        return settings.hitReaction ? std::to_wstring(settings.hitReaction) + L"%" : L"Off";
     case setting::f6Cycle:
         return settings.f6Cycle ? L"1st/3rd only" : L"1st/3rd/game";
     default: return L"";
@@ -341,6 +343,7 @@ const wchar_t* settingLabel(int id) {
     case setting::lightSmoothing: return L"Smooth light";
     case setting::farRooms: return L"Far rooms";
     case setting::f6Cycle: return L"F6 cycle";
+    case setting::hitReaction: return L"Hit reaction";
     default: return L"";
     }
 }
@@ -448,6 +451,7 @@ const wchar_t* settingTip(int id) {
     case setting::objectLights: return L"Lights each object takes. The game uses six; fewer runs faster and keeps the strongest.";
     case setting::lightSmoothing: return L"Strong lights fall off in round gradients instead of squares. From the next level load.";
     case setting::farRooms: return L"Draws one more room through doorways, so far doorways don't show solid black. Off if it costs too much frame rate.";
+    case setting::hitReaction: return L"First person. How hard the view jolts and tilts when a blow lands on you. 0 keeps it still; the damage flash stays. Never in VR.";
     case setting::f6Cycle: return L"What F6 switches between. 1st/3rd/game: each press moves on. 1st/3rd only: a press flips first and third person; hold F6 half a second for the game's camera.";
     default: return L"";
     }

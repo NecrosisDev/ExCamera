@@ -12,7 +12,8 @@ static const wchar_t* const ownHeaders[] = {L"Framing", L"Behaviour", L"Light", 
 constexpr int framing = subHeader, behaviour = subHeader - 1, light = subHeader - 2, image = subHeader - 3,
               damage = subHeader - 4, mouse = subHeader - 5, movement = subHeader - 6;
 static const OwnSection ownSections[] = {
-    {L"Camera", L"First person", {setting::fov, setting::hideHelmet, setting::helmetVisor, setting::fingerPoses}, 4},
+    {L"Camera", L"First person", {setting::fov, setting::hideHelmet, setting::helmetVisor, setting::fingerPoses,
+                                  setting::hitReaction}, 5},
     {L"Camera", L"Third person", {framing, setting::tpFov, setting::tpDistance, setting::tpShoulder, setting::tpHeight,
                                   setting::tpCombat, behaviour, setting::tpLag, setting::tpTight, setting::tpDown,
                                   setting::playerGhost}, 11},
