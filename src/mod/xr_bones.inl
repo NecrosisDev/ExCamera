@@ -38,20 +38,11 @@ struct HeldGripProfile {
     unsigned fill[bins]{};
 };
 static std::array<HeldGripProfile, 128> heldGripCache{};
+// The input thread's finger poses and the render thread's VR hands (xr_drive.inl) both read the cache.
+static SRWLOCK heldGripLock = SRWLOCK_INIT;
 static uintptr_t heldItemNode(uintptr_t root, unsigned side);
-static bool heldItemGrip(uintptr_t root, unsigned side, XrVector3f& point, float& radiusMetres) {
-    const uintptr_t node = heldItemNode(root, side);
-    if (!node || !readable(node, 0x2a0)) return false;
-    const float* e = reinterpret_cast<const float*>(node + 0x30);
-    const float* local = reinterpret_cast<const float*>(node + field::sceneNode::localTransform);
-    for (unsigned i = 0; i < 3; ++i)
-        if (!std::isfinite(e[i]) || e[i] < 0) return false;
-    for (unsigned i = 0; i < 12; ++i)
-        if (!std::isfinite(local[i])) return false;
-    WearAttribute positions{};
-    if (!wearAttribute(node, 1, positions) || (positions.format & 0xffffff) != 0xf30001 || positions.count < 8 || positions.count > fp::wear::maxVertices ||
-        !readable(positions.data, size_t(positions.count) * 12)) return false;
-    const unsigned L = e[0] >= e[1] && e[0] >= e[2] ? 0 : e[1] >= e[2] ? 1 : 2;
+// Under heldGripLock: the stream's profile, looked up or measured into the cache, copied out.
+static void heldGripProfileLocked(const WearAttribute& positions, unsigned L, HeldGripProfile& out) {
     const size_t setBase = (((positions.data >> 6) ^ (size_t(positions.count) * 131u) ^ size_t(L)) & 31u) * 4u;
     HeldGripProfile* slot = nullptr;
     for (size_t way = 0; way < 4; ++way) {
@@ -96,6 +87,26 @@ static bool heldItemGrip(uintptr_t root, unsigned side, XrVector3f& point, float
             slot->valid = true;
         }
     }
+    out = *slot;
+}
+static bool heldItemGrip(uintptr_t root, unsigned side, XrVector3f& point, float& radiusMetres) {
+    const uintptr_t node = heldItemNode(root, side);
+    if (!node || !readable(node, 0x2a0)) return false;
+    const float* e = reinterpret_cast<const float*>(node + 0x30);
+    const float* local = reinterpret_cast<const float*>(node + field::sceneNode::localTransform);
+    for (unsigned i = 0; i < 3; ++i)
+        if (!std::isfinite(e[i]) || e[i] < 0) return false;
+    for (unsigned i = 0; i < 12; ++i)
+        if (!std::isfinite(local[i])) return false;
+    WearAttribute positions{};
+    if (!wearAttribute(node, 1, positions) || (positions.format & 0xffffff) != 0xf30001 || positions.count < 8 || positions.count > fp::wear::maxVertices ||
+        !readable(positions.data, size_t(positions.count) * 12)) return false;
+    const unsigned L = e[0] >= e[1] && e[0] >= e[2] ? 0 : e[1] >= e[2] ? 1 : 2;
+    HeldGripProfile profile{};
+    const HeldGripProfile* slot = &profile;
+    AcquireSRWLockExclusive(&heldGripLock);
+    __try { heldGripProfileLocked(positions, L, profile); } // a fault in the scan unwinds through the release
+    __finally { ReleaseSRWLockExclusive(&heldGripLock); }
     if (!slot->valid) return false;
     // the hand's origin in the item's frame: p_hand = p_local . R + t, so p_local = (p_hand - t) . rows
     const XrVector3f t = {local[9], local[10], local[11]};
@@ -331,7 +342,7 @@ static void skinSettleMarks(bool built, uintptr_t skinOut) {
 }
 static bool skinBuildHook(uintptr_t tree, uintptr_t skinOut, uintptr_t data) {
     skinMarkedCount = 0;
-    if (!skinMergeFault.load() && (fingerPoses.load(std::memory_order_relaxed) != 0 || vrFingerBones.load(std::memory_order_relaxed) != 0))
+    if (!skinMergeFault.load() && verifiedBuild && (fingerPoses.load(std::memory_order_relaxed) != 0 || vrFingerBones.load(std::memory_order_relaxed) != 0))
         skinMarkGuarded(tree);
     const bool built = originalSkinBuild(tree, skinOut, data);
     if (skinMarkedCount) skinSettleMarks(built, skinOut);
@@ -626,8 +637,10 @@ static void trackedBonePose(fingerbones::Hand& hand, const fingerbones::Joints& 
 }
 // The common gate of both drivers: the row's say, no earlier fault, the targets resolved, and play:
 // the mod's camera live in a level and no UI open. Never the title, a preview or a menu.
+// The skin-object, node-id and flag offsets here (+0x10..+0x38, +0x17C, +0x204, +0x218) are checked by hand on the
+// hashed builds only and no field contract covers them, so another build leaves the skeleton to the game.
 static bool trackedBonesWanted(bool rowOn) {
-    return rowOn && nodeMoveHooked.load() && !trackedBoneFault.load() && layout.optionalGroupAvailable("fingerBones") &&
+    return rowOn && verifiedBuild && nodeMoveHooked.load() && !trackedBoneFault.load() && layout.optionalGroupAvailable("fingerBones") &&
            InterlockedCompareExchange(&active, 0, 0) && InterlockedCompareExchange(&cameraReady, 0, 0);
 }
 static fingerbones::Root& trackedBoneEntry(uintptr_t root) {

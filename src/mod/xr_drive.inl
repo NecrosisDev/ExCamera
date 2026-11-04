@@ -114,6 +114,19 @@ static xd::HandPose trackedHandPose(uintptr_t root, unsigned side, bool pressed)
     if (pressed && root && readable(root, 0x1300) && *reinterpret_cast<int*>(root + field::character::weaponCount) > 0 && trackedHaftHeld()) return xd::HandPose::hilt;
     return pressed ? xd::HandPose::fist : xd::HandPose::open;
 }
+// The render owner reads what each hand holds while the game thread may be swapping it; the readable()
+// checks cannot close that window, so a fault there is an empty hand for the frame, counted, not a crash.
+static std::atomic<unsigned> trackedHandHoldFaults{0};
+static void trackedHandHold(uintptr_t root, unsigned side, bool pressed, xd::HandPose& pose, float& radius) { // SEH-only frame
+    __try {
+        pose = trackedHandPose(root, side, pressed);
+        radius = trackedHeldRadius(root, side);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        pose = pressed ? xd::HandPose::fist : xd::HandPose::open;
+        radius = 0;
+        trackedHandHoldFaults.fetch_add(1, std::memory_order_relaxed);
+    }
+}
 static void trackedDrivePublish() {
     TrackedDriveFrame next{};
     xd::TrackingFrame frame{};
@@ -150,7 +163,10 @@ static void trackedDrivePublish() {
                     next.pressed[i] = frame.sample.hands[i].pressed;
                     // Controller hands take the pose of what they hold; a tracked hand keeps its real fingers.
                     const auto& sampled = frame.sample.hands[i].joints;
-                    const xd::HandJoints joints = sampled.tracked ? sampled : xd::inferJoints(frame.sample.hands[i].grip, trackedHandPose(savedRoot, i, frame.sample.hands[i].pressed), i == 1, trackedHeldRadius(savedRoot, i));
+                    xd::HandPose holdPose = xd::HandPose::open;
+                    float holdRadius = 0;
+                    if (!sampled.tracked) trackedHandHold(savedRoot, i, frame.sample.hands[i].pressed, holdPose, holdRadius);
+                    const xd::HandJoints joints = sampled.tracked ? sampled : xd::inferJoints(frame.sample.hands[i].grip, holdPose, i == 1, holdRadius);
                     if ((joints.validMask & xd::allHandJoints) == xd::allHandJoints) {
                         auto& out = next.handJoints[i];
                         const float units = static_cast<float>(vrUnitsPerMetre.load());
