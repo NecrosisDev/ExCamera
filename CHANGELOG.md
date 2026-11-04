@@ -44,6 +44,8 @@ v0.3.0 (revision 60)
 - The settings panel reads the game's GUI size from `hm_saves` on Hellmode installs instead of assuming AppData.
 - `build.py --dev`: dev-only build with a readiness file for automation and a save-slot loader driven by `dev-load.ini`. Never packaged; the loader hasn't loaded a slot in game yet.
 - Casts and comments tidied; camera math untouched.
+- VR: recentering and the wrist menu no longer write `first-person.ini` from the render thread. The session worker saves them, so the headset doesn't drop a frame on a recenter and a wrist-menu change can't overwrite a settings save made at the same moment.
+- VR: a damaged `RecenterOrigin` line (nan, inf or a zero rotation) is ignored instead of handed to the headset runtime.
 - Checked with MSVC, the generated tables, and offline admission checks on both EXEs. See [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for the release build's observed status. VR, the effects and the decal fix still need eyes in game. FPS gains unmeasured.
 
 v0.2.3 (revision 58)

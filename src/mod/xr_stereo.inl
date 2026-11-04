@@ -241,7 +241,7 @@ static void stereoFrustum(uintptr_t view) {
                         vrRecenterOriginValid = true;
                         wchar_t text[160];
                         swprintf_s(text, L"%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f", o[0], o[1], o[2], o[3], o[4], o[5], o[6]);
-                        saveSetting(L"VR", L"RecenterOrigin", text);
+                        queueRecenterOriginSave(text);
                     }
                 }
             }

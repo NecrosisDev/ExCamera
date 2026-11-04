@@ -1531,6 +1531,7 @@ static DWORD WINAPI run(void*) {
     finishSessionWorker();
     flushSettings(); // final best-effort pass, still on the sole persistence owner
     flushPendingModsByMod();
+    flushPendingRecenterOrigin();
     return result;
 }
 // Started only by `enable` (our launcher calls it right after loading the DLL; EMTK's native plugin loader

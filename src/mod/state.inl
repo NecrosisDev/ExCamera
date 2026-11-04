@@ -629,9 +629,51 @@ static void flushPendingModsByMod() {
         pendingModsByModSave.compare_exchange_strong(expected, wanted, std::memory_order_acq_rel);
     }
 }
+// A VR recenter is noticed on the render thread under cameraLock; the INI rewrite waits for the worker so the
+// headset never drops a frame on disk I/O. The newest origin wins; a failed write stays queued. Inline: only
+// OpenXR builds queue one.
+static SRWLOCK recenterOriginSaveLock = SRWLOCK_INIT;
+static wchar_t recenterOriginSaveText[160]{};
+static bool recenterOriginSavePending = false;
+inline void queueRecenterOriginSave(const wchar_t* text) {
+    AcquireSRWLockExclusive(&recenterOriginSaveLock);
+    wcscpy_s(recenterOriginSaveText, text);
+    recenterOriginSavePending = true;
+    ReleaseSRWLockExclusive(&recenterOriginSaveLock);
+}
+static void flushPendingRecenterOrigin() {
+    wchar_t text[160];
+    AcquireSRWLockExclusive(&recenterOriginSaveLock);
+    const bool pending = recenterOriginSavePending;
+    if (pending) wcscpy_s(text, recenterOriginSaveText);
+    recenterOriginSavePending = false;
+    ReleaseSRWLockExclusive(&recenterOriginSaveLock);
+    if (!pending || !settingsPath[0] || WritePrivateProfileStringW(L"VR", L"RecenterOrigin", text, settingsPath)) return;
+    AcquireSRWLockExclusive(&recenterOriginSaveLock);
+    if (!recenterOriginSavePending) { // a newer origin queued meanwhile replaces this one
+        wcscpy_s(recenterOriginSaveText, text);
+        recenterOriginSavePending = true;
+    }
+    ReleaseSRWLockExclusive(&recenterOriginSaveLock);
+}
+// The VR wrist menu edits F8 rows on the render thread. It never writes the INI itself: a second writer
+// could rewrite the file under the worker and lose a row. It flags the rows here; the worker turns the flags
+// into ordinary row revisions (mod/settings.inl) and saves them like any other edit.
+enum VrQuickSave : unsigned {
+    vrQuickPosture = 1u << 0,
+    vrQuickTurning = 1u << 1,
+    vrQuickHands = 1u << 2,
+    vrQuickBody = 1u << 3,
+    vrQuickComfort = 1u << 4,
+    vrQuickHaptics = 1u << 5,
+};
+static std::atomic<unsigned> vrQuickSaves{0};
+static void acceptVrQuickSaves(); // mod/settings.inl; session worker only
 static void saveFov() {
+    acceptVrQuickSaves();
     persistSettingsRows(4);
     flushPendingModsByMod();
+    flushPendingRecenterOrigin();
 }
 static unsigned inputClock = ~0u;
 static wchar_t statusPath[MAX_PATH]{}, statusTempPath[MAX_PATH]{};

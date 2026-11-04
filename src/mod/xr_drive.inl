@@ -454,17 +454,15 @@ static void trackedWristNarrow(char* out, size_t size, const wchar_t* prefix, co
 static void trackedWristAct(int row) {
     switch (row) {
     case 0: ++trackingReset; break;
-    case 1: vrPosture = vrPosture.load() ? 0 : 1; saveSetting(L"VR", L"Posture", fp::vrPostureText(vrPosture.load())); break;
-    case 2: vrTurning = (vrTurning.load() + 1) % 4; saveSetting(L"VR", L"Turning", fp::vrTurningText(vrTurning.load())); break;
-    case 3: vrHandsDrawn = vrHandsDrawn.load() ? 0 : 1; saveSetting(L"VR", L"Hands", fp::vrHandsText(vrHandsDrawn.load())); break;
-    case 4: vrBodyHandsOnly = vrBodyHandsOnly.load() ? 0 : 1; saveSetting(L"VR", L"Body", fp::vrBodyText(vrBodyHandsOnly.load())); break;
-    case 5: vrComfort = (vrComfort.load() + 1) % 3; saveSetting(L"VR", L"Comfort", fp::vrComfortText(vrComfort.load())); break;
-    case 6: { // haptics in quarter steps, wrapping from double back to off
-        const int percent = (vrHapticPercent.load() + 50) % 250;
-        vrHapticPercent = percent;
-        saveSetting(L"VR", L"HapticPercent", std::to_wstring(percent).c_str());
+    case 1: vrPosture = vrPosture.load() ? 0 : 1; vrQuickSaves.fetch_or(vrQuickPosture); break;
+    case 2: vrTurning = (vrTurning.load() + 1) % 4; vrQuickSaves.fetch_or(vrQuickTurning); break;
+    case 3: vrHandsDrawn = vrHandsDrawn.load() ? 0 : 1; vrQuickSaves.fetch_or(vrQuickHands); break;
+    case 4: vrBodyHandsOnly = vrBodyHandsOnly.load() ? 0 : 1; vrQuickSaves.fetch_or(vrQuickBody); break;
+    case 5: vrComfort = (vrComfort.load() + 1) % 3; vrQuickSaves.fetch_or(vrQuickComfort); break;
+    case 6: // haptics in quarter steps, wrapping from double back to off
+        vrHapticPercent = (vrHapticPercent.load() + 50) % 250;
+        vrQuickSaves.fetch_or(vrQuickHaptics);
         break;
-    }
     default: return;
     }
     trackedWristActions.fetch_add(1, std::memory_order_relaxed);

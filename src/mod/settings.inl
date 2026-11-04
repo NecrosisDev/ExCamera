@@ -386,7 +386,22 @@ static void persistSettingsRows(unsigned budget) {
         persistSettingsRow(row);
     }
 }
-static void flushSettings() { persistSettingsRows(panel::setting::count); }
+static void acceptVrQuickSaves() {
+    const unsigned rows = vrQuickSaves.exchange(0, std::memory_order_acq_rel);
+    if (!rows) return;
+    static constexpr std::pair<unsigned, int> map[] = {
+        {vrQuickPosture, panel::setting::vrPosture}, {vrQuickTurning, panel::setting::vrTurning},
+        {vrQuickHands, panel::setting::vrHands},     {vrQuickBody, panel::setting::vrBody},
+        {vrQuickComfort, panel::setting::vrComfort}, {vrQuickHaptics, panel::setting::vrHaptics},
+    };
+    SettingsGuard guard;
+    for (const auto& [bit, row] : map)
+        if (rows & bit) ++settingsRevision[row];
+}
+static void flushSettings() {
+    acceptVrQuickSaves();
+    persistSettingsRows(panel::setting::count);
+}
 // Native Apply owns a draft. Merge only edited rows into the latest state so a
 // menu opened before a FOV key or raw-input fallback cannot overwrite that work.
 static void commitSettingsDraft(const panel::ModSettings& initial, const panel::ModSettings& draft) {
