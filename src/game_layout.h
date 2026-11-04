@@ -68,22 +68,34 @@ inline bool mapPeFile(const uint8_t* file, size_t fileSize, std::vector<uint8_t>
 }
 
 struct PatternBytes {
-    static constexpr size_t capacity = 512;
-    uint8_t data_[capacity]{};
-    uint16_t size_ = 0;
-    void clear() noexcept { size_ = 0; }
-    bool push_back(uint8_t v) noexcept {
-        if (size_ >= capacity) return false;
-        data_[size_++] = v;
+    static constexpr size_t inlineCapacity = 512;
+    uint8_t inline_[inlineCapacity]{};
+    size_t size_ = 0;
+    std::vector<uint8_t> overflow_;
+    void clear() noexcept {
+        size_ = 0;
+        overflow_.clear();
+    }
+    bool push_back(uint8_t v) {
+        if (overflow_.empty()) {
+            if (size_ < inlineCapacity) {
+                inline_[size_++] = v;
+                return true;
+            }
+            overflow_.reserve(inlineCapacity * 2);
+            overflow_.insert(overflow_.end(), inline_, inline_ + size_);
+        }
+        overflow_.push_back(v);
+        size_ = overflow_.size();
         return true;
     }
     size_t size() const noexcept { return size_; }
     bool empty() const noexcept { return size_ == 0; }
-    const uint8_t* data() const noexcept { return data_; }
-    const uint8_t* begin() const noexcept { return data_; }
-    const uint8_t* end() const noexcept { return data_ + size_; }
-    uint8_t operator[](size_t i) const noexcept { return data_[i]; }
-    uint8_t& operator[](size_t i) noexcept { return data_[i]; }
+    const uint8_t* data() const noexcept { return overflow_.empty() ? inline_ : overflow_.data(); }
+    const uint8_t* begin() const noexcept { return data(); }
+    const uint8_t* end() const noexcept { return data() + size_; }
+    uint8_t operator[](size_t i) const noexcept { return data()[i]; }
+    uint8_t& operator[](size_t i) noexcept { return overflow_.empty() ? inline_[i] : overflow_[i]; }
 };
 
 struct Pattern {

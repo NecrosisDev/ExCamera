@@ -1,6 +1,7 @@
 #include "camera_motion.h"
 #include "hook_health.h"
 #include "input_policy.h"
+#include "native_contracts.h"
 #include "pointer_set.h"
 #include "status_json.h"
 #include "xr/math.h"
@@ -362,6 +363,55 @@ bool xr_math_standalone_types_and_transforms() {
     return true;
 }
 
+bool all_signatures_and_native_contracts_parse() {
+    fp::Pattern pat;
+    for (const auto& sig : fp::sig::signatures) {
+        CHECK(sig.pattern != nullptr);
+        CHECK(fp::parsePattern(sig.pattern, pat));
+        CHECK(!pat.bytes.empty());
+        CHECK(pat.anchor < pat.bytes.size());
+        CHECK(pat.mask[pat.anchor] == 0xFF);
+    }
+    size_t largePatterns = 0;
+    for (const auto& owner : fp::contract::owners) {
+        CHECK(owner.pattern != nullptr);
+        CHECK(fp::parsePattern(owner.pattern, pat));
+        CHECK(!pat.bytes.empty());
+        CHECK(pat.anchor < pat.bytes.size());
+        CHECK(pat.mask[pat.anchor] == 0xFF);
+        if (pat.bytes.size() > fp::PatternBytes::inlineCapacity) ++largePatterns;
+    }
+    for (const auto& field : fp::contract::fields) {
+        CHECK(field.pattern != nullptr);
+        CHECK(fp::parsePattern(field.pattern, pat));
+        CHECK(!pat.bytes.empty());
+        if (pat.bytes.size() > fp::PatternBytes::inlineCapacity) ++largePatterns;
+    }
+    CHECK(largePatterns > 0); // verifies multi-kilobyte contracts (up to 4956 bytes) exercise SBO overflow
+    char* exeEnv = nullptr;
+    size_t exeLen = 0;
+    if (_dupenv_s(&exeEnv, &exeLen, "EXCAMERA_TEST_GAME_EXE") == 0 && exeEnv && *exeEnv) {
+        const std::filesystem::path exePath(exeEnv);
+        std::free(exeEnv);
+        std::ifstream in(exePath, std::ios::binary | std::ios::ate);
+        CHECK(in.good());
+        const auto sz = static_cast<size_t>(in.tellg());
+        in.seekg(0);
+        std::vector<uint8_t> raw(sz), mapped;
+        CHECK(bool(in.read(reinterpret_cast<char*>(raw.data()), static_cast<std::streamsize>(sz))));
+        fp::ImageView view;
+        CHECK(fp::mapPeFile(raw.data(), raw.size(), mapped, view));
+        fp::Layout layout;
+        fp::ResolveReport resolveRep;
+        CHECK(fp::resolveLayout(view, layout, resolveRep));
+        fp::ContractReport contractRep;
+        CHECK(fp::validateNativeContracts(view, layout, contractRep));
+    } else if (exeEnv) {
+        std::free(exeEnv);
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -375,5 +425,6 @@ int main() {
          hook_health_menu_immunity_and_stalled_poll_input},
         {"PointerSet and JsonOut formatting", pointer_set_and_status_json_formatting},
         {"xr/math.h standalone types and transforms", xr_math_standalone_types_and_transforms},
+        {"all signatures and native contract patterns parse", all_signatures_and_native_contracts_parse},
     });
 }
