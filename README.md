@@ -36,7 +36,7 @@ Outputs:
 - `build/manifest.toml` — mod-folder manifest stamped with the build version (mod loaders skip a folder without one).
 - `build/ExCamera-<version>-minimal.zip` — runtime ZIP containing those three files, `LICENSE.txt`, and `LICENSE-MinHook.txt`.
 
-Use `py build.py` to build without refreshing the ZIP. Two variants are never packaged: `py build.py --dev` adds automation tools, and `py build.py --openxr-sdk <path to OpenXR-SDK checkout>` compiles the VR integration. CI compiles both on every change so they cannot quietly stop building. The package name follows `FP_BUILD` in `src/build_identity.h`. Compilation and validation use isolated staging under `build/`; success publishes the runtime files and replaces the ZIP individually.
+Use `py build.py` to build without refreshing the ZIP. Two variants are never packaged: `py build.py --dev` adds automation tools, and `py build.py --openxr-sdk <path to OpenXR-SDK checkout>` compiles the VR integration. CI compiles both whenever a change touches the paths `.github/workflows/build.yml` watches, so they cannot quietly stop building. The package name follows `FP_BUILD` in `src/build_identity.h`. Compilation and validation use isolated staging under `build/`; success publishes the runtime files and replaces the ZIP individually.
 
 On failure, previous outputs are retained or restored, not newly built. If rollback cannot finish (for example, a running program locks a file), the error identifies retained recovery files; do not use the mixed outputs. Exit the game and launcher before rebuilding. Publication is not crash-atomic across multiple files. Unrelated files in `build/` are preserved; its persistent `.build.lock` file is only a coordination file, not a stale-lock sentinel.
 
@@ -85,7 +85,7 @@ The Headwear setting controls helmets and other headwear in first person. **Hide
 - `src/native_settings.*`, `src/settings_*` — native settings UI, presentation, and draft model.
 - `src/game_*`, `src/native_contracts.h`, `src/native_build.h` — game compatibility data and validation.
 - `src/mod/view_effects.inl` — optional screen effects (ambient occlusion, reflections, depth of field).
-- `src/xr/`, `src/xr_host.cpp`, `src/mod/xr_*.inl` — OpenXR VR integration, compiled only with `--openxr-sdk`.
+- `src/xr/`, `src/xr_host.cpp`, `src/mod/xr_*.inl` — OpenXR VR integration, compiled only with `--openxr-sdk`. Exceptions: `src/mod/xr_bones.inl` and `src/xr/hand_bend.h` (held-item finger poses) are compiled in every build.
 - `src/vendor/minhook/` — bundled x64 hook library.
 
 See [Architecture](docs/ARCHITECTURE.md) for the compilation model and native integration boundaries.
