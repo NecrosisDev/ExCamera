@@ -45,6 +45,8 @@ static_assert(sizeof hooks / sizeof *hooks == hookCount);
 struct Metric {
     uint64_t calls = 0, samples = 0, inclusive = 0, self = 0, maximum = 0, maximumSelf = 0;
 };
+#pragma warning(push)
+#pragma warning(disable: 4324) // structure was padded due to alignment specifier
 struct alignas(64) ThreadData {
     uint32_t thread = 0;
     std::array<Metric, hookCount> metrics{};
@@ -53,6 +55,7 @@ struct alignas(64) ThreadData {
     uint64_t overflowFrames = 0, clockErrors = 0, depthDrops = 0;
     std::array<uint64_t, 4> modes{};
 };
+#pragma warning(pop)
 struct Token { unsigned depth = 0; bool active = false; };
 class Engine {
     using Clock = uint64_t (*)();

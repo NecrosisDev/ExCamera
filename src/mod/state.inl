@@ -699,10 +699,10 @@ static LRESULT CALLBACK noticeProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(w, message, wp, lp);
 }
 static BOOL CALLBACK findWindow(HWND w, LPARAM out);
-static bool controlsNoticeSeen() {
+[[maybe_unused]] static bool controlsNoticeSeen() {
     return !settingsPath[0] || GetPrivateProfileIntW(L"Launcher", L"ControlsSeen", 0, settingsPath) != 0;
 }
-static void markControlsNoticeSeen() {
+[[maybe_unused]] static void markControlsNoticeSeen() {
     if (settingsPath[0]) WritePrivateProfileStringW(L"Launcher", L"ControlsSeen", L"1", settingsPath);
 }
 static bool showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000,
