@@ -37,7 +37,9 @@ Open the native MANUAL tab on the main menu to read the complete First Person (E
 in-game guide page anytime.
 
 IF SOMETHING GOES WRONG
-Hold F7 to hand the camera back to the game. Close the game fully before
+Hold F7 to hand the camera back to the game. Hold Shift while starting
+ExCamera.exe to start with default settings; your current settings are
+kept as first-person.backup-<date>-<time>.ini beside them. Close the game fully before
 updating or replacing these files. When reporting a problem, include
 first-person-status.json and fault-log.txt from this folder.
 

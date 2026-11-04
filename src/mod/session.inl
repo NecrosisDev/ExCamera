@@ -2,6 +2,7 @@
 // Part of first_person.cpp (one translation unit): included there, in order.
 #include "held_throw_admission.inl"
 static void loadSettings(const wchar_t* path); // mod/settings.inl: every F8 setting from first-person.ini
+static void applySafeReset(const wchar_t* path); // mod/settings.inl: the launcher's safe start, worker only
 #include "../raw_registration.h"
 static void rawReconcile();
 // Stage a predecessor before the switch: a callback may arrive immediately.
@@ -1142,6 +1143,7 @@ static DWORD runSession() {
             if (user.size() < MAX_PATH) wcscpy_s(settingsPath, user.c_str());
         }
         loadSettings(settingsPath);
+        if (GetPrivateProfileIntW(L"Safe", L"Reset", 0, settingsPath)) applySafeReset(settingsPath);
         persistedFov = selectedFov.load();
         attackSideKey = GetPrivateProfileIntW(L"Input", L"AttackSideKey", 0, settingsPath);
         {

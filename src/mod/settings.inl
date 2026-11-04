@@ -331,6 +331,18 @@ static panel::ModSettings readSettings(const wchar_t* path) {
 static void loadSettings(const wchar_t* path) {
     makeLive(readSettings(path));
 }
+// Safe start: the launcher kept the player's file as a backup and left one holding only [Safe] Reset=1.
+// Every row takes its built-in default and is queued, so this worker writes the whole file out as usual;
+// the marker goes now. Should the game stop before the rows are written, the file still reads as defaults.
+static void applySafeReset(const wchar_t* path) {
+    makeLive(panel::ModSettings{});
+    {
+        SettingsGuard guard;
+        for (int r = 0; r < panel::setting::count; ++r)
+            if (panel::rowInfo(r).key) ++settingsRevision[r];
+    }
+    WritePrivateProfileStringW(L"Safe", nullptr, nullptr, path);
+}
 static bool saveSetting(const wchar_t* section, const wchar_t* key, const wchar_t* value) {
     return settingsPath[0] && WritePrivateProfileStringW(section, key, value, settingsPath);
 }

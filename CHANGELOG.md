@@ -1,5 +1,9 @@
 # Changelog
 
+Unreleased
+
+- Safe start: hold Shift while starting ExCamera.exe (or start it with `--safe`) to play with default settings. Your current settings are copied to `first-person.backup-<date>-<time>.ini` beside them first. If the last session ran into an error, the launcher offers the same, with a note that it may not help.
+
 v0.3.0 (revision 60)
 
 - Fixed level loading hitches and stuttering: eliminated synchronous shader double-compilation in glShaderSource, gated sector traversals and roster scans during level population, precompiled wound/fire/bake shaders, paused worker disk logging while loading, and generated procedural stone textures asynchronously on a background worker thread.

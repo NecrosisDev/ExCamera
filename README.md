@@ -22,6 +22,8 @@
 2. Run `ExCamera.exe` each time you play. It starts Exanima through Steam, or attaches if the game is already running.
 3. A short message in game confirms it started.
 
+Hold **Shift** while starting `ExCamera.exe` to start with default settings; your current ones are kept as a backup beside them.
+
 To remove it, delete the folder and `Documents\ExCamera`. Your preferences live in `Documents\ExCamera\first-person.ini` and carry over when you update.
 
 **Works with Exanima 0.9.5.2g** on Windows x64 (Steam build 25803178, standard and Hellmode). On any other game version it warns you or refuses to start, and changes nothing.
