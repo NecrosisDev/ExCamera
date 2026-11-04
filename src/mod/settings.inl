@@ -290,8 +290,16 @@ static panel::ModSettings readSettings(const wchar_t* path) {
         GetPrivateProfileStringW(L"VR", L"RecenterOrigin", L"", origin, 160, path);
         float o[7]{};
         if (origin[0] && swscanf_s(origin, L"%f,%f,%f,%f,%f,%f,%f", &o[0], &o[1], &o[2], &o[3], &o[4], &o[5], &o[6]) == 7) {
-            memcpy(vrRecenterOrigin, o, sizeof o);
-            vrRecenterOriginValid = true;
+            // A hand-edited or damaged line can hold nan/inf or a zero rotation, which the XR runtime rejects as an
+            // invalid pose. Keep only finite values with a usable rotation, normalised; otherwise forget the origin.
+            bool finite = true;
+            for (const float v : o) finite = finite && std::isfinite(v);
+            const float length = finite ? std::sqrt(o[3] * o[3] + o[4] * o[4] + o[5] * o[5] + o[6] * o[6]) : 0.0f;
+            if (finite && std::isfinite(length) && length > 0.5f && length < 2.0f) {
+                for (int k = 3; k < 7; ++k) o[k] /= length;
+                memcpy(vrRecenterOrigin, o, sizeof o);
+                vrRecenterOriginValid = true;
+            }
         }
     }
     wchar_t indicatorText[24]{};

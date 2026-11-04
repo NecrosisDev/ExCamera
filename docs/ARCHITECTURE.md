@@ -2,7 +2,7 @@
 
 ## Build boundaries
 
-`build.py` builds two Windows x64 binaries: the launcher (`launcher.cpp`) and the DLL (`first_person.cpp`). The DLL also links `native_settings.cpp`, `settings_presentation.cpp`, the bundled MinHook C sources, and `supersampling_shim.asm`.
+`build.py` builds two Windows x64 binaries: the launcher (`launcher.cpp`) and the DLL (`first_person.cpp`). The DLL also links `native_settings.cpp`, `settings_presentation.cpp`, the bundled MinHook C sources, and `supersampling_shim.asm`; `--openxr-sdk` builds add `xr_host.cpp` and the `mod/xr_*.inl` parts.
 
 The files under `src/mod/` intentionally form **one translation unit** through ordered includes in `first_person.cpp`; `state.inl` also includes `activation.inl`. They share private state and helpers. Do not add these `.inl` files to the compiler's source list or reorder them as an organizational cleanup.
 
@@ -39,7 +39,7 @@ The shared mesh queue checks the submitted pointer before validating a possible 
 
 The near-plane solver may cap proved-clear results at twice the caller's maximum near plane. Its initial segment ends at an endpoint of the original six-step bisection tree, so even a quantized result beyond it already saturates the filter. A hit uses the unchanged six-step search; unknown queries retain the original fallback. Props are still queried unless level clearance already forces the minimum plane. Every temporal sample retains current geometry queries and its own physical head pose, camera transform and filter evaluation. Held placement passes its first predicate result into clearance refinement and still checks final clearance before accepting an output.
 
-Run `python -B tests/run_performance.py` for native regression suites. They compile production owners with owned-memory/native-boundary fixtures and compare against the pinned pre-change oracle in `tests/original_performance.inl`. The retained integration fixtures cover temporal sample order, extra requests, source faults, replacement, TP obstruction ownership and native view boundaries. They do not launch or attach to the game. See `DECISIONS.md` for the reason cross-frame and cross-sample caches are deliberately absent.
+The maintainer runs `python -B tests/run_performance.py` locally for native regression suites; `tests/` and `DECISIONS.md` are kept out of the published repository, so a fresh clone has neither. They compile production owners with owned-memory/native-boundary fixtures and compare against the pinned pre-change oracle in `tests/original_performance.inl`. The retained integration fixtures cover temporal sample order, extra requests, source faults, replacement, TP obstruction ownership and native view boundaries. They do not launch or attach to the game. Cross-frame and cross-sample caches are deliberately absent (reasoning recorded in the local `DECISIONS.md`).
 
 ## Screen-effect quality diagnostics
 

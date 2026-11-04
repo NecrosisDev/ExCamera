@@ -64,3 +64,47 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 14
+
+  # The dev tools and the OpenXR integration are compiled out of release packages, so the job above never
+  # compiles them. Build each variant here so neither can silently stop compiling. Nothing is uploaded.
+  variants:
+    name: Windows x64 (${{ matrix.variant }})
+    runs-on: windows-2022
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [dev, openxr]
+    env:
+      OPENXR_SDK_TAG: release-1.1.43
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      # Headers only: the runtime loads openxr_loader.dll itself, so no loader library is linked.
+      - name: Fetch OpenXR SDK headers
+        if: matrix.variant == 'openxr'
+        uses: actions/checkout@v7
+        with:
+          repository: KhronosGroup/OpenXR-SDK
+          ref: ${{ env.OPENXR_SDK_TAG }}
+          path: openxr-sdk
+          persist-credentials: false
+
+      - name: Build dev variant
+        if: matrix.variant == 'dev'
+        shell: pwsh
+        run: python build.py --dev
+
+      - name: Build OpenXR variant
+        if: matrix.variant == 'openxr'
+        shell: pwsh
+        run: python build.py --openxr-sdk openxr-sdk

@@ -16,6 +16,8 @@ Unreleased
 - The settings panel reads the game's GUI size from `hm_saves` on Hellmode installs instead of assuming AppData.
 - `build.py --dev`: dev-only build with a readiness file for automation and a save-slot loader driven by `dev-load.ini`. Never packaged; the loader hasn't loaded a slot in game yet.
 - Casts and comments tidied; camera math untouched.
+- VR: a damaged `RecenterOrigin` line in the INI (nan, inf or a zero rotation) is ignored instead of being handed to the headset runtime as a broken pose. Slightly-off rotations are normalised.
+- CI now also compiles the `--dev` and `--openxr-sdk` builds, which release packages leave out, so they can't quietly stop compiling.
 - Checked with MSVC, the generated tables, offline admission checks on both EXEs, a Hellmode title run and one in-game death. VR, the effects and the decal fix still need eyes in game. FPS gains unmeasured.
 
 v0.2.3 (revision 58)
