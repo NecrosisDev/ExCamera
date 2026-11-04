@@ -171,6 +171,7 @@ namespace sector {
     inline size_t scene = fp::game::sector::scene;
     inline size_t passMask = fp::game::sector::passMask;
     inline size_t lightCount = fp::game::sector::lightCount;
+    inline size_t roomRender = fp::game::sector::roomRender;
 }
 namespace pick {
     inline size_t origin = fp::game::pick::origin;
@@ -348,6 +349,21 @@ namespace light {
 namespace shadowMap {
     inline size_t dirty = fp::game::shadowMap::dirty;
     inline size_t needed = fp::game::shadowMap::needed;
+}
+namespace level {
+    inline size_t roomCount = fp::game::level::roomCount;
+    inline size_t rooms = fp::game::level::rooms;
+    inline size_t roomStride = fp::game::level::roomStride;
+    inline size_t roomCells = fp::game::level::roomCells;
+}
+namespace room {
+    inline size_t state = fp::game::room::state;
+    inline size_t sector = fp::game::room::sector;
+    inline size_t edgeCount = fp::game::room::edgeCount;
+    inline size_t edges = fp::game::room::edges;
+}
+namespace roomEdge {
+    inline size_t cell = fp::game::roomEdge::cell;
 }
 namespace bindings {
     inline size_t stride = fp::game::bindings::stride;
@@ -607,6 +623,16 @@ inline void resetLiveOffsets() noexcept {
     light::kind = fp::game::light::kind;
     shadowMap::dirty = fp::game::shadowMap::dirty;
     shadowMap::needed = fp::game::shadowMap::needed;
+    level::roomCount = fp::game::level::roomCount;
+    level::rooms = fp::game::level::rooms;
+    level::roomStride = fp::game::level::roomStride;
+    room::state = fp::game::room::state;
+    room::sector = fp::game::room::sector;
+    sector::roomRender = fp::game::sector::roomRender;
+    level::roomCells = fp::game::level::roomCells;
+    room::edgeCount = fp::game::room::edgeCount;
+    room::edges = fp::game::room::edges;
+    roomEdge::cell = fp::game::roomEdge::cell;
     bodyPart::poseForward = fp::game::bodyPart::poseForward;
     bodyPart::poseOrigin = fp::game::bodyPart::poseOrigin;
     bindings::stride = fp::game::bindings::stride;
@@ -773,6 +799,7 @@ inline constexpr ContractOwner owners[] = {
     {"portalSphereTest", sig::targetCount, "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 B0 66 0F 7F 74 24 40 48 89 4C 24 38 49 89 D6 45 30 FF 48 8B 54 24 38 8B 82 70 02 00 00", 0},
     {"meshLightRecount", sig::targetCount, "83 B9 DC 01 00 00 00 0F 8C 88 00 00 00 48 8B 05 ?? ?? ?? ?? 8B 90 F0 01 00 00 83 FA", 0},
     {"shadowSchedule", sig::targetCount, "55 48 89 E5 48 8D 64 24 B0 48 89 5D D0 48 89 75 D8 48 89 4D F8 8B 0D ?? ?? ?? ?? E8", 0},
+    {"roomClassify", sig::roomClassify, "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 90 48 89 4C 24 20 49 89 D7 C6 44 24 68 01 48 8B 44", 0},
 };
 inline constexpr FieldContract fields[] = {
     {"character::sceneNode", 9, 0x3F9, "89 44 24 40 48 8B 73 28 48 8B 46 18 48 8B 80 30 01 00 00 48 8D 50 64 48 8D 4C 24 38", nullptr},
@@ -1134,8 +1161,10 @@ inline constexpr FieldContract fields[] = {
     {"silhouette::textureBindBody", 148, 0x0, "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 B7 B9 42 00 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D 96 B9 42 00 74 14 67 8D 8B C0 84 00 00 FF 15 C7 8D 42 00 89 1D 81 B9 42 00 90 8B 05 7A B9 42 00 48 C1 E0 04 48 8D 15 7F B9 42 00 48 8D 1C 02 48 85 F6 74 06 83 7E 58 00 75 2B 83 3D 59 B9 42 00 00 7D 0F 83 7B 08 00 76 09 8B 4B 08 FF 15 B8 8A 42 00 C7 43 08 00 00 00 00 48 C7 03 00 00 00 00 E9 7A 00 00 00 83 3D 2E B9 42 00 00 7D 24 8B 46 40 3B 43 08 74 1C 83 7B 08 00 76 0A 8B 4B 08 FF 15 85 8A 42 00 90 8B 4E 40 FF 15 6B 8A 42 00 0F 1F 00 8B 46 40 89 43 08 8B 56 58 8B 4B 08 FF 15 A6 8C 42 00 8B 46 18 25 00 02 00 00 75 1C F3 0F 10 05 64 E3 23 00 BA 01 85 00 00 8B 4B 08 0F 28 D0 FF 15 A3 89 42 00 0F 1F 00 8B 05 CA B8 42 00 48 C1 E0 04 48 8D 15 CF B8 42 00 48 89 34 02 90 48 8D 64 24 28 5E 5B C3", "silhouette"},
     {"engineLog::logBody", 149, 0x0, "55 48 89 E5 48 8D 64 24 A0 48 89 5D C8 89 CB 48 89 55 F8 4C 89 45 F0 48 8B 4D F8 E8 20 23 FE FF 48 8B 4D F0 E8 17 23 FE FF 48 C7 45 E8 00 00 00 00 90 48 8D 4D E8 E8 B5 22 FE FF 48 8B 45 F8 48 89 45 D0 48 8D 05 16 2D 2D 00 48 89 45 D8 48 8B 45 F0 48 89 45 E0 48 8D 55 D0 45 31 C9 41 B8 02 00 00 00 48 8D 4D E8 E8 F4 26 FE FF 48 8B 55 E8 48 8B 0D 29 48 47 00 E8 44 B0 FF FF 80 3D 8D 45 47 00 00 75 2B 83 FB 05 74 26 48 8B 05 0F 48 47 00 48 8D 50 08 48 8B 0D A4 64 28 00 48 85 C9 75 07 48 8D 0D 38 86 36 00 E8 33 AA FF FF 0F 1F 00 83 FB 01 0F 8C B3 00 00 00 83 EB 01 74 5A 83 EB 01 74 31 83 EB 01 74 40 83 EB 01 74 5B 83 EB 01 74 66 83 EB 01 0F 84 6D 00 00 00 83 EB 01 0F 84 78 00 00 00 83 EB 01 0F 84 7F 00 00 00 E9 7A 00 00 00 66 90 48 8B 55 F0 B9 01 00 00 00 E8 BE FD FF FF E9 65 00 00 00 90 48 8B 55 F0 B9 01 00 00 00 E8 AA FD FF FF EB 54 48 8B 55 F0 31 C9 E8 9D FD FF FF EB 47 0F 1F 00 48 8B 55 F0 48 8B 4D F8 E8 EB FA FF FF EB 35 90 48 8B 55 F0 48 8B 4D F8 E8 DB FA FF FF EB 25 90 4C 8B 45 F0 48 8B 55 F8 B9 02 00 00 00 E8 F6 BF FF FF EB 10 4C 8B 45 F0 48 8B 55 F8 31 C9 E8 E5 BF FF FF 90 90 48 89 E9 E8 5B FE FF FF 48 8B 5D C8 48 8D 65 00 5D C3", "engineLog"},
     {"engineLog::messageLineBody", 150, 0x0, "53 56 48 8D 64 24 C8 8B 35 63 4B 47 00 83 FE 0F 7C 04 31 DB EB 04 67 8D 5E 01 3B 1D 40 4B 47 00 0F 84 7A 00 00 00 48 89 4C 24 20 48 8D 05 CE 30 2D 00 48 89 44 24 28 48 89 54 24 30 48 8D 54 24 20 89 F0 48 C1 E0 04 48 8D 0D 32 4B 47 00 48 01 C1 45 31 C9 41 B8 02 00 00 00 E8 E1 2A FE FF 48 8D 05 1A 4B 47 00 89 F2 48 C1 E2 04 48 8B 0C 10 48 85 C9 74 04 48 8B 49 F8 48 6B C9 32 8B 15 AD 3D 47 00 48 81 C2 D0 07 00 00 48 01 CA 21 F6 48 C1 E6 04 89 54 30 08 89 1D D3 4A 47 00 0F 1F 00 E8 FB 06 00 00 90 48 8D 64 24 38 5E 5B C3", "engineLog"},
+    {"level::roomRenderSync", 156, 0x5E0, "48 8B 44 24 20 8B 40 1C 67 44 8D 40 FF 45 85 C0 0F 8C 76 00 00 00 BA FF FF FF FF 0F 1F 44 00 00 83 C2 01 48 8B 44 24 20 48 8B 48 20 48 63 C2 48 6B C0 54 4C 8D 0C 01 4C 89 C8 8B 48 30 3B 48 2C 74 42 41 8B 41 30 41 89 41 2C 83 F8 01 75 10 49 8B 41 34 C7 80 18 03 00 00 02 00 00 00 EB 25 41 83 79 2C 02 75 10 49 8B 41 34 C7 80 18 03 00 00 01 00 00 00 EB 0E 49 8B 41 34 C7 80 18 03 00 00 00 00 00 00 41 39 D0", "farRooms"},
+    {"level::roomNeighbours", 156, 0x4C2, "41 8B 41 18 67 44 8D 50 FF 45 85 D2 7C 3C 41 BE FF FF FF FF 66 90 41 83 C6 01 48 8B 44 24 20 4C 8B 40 20 4C 8B 58 28 49 8B 59 1C 49 63 C6 8B 44 C3 04 49 63 04 83 48 6B C0 54 41 C7 44 00", "farRooms"},
 };
-inline constexpr std::array<FieldOffsetBinding, 240> fieldBindings = {{
+inline constexpr std::array<FieldOffsetBinding, 249> fieldBindings = {{
     {0u, 8u, 24, false, game::character::sceneNode, &game::live::character::sceneNode},
     {1u, 14u, 1224, false, game::character::physicsLive, &game::live::character::physicsLive},
     {2u, 10u, 2336, false, game::character::weaponCount, &game::live::character::weaponCount},
@@ -1376,6 +1405,15 @@ inline constexpr std::array<FieldOffsetBinding, 240> fieldBindings = {{
     {255u, 4u, 608, false, game::light::kind, &game::live::light::kind},
     {256u, 4u, 16, false, game::shadowMap::dirty, &game::live::shadowMap::dirty},
     {257u, 4u, 20, false, game::shadowMap::needed, &game::live::shadowMap::needed},
+    {359u, 5u, 28, false, game::level::roomCount, &game::live::level::roomCount},
+    {359u, 40u, 32, false, game::level::rooms, &game::live::level::rooms},
+    {359u, 58u, 48, false, game::room::state, &game::live::room::state},
+    {359u, 79u, 52, false, game::room::sector, &game::live::room::sector},
+    {359u, 83u, 792, false, game::sector::roomRender, &game::live::sector::roomRender},
+    {360u, 35u, 40, false, game::level::roomCells, &game::live::level::roomCells},
+    {360u, 0u, 24, false, game::room::edgeCount, &game::live::room::edgeCount},
+    {360u, 39u, 28, false, game::room::edges, &game::live::room::edges},
+    {360u, 46u, 4, false, game::roomEdge::cell, &game::live::roomEdge::cell},
 }};
 inline constexpr std::array<ClosureCallee, 115> closureCallees = {{
     {"callee_1240", "FF 25 ?? ?? ?? ??"},
@@ -2398,6 +2436,16 @@ static_assert(game::light::shadow == 0x2C0, "Review native contract after changi
 static_assert(game::light::kind == 0x260, "Review native contract after changing light::kind");
 static_assert(game::shadowMap::dirty == 0x10, "Review native contract after changing shadowMap::dirty");
 static_assert(game::shadowMap::needed == 0x14, "Review native contract after changing shadowMap::needed");
+static_assert(game::level::roomCount == 0x1C, "Review native contract after changing level::roomCount");
+static_assert(game::level::rooms == 0x20, "Review native contract after changing level::rooms");
+static_assert(game::level::roomStride == 0x54, "Review native contract after changing level::roomStride");
+static_assert(game::room::state == 0x30, "Review native contract after changing room::state");
+static_assert(game::room::sector == 0x34, "Review native contract after changing room::sector");
+static_assert(game::sector::roomRender == 0x318, "Review native contract after changing sector::roomRender");
+static_assert(game::level::roomCells == 0x28, "Review native contract after changing level::roomCells");
+static_assert(game::room::edgeCount == 0x18, "Review native contract after changing room::edgeCount");
+static_assert(game::room::edges == 0x1C, "Review native contract after changing room::edges");
+static_assert(game::roomEdge::cell == 0x4, "Review native contract after changing roomEdge::cell");
 static_assert(game::bodyPart::poseForward == 0x2B8, "Review native contract after changing bodyPart::poseForward");
 static_assert(game::bodyPart::poseOrigin == 0x2C4, "Review native contract after changing bodyPart::poseOrigin");
 static_assert(game::bindings::stride == 0x10, "Review native contract after changing bindings::stride");

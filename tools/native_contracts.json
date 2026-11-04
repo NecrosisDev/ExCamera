@@ -1154,6 +1154,14 @@
       "end_rva": "0x4f74c",
       "pattern": "55 48 89 E5 48 8D 64 24 B0 48 89 5D D0 48 89 75 D8 48 89 4D F8 8B 0D ?? ?? ?? ?? E8",
       "entry_offset": 0
+    },
+    {
+      "name": "roomClassify",
+      "rva": "0x143c20",
+      "end_rva": "0x1442a2",
+      "target": "roomClassify",
+      "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 90 48 89 4C 24 20 49 89 D7 C6 44 24 68 01 48 8B 44",
+      "entry_offset": 0
     }
   ],
   "fields": [
@@ -4649,6 +4657,107 @@
       "native_instruction": "mov eax, dword ptr [rsi + 0x14]",
       "displacement_offset": 6,
       "displacement_bytes": 1
+    },
+    {
+      "name": "level::roomCount",
+      "value": "0x1c",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x144205",
+      "width": 4,
+      "provenance": "mov eax, dword ptr [rax + 0x1c]: loop bound of the render-mode sync over level rooms.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "level::rooms",
+      "value": "0x20",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x144228",
+      "width": 8,
+      "provenance": "mov rcx, qword ptr [rax + 0x20]: base of the level's room entry array.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "level::roomStride",
+      "value": "0x54",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x14422f",
+      "width": 8,
+      "provenance": "imul rax, rax, 0x54: room entry stride.",
+      "optional_group": "farRooms",
+      "operand_kind": "immediate"
+    },
+    {
+      "name": "room::state",
+      "value": "0x30",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x14423a",
+      "width": 4,
+      "provenance": "mov ecx, dword ptr [rax + 0x30]: room state (2 at hand, 1 neighbour, 0 other), compared with its previous copy at +2C.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "room::sector",
+      "value": "0x34",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x14424f",
+      "width": 8,
+      "provenance": "mov rax, qword ptr [r9 + 0x34]: the room's sector, whose +318 render mode is written next.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "sector::roomRender",
+      "value": "0x318",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x144253",
+      "width": 4,
+      "provenance": "mov dword ptr [rax + 0x318], 2: sector render mode read by the render walk 0x5B400 (0 hidden, 1 whole, 2 through portals).",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "level::roomCells",
+      "value": "0x28",
+      "owner": "roomClassify",
+      "witness": "level::roomNeighbours",
+      "instruction": "0x144105",
+      "width": 8,
+      "provenance": "mov r11, qword ptr [rax + 0x28]: grid cell table holding room index + 1.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "room::edgeCount",
+      "value": "0x18",
+      "owner": "roomClassify",
+      "witness": "level::roomNeighbours",
+      "instruction": "0x1440e2",
+      "width": 4,
+      "provenance": "mov eax, dword ptr [r9 + 0x18]: number of the room's edge records.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "room::edges",
+      "value": "0x1c",
+      "owner": "roomClassify",
+      "witness": "level::roomNeighbours",
+      "instruction": "0x144109",
+      "width": 8,
+      "provenance": "mov rbx, qword ptr [r9 + 0x1c]: the room's 8-byte edge records.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "roomEdge::cell",
+      "value": "0x4",
+      "owner": "roomClassify",
+      "witness": "level::roomNeighbours",
+      "instruction": "0x144110",
+      "width": 4,
+      "provenance": "mov eax, dword ptr [rbx + rax*8 + 4]: grid cell on the far side of an edge record.",
+      "optional_group": "farRooms"
     }
   ],
   "references": [
@@ -5597,6 +5706,22 @@
       "pattern": "53 56 48 8D 64 24 C8 8B 35 63 4B 47 00 83 FE 0F 7C 04 31 DB EB 04 67 8D 5E 01 3B 1D 40 4B 47 00 0F 84 7A 00 00 00 48 89 4C 24 20 48 8D 05 CE 30 2D 00 48 89 44 24 28 48 89 54 24 30 48 8D 54 24 20 89 F0 48 C1 E0 04 48 8D 0D 32 4B 47 00 48 01 C1 45 31 C9 41 B8 02 00 00 00 E8 E1 2A FE FF 48 8D 05 1A 4B 47 00 89 F2 48 C1 E2 04 48 8B 0C 10 48 85 C9 74 04 48 8B 49 F8 48 6B C9 32 8B 15 AD 3D 47 00 48 81 C2 D0 07 00 00 48 01 CA 21 F6 48 C1 E6 04 89 54 30 08 89 1D D3 4A 47 00 0F 1F 00 E8 FB 06 00 00 90 48 8D 64 24 38 5E 5B C3",
       "optional_group": "engineLog",
       "provenance": "Whole FUN_1000259A0 body (RVA 0x259A0-0x25A4E), byte-exact: copies source + \" : \" + text into a 16-entry ring (DAT_10049A520, head DAT_10049A510, tail DAT_10049A500) with an expiry of now + 2000 ms + 50 ms per character; a full ring drops the line."
+    },
+    {
+      "name": "level::roomRenderSync",
+      "owner": "roomClassify",
+      "window_offset": 1504,
+      "pattern": "48 8B 44 24 20 8B 40 1C 67 44 8D 40 FF 45 85 C0 0F 8C 76 00 00 00 BA FF FF FF FF 0F 1F 44 00 00 83 C2 01 48 8B 44 24 20 48 8B 48 20 48 63 C2 48 6B C0 54 4C 8D 0C 01 4C 89 C8 8B 48 30 3B 48 2C 74 42 41 8B 41 30 41 89 41 2C 83 F8 01 75 10 49 8B 41 34 C7 80 18 03 00 00 02 00 00 00 EB 25 41 83 79 2C 02 75 10 49 8B 41 34 C7 80 18 03 00 00 01 00 00 00 EB 0E 49 8B 41 34 C7 80 18 03 00 00 00 00 00 00 41 39 D0",
+      "provenance": "Final loop of the room classifier 0x143C20: for every level room (count level+1C, 0x54-byte entries at level+20) it copies entry state +30 into +2C and writes the room sector's render mode +318 (state 1 -> 2, state 2 -> 1, else 0). The far-rooms adapter rewrites exactly these cells after this function returns.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "level::roomNeighbours",
+      "owner": "roomClassify",
+      "window_offset": 1218,
+      "pattern": "41 8B 41 18 67 44 8D 50 FF 45 85 D2 7C 3C 41 BE FF FF FF FF 66 90 41 83 C6 01 48 8B 44 24 20 4C 8B 40 20 4C 8B 58 28 49 8B 59 1C 49 63 C6 8B 44 C3 04 49 63 04 83 48 6B C0 54 41 C7 44 00",
+      "provenance": "Neighbour walk of the room classifier 0x143C20: entry +18 edge count, entry +1C 8-byte edge records whose second dword is a grid cell, level+28 cell table holding room index + 1 (hence the -24 = +30 - 54 store into the neighbour's state).",
+      "optional_group": "farRooms"
     }
   ],
   "closures": {

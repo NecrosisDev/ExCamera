@@ -22,8 +22,7 @@ identifies the build by hash, and runs the signature, field-contract and VR chec
     python tools/check_game.py [path/to/Exanima.exe]
 
 `python tools/xr_contracts.py check <Exanima.exe>` runs the VR check on its own.
-Far rooms and attack variants use offsets no contract covers, so they stay off on any
-build not hashed in `src/native_build.h`.
+Attack variants additionally require a build hashed in `src/native_build.h`.
 
 ## Shaders
 

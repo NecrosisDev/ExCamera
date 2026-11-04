@@ -154,7 +154,27 @@ inline constexpr size_t lightCount = 0x1F0; // int: the sector's lights
 inline constexpr size_t lastMesh = 0x1C8; // int
 inline constexpr size_t meshes = 0x1D0;
 inline constexpr size_t passMask = 0xE0; // cached render-view admission, borrowed for controller picks
+inline constexpr size_t roomRender = 0x318; // int: render walk 5B400 draws 0 none, 1 whole, 2 through portals
 } // namespace sector
+
+// The level's rooms (the room classifier 143C20's first argument).
+namespace level {
+inline constexpr size_t roomCount = 0x1C; // int
+inline constexpr size_t rooms = 0x20;     // room entries (namespace room)
+inline constexpr size_t roomStride = 0x54;
+inline constexpr size_t roomCells = 0x28; // int per grid cell: room index + 1, 0 none
+} // namespace level
+
+namespace room {
+inline constexpr size_t edgeCount = 0x18; // int
+inline constexpr size_t edges = 0x1C;     // 8-byte records (namespace roomEdge)
+inline constexpr size_t state = 0x30;     // int: 2 at hand, 1 neighbour, 0 other
+inline constexpr size_t sector = 0x34;    // its sector (sector::roomRender)
+} // namespace room
+
+namespace roomEdge {
+inline constexpr size_t cell = 0x4; // int: grid cell on the far side (level::roomCells)
+} // namespace roomEdge
 
 namespace scene {
 inline constexpr size_t lifecycleFlags = 0x1C20; // optional native attack-variant ownership

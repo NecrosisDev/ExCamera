@@ -392,35 +392,35 @@ static std::atomic<bool> roomViewHooked{false};
 static std::atomic<unsigned> roomViewOpened{0};
 
 static void setRoomTypes(uintptr_t level, bool wide) {
-    const int count = *reinterpret_cast<const int*>(level + 0x1c);
-    const uintptr_t entries = *reinterpret_cast<const uintptr_t*>(level + 0x20),
-                    indices = *reinterpret_cast<const uintptr_t*>(level + 0x28);
+    const int count = *reinterpret_cast<const int*>(level + field::level::roomCount);
+    const uintptr_t entries = *reinterpret_cast<const uintptr_t*>(level + field::level::rooms),
+                    indices = *reinterpret_cast<const uintptr_t*>(level + field::level::roomCells);
     if (count <= 0 || count > 4096 || !entries) return;
-    const auto entry = [&](int room) { return entries + size_t(room) * 0x54; };
-    const auto sector = [&](uintptr_t e) { return *reinterpret_cast<const uintptr_t*>(e + 0x34); };
+    const auto entry = [&](int room) { return entries + size_t(room) * field::level::roomStride; };
+    const auto sector = [&](uintptr_t e) { return *reinterpret_cast<const uintptr_t*>(e + field::room::sector); };
+    const auto state = [&](uintptr_t e) { return *reinterpret_cast<const int*>(e + field::room::state); };
     for (int room = 0; room < count; ++room) {
         const uintptr_t e = entry(room), s = sector(e);
         if (!s) continue;
-        const int state = *reinterpret_cast<const int*>(e + 0x30);
-        const int type = state == 2 ? 1 : state == 1 ? (wide ? 1 : 2) : 0;
-        int& shown = *reinterpret_cast<int*>(s + 0x318);
+        const int type = state(e) == 2 ? 1 : state(e) == 1 ? (wide ? 1 : 2) : 0;
+        int& shown = *reinterpret_cast<int*>(s + field::sector::roomRender);
         if (shown != type) shown = type;
     }
     if (!wide) return;
     unsigned opened = 0;
     for (int room = 0; room < count; ++room) {
         const uintptr_t e = entry(room);
-        if (*reinterpret_cast<const int*>(e + 0x30) != 1) continue;
-        const int edges = *reinterpret_cast<const int*>(e + 0x18);
-        const uintptr_t pairs = *reinterpret_cast<const uintptr_t*>(e + 0x1c);
+        if (state(e) != 1) continue;
+        const int edges = *reinterpret_cast<const int*>(e + field::room::edgeCount);
+        const uintptr_t pairs = *reinterpret_cast<const uintptr_t*>(e + field::room::edges);
         if (edges <= 0 || edges > 256 || !pairs || !indices) continue;
         for (int k = 0; k < edges; ++k) {
-            const int edge = *reinterpret_cast<const int*>(pairs + size_t(k) * 8 + 4);
+            const int edge = *reinterpret_cast<const int*>(pairs + size_t(k) * 8 + field::roomEdge::cell);
             const int next = *reinterpret_cast<const int*>(indices + size_t(edge) * 4) - 1; // numbered from 1
             if (next < 0 || next >= count) continue;
             const uintptr_t n = entry(next), s = sector(n);
-            if (!s || *reinterpret_cast<const int*>(n + 0x30) != 0) continue;
-            *reinterpret_cast<int*>(s + 0x318) = 2;
+            if (!s || state(n) != 0) continue;
+            *reinterpret_cast<int*>(s + field::sector::roomRender) = 2;
             ++opened;
         }
     }
@@ -439,16 +439,10 @@ static char roomClassify(uintptr_t level, uintptr_t out) {
     return result;
 }
 
-// The level/entry/sector offsets above (+1C, +20, +28, stride 54, +30, +34, sector +318) are checked by
-// hand against 143C20 and 5B400 on the hashed builds only; no field contract covers them, and the hook
-// writes +318 even with the option off. Another build keeps the game's room rule.
-static bool roomViewUnreviewedBuild = false;
+// The level, room and sector fields are witnessed in 143C20 itself (level::roomRenderSync and
+// level::roomNeighbours); a build where they changed withholds the farRooms group.
 static void createRoomViewHook() {
     if (!layout.optionalGroupAvailable("farRooms")) return;
-    if (!verifiedBuild) {
-        roomViewUnreviewedBuild = true;
-        return;
-    }
     const uintptr_t addr = optionalGameAt(fp::sig::roomClassify);
     if (!addr || !readable(addr, sizeof roomClassifyEntry) ||
         std::memcmp(reinterpret_cast<const void*>(addr), roomClassifyEntry, sizeof roomClassifyEntry))
