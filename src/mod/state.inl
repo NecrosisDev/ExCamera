@@ -39,6 +39,7 @@ static fp::Layout layout;
 // File-image admission finishes before hooks are created. This report is immutable during a session.
 static fp::ContractReport nativeContracts;
 static bool manualDefenseFieldMismatch = false;
+static uintptr_t optionalGameAt(fp::sig::Target t) { return layout.rva[t] ? base + layout.rva[t] : 0; }
 static uintptr_t gameAt(fp::sig::Target t) {
     return base + layout.rva[t];
 }
@@ -1048,6 +1049,7 @@ static std::atomic<unsigned> dragFlagsStatus{0}; // diagnostic mirror; formatted
 static bool readable(uintptr_t address, size_t size);
 static const char* nodeName(uintptr_t node);
 static bool verifiedBuild = false; // the build this release was tested on, by its hash (session.inl sets it)
+static bool closureVerifiedBuild = false; // call-graph closures verified without whole-EXE SHA-256 match
 static int dragKind(uintptr_t* object = nullptr);
 static int dragKind(uintptr_t* object) {
     // 0x11F610 (the player's input step) reads the manager's flags: 0x2000 an object drag (queried by
@@ -1223,6 +1225,7 @@ static void cursorLookPoll() {
 // Native settings are serviced only by their native GUI maintenance callback.
 static void nativeSettingsMaintenance(uintptr_t);
 static void (*originalGuiMaintenance)(uintptr_t)=nullptr;
+static bool createNativeSettingsHooks();
 static bool awaitNativeSettings(DWORD timeout=2000);
 static void nativeSettingsBeforeStop();
 static void writeNativeCheckboxStatus(fp::JsonOut&);

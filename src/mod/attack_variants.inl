@@ -256,19 +256,16 @@ static bool loadedAttackVariantContracts(const fp::ImageView& file) {
         return false;
     }
 }
-static bool admitAttackVariantsEntries(const fp::ImageView& file, bool sourceVerified) {
+static bool admitAttackVariantsEntries(const fp::ImageView& file) {
     const int previous = attackVariantsAvailability.load();
     if (attackVariantsHooksCreated && previous == 5) return false;
     // Unknown normal-return ownership is sticky but does not waive retained
     // trampoline validation on F7/F6. A healthy re-arm preserves state 7 and
     // broad denial; any changed code upgrades it to restart-required state 5.
     int reason = 0;
-    // Masked code patterns alone do not bind every rel32 call to the reviewed
-    // native closure on a merely compatible build. This initial partial
-    // capability additionally requires a fresh supported-executable hash.
-    if (!sourceVerified)
-        reason = 9;
-    else if (!layout.optionalGroupAvailable("manualDefense"))
+    // Call-graph closure verification (fp::validateOptionalClosure) binds every
+    // wildcarded rel32 call/jump target across attackVariants and physicsOwnership.
+    if (!layout.optionalGroupAvailable("manualDefense"))
         reason = 8;
     else if (!layout.optionalGroupAvailable("physicsOwnership"))
         reason = optionalContractFailed("physicsOwnership") ? 6 : 10;

@@ -397,7 +397,8 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         inputOwner.movementUp(bit);
 
     // The Settings window scrolls with the wheel; nothing of the camera's takes it while the window is up.
-    const uintptr_t optionsForm = message == WM_MOUSEWHEEL && base ? *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::guiOptionsForm)) : 0;
+    const uintptr_t optionsSlot = message == WM_MOUSEWHEEL && base ? optionalGameAt(fp::sig::guiOptionsForm) : 0;
+    const uintptr_t optionsForm = optionsSlot ? *reinterpret_cast<const uintptr_t*>(optionsSlot) : 0;
     const bool optionsShown = optionsForm && readable(optionsForm + field::form::visible, 1) &&
                               *reinterpret_cast<const unsigned char*>(optionsForm + field::form::visible);
     if (optionsShown) {
@@ -494,6 +495,11 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             if (!cursorFreeBitSet(cursorFreeBit) && !InterlockedCompareExchange(&active, 0, 0) &&
                 !(gone && GetTickCount64() - gone >= 2000))
                 return 0;
+            if (!layout.optionalGroupAvailable("nativeSettings")) {
+                showNotice(FP_SHOWN_NAME L": in-game Mod Settings is unavailable on this Exanima version; "
+                                         L"first-person.ini remains active.");
+                return 0;
+            }
             setCursorFreeBit(cursorFreeBit, !cursorFreeBitSet(cursorFreeBit));
             releaseInput();
             return 0;
@@ -1031,10 +1037,10 @@ static constexpr unsigned heldCollisionQueryBit = 0x200000;
 static constexpr float nativeHeldSweepSpan = 1000.f;
 
 static float heldPlacementStart(uintptr_t caller, const float* origin, const float* direction, float scale) {
-    if (boundedPlacement.object &&
+    if (boundedPlacement.object && caller &&
         (caller == gameAt(fp::sig::heldStartReturn) || caller == gameAt(fp::sig::heldChildStartReturn) ||
-         caller == gameAt(fp::sig::inventoryStartReturn) ||
-         caller == gameAt(fp::sig::inventoryChildStartReturn)) &&
+         caller == optionalGameAt(fp::sig::inventoryStartReturn) ||
+         caller == optionalGameAt(fp::sig::inventoryChildStartReturn)) &&
         !std::memcmp(origin, boundedPlacement.values, 12) && !std::memcmp(direction, boundedPlacement.values + 3, 12))
         return -boundedPlacement.distance;
     return scale;
@@ -2194,7 +2200,7 @@ static unsigned walkSceneVisit(uintptr_t scene, uintptr_t* nodes, unsigned* pare
 static float heldSweepFor(uintptr_t caller, uintptr_t body, const float* direction, uintptr_t viewport,
                           uintptr_t pose) {
     if (!boundedPlacement.object || viewport != boundedPlacement.viewport ||
-        (caller != gameAt(fp::sig::heldSweepReturn) && caller != gameAt(fp::sig::inventorySweepReturn)) ||
+        (!caller || (caller != gameAt(fp::sig::heldSweepReturn) && caller != optionalGameAt(fp::sig::inventorySweepReturn))) ||
         std::memcmp(direction, boundedPlacement.values + 3, 12))
         return originalHeldSweep(body, direction, viewport, pose);
     uintptr_t nodes[1024]{};

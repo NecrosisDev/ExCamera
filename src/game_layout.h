@@ -5,6 +5,7 @@
 // No Win32 here: the DLL resolves the game's own file, the launcher the same file, and the tests
 // any buffer. A layout defaults to the source build's addresses (game_signatures.h knownRva), so
 // code that reads it before resolution, and the unit tests' fake memory, see the known build.
+#include "fpc_rtti.h"
 #include "game_signatures.h"
 #include <cstdint>
 #include <cstring>
@@ -253,12 +254,39 @@ struct ResolveReport {
 };
 
 namespace detail {
+struct VmtTargetHint {
+    sig::Target target;
+    const char* className;
+};
+
+struct VmtSlotHint {
+    sig::Target slot;
+    sig::Target holds;
+    const char* className;
+    uint32_t defaultOffset;
+};
+
+inline constexpr VmtTargetHint defaultVmtTargets[] = {
+    {sig::nodeVmt, "T3DNode"},
+    {sig::heldBodyMetadata, "TTetraRBD"},
+    {sig::characterMetadata, "TMotileDynamics"},
+};
+
+inline constexpr VmtSlotHint defaultVmtSlots[] = {
+    {sig::navSlot, sig::navSampler, "TNavCameraControl", 0x140},
+    {sig::behaviorSlot, sig::playerBehavior, "TPlayerBehaviour", 0x0F0},
+    {sig::pointSlot, sig::aimPoint, "TPlayerBehaviour", 0x160},
+    {sig::combatUpdateSlot, sig::combatUpdate, "TMotileDynamics", 0x158},
+};
+
 // Same resolver for the generated native tables and small adversarial fixtures.
 // Required targets are all-or-nothing. Every address in a failed optional group
 // is withheld together; individual diagnostics retain their original outcomes.
 inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& report,
                                 const sig::Signature* signatures, size_t signatureCount,
-                                const sig::SlotCheck* slots, size_t slotCount) {
+                                const sig::SlotCheck* slots, size_t slotCount,
+                                const VmtTargetHint* vmtTargets = nullptr, size_t vmtTargetCount = 0,
+                                const VmtSlotHint* vmtSlots = nullptr, size_t vmtSlotCount = 0) {
     report = ResolveReport{};
     uint32_t rva[sig::targetCount]{};
     unsigned matched[sig::targetCount]{};
@@ -300,6 +328,18 @@ inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& 
         rva[s.target] = uint32_t(value);
         ++matched[s.target];
     }
+    // Free Pascal x64 VMT fallback: if a class VMT target's constructor reference signatures all missed,
+    // recover its VMT directly from .rdata by ShortString class name and vInstanceSize/-vInstanceSize invariant.
+    for (size_t k = 0; k < vmtTargetCount; ++k) {
+        const VmtTargetHint& vt = vmtTargets[k];
+        if (vt.target >= sig::targetCount || matched[vt.target] || disagree[vt.target]) continue;
+        rtti::VmtInfo info{};
+        if (rtti::findClassVmt(v, vt.className, info) && info.rva > 0 && info.rva < v.size) {
+            rva[vt.target] = info.rva;
+            matched[vt.target] = 1;
+            report.degraded[vt.target] = true;
+        }
+    }
     auto fail = [&](unsigned t, Unresolved why) {
         if (report.why[t] == Unresolved::none) {
             report.why[t] = why;
@@ -329,6 +369,23 @@ inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& 
         --report.failures;
         report.degraded[c.holds] = true;
     }
+    // Conversely, if a VMT slot's own reference signatures missed while its virtual method resolved,
+    // locate the class VMT via RTTI and scan its virtual method table for the resolved method entry.
+    for (size_t k = 0; k < vmtSlotCount; ++k) {
+        const VmtSlotHint& vs = vmtSlots[k];
+        if (vs.slot >= sig::targetCount || vs.holds >= sig::targetCount ||
+            matched[vs.slot] || disagree[vs.slot] || report.why[vs.holds] != Unresolved::none)
+            continue;
+        rtti::VmtInfo info{};
+        uint32_t slotRva = 0;
+        if (rtti::findClassVmt(v, vs.className, info) &&
+            rtti::findMethodSlot(v, info.rva, rva[vs.holds], slotRva, vs.defaultOffset)) {
+            rva[vs.slot] = slotRva;
+            report.why[vs.slot] = Unresolved::none;
+            --report.failures;
+            report.degraded[vs.slot] = true;
+        }
+    }
     for (size_t i = 0; i < slotCount; ++i) {
         const sig::SlotCheck& c = slots[i];
         if (report.why[c.slot] != Unresolved::none || report.why[c.holds] != Unresolved::none) continue;
@@ -338,7 +395,25 @@ inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& 
             continue;
         }
         memcpy(&held, v.data + rva[c.slot], 8);
-        if (held != v.imageBase + rva[c.holds]) fail(c.slot, Unresolved::slotMismatch);
+        if (held != v.imageBase + rva[c.holds]) {
+            bool shiftedAdapted = false;
+            for (size_t k = 0; k < vmtSlotCount; ++k) {
+                const VmtSlotHint& vs = vmtSlots[k];
+                if (vs.slot != c.slot || vs.holds != c.holds) continue;
+                rtti::VmtInfo info{};
+                uint32_t shiftedSlotRva = 0;
+                if (rtti::findClassVmt(v, vs.className, info) &&
+                    rva[c.slot] >= info.rva + rtti::vmtHeaderSize &&
+                    rva[c.slot] < info.rva + rtti::vmtHeaderSize + rtti::maxVmtMethods * 8u &&
+                    rtti::findMethodSlot(v, info.rva, rva[c.holds], shiftedSlotRva, vs.defaultOffset)) {
+                    rva[c.slot] = shiftedSlotRva;
+                    report.degraded[c.slot] = true;
+                    shiftedAdapted = true;
+                }
+                break;
+            }
+            if (!shiftedAdapted) fail(c.slot, Unresolved::slotMismatch);
+        }
     }
     for (unsigned t = 0; t < sig::targetCount; ++t) {
         if (report.why[t] != Unresolved::none) report.degraded[t] = false;
@@ -372,7 +447,11 @@ inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& 
 inline bool resolveLayout(const ImageView& v, Layout& out, ResolveReport& report) {
     return detail::resolveLayoutTables(v, out, report, sig::signatures,
                                        sizeof sig::signatures / sizeof *sig::signatures, sig::slotChecks,
-                                       sizeof sig::slotChecks / sizeof *sig::slotChecks);
+                                       sizeof sig::slotChecks / sizeof *sig::slotChecks,
+                                       detail::defaultVmtTargets,
+                                       sizeof detail::defaultVmtTargets / sizeof *detail::defaultVmtTargets,
+                                       detail::defaultVmtSlots,
+                                       sizeof detail::defaultVmtSlots / sizeof *detail::defaultVmtSlots);
 }
 
 // The function entries the mod hooks or calls, compared in the running game with the file: a detour

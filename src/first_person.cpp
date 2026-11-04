@@ -27,7 +27,7 @@
 #include "game_structs.h"
 #include "pointer_set.h"
 #include "held_object.h"
-namespace field = fp::game; // field::character::combatStance and so on: offsets in the game's objects
+namespace field = fp::game::live; // field::character::combatStance and so on: live-adaptable offsets in the game's objects
 #include "head_stabiliser.h"
 #include <algorithm>
 #include <string>

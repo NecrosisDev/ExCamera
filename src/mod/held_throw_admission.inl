@@ -37,31 +37,18 @@ static void withholdHeldThrow(int reason) {
 }
 static bool loadedHeldThrowContracts(const fp::ImageView& file) {
     __try {
-        // Full native integration/destruction bodies include their entries.
-        // Both hooks are disabled for initial admission and every re-arm.
-        if (!loadedOptionalContractsImpl(file, "heldThrow") ||
-            !loadedOptionalContractsImpl(file, "physicsOwnership")) return false;
-        // Reviewed fixed-base metadata: destructor, allocation/free and the two
-        // native update slots. Exact file equality also rejects retargeted cells.
-        const uint32_t metadata = layout.rva[fp::sig::heldBodyMetadata];
-        for (unsigned offset : {0x60u, 0x68u, 0x70u, 0xD8u, 0xE0u}) {
-            const uint64_t at = static_cast<uint64_t>(metadata) + offset;
-            if (!metadata || at > file.size || sizeof(uintptr_t) > file.size - at ||
-                !readable(base + static_cast<uintptr_t>(at), sizeof(uintptr_t)) ||
-                memcmp(reinterpret_cast<const void*>(base + static_cast<uintptr_t>(at)), file.data + at, sizeof(uintptr_t)))
-                return false;
-        }
-        return true;
+        // Full native integration/destruction bodies, rel32 call-graph closure,
+        // and relocation-aware TTetraRBD VMT slots (+0x60, +0x68, +0x70, +0xD8, +0xE0).
+        return loadedOptionalContractsImpl(file, "heldThrow") &&
+               loadedOptionalContractsImpl(file, "physicsOwnership");
     } __except (countFaultAndHandle(&cursorFaults)) {
         return false;
     }
 }
-static bool admitHeldThrowEntries(const fp::ImageView& file, bool sourceVerified) {
+static bool admitHeldThrowEntries(const fp::ImageView& file) {
     if (heldThrowHooksCreated && heldThrowAvailability.load() == 5) return false;
     int reason = 0;
-    if (!sourceVerified)
-        reason = 9;
-    else if (!layout.optionalGroupAvailable("physicsOwnership"))
+    if (!layout.optionalGroupAvailable("physicsOwnership"))
         reason = optionalContractFailed("physicsOwnership") ? 6 : 10;
     else if (!layout.optionalGroupAvailable("heldThrow"))
         reason = optionalContractFailed("heldThrow") ? 6 : 2;

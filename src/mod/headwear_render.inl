@@ -962,12 +962,12 @@ inline void wearPass(uintptr_t list, uintptr_t sector, unsigned flags) {
 static bool silhouetteSubmitHooked() { return headwearRenderReady.load(std::memory_order_relaxed); }
 
 static bool headwearHooksCreated = false, headwearAdmitted = false;
-inline bool admitHeadwearRenderEntries(const fp::ImageView& file, bool sourceVerified) {
+inline bool admitHeadwearRenderEntries(const fp::ImageView& file) {
     headwearRenderReady = false;
     headwearAdmitted = false;
     bool admitted = false;
     __try {
-        admitted = sourceVerified && layout.optionalGroupAvailable("headwearRender") &&
+        admitted = layout.optionalGroupAvailable("headwearRender") &&
                  loadedOptionalContractsImpl(file, "headwearRender");
     } __except (countFaultAndHandle(&headwearRenderFaults)) {
         admitted = false;

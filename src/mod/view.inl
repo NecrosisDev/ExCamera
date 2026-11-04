@@ -385,7 +385,6 @@ static void distanceCull(uintptr_t sector) {
 // when a room's state changes, so every room is set again on every call; off, each goes back to native's value.
 using RoomClassify = char (*)(uintptr_t, uintptr_t);
 static RoomClassify originalRoomClassify = nullptr;
-static constexpr uintptr_t roomClassifyRva = 0x143C20; // standard 0.9.5.2g only: the entry bytes admit it
 static constexpr unsigned char roomClassifyEntry[] = {0x53, 0x57, 0x56, 0x41, 0x54, 0x41, 0x55, 0x41,
                                                       0x56, 0x41, 0x57, 0x48, 0x8D, 0x64, 0x24, 0x90,
                                                       0x48, 0x89, 0x4C, 0x24, 0x20, 0x49, 0x89, 0xD7};
@@ -441,18 +440,18 @@ static char roomClassify(uintptr_t level, uintptr_t out) {
 }
 
 static void createRoomViewHook() {
-    const auto target = reinterpret_cast<unsigned char*>(base + roomClassifyRva);
-    if (!readable(uintptr_t(target), sizeof roomClassifyEntry) ||
-        std::memcmp(target, roomClassifyEntry, sizeof roomClassifyEntry))
+    if (!layout.optionalGroupAvailable("farRooms")) return;
+    const uintptr_t addr = optionalGameAt(fp::sig::roomClassify);
+    if (!addr || !readable(addr, sizeof roomClassifyEntry) ||
+        std::memcmp(reinterpret_cast<const void*>(addr), roomClassifyEntry, sizeof roomClassifyEntry))
         return; // another build: the room rule stays the game's
-    roomViewHooked = MH_CreateHook(target, (void*)roomClassify, (void**)&originalRoomClassify) == MH_OK;
+    roomViewHooked = MH_CreateHook(reinterpret_cast<void*>(addr), (void*)roomClassify, (void**)&originalRoomClassify) == MH_OK;
 }
 
 // Node move. Native 5C030 re-parents a node's tree to a scene: it walks the tree with a work list in 38 stack
 // slots and no bounds check. A wide tree (a character with the finger bones on) writes past them onto the return
 // address, and the game then "returns" into a child node: "Task fatal error". This is the same function with a
 // list that grows. The whole native body is compared first, so any other build keeps its own.
-static constexpr uintptr_t nodeMoveRva = 0x5C030;
 static constexpr unsigned char nodeMoveBody[] = {
     0x53, 0x57, 0x56, 0x41, 0x54, 0x48, 0x8D, 0xA4, 0x24, 0xC8, 0xFE, 0xFF, 0xFF, 0x48, 0x89, 0x4C, 0x24, 0x20,
     0x48, 0x89, 0xD3, 0x48, 0x8B, 0x44, 0x24, 0x20, 0x48, 0x8B, 0x80, 0x30, 0x01, 0x00, 0x00, 0x48, 0x8D, 0x50,
@@ -490,8 +489,8 @@ static void nodeMoveImpl(uintptr_t node, uintptr_t scene) {
     using Shift = void (*)(uintptr_t, const float*);
     alignas(16) float delta[4]{};
     const uintptr_t sector = *reinterpret_cast<const uintptr_t*>(node + 0x130);
-    reinterpret_cast<Difference>(base + 0x19170)(delta, reinterpret_cast<const float*>(sector + 0x64),
-                                                 reinterpret_cast<const float*>(scene + 0x64));
+    reinterpret_cast<Difference>(gameAt(fp::sig::nodeVecSub))(delta, reinterpret_cast<const float*>(sector + 0x64),
+                                                              reinterpret_cast<const float*>(scene + 0x64));
     std::vector<uintptr_t> pending;
     pending.reserve(64);
     pending.push_back(node);
@@ -513,14 +512,14 @@ static void nodeMoveImpl(uintptr_t node, uintptr_t scene) {
     if (peak > nodeMovePeak.load(std::memory_order_relaxed)) nodeMovePeak.store(unsigned(peak), std::memory_order_relaxed);
     if (peak >= 32) nodeMoveOverflows.fetch_add(1, std::memory_order_relaxed);
     if (!*reinterpret_cast<const uintptr_t*>(node + 0x160)) {
-        reinterpret_cast<Offset>(base + 0x19100)(node + 0x94, delta);
-        reinterpret_cast<Rebuild>(base + 0x50EB0)(node);
+        reinterpret_cast<Offset>(gameAt(fp::sig::nodeVecAddTo))(node + 0x94, delta);
+        reinterpret_cast<Rebuild>(gameAt(fp::sig::propagateNodePose))(node);
     }
     *reinterpret_cast<unsigned*>(*reinterpret_cast<const uintptr_t*>(node + 0x130) + 0x218) |= 0x300000;
-    reinterpret_cast<Attach>(base + 0x50170)(scene, node);
+    reinterpret_cast<Attach>(gameAt(fp::sig::nodeMoveAttach))(scene, node);
     if (*reinterpret_cast<const unsigned*>(node + 8) & 0x40000) {
         uintptr_t self = node;
-        reinterpret_cast<Register>(base + 0x55FA0)(scene, &self, 0);
+        reinterpret_cast<Register>(gameAt(fp::sig::nodeRegisterDynamic))(scene, &self, 0);
     }
 }
 
@@ -529,11 +528,38 @@ static void nodeMove(uintptr_t node, uintptr_t scene) {
     __except (countFaultAndHandle(&nodeMoveFaults)) {}
 }
 
+static bool nodeMoveBodyMatches(uintptr_t addr) {
+    if (!addr || !readable(addr, sizeof nodeMoveBody)) return false;
+    const auto* live = reinterpret_cast<const unsigned char*>(addr);
+    struct CallEdge { size_t offset; fp::sig::Target callee; };
+    static constexpr CallEdge edges[] = {
+        {49, fp::sig::nodeVecSub},
+        {291, fp::sig::nodeVecAddTo},
+        {301, fp::sig::propagateNodePose},
+        {338, fp::sig::nodeMoveAttach},
+        {369, fp::sig::nodeRegisterDynamic},
+    };
+    for (size_t i = 0; i < sizeof nodeMoveBody; ++i) {
+        bool inRel32 = false;
+        for (const auto& edge : edges)
+            if (i >= edge.offset + 1 && i < edge.offset + 5) { inRel32 = true; break; }
+        if (!inRel32 && live[i] != nodeMoveBody[i]) return false;
+    }
+    for (const auto& edge : edges) {
+        int32_t rel = 0;
+        std::memcpy(&rel, live + edge.offset + 1, sizeof rel);
+        const uintptr_t dest = static_cast<uintptr_t>(static_cast<intptr_t>(addr + edge.offset + 5) + rel);
+        if (dest != optionalGameAt(edge.callee)) return false;
+    }
+    return true;
+}
+
 static void createNodeMoveHook() {
-    const auto target = reinterpret_cast<unsigned char*>(base + nodeMoveRva);
-    if (!readable(uintptr_t(target), sizeof nodeMoveBody) || std::memcmp(target, nodeMoveBody, sizeof nodeMoveBody))
+    if (!layout.optionalGroupAvailable("nodeMove")) return;
+    const uintptr_t addr = optionalGameAt(fp::sig::nodeMove);
+    if (!nodeMoveBodyMatches(addr))
         return; // another build: its own walk, and no finger bones to overflow it
-    nodeMoveHooked = MH_CreateHook(target, (void*)nodeMove, (void**)&originalNodeMove) == MH_OK;
+    nodeMoveHooked = MH_CreateHook(reinterpret_cast<void*>(addr), (void*)nodeMove, (void**)&originalNodeMove) == MH_OK;
 }
 
 // Lights per object. The queue (26F230), its flush recount (26F420) and the binder walk a mesh's light list

@@ -334,11 +334,11 @@ static bool slotTaken(fp::sig::Target slot, fp::sig::Target original) {
 } // no longer the game's own function
 // True to go on: nothing else hooked, or chaining is allowed. The function entries are compared with the
 // game's file; the slots with the game's own functions.
-static bool otherHooksCheckView(const fp::ImageView& file, bool optionalSourceVerified) {
+static bool otherHooksCheckView(const fp::ImageView& file) {
     if (!admitManualDefenseEntries(file) ||
-        !admitAttackVariantsEntries(file, optionalSourceVerified) ||
-        !admitHeldThrowEntries(file, optionalSourceVerified) ||
-        !admitHeadwearRenderEntries(file, optionalSourceVerified) ||
+        !admitAttackVariantsEntries(file) ||
+        !admitHeldThrowEntries(file) ||
+        !admitHeadwearRenderEntries(file) ||
         !admitViewEffectsEntries(file) ||
         !admitSilhouetteEntries(file)) {
         otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
@@ -387,11 +387,7 @@ static bool otherHooksCheck(const wchar_t* executable) {
         snprintf(faultDetail, sizeof faultDetail, "Exanima.exe could not be read");
         return false;
     }
-    // This optional closure proof is source-bound, unlike the core compatible
-    // build path. Recheck the established hash on initial install and F7/F6,
-    // alongside this freshly read file, rather than trusting cached startup status.
-    const bool optionalSourceVerified = fp::supportedExecutable(executable);
-    return otherHooksCheckView(file, optionalSourceVerified);
+    return otherHooksCheckView(file);
 }
 // The dispatch slots' current owners become what this mod's replacements call: the game's own functions,
 // or (chained) another program's. Never this mod's own replacements (a stop that did not roll back).
@@ -957,7 +953,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("hidden_body", hiddenBodyNodes.load());
     j.str("view", viewMode.load() == 1 ? "third" : viewMode.load() == 2 ? "to-overhead" : "first");
     j.unum("tp_prop_pulls", tpPropPulls.load());
-    j.str("game_build", verifiedBuild ? "verified" : "compatible");
+    j.str("game_build", verifiedBuild ? "verified" : (closureVerifiedBuild ? "closure_verified" : "compatible"));
     j.str("hook_health", hookHealthText());
     {
         char hooks[200];
@@ -967,6 +963,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.str("signatures_degraded", degradedTargets);
     writeNativeCheckboxStatus(j);
     j.unum("native_fields_checked", nativeContracts.checked);
+    j.unum("native_fields_adapted", nativeContracts.adaptedFields);
     j.unum("native_fields_withheld", nativeContracts.optionalFailures);
     j.str("native_field_issue", nativeContracts.firstOptional ? nativeContracts.firstOptional : "none");
     j.object("held")
@@ -1160,7 +1157,7 @@ static DWORD runSession() {
     }
     base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     originalNav = (Nav)(gameAt(fp::sig::navSampler));
-    if (!otherHooksCheckView(startupFile, verifiedBuild)) {
+    if (!otherHooksCheckView(startupFile)) {
         reportFault("native_code_conflict", "not_installed", "not_required",
                     otherHooksNotice[0] ? otherHooksNotice : nullptr);
         return 2;
@@ -1192,8 +1189,6 @@ static DWORD runSession() {
                       (void**)&originalCameraMouse) != MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::aimWorldToLocal), (void*)aimWorldToLocal,
                       (void**)&originalAimWorldToLocal) != MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::guiMaintenance), (void*)nativeSettingsMaintenance,
-                      (void**)&originalGuiMaintenance) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::cursorAim)), (void*)cursorAim, (void**)&originalCursor) !=
             MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::combatAttention), (void*)combatAttention,
@@ -1235,14 +1230,6 @@ static DWORD runSession() {
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::coverDepth)), (void*)coverDepth, (void**)&originalCoverDepth) !=
             MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::resourceQueue), (void*)resourceQueue,
-                      (void**)&originalResourceQueue) != MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::inventoryComplete), (void*)inventoryComplete,
-                      (void**)&originalInventoryComplete) != MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::inventoryCommit), (void*)inventoryCommit,
-                      (void**)&originalInventoryCommit) != MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::inventoryAdmission), (void*)inventoryAdmission,
-                      (void**)&originalInventoryAdmission) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::dragPlace)), (void*)dragPlace, (void**)&originalDragPlace) !=
             MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::heldUpdate), (void*)heldUpdate, (void**)&originalHeldUpdate) !=
@@ -1282,6 +1269,16 @@ static DWORD runSession() {
                       (void**)&originalSwap) != MH_OK) {
         uninitializeNativeHooks();
         reportFault("hook_creation_failed", "not_installed", "not_required");
+        return 3;
+    }
+    if (!createNativeSettingsHooks()) {
+        uninitializeNativeHooks();
+        reportFault("settings_hook_rollback_failed", "not_installed", "not_required");
+        return 3;
+    }
+    if (!createInventoryReachHooks()) {
+        uninitializeNativeHooks();
+        reportFault("inventory_hook_rollback_failed", "not_installed", "not_required");
         return 3;
     }
     if (!createManualDefenseHooks()) {
@@ -1332,10 +1329,16 @@ static DWORD runSession() {
             return 4;
         }
     }
+    closureVerifiedBuild = !verifiedBuild &&
+                           nativeContracts.optionalFailures == 0 &&
+                           degradedTargets[0] == 0 &&
+                           attackVariantsHooksCreated &&
+                           heldThrowHooksCreated &&
+                           headwearHooksCreated;
     if (chained)
         showNotice(otherHooksNotice, 12000);
-    else if (!verifiedBuild)
-        showNotice(FP_SHOWN_NAME L": untested Exanima version. Every game function was found; hold F7 if "
+    else if (!verifiedBuild && !closureVerifiedBuild)
+        showNotice(FP_SHOWN_NAME L": untested Exanima version. Compatible game functions resolved; hold F7 if "
                                  L"anything looks wrong.",
                    12000);
     profileInitialize(); // Publish only after this instance owns successfully armed hooks.

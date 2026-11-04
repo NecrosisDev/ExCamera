@@ -4957,7 +4957,8 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
     }
     // The Settings window stands over the scene and the game paused: its frames skip the effects.
     if (!eye) {
-        const uintptr_t options = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::guiOptionsForm));
+        const uintptr_t optionsSlot = optionalGameAt(fp::sig::guiOptionsForm);
+        const uintptr_t options = optionsSlot ? *reinterpret_cast<const uintptr_t*>(optionsSlot) : 0;
         if (options && readable(options + field::form::visible, 1) && *reinterpret_cast<const unsigned char*>(options + field::form::visible)) {
             skipViewEffects("the Settings window is open");
             return;

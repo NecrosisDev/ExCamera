@@ -491,6 +491,36 @@ static uintptr_t inventoryAdmission(uintptr_t drag, unsigned format) {
     }
 }
 
+static bool createInventoryReachHooks() {
+    if (!layout.optionalGroupAvailable("inventoryReach")) return true;
+    struct Hook { fp::sig::Target target; void* replacement; void** original; };
+    const Hook hooks[] = {
+        {fp::sig::resourceQueue, (void*)resourceQueue, (void**)&originalResourceQueue},
+        {fp::sig::inventoryComplete, (void*)inventoryComplete, (void**)&originalInventoryComplete},
+        {fp::sig::inventoryCommit, (void*)inventoryCommit, (void**)&originalInventoryCommit},
+        {fp::sig::inventoryAdmission, (void*)inventoryAdmission, (void**)&originalInventoryAdmission},
+    };
+    unsigned created = 0;
+    for (const Hook& hook : hooks) {
+        if (MH_CreateHook((void*)gameAt(hook.target), hook.replacement, hook.original) != MH_OK) {
+            bool removed = true;
+            while (created) {
+                --created;
+                removed = (MH_RemoveHook((void*)gameAt(hooks[created].target)) == MH_OK) && removed;
+            }
+            if (removed) {
+                for (unsigned t = 0; t < fp::sig::targetCount; ++t) {
+                    const char* grp = fp::sig::targetOptionalGroups[t];
+                    if (grp && !strcmp(grp, "inventoryReach")) layout.rva[t] = 0;
+                }
+            }
+            return removed;
+        }
+        ++created;
+    }
+    return true;
+}
+
 static char heldPick(uintptr_t object, uintptr_t viewport, float x, float y, uintptr_t out,
                      bool gameplay = false) {
     const auto sampledGeneration = holdGeneration.load();

@@ -253,8 +253,20 @@ static bool trackedBoneDrivenByVr = false; // set by the VR drive's tick, read a
 // register D39B0 reads +300 of a node it has not registered yet, past a plain node's end; that word only picks
 // whether it first rebuilds the node's world from its parent, harmless either way when the page past +1C8 is
 // mapped. Any T3DNode allocated within 0x308 bytes of an unmapped page boundary is parked unused and replaced.
-static constexpr size_t nodeSize = 0x1C8;
-static constexpr size_t boneRegisterSpan = 0x308;
+static constexpr size_t defaultNodeSize = 0x1C8;
+static constexpr size_t minBoneRegisterSpan = 0x308;
+static size_t runtimeNodeSize() noexcept {
+    if (!layout.rva[fp::sig::nodeVmt]) return defaultNodeSize;
+    const uintptr_t vmt = gameAt(fp::sig::nodeVmt);
+    if (!readable(vmt, 16)) return defaultNodeSize;
+    uint32_t instSize = 0;
+    if (!fp::rtti::readVmtInstanceSize(reinterpret_cast<const uint8_t*>(vmt), 16, instSize)) return defaultNodeSize;
+    if (instSize < 0x180 || instSize > 0x1000) return defaultNodeSize;
+    return static_cast<size_t>(instSize);
+}
+static size_t runtimeBoneRegisterSpan() noexcept {
+    return (std::max)(minBoneRegisterSpan, runtimeNodeSize());
+}
 static uintptr_t parkedEdgeNodes[16]{};
 static unsigned parkedEdgeNodeCount = 0;
 // Rigid hand pieces into the skin. The skin build (D9940, equipment refresh) merges into the _SKIN aggregate every
@@ -345,7 +357,7 @@ static uintptr_t trackedBoneCtorCall() {
     for (unsigned attempt = 0; attempt < 5; ++attempt) {
         const uintptr_t node = trackedBoneCtorRawCall();
         if (!node) return 0;
-        if (readable(node, boneRegisterSpan)) return node;
+        if (readable(node, runtimeBoneRegisterSpan())) return node;
         if (parkedEdgeNodeCount < std::size(parkedEdgeNodes)) parkedEdgeNodes[parkedEdgeNodeCount++] = node;
     }
     return 0;
@@ -357,7 +369,7 @@ static bool trackedBoneAttachCall(uintptr_t parent, uintptr_t child) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { trackedBoneFault = true; return false; }
 }
 static int trackedBoneRegisterCall(uintptr_t skin, uintptr_t node) {
-    if (!node || !readable(node, boneRegisterSpan)) return 0;
+    if (!node || !readable(node, runtimeBoneRegisterSpan())) return 0;
     __try {
         return reinterpret_cast<int (*)(uintptr_t, uintptr_t)>(gameAt(fp::sig::boneRegister))(skin, node);
     } __except (EXCEPTION_EXECUTE_HANDLER) { trackedBoneFault = true; return 0; }
@@ -370,7 +382,7 @@ static bool trackedBonePropagateCall(uintptr_t node) {
 }
 // A node we made, still ours: the game's mesh class, hung on the hand node, carrying our name.
 static bool trackedBoneNodeValid(uintptr_t node, uintptr_t handNode) {
-    return node && readable(node, nodeSize) && *reinterpret_cast<uintptr_t*>(node) == gameAt(fp::sig::nodeVmt) &&
+    return node && readable(node, runtimeNodeSize()) && *reinterpret_cast<uintptr_t*>(node) == gameAt(fp::sig::nodeVmt) &&
            *reinterpret_cast<uintptr_t*>(node + field::sceneNode::parent) == handNode &&
            !strncmp(reinterpret_cast<const char*>(node + field::sceneNode::name), fingerbones::nodeNamePrefix, 7);
 }
@@ -458,7 +470,7 @@ static void trackedBoneRestSkeleton(const fingerbones::Joints& joint, fingerbone
 // One bone node: made by the game, named, at the hand's frame, hung on the hand node, registered.
 static bool trackedBoneCreate(fingerbones::Hand& hand, unsigned index, const fingerbones::Skin& skin) {
     const uintptr_t node = trackedBoneCtorCall();
-    if (!node || !readable(node, boneRegisterSpan) || *reinterpret_cast<uintptr_t*>(node) != gameAt(fp::sig::nodeVmt)) { trackedBoneFault = true; return false; }
+    if (!node || !readable(node, runtimeBoneRegisterSpan()) || *reinterpret_cast<uintptr_t*>(node) != gameAt(fp::sig::nodeVmt)) { trackedBoneFault = true; return false; }
     char name[16]{};
     snprintf(name, sizeof name, "%s%02u", fingerbones::nodeNamePrefix, index);
     memcpy(reinterpret_cast<void*>(node + field::sceneNode::name), name, sizeof name);

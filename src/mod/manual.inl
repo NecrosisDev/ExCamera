@@ -125,16 +125,12 @@ static void loadRPKFromStreamHook(uintptr_t rpk, uintptr_t stream) {
 }
 
 static void createManualPageHook() {
-    uintptr_t target = base + 0x6F710;
-    const uintptr_t callSite = base + 0x1CABC0;
-    if (readable(callSite, 5) && *reinterpret_cast<const uint8_t*>(callSite) == 0xE8) {
-        const int32_t rel = *reinterpret_cast<const int32_t*>(callSite + 1);
-        const uintptr_t dest = callSite + 5 + rel;
-        if (readable(dest, 16)) target = dest;
-    }
-    // Verify standard prologue: push rbp; mov rbp, rsp; lea rsp, [rsp - 0x50]; mov [rbp - 0x28], rbx
+    if (!layout.optionalGroupAvailable("manual")) return;
+    const uintptr_t target = optionalGameAt(fp::sig::loadRpkStream);
+    // Verify standard prologue: push rbp; mov rbp, rsp; lea rsp, [rsp - 0x50]
     static const uint8_t sig[] = { 0x55, 0x48, 0x89, 0xE5, 0x48, 0x8D, 0x64, 0x24, 0xB0 };
-    if (!readable(target, sizeof(sig)) || std::memcmp(reinterpret_cast<const void*>(target), sig, sizeof(sig)) != 0) {
+    if (!target || !readable(target, sizeof(sig)) ||
+        std::memcmp(reinterpret_cast<const void*>(target), sig, sizeof(sig)) != 0) {
         return;
     }
     manualPageHooked = MH_CreateHook(reinterpret_cast<void*>(target),

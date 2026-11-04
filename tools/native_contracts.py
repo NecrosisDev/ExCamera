@@ -3,10 +3,10 @@
     python tools/native_contracts.py generate <source Exanima.exe>
     python tools/native_contracts.py check <Exanima.exe>
 
-Generation validates and preserves all reviewed windows, including event witnesses
-and interior owner anchors, using the archive identified in native_contracts.json.
-Checking any
-build uses its instructions and resolved targets, with no version/hash allowlist.
+Generation validates and preserves all reviewed windows, including event witnesses,
+interior owner anchors, dynamic field-offset bindings and optional call-graph closures,
+using the archive identified in native_contracts.json. Checking any build uses its
+instructions, call-graph closures and resolved targets, with no version/hash allowlist.
 """
 from pathlib import Path
 import argparse
@@ -21,6 +21,24 @@ import signatures
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / 'tools/native_contracts.json'
 HEADER = ROOT / 'src/game_contracts.h'
+
+ALLOWED_OPTIONAL_GROUPS = (
+    None,
+    'manualDefense',
+    'attackVariants',
+    'physicsOwnership',
+    'heldThrow',
+    'settingsRedraw',
+    'viewEffects',
+    'nativeSettings',
+    'inventoryReach',
+    'headwearRender',
+    'silhouette',
+)
+
+# Fixed C++ struct ABIs static_asserted in native_widgets.h / game_structs.h:
+# layout changes in these structs must fail/withhold rather than mutate runtime offsets.
+FIXED_ABI_AREAS = frozenset({'nativeElement', 'nativeString', 'meshRayQuery'})
 
 
 def field_offsets(text):
@@ -63,6 +81,68 @@ def pattern_bytes(text):
     return bytes(0 if token == '??' else int(token, 16) for token in tokens), [token != '??' for token in tokens]
 
 
+def runtime_witnesses(spec):
+    return ([field for field in spec['fields'] if 'witness' not in field] +
+            spec.get('references', []) + spec.get('events', []))
+
+
+def validate_closures(spec, owners, witnesses):
+    closures = spec.get('closures')
+    if closures is None:
+        return
+    callees = {}
+    for callee in closures.get('callees', []):
+        name = callee['name']
+        if name in callees or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
+            raise ValueError('Invalid or duplicate closure callee: ' + str(name))
+        pattern_bytes(callee['pattern'])
+        if number(callee['rva']) <= 0:
+            raise ValueError('Invalid closure callee RVA: ' + name)
+        callees[name] = callee
+    for branch in closures.get('branches', []):
+        grp = branch.get('group')
+        if grp not in ALLOWED_OPTIONAL_GROUPS or grp is None:
+            raise ValueError('Invalid closure branch group: ' + str(grp))
+        w = witnesses.get(branch.get('witness'))
+        if w is None or w.get('optional_group') != grp:
+            raise ValueError('Closure branch witness mismatch: ' + str(branch.get('witness')))
+        w_len = len(w['pattern'].split())
+        disp_off, insn_end = int(branch['disp_offset']), int(branch['insn_end'])
+        if not (0 <= disp_off <= w_len - 4 and disp_off + 4 <= insn_end <= w_len):
+            raise ValueError('Closure branch offset leaves witness: ' + w['name'])
+        kind = branch.get('kind')
+        if kind == 'intra':
+            owner = owners[w['owner']]
+            span = number(owner['end_rva']) - number(owner['rva'])
+            if not 0 <= int(branch['owner_offset']) <= span:
+                raise ValueError('Intra-owner closure offset leaves owner: ' + w['name'])
+        elif kind == 'target':
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', branch.get('target', '')):
+                raise ValueError('Invalid closure branch target: ' + w['name'])
+        elif kind == 'owner':
+            if branch.get('callee_owner') not in owners:
+                raise ValueError('Missing closure callee owner: ' + str(branch.get('callee_owner')))
+        elif kind == 'callee':
+            if branch.get('callee') not in callees:
+                raise ValueError('Missing closure callee: ' + str(branch.get('callee')))
+        else:
+            raise ValueError('Unknown closure branch kind: ' + str(kind))
+    for slot in closures.get('vmt_slots', []):
+        if slot.get('group') not in ALLOWED_OPTIONAL_GROUPS or slot.get('group') is None:
+            raise ValueError('Invalid closure VMT slot group')
+        if int(slot.get('slot_offset', 0)) < 0x60 or int(slot['slot_offset']) % 8 != 0:
+            raise ValueError('Invalid closure VMT slot offset')
+        kind = slot.get('kind')
+        if kind == 'target':
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', slot.get('target', '')):
+                raise ValueError('Invalid closure VMT target')
+        elif kind == 'callee':
+            if slot.get('callee') not in callees:
+                raise ValueError('Missing closure VMT callee: ' + str(slot.get('callee')))
+        else:
+            raise ValueError('Unknown closure VMT slot kind: ' + str(kind))
+
+
 def validate_spec(spec, offsets):
     if spec.get('schema') != 1:
         raise ValueError('Unsupported native-contract schema')
@@ -83,8 +163,13 @@ def validate_spec(spec, offsets):
     for field in spec['fields']:
         if field['owner'] not in owners:
             raise ValueError('Missing native owner: ' + field['owner'])
-        if field.get('optional_group') not in (None, 'manualDefense', 'attackVariants', 'physicsOwnership', 'heldThrow', 'settingsRedraw', 'viewEffects'):
-            raise ValueError('Unknown optional capability')
+        if field.get('optional_group') not in ALLOWED_OPTIONAL_GROUPS:
+            raise ValueError('Unknown optional capability: ' + str(field.get('optional_group')))
+    for event in spec.get('events', []):
+        if event['owner'] not in owners:
+            raise ValueError('Missing native event owner: ' + event['owner'])
+        if event.get('optional_group') not in ALLOWED_OPTIONAL_GROUPS:
+            raise ValueError('Unknown optional capability on event: ' + str(event.get('optional_group')))
     references = {field['name']: field for field in spec.get('references', [])}
     if len(references) != len(spec.get('references', [])):
         raise ValueError('Duplicate global reference')
@@ -130,34 +215,194 @@ def validate_spec(spec, offsets):
     missing = sorted(set(offsets) - set(covered))
     if missing:
         raise ValueError('Fields without reviewed contracts: ' + ', '.join(missing))
-
-
-def runtime_witnesses(spec):
-    return ([field for field in spec['fields'] if 'witness' not in field] +
-            spec.get('references', []) + spec.get('events', []))
+    witness_map = {w['name']: w for w in runtime_witnesses(spec)}
+    validate_closures(spec, owners, witness_map)
 
 
 def generated_header(spec):
-    lines = ['#pragma once', '// Generated by tools/native_contracts.py; provenance is in tools/native_contracts.json.',
-             '#include "game_structs.h"', 'namespace fp::contract {', 'inline constexpr ContractOwner owners[] = {']
+    lines = [
+        '#pragma once',
+        '// Generated by tools/native_contracts.py; provenance is in tools/native_contracts.json.',
+        '#include "game_structs.h"',
+        '#include <array>',
+    ]
+
+    # 1. Runtime-adaptable live offsets (fp::game::live), initialized from constexpr fp::game defaults.
+    areas = {}
+    area_order = []
+    constant_names = {c['name'] for c in spec.get('constants', [])}
+    mutable_names = []
+    for item in spec['fields'] + spec.get('derived', []) + spec.get('constants', []):
+        area, member = item['name'].split('::', 1)
+        if area not in areas:
+            areas[area] = []
+            area_order.append(area)
+        is_const = item['name'] in constant_names or area in FIXED_ABI_AREAS
+        areas[area].append((member, item['name'], is_const))
+        if not is_const:
+            mutable_names.append(item['name'])
+
+    lines.append('namespace fp::game::live {')
+    for area in area_order:
+        lines.append('namespace %s {' % area)
+        for member, full_name, is_const in areas[area]:
+            qual = 'inline constexpr size_t' if is_const else 'inline size_t'
+            lines.append('    %s %s = fp::game::%s;' % (qual, member, full_name))
+        lines.append('}')
+    lines.append('inline void recomputeDerivedOffsets() noexcept {')
+    for d in spec.get('derived', []):
+        d_area = d['name'].split('::', 1)[0]
+        if 'base' in d and d_area not in FIXED_ABI_AREAS:
+            mult = number(d.get('multiply', 1))
+            add = number(d.get('add', 0))
+            lines.append('    %s = %s * %du + %du;' % (d['name'], d['base'], mult, add))
+    lines.append('}')
+    lines.append('inline void resetLiveOffsets() noexcept {')
+    for full_name in mutable_names:
+        lines.append('    %s = fp::game::%s;' % (full_name, full_name))
+    lines.append('    recomputeDerivedOffsets();')
+    lines.append('}')
+    lines.append('} // namespace fp::game::live')
+
+    # 2. Contract owners and runtime witnesses
+    lines += ['namespace fp::contract {', 'inline constexpr ContractOwner owners[] = {']
     indices = {owner['name']: i for i, owner in enumerate(spec['owners'])}
+    owners_by_name = {owner['name']: owner for owner in spec['owners']}
     for owner in spec['owners']:
         target = 'sig::' + owner.get('target', 'targetCount')
         lines.append('    {%s, %s, %s, %d},' % (json.dumps(owner['name']), target,
                                                json.dumps(owner['pattern']), owner['entry_offset']))
     lines += ['};', 'inline constexpr FieldContract fields[] = {']
-    for field in runtime_witnesses(spec):
+    witness_list = runtime_witnesses(spec)
+    witness_indices = {w['name']: i for i, w in enumerate(witness_list)}
+    witness_by_name = {w['name']: w for w in witness_list}
+    for field in witness_list:
         group = json.dumps(field['optional_group']) if field.get('optional_group') else 'nullptr'
         reference = ', sig::%s, %d, %d, %d, %d' % (field['relative_to'], field['displacement_offset'],
                                                    field['next_offset'], number(field['relative_add']), field['width']) if 'relative_to' in field else ''
         lines.append('    {%s, %d, 0x%X, %s, %s%s},' % (json.dumps(field['name']), indices[field['owner']],
                                                        field['window_offset'], json.dumps(field['pattern']), group, reference))
     lines.append('};')
+
+    # 3. Dynamic struct-displacement bindings for hde64 extraction
+    binding_rows = []
+    for field in spec['fields']:
+        area = field['name'].split('::', 1)[0]
+        val = number(field['value'])
+        if field.get('operand_kind') == 'immediate' or val == 0 or area in FIXED_ABI_AREAS:
+            continue
+        w_name = field.get('witness', field['name'])
+        w_idx = witness_indices[w_name]
+        w = witness_by_name[w_name]
+        o_rva = number(owners_by_name[field['owner']]['rva'])
+        insn_off = number(field['instruction']) - (o_rva + w['window_offset'])
+        adj = number(field.get('adjust', 0))
+        exp_disp = val + adj
+        negated = (exp_disp == -val)
+        if adj != 0 and not negated:
+            continue
+        binding_rows.append('    {%du, %du, %d, %s, game::%s, &game::live::%s},' % (
+            w_idx, insn_off, exp_disp, 'true' if negated else 'false', field['name'], field['name']))
+    if binding_rows:
+        lines.append('inline constexpr std::array<FieldOffsetBinding, %d> fieldBindings = {{' % len(binding_rows))
+        lines += binding_rows
+        lines.append('}};')
+    else:
+        lines.append('inline constexpr std::array<FieldOffsetBinding, 0> fieldBindings = {};')
+
+    # 4. Call-graph closure verification tables
+    closures = spec.get('closures') or {}
+    callees = closures.get('callees', [])
+    callee_indices = {c['name']: i for i, c in enumerate(callees)}
+    if callees:
+        lines.append('inline constexpr std::array<ClosureCallee, %d> closureCallees = {{' % len(callees))
+        for c in callees:
+            lines.append('    {%s, %s},' % (json.dumps(c['name']), json.dumps(c['pattern'])))
+        lines.append('}};')
+    else:
+        lines.append('inline constexpr std::array<ClosureCallee, 0> closureCallees = {};')
+
+    branches = closures.get('branches', [])
+    if branches:
+        lines.append('inline constexpr std::array<ClosureBranch, %d> closureBranches = {{' % len(branches))
+        for b in branches:
+            w_idx = witness_indices[b['witness']]
+            kind = b['kind']
+            if kind == 'intra':
+                arg = str(int(b['owner_offset']))
+            elif kind == 'target':
+                arg = 'static_cast<int32_t>(sig::%s)' % b['target']
+            elif kind == 'owner':
+                arg = str(indices[b['callee_owner']])
+            else:
+                arg = str(callee_indices[b['callee']])
+            lines.append('    {%s, %du, %du, %du, ClosureKind::%s, %s},' % (
+                json.dumps(b['group']), w_idx, int(b['disp_offset']), int(b['insn_end']), kind, arg))
+        lines.append('}};')
+    else:
+        lines.append('inline constexpr std::array<ClosureBranch, 0> closureBranches = {};')
+
+    vmt_slots = closures.get('vmt_slots', [])
+    if vmt_slots:
+        lines.append('inline constexpr std::array<ClosureVmtSlot, %d> closureVmtSlots = {{' % len(vmt_slots))
+        for s in vmt_slots:
+            kind = s['kind']
+            arg = ('static_cast<uint32_t>(sig::%s)' % s['target']) if kind == 'target' else ('%du' % callee_indices[s['callee']])
+            lines.append('    {%s, sig::%s, 0x%Xu, ClosureKind::%s, %s},' % (
+                json.dumps(s['group']), s['vmt_target'], int(s['slot_offset']), kind, arg))
+        lines.append('}};')
+    else:
+        lines.append('inline constexpr std::array<ClosureVmtSlot, 0> closureVmtSlots = {};')
+
     for field in spec['fields'] + spec.get('derived', []) + spec.get('constants', []):
         lines.append('static_assert(game::%s == 0x%X, "Review native contract after changing %s");' % (
             field['name'], number(field['value']), field['name']))
     lines += ['} // namespace fp::contract', '']
     return '\n'.join(lines)
+
+
+def verify_closures_on_exe(exe, spec, targets):
+    closures = spec.get('closures')
+    if not closures:
+        return
+    owners_by_name = {o['name']: o for o in spec['owners']}
+    witness_by_name = {w['name']: w for w in runtime_witnesses(spec)}
+    func_targets = {k: int(v['rva'], 16) for k, v in targets['functions'].items()}
+    glob_targets = {k: int(v['rva'], 16) for k, v in targets['globals'].items()}
+    callees = {c['name']: c for c in closures.get('callees', [])}
+
+    for c in callees.values():
+        rva = number(c['rva'])
+        data, mask = pattern_bytes(c['pattern'])
+        if not exe.text[0] <= rva <= exe.text[1] - len(data):
+            raise ValueError('Closure callee leaves .text: ' + c['name'])
+        if any(fixed and exe.mem[rva + i] != val for i, (val, fixed) in enumerate(zip(data, mask))):
+            raise ValueError('Closure callee pattern differs at source RVA: ' + c['name'])
+
+    for b in closures.get('branches', []):
+        w = witness_by_name[b['witness']]
+        owner = owners_by_name[w['owner']]
+        at = number(owner['rva']) + w['window_offset']
+        rel = int.from_bytes(exe.mem[at + b['disp_offset']:at + b['disp_offset'] + 4], 'little', signed=True)
+        dest = at + b['insn_end'] + rel
+        if b['kind'] == 'intra':
+            expected = number(owner['rva']) + int(b['owner_offset'])
+        elif b['kind'] == 'target':
+            expected = func_targets[b['target']]
+        elif b['kind'] == 'owner':
+            expected = number(owners_by_name[b['callee_owner']]['rva'])
+        else:
+            expected = number(callees[b['callee']]['rva'])
+        if dest != expected:
+            raise ValueError('Closure branch destination mismatch in %s: 0x%X != 0x%X' % (b['witness'], dest, expected))
+
+    for s in closures.get('vmt_slots', []):
+        vmt_rva = glob_targets[s['vmt_target']]
+        va = int.from_bytes(exe.mem[vmt_rva + s['slot_offset']:vmt_rva + s['slot_offset'] + 8], 'little')
+        dest = va - exe.base
+        expected = func_targets[s['target']] if s['kind'] == 'target' else number(callees[s['callee']]['rva'])
+        if dest != expected:
+            raise ValueError('Closure VMT slot mismatch at +0x%X: 0x%X != 0x%X' % (s['slot_offset'], dest, expected))
 
 
 def generate(path):
@@ -226,7 +471,8 @@ def generate(path):
                         op.mem.disp == displacement and op.size == field['width']]
         if not matching:
             raise ValueError('Reviewed field instruction differs: ' + field['name'])
-    HEADER.write_text(generated_header(spec), encoding='utf-8')
+    verify_closures_on_exe(exe, spec, targets)
+    HEADER.write_text(generated_header(spec), encoding='utf-8', newline='\n')
     print('GENERATED %d runtime witnesses, %d native owners; verified %d field declarations' % (
         len(runtime_witnesses(spec)), len(spec['owners']), len(spec['fields'])))
 
@@ -258,6 +504,7 @@ def resolve_contracts(exe, spec, layout):
     rvas = dict(layout['rvas'] or {})
     required_failure = False
     witnesses = runtime_witnesses(spec)
+    witness_by_name = {w['name']: w for w in witnesses}
     for field in witnesses:
         entry, why = owners[field['owner']]
         if why is None:
@@ -289,10 +536,74 @@ def resolve_contracts(exe, spec, layout):
                 disabled |= members
             else:
                 required_failure = True
+
+    closures = spec.get('closures') or {}
+    callees = {c['name']: pattern_bytes(c['pattern']) for c in closures.get('callees', [])}
+    closure_failed_groups = set()
+    if layout['ok']:
+        for b in closures.get('branches', []):
+            grp = b['group']
+            if grp in closure_failed_groups:
+                continue
+            w = witness_by_name[b['witness']]
+            entry, ow_why = owners[w['owner']]
+            if ow_why is not None or b['witness'] in failures:
+                closure_failed_groups.add(grp)
+                continue
+            at = entry + w['window_offset']
+            rel = int.from_bytes(exe.mem[at + b['disp_offset']:at + b['disp_offset'] + 4], 'little', signed=True)
+            dest = at + b['insn_end'] + rel
+            ok_branch = exe.text[0] <= dest < exe.text[1]
+            if ok_branch:
+                if b['kind'] == 'intra':
+                    ok_branch = (dest == entry + int(b['owner_offset']))
+                elif b['kind'] == 'target':
+                    t_rva = rvas.get(b['target'], 0)
+                    ok_branch = (t_rva != 0 and dest == t_rva)
+                elif b['kind'] == 'owner':
+                    c_entry, c_why = owners[b['callee_owner']]
+                    ok_branch = (c_why is None and dest == c_entry)
+                else:
+                    c_data, c_mask = callees[b['callee']]
+                    ok_branch = (dest + len(c_data) <= exe.text[1] and
+                                 all(not fixed or exe.mem[dest + i] == val
+                                     for i, (val, fixed) in enumerate(zip(c_data, c_mask))))
+            if not ok_branch:
+                closure_failed_groups.add(grp)
+                failures.setdefault('closure::' + grp, 'optional call-graph closure changed')
+        for s in closures.get('vmt_slots', []):
+            grp = s['group']
+            if grp in closure_failed_groups:
+                continue
+            vmt_rva = rvas.get(s['vmt_target'], 0)
+            off = int(s['slot_offset'])
+            if not vmt_rva or vmt_rva + off + 8 > len(exe.mem):
+                closure_failed_groups.add(grp)
+                failures.setdefault('closure::' + grp, 'optional VMT slot outside image')
+                continue
+            va = int.from_bytes(exe.mem[vmt_rva + off:vmt_rva + off + 8], 'little')
+            dest = va - exe.base
+            ok_slot = exe.text[0] <= dest < exe.text[1]
+            if ok_slot:
+                if s['kind'] == 'target':
+                    t_rva = rvas.get(s['target'], 0)
+                    ok_slot = (t_rva != 0 and dest == t_rva)
+                else:
+                    c_data, c_mask = callees[s['callee']]
+                    ok_slot = (dest + len(c_data) <= exe.text[1] and
+                               all(not fixed or exe.mem[dest + i] == val
+                                   for i, (val, fixed) in enumerate(zip(c_data, c_mask))))
+            if not ok_slot:
+                closure_failed_groups.add(grp)
+                failures.setdefault('closure::' + grp, 'optional VMT slot changed')
+    for grp in closure_failed_groups:
+        disabled |= {name for name, declared in layout.get('groups', {}).items() if declared == grp}
+
     for name in disabled:
         rvas[name] = 0
     return {'ok': layout['ok'] and not required_failure, 'why': failures, 'disabled': disabled,
-            'rvas': None if required_failure else rvas, 'checked': len(witnesses)}
+            'rvas': None if required_failure else rvas, 'checked': len(witnesses),
+            'closure_failed_groups': closure_failed_groups}
 
 
 def check(path):

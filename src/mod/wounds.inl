@@ -813,8 +813,8 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, 
     r.weapon = weapon;
 
     uint32_t motion = 0;
-    if (readable(attacker + 0x9b8, sizeof(uint32_t))) {
-        motion = *reinterpret_cast<const uint32_t*>(attacker + 0x9b8);
+    if (readable(attacker + field::character::motion, sizeof(uint32_t))) {
+        motion = *reinterpret_cast<const uint32_t*>(attacker + field::character::motion);
         if (motion == 0xb) {
             r.kind = woundThrust;
         } else {
@@ -864,8 +864,9 @@ static void physicalImpactDetour(uintptr_t attacker) {
 }
 
 static void createWoundHooks() {
-    const uintptr_t impactTarget = gameAt(fp::sig::xrPhysicalImpact);
-    const uintptr_t damageTarget = base + 0x159700;
+    if (!layout.optionalGroupAvailable("wounds")) return;
+    const uintptr_t impactTarget = optionalGameAt(fp::sig::woundImpact);
+    const uintptr_t damageTarget = optionalGameAt(fp::sig::bodyDamage);
 
     static const unsigned char applySig[] = {0x53, 0x56, 0x48, 0x8d, 0x64, 0x24, 0xd8, 0x48, 0x89, 0xcb, 0x40, 0x30, 0xf6};
     static const unsigned char impactSig[] = {0x55, 0x48, 0x89, 0xe5, 0x48, 0x8d, 0xa4, 0x24, 0x90, 0xfe, 0xff, 0xff};

@@ -369,6 +369,120 @@ class GeneratedAndContractTests(unittest.TestCase):
         self.assertIn('static_assert(game::actor::health == 0x40', header_a)
         self.assertIn('static_assert(game::actor::maxHealth == 0x44', header_a)
 
+    def test_fpc_vmt_and_shifted_slot_discovery(self):
+        mem = bytearray(0x3000)
+        base = 0x140000000
+        mem[0x2100:0x2108] = b'\x07T3DNode'
+        mem[0x2200:0x2208] = (0x1C8).to_bytes(8, 'little', signed=True)
+        mem[0x2208:0x2210] = (-0x1C8).to_bytes(8, 'little', signed=True)
+        mem[0x2210:0x2218] = (0).to_bytes(8, 'little')
+        mem[0x2218:0x2220] = (base + 0x2100).to_bytes(8, 'little')
+        mem[0x2260:0x2268] = (base + 0x1100).to_bytes(8, 'little')
+        mem[0x2268:0x2270] = (base + 0x1200).to_bytes(8, 'little')
+        mem[0x2270:0x2278] = (base + 0x1300).to_bytes(8, 'little')
+        exe = SimpleNamespace(mem=mem, text=(0x1000, 0x2000), base=base)
+
+        self.assertEqual(signatures.find_fpc_vmt(exe, 'T3DNode'), 0x2200)
+        self.assertEqual(signatures.find_vmt_method_slot(exe, 0x2200, 0x1200, 0x68), 0x2268)
+
+        # Base-class virtual insertion shifts 0x1200 from +0x68 -> +0x70
+        mem[0x2268:0x2270] = (base + 0x1180).to_bytes(8, 'little')
+        mem[0x2270:0x2278] = (base + 0x1200).to_bytes(8, 'little')
+        mem[0x2278:0x2280] = (base + 0x1300).to_bytes(8, 'little')
+        self.assertEqual(signatures.find_vmt_method_slot(exe, 0x2200, 0x1200, 0x68), 0x2270)
+
+        # Duplicate method pointer in VMT fails closed
+        mem[0x2278:0x2280] = (base + 0x1200).to_bytes(8, 'little')
+        self.assertIsNone(signatures.find_vmt_method_slot(exe, 0x2200, 0x1200, 0x68))
+        mem[0x2278:0x2280] = (base + 0x1300).to_bytes(8, 'little')
+
+        # Duplicate VMT class name fails closed
+        mem[0x2500:0x2580] = mem[0x2200:0x2280]
+        self.assertIsNone(signatures.find_fpc_vmt(exe, 'T3DNode'))
+
+    def test_native_contracts_scoped_degradation_and_closure_verification(self):
+        mem = bytearray(b'\xCC' * 0x3000)
+        base = 0x140000000
+        # Owner at 0x1100: sub rsp, 0x28; call 0x1300; add rsp, 0x28; ret
+        mem[0x1100:0x110E] = bytes([0x48, 0x83, 0xEC, 0x28, 0xE8, 0xF7, 0x01, 0x00, 0x00, 0x48, 0x83, 0xC4, 0x28, 0xC3])
+        # Callee at 0x1300
+        mem[0x1300:0x1308] = bytes([0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x5B, 0xC3])
+
+        def find_fn(data, mask, limit=3):
+            import re as _re
+            rx = _re.compile(b''.join(_re.escape(bytes([b])) if m else b'.' for b, m in zip(data, mask)), _re.DOTALL)
+            return [0x1000 + m.start() for m in rx.finditer(bytes(mem[0x1000:0x2000]))][:limit]
+
+        exe = SimpleNamespace(mem=mem, text=(0x1000, 0x2000), base=base, find=find_fn)
+        layout = {
+            'ok': True,
+            'rvas': {'fnCore': 0x1100, 'invHook': 0x1400, 'throwHook': 0x1500},
+            'groups': {'invHook': 'inventoryReach', 'throwHook': 'heldThrow'},
+        }
+        spec = {
+            'owners': [
+                {
+                    'name': 'ownerCore',
+                    'target': 'fnCore',
+                    'rva': '0x1100',
+                    'end_rva': '0x110E',
+                    'entry_offset': 0,
+                    'pattern': '48 83 EC 28 E8 ?? ?? ?? ?? 48 83 C4 28 C3',
+                }
+            ],
+            'fields': [
+                {
+                    'name': 'core::ok',
+                    'owner': 'ownerCore',
+                    'window_offset': 0,
+                    'pattern': '48 83 EC 28',
+                },
+                {
+                    'name': 'inventory::changed',
+                    'owner': 'ownerCore',
+                    'window_offset': 0,
+                    'pattern': '48 83 EC 38',
+                    'optional_group': 'inventoryReach',
+                },
+                {
+                    'name': 'heldThrow::body',
+                    'owner': 'ownerCore',
+                    'window_offset': 0,
+                    'pattern': '48 83 EC 28 E8 ?? ?? ?? ?? 48 83 C4 28 C3',
+                    'optional_group': 'heldThrow',
+                },
+            ],
+            'references': [],
+            'closures': {
+                'callees': [{'name': 'callee_1300', 'pattern': '40 53 48 83 EC 20 5B C3'}],
+                'branches': [
+                    {
+                        'group': 'heldThrow',
+                        'witness': 'heldThrow::body',
+                        'disp_offset': 5,
+                        'insn_end': 9,
+                        'kind': 'callee',
+                        'callee': 'callee_1300',
+                    }
+                ],
+                'vmt_slots': [],
+            },
+        }
+        res = native_contracts.resolve_contracts(exe, spec, layout)
+        self.assertTrue(res['ok'])
+        self.assertEqual(res['disabled'], {'invHook'})
+        self.assertEqual(res['rvas']['fnCore'], 0x1100)
+        self.assertEqual(res['rvas']['invHook'], 0)
+        self.assertEqual(res['rvas']['throwHook'], 0x1500)
+
+        # Retargeting the E8 rel32 call fails the heldThrow closure without failing core
+        mem[0x1105] = 0x07
+        res_tampered = native_contracts.resolve_contracts(exe, spec, layout)
+        self.assertTrue(res_tampered['ok'])
+        self.assertIn('heldThrow', res_tampered['closure_failed_groups'])
+        self.assertEqual(res_tampered['rvas']['throwHook'], 0)
+        self.assertEqual(res_tampered['rvas']['fnCore'], 0x1100)
+
 
 class BuildHelperTests(unittest.TestCase):
     def test_read_define_parses_single_definition(self):

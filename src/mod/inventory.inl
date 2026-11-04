@@ -17,7 +17,7 @@ static thread_local ULONGLONG inventoryGeneration = 0, inventoryQueueScope = 0,
                               inventoryCompletionScope = 0;
 static thread_local uintptr_t inventoryCompletionObject = 0;
 static bool inventoryPreviewOwner(const InventoryPreview& p) {
-    if (!p.generation || p.ownerEpoch != inventoryOwnerEpoch.load() ||
+    if (!layout.optionalGroupAvailable("inventoryReach") || !p.generation || p.ownerEpoch != inventoryOwnerEpoch.load() ||
         p.inputGeneration != inputOwner.generation() || !base || !onGameThread() ||
         p.mode != viewMode.load() || p.mode >= 2 ||
         !InterlockedCompareExchange(&active, 0, 0) || InterlockedCompareExchange(&stopping, 0, 0) ||
@@ -51,10 +51,10 @@ static bool inventoryPreviewOwner(const InventoryPreview& p) {
         *reinterpret_cast<unsigned char*>(p.source + field::inventorySource::merchant)) return false;
     const uintptr_t table = *reinterpret_cast<uintptr_t*>(p.source);
     return readable(table, field::inventorySource::finishSlot + sizeof(uintptr_t)) &&
-           *reinterpret_cast<uintptr_t*>(table + field::inventorySource::finishSlot) == gameAt(fp::sig::inventorySourceFinish);
+           *reinterpret_cast<uintptr_t*>(table + field::inventorySource::finishSlot) == optionalGameAt(fp::sig::inventorySourceFinish);
 }
 static ULONGLONG inventoryAdmissionBegin(uintptr_t drag, unsigned format) {
-    if (!onGameThread()) return 0;
+    if (!onGameThread() || !layout.optionalGroupAvailable("inventoryReach")) return 0;
     __try {
         if (!readable(drag, field::drag::viewport + sizeof(uintptr_t)) ||
             *reinterpret_cast<uintptr_t*>(drag + field::drag::object) ||
@@ -142,6 +142,7 @@ static void inventoryComplete(uintptr_t job, uintptr_t failed, uintptr_t third, 
     }
 }
 static ULONGLONG inventoryPlacementBegin(uintptr_t object, uintptr_t viewport) {
+    if (!layout.optionalGroupAvailable("inventoryReach")) return 0;
     __try {
         auto& p = inventoryPreview;
         if (p.object == object) p.observed = false; // an incomplete new attempt is not a proven failure
@@ -159,6 +160,7 @@ static ULONGLONG inventoryPlacementBegin(uintptr_t object, uintptr_t viewport) {
     return 0;
 }
 static void inventoryPlacementEnd(ULONGLONG generation, uintptr_t object, int result) {
+    if (!layout.optionalGroupAvailable("inventoryReach")) return;
     __try {
         auto& p = inventoryPreview;
         if (generation && generation == p.generation && p.object == object && inventoryPreviewOwner(p) &&

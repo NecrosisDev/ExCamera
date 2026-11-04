@@ -259,7 +259,7 @@ def build_runtime(stage, ver, package, dev=False, openxr_sdk=None, wx=False):
             f'/Fe:"{stage / "ExanimaFirstPerson.dll"}" /link /INCREMENTAL:NO /Brepro'
         ),
         (
-            f'{cl}launcher.cpp user32.lib /Fe:"{stage / "ExCamera.exe"}" '
+            f'{cl}launcher.cpp "{obj / "hde64.obj"}" user32.lib /Fe:"{stage / "ExCamera.exe"}" '
             f'/link /SUBSYSTEM:WINDOWS /INCREMENTAL:NO /Brepro'
         ),
         f'dumpbin /nologo /exports "{stage / "ExanimaFirstPerson.dll"}" > "{obj / "exports.txt"}"',

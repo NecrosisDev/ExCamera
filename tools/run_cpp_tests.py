@@ -37,7 +37,10 @@ def main():
     obj_dir.mkdir(parents=True, exist_ok=True)
 
     vcvars = build.find_vcvarsall()
-    commands = []
+    hde_obj = obj_dir / 'hde64.obj'
+    commands = [
+        f'{build.MINHOOK_CL} "{build.SRC / "vendor/minhook/src/hde/hde64.c"}" /Fo:"{obj_dir}\\\\"'
+    ]
     binaries = []
     includes = f'/I"{build.SRC}" /I"{ROOT / "tests"}"'
     for src in sources:
@@ -48,7 +51,7 @@ def main():
         inputs = [src, *extra_sources_for(src)]
         quoted_inputs = ' '.join(f'"{p}"' for p in inputs)
         commands.append(
-            f'cl {CL_FLAGS} {includes} {quoted_inputs} /Fo:"{target_obj_dir}\\\\" /Fe:"{exe_path}" /link /INCREMENTAL:NO'
+            f'cl {CL_FLAGS} {includes} {quoted_inputs} "{hde_obj}" /Fo:"{target_obj_dir}\\\\" /Fe:"{exe_path}" /link /INCREMENTAL:NO'
         )
         binaries.append(exe_path)
 

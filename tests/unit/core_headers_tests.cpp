@@ -412,6 +412,345 @@ bool all_signatures_and_native_contracts_parse() {
     return true;
 }
 
+bool fpc_rtti_vmt_and_shifted_slot_introspection() {
+    std::vector<uint8_t> image(0x3000, 0);
+    const uint64_t imageBase = 0x140000000ull;
+    fp::ImageView view{image.data(), image.size(), imageBase, 0x1000u, 0x2000u};
+
+    auto put64 = [&](size_t rva, uint64_t val) { std::memcpy(image.data() + rva, &val, sizeof val); };
+    auto puti64 = [&](size_t rva, int64_t val) { std::memcpy(image.data() + rva, &val, sizeof val); };
+
+    // Pascal ShortString "\x07T3DNode" in .rdata at 0x2100.
+    const char name[] = "\x07T3DNode";
+    std::memcpy(image.data() + 0x2100, name, 8);
+
+    // Free Pascal x64 VMT at 0x2200.
+    puti64(0x2200 + 0x00, 0x1C8);
+    puti64(0x2200 + 0x08, -0x1C8);
+    put64(0x2200 + 0x10, 0);
+    put64(0x2200 + 0x18, imageBase + 0x2100ull);
+    put64(0x2200 + 0x60, imageBase + 0x1100ull); // vDestroy in .text
+    put64(0x2200 + 0x68, imageBase + 0x1200ull); // virtual slot 1
+    put64(0x2200 + 0x70, imageBase + 0x1300ull); // virtual slot 2
+
+    uint32_t instSize = 0;
+    CHECK(fp::rtti::readVmtInstanceSize(image.data() + 0x2200, 16, instSize));
+    CHECK(instSize == 0x1C8u);
+
+    fp::rtti::VmtInfo vmt{};
+    CHECK(fp::rtti::findClassVmt(view, "T3DNode", vmt));
+    CHECK(vmt.rva == 0x2200u && vmt.instanceSize == 0x1C8u && vmt.nameRva == 0x2100u);
+
+    uint32_t slotRva = 0;
+    CHECK(fp::rtti::findMethodSlot(view, vmt.rva, 0x1200u, slotRva, 0x68u));
+    CHECK(slotRva == 0x2268u);
+
+    // Simulate a base-class virtual method insertion at +0x68 shifting 0x1200 -> +0x70.
+    put64(0x2200 + 0x68, imageBase + 0x1180ull);
+    put64(0x2200 + 0x70, imageBase + 0x1200ull);
+    put64(0x2200 + 0x78, imageBase + 0x1300ull);
+    CHECK(fp::rtti::findMethodSlot(view, vmt.rva, 0x1200u, slotRva, 0x68u));
+    CHECK(slotRva == 0x2270u);
+
+    // Ambiguous duplicate virtual method pointer in two slots fails closed.
+    put64(0x2200 + 0x78, imageBase + 0x1200ull);
+    CHECK(!fp::rtti::findMethodSlot(view, vmt.rva, 0x1200u, slotRva, 0x68u));
+    put64(0x2200 + 0x78, imageBase + 0x1300ull);
+
+    // Ambiguous duplicate class VMT fails closed.
+    std::memcpy(image.data() + 0x2500, image.data() + 0x2200, 0x80);
+    CHECK(!fp::rtti::findClassVmt(view, "T3DNode", vmt));
+    return true;
+}
+
+size_t gSyntheticLiveField = 0x2A0;
+size_t gSyntheticLiveDerived = 0x2B8;
+void resetSyntheticLive() {
+    gSyntheticLiveField = 0x2A0;
+    gSyntheticLiveDerived = 0x2B8;
+}
+void commitSyntheticLive() {
+    gSyntheticLiveDerived = gSyntheticLiveField + 0x18;
+}
+
+bool hde64_dynamic_offset_adaptation_and_conflict_guard() {
+    std::vector<uint8_t> image(0x2000, 0x90);
+    fp::ImageView view{image.data(), image.size(), 0x140000000ull, 0x1000u, 0x1800u};
+
+    const uint8_t prologue[] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20};
+    std::memcpy(image.data() + 0x1100, prologue, sizeof prologue);
+
+    // Shifted disp32: both witnesses access [rcx + 0x2B0] instead of baseline 0x2A0.
+    const uint8_t load2B0[] = {0xF3, 0x0F, 0x10, 0x81, 0xB0, 0x02, 0x00, 0x00};
+    const uint8_t store2B0[] = {0xF3, 0x0F, 0x11, 0x81, 0xB0, 0x02, 0x00, 0x00};
+    std::memcpy(image.data() + 0x1110, load2B0, sizeof load2B0);
+    std::memcpy(image.data() + 0x1120, store2B0, sizeof store2B0);
+
+    fp::Layout layout{};
+    layout.resolved = true;
+    layout.rva[fp::sig::pollInput] = 0x1100u;
+
+    const fp::ContractOwner owners[] = {
+        {"synthOwner", fp::sig::pollInput, "48 89 5C 24 08 57 48 83 EC 20", 0},
+    };
+    const fp::FieldContract fields[] = {
+        {"synth::load", 0u, 0x10u, "F3 0F 10 81 A0 02 00 00", nullptr},
+        {"synth::store", 0u, 0x20u, "F3 0F 11 81 A0 02 00 00", nullptr},
+    };
+    const fp::FieldOffsetBinding bindings[] = {
+        {0u, 0u, 0x2A0, false, 0x2A0u, &gSyntheticLiveField},
+        {1u, 0u, 0x2A0, false, 0x2A0u, &gSyntheticLiveField},
+    };
+
+    fp::ContractReport report{};
+    CHECK(fp::detail::validateContractTables(view, layout, report, owners, 1, fields, 2, bindings, 2,
+                                             &resetSyntheticLive, &commitSyntheticLive));
+    CHECK(gSyntheticLiveField == 0x2B0u);
+    CHECK(gSyntheticLiveDerived == 0x2C8u);
+    CHECK(report.adaptedFields >= 1u);
+
+    // Disagreeing witnesses (0x2B0 vs 0x2C0) must fail closed and reset live offsets to baseline.
+    image[0x1120 + 4] = 0xC0;
+    CHECK(!fp::detail::validateContractTables(view, layout, report, owners, 1, fields, 2, bindings, 2,
+                                              &resetSyntheticLive, &commitSyntheticLive));
+    CHECK(report.firstRequiredReason == fp::ContractFailure::changed);
+    CHECK(gSyntheticLiveField == 0x2A0u && gSyntheticLiveDerived == 0x2B8u);
+
+    // Opcode mutation (addss 0x58 instead of movss 0x10) must never adapt even with matching disp32.
+    image[0x1120 + 4] = 0xB0;
+    image[0x1110 + 2] = 0x58;
+    CHECK(!fp::detail::validateContractTables(view, layout, report, owners, 1, fields, 2, bindings, 2,
+                                              &resetSyntheticLive, &commitSyntheticLive));
+    return true;
+}
+
+bool call_graph_closure_and_scoped_degradation() {
+    std::vector<uint8_t> image(0x3000, 0xCC);
+    const uint64_t imageBase = 0x140000000ull;
+    fp::ImageView view{image.data(), image.size(), imageBase, 0x1000u, 0x2000u};
+
+    // Owner at 0x1100: sub rsp, 0x28; call 0x1300; add rsp, 0x28; ret
+    const uint8_t ownerBytes[] = {0x48, 0x83, 0xEC, 0x28, 0xE8, 0xF7, 0x01, 0x00, 0x00, 0x48, 0x83, 0xC4, 0x28, 0xC3};
+    // Callee at 0x1300
+    const uint8_t calleeBytes[] = {0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0xD9, 0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3};
+    std::memcpy(image.data() + 0x1100, ownerBytes, sizeof ownerBytes);
+    std::memcpy(image.data() + 0x1300, calleeBytes, sizeof calleeBytes);
+
+    // VMT slot at 0x2200 + 0xD8 holding imageBase + 0x1300.
+    const uint64_t slotVa = imageBase + 0x1300ull;
+    std::memcpy(image.data() + 0x2200 + 0xD8, &slotVa, sizeof slotVa);
+
+    fp::Layout layout{};
+    layout.resolved = true;
+    layout.rva[fp::sig::pollInput] = 0x1100u;
+    for (unsigned t = 0; t < fp::sig::targetCount; ++t) {
+        if (!fp::sig::targetOptionalGroups[t]) continue;
+        if (std::strcmp(fp::sig::targetOptionalGroups[t], "nativeSettings") == 0)
+            layout.rva[t] = 0x1500u;
+        else if (std::strcmp(fp::sig::targetOptionalGroups[t], "heldThrow") == 0)
+            layout.rva[t] = 0x1100u;
+    }
+    layout.rva[fp::sig::heldBodyMetadata] = 0x2200u;
+
+    const fp::ContractOwner owners[] = {
+        {"closureOwner", fp::sig::pollInput, "48 83 EC 28 E8 ?? ?? ?? ?? 48 83 C4 28 C3", 0},
+    };
+    const fp::FieldContract fields[] = {
+        {"core::ok", 0u, 0u, "48 83 EC 28", nullptr},
+        {"settings::broken", 0u, 0u, "48 83 EC 38", "nativeSettings"},
+        {"heldThrow::body", 0u, 0u, "48 83 EC 28 E8 ?? ?? ?? ?? 48 83 C4 28 C3", "heldThrow"},
+    };
+
+    // 1. Scoped degradation: broken nativeSettings witness withholds nativeSettings without failing core.
+    fp::ContractReport report{};
+    CHECK(fp::detail::validateContractTables(view, layout, report, owners, 1, fields, 3));
+    CHECK(report.optionalFailures == 1u);
+    CHECK(!layout.optionalGroupAvailable("nativeSettings"));
+    CHECK(layout.optionalGroupAvailable("heldThrow"));
+    CHECK(layout.rva[fp::sig::pollInput] == 0x1100u);
+
+    // 2. Relocation-aware call-graph + VMT closure check against simulated ASLR live memory.
+    const fp::ClosureCallee callees[] = {
+        {"callee_1300", "40 53 48 83 EC 20 48 8B D9 48 83 C4 20 5B C3"},
+    };
+    const fp::ClosureBranch branches[] = {
+        {"heldThrow", 2u, 5u, 9u, fp::ClosureKind::callee, 0},
+    };
+    const fp::ClosureVmtSlot vmtSlots[] = {
+        {"heldThrow", fp::sig::heldBodyMetadata, 0xD8u, fp::ClosureKind::callee, 0u},
+    };
+
+    std::vector<uint8_t> liveRam = image;
+    const uintptr_t liveBase = reinterpret_cast<uintptr_t>(liveRam.data());
+    const uintptr_t relocatedSlotVa = liveBase + 0x1300u;
+    std::memcpy(liveRam.data() + 0x2200 + 0xD8, &relocatedSlotVa, sizeof relocatedSlotVa);
+
+    CHECK(fp::detail::validateClosureTables(view, layout, "heldThrow", owners, 1, fields, 3,
+                                            callees, 1, branches, 1, vmtSlots, 1, liveBase));
+
+    // Mutating unrelated .text/.rdata bytes outside the closure still passes!
+    image[0x1700] ^= 0xFF;
+    liveRam[0x1700] ^= 0xFF;
+    CHECK(fp::detail::validateClosureTables(view, layout, "heldThrow", owners, 1, fields, 3,
+                                            callees, 1, branches, 1, vmtSlots, 1, liveBase));
+
+    // Retargeting the E8 rel32 call fails closed.
+    image[0x1100 + 5] = 0x07;
+    liveRam[0x1100 + 5] = 0x07;
+    CHECK(!fp::detail::validateClosureTables(view, layout, "heldThrow", owners, 1, fields, 3,
+                                             callees, 1, branches, 1, vmtSlots, 1, liveBase));
+    image[0x1100 + 5] = 0xF7;
+    liveRam[0x1100 + 5] = 0xF7;
+
+    // Retargeting the live VMT slot in RAM fails closed.
+    const uintptr_t hookedSlotVa = liveBase + 0x1400u;
+    std::memcpy(liveRam.data() + 0x2200 + 0xD8, &hookedSlotVa, sizeof hookedSlotVa);
+    CHECK(!fp::detail::validateClosureTables(view, layout, "heldThrow", owners, 1, fields, 3,
+                                             callees, 1, branches, 1, vmtSlots, 1, liveBase));
+    return true;
+}
+
+bool real_binary_resilience_simulations() {
+    char* exeEnv = nullptr;
+    size_t exeLen = 0;
+    if (_dupenv_s(&exeEnv, &exeLen, "EXCAMERA_TEST_GAME_EXE") != 0 || !exeEnv || !*exeEnv) {
+        if (exeEnv) std::free(exeEnv);
+        return true;
+    }
+    const std::filesystem::path exePath(exeEnv);
+    std::free(exeEnv);
+
+    std::ifstream in(exePath, std::ios::binary | std::ios::ate);
+    CHECK(in.good());
+    const auto sz = static_cast<size_t>(in.tellg());
+    in.seekg(0);
+    std::vector<uint8_t> raw(sz), mapped;
+    CHECK(bool(in.read(reinterpret_cast<char*>(raw.data()), static_cast<std::streamsize>(sz))));
+    fp::ImageView baseView;
+    CHECK(fp::mapPeFile(raw.data(), raw.size(), mapped, baseView));
+
+    fp::Layout baseLayout;
+    fp::ResolveReport resolveRep;
+    CHECK(fp::resolveLayout(baseView, baseLayout, resolveRep));
+
+    // 1. Free Pascal x64 RTTI matches resolved VMT targets and T3DNode instance size.
+    fp::rtti::VmtInfo nodeVmt{}, heldVmt{}, charVmt{}, navVmt{}, playerVmt{};
+    CHECK(fp::rtti::findClassVmt(baseView, "T3DNode", nodeVmt));
+    CHECK(nodeVmt.rva == baseLayout.rva[fp::sig::nodeVmt] && nodeVmt.instanceSize == 0x1C8u);
+    CHECK(fp::rtti::findClassVmt(baseView, "TTetraRBD", heldVmt));
+    CHECK(heldVmt.rva == baseLayout.rva[fp::sig::heldBodyMetadata]);
+    CHECK(fp::rtti::findClassVmt(baseView, "TMotileDynamics", charVmt));
+    CHECK(charVmt.rva == baseLayout.rva[fp::sig::characterMetadata]);
+    CHECK(fp::rtti::findClassVmt(baseView, "TNavCameraControl", navVmt));
+    CHECK(fp::rtti::findClassVmt(baseView, "TPlayerBehaviour", playerVmt));
+
+    // 2. Hellmode / hotfix simulation: mutating unrelated header/data bytes breaks whole-EXE SHA-256
+    // yet all 4 call-graph closure capabilities remain admitted!
+    std::vector<uint8_t> hellmodeImg = mapped;
+    hellmodeImg[0x40] ^= 0x5Au;
+    fp::ImageView hellmodeView = baseView;
+    hellmodeView.data = hellmodeImg.data();
+    CHECK(fp::validateOptionalClosure(hellmodeView, baseLayout, "attackVariants"));
+    CHECK(fp::validateOptionalClosure(hellmodeView, baseLayout, "physicsOwnership"));
+    CHECK(fp::validateOptionalClosure(hellmodeView, baseLayout, "heldThrow"));
+    CHECK(fp::validateOptionalClosure(hellmodeView, baseLayout, "headwearRender"));
+
+    auto findWitnessRva = [&](const char* witnessName) -> uint32_t {
+        for (const auto& f : fp::contract::fields) {
+            if (std::strcmp(f.name, witnessName) == 0) {
+                const auto& ow = fp::contract::owners[f.owner];
+                fp::Pattern pat;
+                uint32_t at = 0;
+                if (!fp::parsePattern(ow.pattern, pat)) return 0;
+                if (fp::findPattern(baseView, pat, baseView.textBegin, baseView.textEnd, &at) != 1) return 0;
+                return static_cast<uint32_t>(static_cast<int64_t>(at) + ow.entryOffset) + f.offset;
+            }
+        }
+        return 0;
+    };
+
+    // 3. Call-graph tamper detection: retargeting a single attackVariants rel32 fails attackVariants only,
+    // and corrupting a TTetraRBD VMT slot fails heldThrow only.
+    for (const auto& br : fp::contract::closureBranches) {
+        if (std::strcmp(br.group, "attackVariants") == 0) {
+            const auto& wf = fp::contract::fields[br.witnessIndex];
+            const uint32_t wRva = findWitnessRva(wf.name);
+            CHECK(wRva != 0);
+            std::vector<uint8_t> tampered = mapped;
+            tampered[wRva + br.dispOffset] ^= 0x20u;
+            fp::ImageView tamperedView = baseView;
+            tamperedView.data = tampered.data();
+            CHECK(!fp::validateOptionalClosure(tamperedView, baseLayout, "attackVariants"));
+            CHECK(fp::validateOptionalClosure(tamperedView, baseLayout, "headwearRender"));
+            break;
+        }
+    }
+    {
+        std::vector<uint8_t> vmtTampered = mapped;
+        vmtTampered[baseLayout.rva[fp::sig::heldBodyMetadata] + 0xD8u] ^= 0x10u;
+        fp::ImageView vmtView = baseView;
+        vmtView.data = vmtTampered.data();
+        CHECK(!fp::validateOptionalClosure(vmtView, baseLayout, "heldThrow"));
+        CHECK(fp::validateOptionalClosure(vmtView, baseLayout, "attackVariants"));
+    }
+
+    // 4. Scoped degradation: corrupting inventory::completionCurrentOwner or optionsForm::applied
+    // withholds only inventoryReach or nativeSettings while keeping core ExCamera healthy!
+
+    const uint32_t invWitnessRva = findWitnessRva("inventory::completionCurrentOwner");
+    CHECK(invWitnessRva != 0);
+    {
+        std::vector<uint8_t> invMod = mapped;
+        invMod[invWitnessRva] ^= 0xFFu;
+        fp::ImageView invView = baseView;
+        invView.data = invMod.data();
+        fp::Layout invLayout = baseLayout;
+        fp::ContractReport invRep;
+        CHECK(fp::validateNativeContracts(invView, invLayout, invRep));
+        CHECK(!invLayout.optionalGroupAvailable("inventoryReach"));
+        CHECK(invLayout.optionalGroupAvailable("nativeSettings"));
+        CHECK(invLayout.rva[fp::sig::pollInput] != 0);
+    }
+
+    const uint32_t optWitnessRva = findWitnessRva("optionsForm::applied");
+    CHECK(optWitnessRva != 0);
+    {
+        std::vector<uint8_t> optMod = mapped;
+        optMod[optWitnessRva] ^= 0xFFu;
+        fp::ImageView optView = baseView;
+        optView.data = optMod.data();
+        fp::Layout optLayout = baseLayout;
+        fp::ContractReport optRep;
+        CHECK(fp::validateNativeContracts(optView, optLayout, optRep));
+        CHECK(!optLayout.optionalGroupAvailable("nativeSettings"));
+        CHECK(optLayout.optionalGroupAvailable("inventoryReach"));
+        CHECK(optLayout.rva[fp::sig::pollInput] != 0);
+    }
+
+    // 5. Real-binary hde64 struct-offset adaptation: shift bodyPart::pose 0x2A0 -> 0x2B0.
+    const uint32_t poseWitnessRva = findWitnessRva("bodyPart::pose");
+    CHECK(poseWitnessRva != 0);
+    {
+        std::vector<uint8_t> poseMod = mapped;
+        CHECK(poseMod[poseWitnessRva + 17] == 0xA0u && poseMod[poseWitnessRva + 18] == 0x02u);
+        poseMod[poseWitnessRva + 17] = 0xB0u;
+        fp::ImageView poseView = baseView;
+        poseView.data = poseMod.data();
+        fp::Layout poseLayout = baseLayout;
+        fp::ContractReport poseRep;
+        CHECK(fp::validateNativeContracts(poseView, poseLayout, poseRep));
+        CHECK(poseRep.adaptedFields == 1u);
+        CHECK(fp::game::live::bodyPart::pose == 0x2B0u);
+        CHECK(fp::game::live::bodyPart::poseForward == 0x2C8u);
+        CHECK(fp::game::live::bodyPart::poseOrigin == 0x2D4u);
+        fp::game::live::resetLiveOffsets();
+        fp::game::live::recomputeDerivedOffsets();
+        CHECK(fp::game::live::bodyPart::pose == 0x2A0u);
+    }
+
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -426,5 +765,12 @@ int main() {
         {"PointerSet and JsonOut formatting", pointer_set_and_status_json_formatting},
         {"xr/math.h standalone types and transforms", xr_math_standalone_types_and_transforms},
         {"all signatures and native contract patterns parse", all_signatures_and_native_contracts_parse},
+        {"Free Pascal x64 RTTI VMT and shifted slot introspection",
+         fpc_rtti_vmt_and_shifted_slot_introspection},
+        {"hde64 dynamic struct-offset adaptation and conflict guard",
+         hde64_dynamic_offset_adaptation_and_conflict_guard},
+        {"call-graph closure verification and scoped subsystem degradation",
+         call_graph_closure_and_scoped_degradation},
+        {"real Exanima.exe resilience simulations", real_binary_resilience_simulations},
     });
 }

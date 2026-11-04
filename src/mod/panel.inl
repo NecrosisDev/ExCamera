@@ -317,7 +317,23 @@ static void nativeSettingsMaintenance(uintptr_t self) {
         InterlockedDecrement(&nativeSettingsInFlight);
     }
 }
+static bool createNativeSettingsHooks() {
+    if (!layout.optionalGroupAvailable("nativeSettings")) return true;
+    if (MH_CreateHook((void*)gameAt(fp::sig::guiMaintenance), (void*)nativeSettingsMaintenance,
+                      (void**)&originalGuiMaintenance) == MH_OK)
+        return true;
+    for (unsigned t = 0; t < fp::sig::targetCount; ++t) {
+        const char* grp = fp::sig::targetOptionalGroups[t];
+        if (grp && !strcmp(grp, "nativeSettings")) layout.rva[t] = 0;
+    }
+    return true;
+}
 static void f8WindowTick(bool requested, bool foreground) {
+    if (!layout.optionalGroupAvailable("nativeSettings")) {
+        if (cursorFreeBitSet(cursorFreeBit)) setCursorFreeBit(cursorFreeBit, false);
+        nativeSettingsWanted = false;
+        return;
+    }
     // Focus loss releases input, not the settings transaction. Only begin an
     // opening while foreground; explicit F8 dismissal still closes off-focus.
     if (!requested || foreground) nativeSettingsWanted = requested;
