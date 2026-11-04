@@ -82,3 +82,36 @@ jobs:
           name: ExCamera-minimal
           if-no-files-found: error
           retention-days: 14
+
+  # The OpenXR integration is compiled out of the minimal package, so the job above never compiles it.
+  # Build it here so it cannot silently stop compiling. Nothing is uploaded.
+  openxr:
+    name: Windows x64 (OpenXR)
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      OPENXR_SDK_TAG: release-1.1.43
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      # Headers only: the runtime loads openxr_loader.dll itself, so no loader library is linked.
+      - name: Fetch OpenXR SDK headers
+        uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/OpenXR-SDK
+          ref: ${{ env.OPENXR_SDK_TAG }}
+          path: openxr-sdk
+          persist-credentials: false
+
+      - name: Build OpenXR variant with warnings as errors
+        shell: pwsh
+        run: python build.py --openxr-sdk openxr-sdk --wx
