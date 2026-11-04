@@ -439,8 +439,16 @@ static char roomClassify(uintptr_t level, uintptr_t out) {
     return result;
 }
 
+// The level/entry/sector offsets above (+1C, +20, +28, stride 54, +30, +34, sector +318) are checked by
+// hand against 143C20 and 5B400 on the hashed builds only; no field contract covers them, and the hook
+// writes +318 even with the option off. Another build keeps the game's room rule.
+static bool roomViewUnreviewedBuild = false;
 static void createRoomViewHook() {
     if (!layout.optionalGroupAvailable("farRooms")) return;
+    if (!verifiedBuild) {
+        roomViewUnreviewedBuild = true;
+        return;
+    }
     const uintptr_t addr = optionalGameAt(fp::sig::roomClassify);
     if (!addr || !readable(addr, sizeof roomClassifyEntry) ||
         std::memcmp(reinterpret_cast<const void*>(addr), roomClassifyEntry, sizeof roomClassifyEntry))

@@ -2,6 +2,7 @@
 
     python tools/xr_contracts.py generate <Exanima.exe>
     python tools/xr_contracts.py verify
+    python tools/xr_contracts.py check <Exanima.exe>
 
 Every native owner the XR replay freezes, calls or restores around is captured as a complete
 instruction byte pattern. Internal rel32/RIP displacements are fixed on this exact build; only
@@ -195,15 +196,45 @@ def generate(exe_path):
     print(f'WROTE {len(spec["owners"])} whole-function XR contracts, {size} bytes')
 
 
+def check(exe_path):
+    """Read-only: compare the header's whole-function contracts with an executable's mapped image,
+    exactly as the runtime admission does against loaded memory. Any mismatch withholds XR."""
+    validate_offline()
+    spec = json.loads(SPEC.read_text(encoding='utf-8'))
+    mem = signatures.Exe(exe_path).mem
+    failed = []
+    template_rva = int(spec['frustum_template']['rva'], 16)
+    expected = b''.join(int(v).to_bytes(4, 'little', signed=True) for v in spec['frustum_template']['indices'])
+    if bytes(mem[template_rva:template_rva + len(expected)]) != expected:
+        failed.append('frustum_template')
+    matches = list(CONTRACT_ENTRY_RE.finditer(HEADER.read_text(encoding='utf-8')))
+    for match in matches:
+        rva_hex, literals_block, name = match.groups()
+        rva = int(rva_hex, 16)
+        tokens = ''.join(re.findall(r'"([^"]*)"', literals_block)).split(' ')
+        actual = mem[rva:rva + len(tokens)]
+        if len(actual) != len(tokens) or any(tok != '??' and int(tok, 16) != byte for tok, byte in zip(tokens, actual)):
+            failed.append(name)
+    for name in failed:
+        print('XR FAIL %s' % name)
+    print('%d XR whole-function contracts checked, %d failed%s' % (
+        len(matches), len(failed), ' (VR would be withheld on this build)' if failed else ''))
+    return 0 if not failed else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest='command', required=True)
     gen_parser = subparsers.add_parser('generate', help='Regenerate src/xr/native_contracts.h from Exanima.exe')
     gen_parser.add_argument('exe', type=Path)
     subparsers.add_parser('verify', help='Validate xr_contracts.json against src/xr/native_contracts.h offline')
+    check_parser = subparsers.add_parser('check', help='Read-only: check the XR contracts against an Exanima.exe')
+    check_parser.add_argument('exe', type=Path)
     args = parser.parse_args()
     if args.command == 'generate':
         generate(args.exe)
+    elif args.command == 'check':
+        sys.exit(check(args.exe))
     else:
         stats = validate_offline()
         print(f'{stats["owners"]} XR contracts / {stats["bytes"]} bytes: consistent')

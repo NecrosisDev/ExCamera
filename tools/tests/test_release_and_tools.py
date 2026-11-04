@@ -19,6 +19,7 @@ for candidate in (str(ROOT), str(TOOLS)):
         sys.path.insert(0, candidate)
 
 import build  # noqa: E402
+import check_game  # noqa: E402
 import check_generated  # noqa: E402
 import native_contracts  # noqa: E402
 import release  # noqa: E402
@@ -175,6 +176,13 @@ class GeneratedAndContractTests(unittest.TestCase):
         output = buf.getvalue()
         self.assertIn('XR contracts', output)
         self.assertIn('consistent', output)
+
+    def test_check_game_reads_every_reviewed_build_hash(self):
+        builds = check_game.known_builds()
+        text = check_game.BUILD_HEADER.read_text(encoding='utf-8')
+        self.assertEqual(len(builds), text.count('", //'))
+        self.assertIn(xr_contracts.json.loads(xr_contracts.SPEC.read_text(encoding='utf-8'))['source_sha256'], builds)
+        self.assertTrue(all(builds.values()))
 
     def test_relocation_bisect_matches_naive_scan(self):
         relocations = sorted([0x1000, 0x1010, 0x1018, 0x2050])

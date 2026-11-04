@@ -14,6 +14,17 @@ optional groups, signature metadata, enum ordering, slot checks, and exact gener
 header text. It detects source/header drift; it cannot establish that new native
 claims are correct without the executable and review.
 
+## After a game update
+
+One read-only command finds `Exanima.exe` in the Steam libraries (or takes a path),
+identifies the build by hash, and runs the signature, field-contract and VR checks:
+
+    python tools/check_game.py [path/to/Exanima.exe]
+
+`python tools/xr_contracts.py check <Exanima.exe>` runs the VR check on its own.
+Far rooms and attack variants use offsets no contract covers, so they stay off on any
+build not hashed in `src/native_build.h`.
+
 ## Native validation and generation
 
 Use Python 3.10 or newer for native generation, with `pefile` and `capstone` installed. Keep the game
