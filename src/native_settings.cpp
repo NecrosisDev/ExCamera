@@ -32,7 +32,7 @@ static const OwnSection ownSections[] = {
                          setting::vrPosture, setting::vrTurning, setting::vrEffects, setting::vrGripAngle, setting::vrHaptics,
                          setting::vrPanelWidth, setting::vrPanelDistance}, 12},
     {L"VR", L"Body and comfort", {setting::vrComfort, setting::vrBody, setting::vrHeight, setting::vrGrabTurn, setting::vrEyeScale,
-                                  setting::vrGripSlide, setting::vrKick, setting::vrFingerBones}, 8},
+                                  setting::vrGripSlide, setting::vrKick, setting::vrFingerBones, setting::vrWeapons}, 9},
 };
 
 // Adapt only owned mod checkboxes. The native handler performs the hit test,

@@ -1021,6 +1021,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .boolean("drive_enabled", trackedDriveRequested.load())
         .boolean("drive_fault", trackedDriveFault.load())
         .boolean("body_driver_enabled", trackedBodyRequested.load())
+        .boolean("weapons_enabled", trackedWeaponsWanted())
         .boolean("physical_contacts_ready", physicalContactsReady.load())
         .unum("physical_impact_calls", physicalImpactCalls.load())
         .unum("motor_targets", trackedMotorTargets.load())

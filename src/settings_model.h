@@ -105,6 +105,7 @@ enum : int {
     vrHandPanel,
     vrPouch,
     vrFingerBones,
+    vrWeapons,
     ambientOcclusion,
     depthOfField,
     screenSpaceReflections,
@@ -217,6 +218,7 @@ struct ModSettings {
     int vrPouch = 1;      // 1: the left hip puts items away and takes them back (ScriptRuntime inventory exports)
     int vrKick = 0;       // 1 lets the stick click play the game's kick clip; experimental, off by default
     int vrFingerBones = 0; // 1 adds finger bones to the game's own skeleton for the tracked joints; experimental, off by default
+    int vrWeapons = 0;    // 1: a wielded weapon is driven by the tracked hands; experimental, off by default
     // Fixed engineering parameters. The camera is intentionally mounted at the
     // head's center (16 cm setback) for clearance; visibility must be fixed
     // with first-person-only head rendering, NOT by moving the camera.
@@ -428,6 +430,9 @@ struct ModSettings {
         case setting::vrFingerBones:
             vrFingerBones = vrFingerBones ? 0 : 1;
             break;
+        case setting::vrWeapons:
+            vrWeapons = vrWeapons ? 0 : 1;
+            break;
         case setting::nearClip:
             nearClip = fp::clampNearClip(nearClip + delta);
             break;
@@ -625,6 +630,8 @@ struct ModSettings {
             return vrPouch ? L"on" : L"off";
         case setting::vrFingerBones:
             return vrFingerBones ? L"on" : L"off";
+        case setting::vrWeapons:
+            return vrWeapons ? L"on" : L"off";
         case setting::crouchMode:
             return crouchMode == 2
                        ? L"toggle (the game's duck key)"
@@ -1090,6 +1097,11 @@ inline const RowInfo& rowInfo(int row) {
          L"FingerBones", fp::vrFingerBonesFromText, fp::vrFingerBonesText,
          L"Experimental. On: finger bones are added to your body's own skeleton and the skinned body mesh bends its "
          L"fingers to the tracked joints. Shows on the full body; the hands-only body hides that mesh."},
+        {setting::vrWeapons, L"VR: weapons follow hands (experimental)", RowInfo::choice, &ModSettings::vrWeapons, nullptr, L"VR",
+         L"WeaponsFollowHands", fp::vrKickFromText, fp::vrKickText,
+         L"Experimental. On: a wielded weapon is moved by your tracked hands, one or both on its grip, instead of the "
+         L"game's own swing poses. Not with a shield, while blocking or mid-swing; the game takes the weapon back then. "
+         L"Off keeps the game's weapon handling."},
         {setting::ambientOcclusion, L"Ambient occlusion", RowInfo::choice, &ModSettings::ambientOcclusion, nullptr,
          L"View", L"AmbientOcclusion", nullptr, nullptr,
          L"Adds restrained screen-space contact shading around nearby geometry. It uses the presented depth buffer, "

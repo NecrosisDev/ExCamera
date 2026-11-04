@@ -33,6 +33,14 @@ static SRWLOCK trackedDriveLock = SRWLOCK_INIT;
 static TrackedDriveFrame trackedDriveFrame;
 static std::atomic<uint64_t> trackedDriveGeneration{0};
 static std::atomic<bool> trackedDriveRequested{false}, trackedDriveFault{false}, trackedLocomotionRequested{false}, trackedWeaponsRequested{false}, trackedBodyRequested{false};
+// Hand-driven weapons follow the "VR: weapons follow hands" row live (every plan and compose re-reads it, and a
+// refusal hands the weapon back to the game mid-swing as any other gate does); EXCAMERA_XR_WEAPONS=1 or 0 overrides
+// the row for a dev run. trackedWeaponsRequested only says the drive hooks of this session can carry it.
+static std::atomic<int> trackedWeaponsOverride{-1};
+static bool trackedWeaponsWanted() {
+    const int forced = trackedWeaponsOverride.load(std::memory_order_relaxed);
+    return trackedWeaponsRequested && (forced >= 0 ? forced != 0 : vrWeapons.load(std::memory_order_relaxed) != 0);
+}
 // Body driver and room-scale walking default on while body trackers are live: a key left unset (no
 // EXCAMERA_XR_BODY_DRIVER / EXCAMERA_XR_LOCOMOTION, no ini key) follows the trackers, "1" forces on, "0" off.
 // Without trackers nothing changes. Trackers lost for under half a second keep the switches on.
@@ -1317,7 +1325,9 @@ static bool createTrackedDriveHooks() {
     const DWORD bodyKey = GetEnvironmentVariableW(L"EXCAMERA_XR_BODY_DRIVER", enabled, 4);
     trackedBodyRequested = bodyKey == 1 && enabled[0] == L'1';
     trackedBodyAuto = bodyKey == 0; // unset: on while trackers are live
-    trackedWeaponsRequested = GetEnvironmentVariableW(L"EXCAMERA_XR_WEAPONS", enabled, 4) == 1 && enabled[0] == L'1';
+    const DWORD weaponsKey = GetEnvironmentVariableW(L"EXCAMERA_XR_WEAPONS", enabled, 4);
+    trackedWeaponsOverride = weaponsKey == 0 ? -1 : (weaponsKey == 1 && enabled[0] == L'1') ? 1 : 0; // unset: the row decides
+    trackedWeaponsRequested = true;
     const DWORD walkKey = GetEnvironmentVariableW(L"EXCAMERA_XR_LOCOMOTION", enabled, 4);
     trackedLocomotionRequested = walkKey == 1 && enabled[0] == L'1';
     trackedLocomotionAuto = walkKey == 0;

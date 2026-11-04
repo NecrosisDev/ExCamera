@@ -1,5 +1,10 @@
 # Changelog
 
+Unreleased
+
+- VR: new setting "VR: weapons follow hands (experimental)", off by default. On, a wielded weapon is moved by your tracked hands instead of the game's swing poses. It switches straight away; the game takes the weapon back while blocking, mid-swing or with a shield.
+- Finger poses and VR finger bones now stay off on game versions other than the supported one, instead of guessing at a changed skeleton.
+
 v0.3.0 (revision 60)
 
 - Fixed level loading hitches and stuttering: eliminated synchronous shader double-compilation in glShaderSource, gated sector traversals and roster scans during level population, precompiled wound/fire/bake shaders, paused worker disk logging while loading, and generated procedural stone textures asynchronously on a background worker thread.

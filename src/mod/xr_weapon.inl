@@ -1,7 +1,7 @@
 // Read-only equipped-grip admission for the XR pose owner; it adds no hook of its own.
 static thread_local xd::EquippedDrive trackedEquippedDrive;
 static bool trackedWeaponReady(uintptr_t root) {
-    if (!trackedWeaponsRequested || !inputEnabled || cursorFreeNow() || (*reinterpret_cast<unsigned*>(gameAt(fp::sig::buttonWord)) & 3) || !readable(root, 0x1300) || *reinterpret_cast<uintptr_t*>(root + field::character::shieldPart) || *reinterpret_cast<uintptr_t*>(root + field::character::specialHeldPart) ||
+    if (!trackedWeaponsWanted() || !inputEnabled || cursorFreeNow() || (*reinterpret_cast<unsigned*>(gameAt(fp::sig::buttonWord)) & 3) || !readable(root, 0x1300) || *reinterpret_cast<uintptr_t*>(root + field::character::shieldPart) || *reinterpret_cast<uintptr_t*>(root + field::character::specialHeldPart) ||
         *(unsigned char*)(root + field::character::defenseActive) || *reinterpret_cast<uintptr_t*>(root + field::character::actionCallback) || (*reinterpret_cast<unsigned*>(root + field::character::swingBits) & 0xB0012)) return false;
     const auto drag = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::dragManager));
     if (readable(drag, field::drag::object + 8) && (*reinterpret_cast<unsigned*>(drag + field::drag::flags) || *reinterpret_cast<uintptr_t*>(drag + field::drag::object))) return false;

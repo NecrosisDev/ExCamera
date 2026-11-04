@@ -196,6 +196,8 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return settings.vrPouch ? L"On" : L"Off";
     case setting::vrFingerBones:
         return settings.vrFingerBones ? L"On" : L"Off";
+    case setting::vrWeapons:
+        return settings.vrWeapons ? L"On" : L"Off";
     case setting::ambientOcclusion:
     case setting::depthOfField:
     case setting::screenSpaceReflections:
@@ -319,6 +321,7 @@ const wchar_t* settingLabel(int id) {
     case setting::vrHandPanel: return L"VR menus in hand";
     case setting::vrPouch: return L"VR hip pouch";
     case setting::vrFingerBones: return L"VR finger bones";
+    case setting::vrWeapons: return L"VR weapons follow hands (experimental)";
     case setting::ambientOcclusion: return L"Contact shadows";
     case setting::depthOfField: return L"Focus blur";
     case setting::screenSpaceReflections: return L"Reflections";
@@ -426,6 +429,7 @@ const wchar_t* settingTip(int id) {
     case setting::vrHandPanel: return L"On: the inventory and every open menu sit on a panel held in your left hand, turned towards you; point at it with the right hand, the trigger clicks and the grip is the right button. Hold the trigger on an item and point out into the world to carry it out; let go to set it down there and pick it up. Off: the menu floats in front of you.";
     case setting::vrPouch: return L"On: let go of a held item at your left hip to put it in your inventory; close an empty hand there to take the last one back. Needs the script runtime's inventory exports; without them nothing happens.";
     case setting::vrFingerBones: return L"Experimental. On: finger bones are added to your body's own skeleton and the skinned body mesh bends its fingers to the tracked joints. Shows on the full body; the hands-only body hides that mesh.";
+    case setting::vrWeapons: return L"Experimental. On: a wielded weapon is moved by your tracked hands, one or both on its grip, instead of the game's own swing poses. Not with a shield, while blocking or mid-swing; the game takes the weapon back then. Off keeps the game's weapon handling.";
     case setting::ambientOcclusion: return L"Soft shadow in corners, under objects and where things touch. High values can darken narrow gaps.";
     case setting::depthOfField: return L"Softens very near and very far things while the middle stays sharp. First person only.";
     case setting::screenSpaceReflections: return L"Faint reflections on floors and other upward-facing surfaces, from what's on screen. Turn off if you see smearing.";
