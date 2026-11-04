@@ -6,6 +6,7 @@ Unreleased
 - F6 can switch between first and third person only: set Settings > Camera > F6 cycle to "1st/3rd only". Then a tap flips the two views, and holding F6 for half a second shows the game's own camera. The default still steps through all three.
 - New Hit reaction slider (Settings > Camera > First person): how hard the first-person view jolts when you are hit, from 0 (still) to 100 % (as before). Hits now also tilt the view a little, as they were meant to. A VR headset view never jolts.
 - New Swap shoulder key (Settings > Controls > Keys, unbound by default): in third person it slides the camera over your other shoulder and remembers the side. Changing the Shoulder setting's side slides too, instead of jumping. It can't share a key with Rotate, Kick, Jump or Recenter, and a hand-edited ini that binds one key to two of these keeps only the first.
+- A greyed-out setting now says why in its help line: "Not available on this game version." when this Exanima build lacks what it needs (for example far rooms or finger poses on Hellmode, screen effects or manual defense where the game code differs), or "Turned off after an error. Restart the game to retry." when the feature stopped itself after a fault.
 
 v0.3.0 (revision 60)
 

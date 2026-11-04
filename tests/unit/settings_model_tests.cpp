@@ -1,5 +1,6 @@
 #include "settings_model.h"
 #include "settings_presentation.h"
+#include "settings_draft.h"
 
 #include <algorithm>
 #include <climits>
@@ -229,6 +230,30 @@ bool normalize_drops_duplicate_mod_bindings() {
     return true;
 }
 
+bool unavailable_and_faulted_rows_say_why() {
+    ModSettings settings;
+    CHECK(settings.inactiveReason(panel::setting::farRooms) == nullptr);
+    settings.unavailable = panel::capFarRooms | panel::capViewEffects;
+    CHECK(std::wcsstr(settings.inactiveReason(panel::setting::farRooms), L"game version") != nullptr);
+    CHECK(std::wcsstr(settings.inactiveReason(panel::setting::ambientOcclusion), L"game version") != nullptr);
+    CHECK(settings.inactiveReason(panel::setting::fingerPoses) == nullptr);
+    settings.faulted = panel::capViewEffects | panel::capFingers;
+    // A fault outranks a missing feature: restarting is the thing to do.
+    CHECK(std::wcsstr(settings.inactiveReason(panel::setting::depthOfField), L"Restart") != nullptr);
+    CHECK(std::wcsstr(settings.inactiveReason(panel::setting::fingerPosesOthers), L"Restart") != nullptr);
+    CHECK(settings.inactiveReason(panel::setting::fov) == nullptr);
+    // Runtime status, not a saved value: it never makes two settings differ.
+    CHECK(settings == ModSettings{});
+    for (int row = 0; row < count; ++row)
+        if (panel::rowCapability(row)) CHECK(panel::rowInfo(row).editable());
+    panel::SettingsDraft draft;
+    draft.begin(ModSettings{});
+    CHECK(draft.refreshStatus(settings));
+    CHECK(draft.value.faulted == settings.faulted && draft.value.unavailable == settings.unavailable);
+    CHECK(!draft.refreshStatus(settings));
+    return true;
+}
+
 bool every_row_has_valid_presentation_labels_and_tips() {
     const ModSettings defaults;
     for (int row = 0; row < count; ++row) {
@@ -255,6 +280,7 @@ int main() {
         {"F6 cycle row steps, saves and normalizes", f6_cycle_row_steps_saves_and_normalizes},
         {"hit reaction row is a percent slider", hit_reaction_row_is_a_percent_slider},
         {"normalize drops duplicate mod bindings", normalize_drops_duplicate_mod_bindings},
+        {"unavailable and faulted rows say why", unavailable_and_faulted_rows_say_why},
         {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });
 }

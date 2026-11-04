@@ -16,6 +16,27 @@ static bool settingsSavePending() {
     SettingsGuard guard;
     return settingsSavePendingLocked();
 }
+// Which optional features this session lacks (the game build withheld or changed their code) or switched off
+// after a fault, for the Settings rows that depend on them (panel::rowCapability). Flags the hooks already keep.
+static void rowCapabilities(unsigned& unavailable, unsigned& faulted) {
+    unavailable = faulted = 0;
+    if (!nodeMoveHooked.load() || !layout.optionalGroupAvailable("fingerBones")) unavailable |= panel::capFingers;
+    if (trackedBoneFault.load() || skinMergeFault.load()) faulted |= panel::capFingers;
+    if (!roomViewHooked.load()) unavailable |= panel::capFarRooms;
+    const unsigned effects = viewEffectsUnavailable.load(std::memory_order_relaxed);
+    if (effects & viewHookMissing) unavailable |= panel::capViewEffects;
+    if (effects & viewFaulted) faulted |= panel::capViewEffects;
+    if (!originalBodyDamage && !originalPhysicalImpact) unavailable |= panel::capWounds;
+    if (!bladeReady.load()) unavailable |= panel::capBlades;
+    if (bladeFault.load()) faulted |= panel::capBlades;
+    if (!layout.optionalGroupAvailable("kick")) unavailable |= panel::capKick | panel::capJump;
+    if (!layout.optionalGroupAvailable("jump")) unavailable |= panel::capJump;
+    if (motionKickFault.load()) faulted |= panel::capKick;
+    if (motionJumpFault.load()) faulted |= panel::capJump;
+    const int defense = manualDefenseAvailability.load(); // 0 not decided yet, 1 ready, 5 changed after its hooks
+    if (defense == 5) faulted |= panel::capManualDefense;
+    else if (defense > 1) unavailable |= panel::capManualDefense;
+}
 static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     panel::ModSettings s;
     s.fov = selectedFov.load();
@@ -101,6 +122,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.fpSwingSelection = fpSwingSelection.load();
     s.tpSwingSelection = tpSwingSelection.load();
     s.manualDefenseAvailable = manualDefenseReady.load();
+    rowCapabilities(s.unavailable, s.faulted);
     s.scriptRuntimeAvailable = true;
     s.crouchMode = crouchMode.load();
     s.nearClip = nearClip.load();

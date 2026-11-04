@@ -145,6 +145,30 @@ inline bool fixedSetting(int row) {
     }
 }
 
+// Features this game build or a fault can take away, for rows that would otherwise look live and do nothing.
+// ModSettings::unavailable and ::faulted carry them at runtime (never saved).
+enum : unsigned {
+    capFingers = 1u << 0, capFarRooms = 1u << 1, capViewEffects = 1u << 2, capWounds = 1u << 3,
+    capBlades = 1u << 4, capKick = 1u << 5, capJump = 1u << 6, capManualDefense = 1u << 7,
+};
+inline unsigned rowCapability(int row) {
+    switch (row) {
+    case setting::fingerPoses: case setting::fingerPosesOthers: return capFingers;
+    case setting::farRooms: return capFarRooms;
+    case setting::ambientOcclusion: case setting::depthOfField: case setting::screenSpaceReflections:
+    case setting::edgeSmoothing: case setting::helmetVisor: case setting::playerGhost:
+    case setting::conditionEffects: case setting::lightSmoothing: case setting::heldDetail:
+    case setting::armourDetail: case setting::objectDetail: case setting::levelDetail:
+        return capViewEffects;
+    case setting::woundMarks: return capWounds;
+    case setting::bladeDrag: case setting::stabSink: case setting::bladeGain: return capBlades;
+    case setting::kickKey: return capKick;
+    case setting::jumpKey: return capJump;
+    case setting::fpDefense: case setting::tpDefense: return capManualDefense;
+    default: return 0;
+    }
+}
+
 struct ModSettings;
 inline bool stepSchema(ModSettings& settings,int row,int delta);
 
@@ -194,6 +218,7 @@ struct ModSettings {
     int fpDefense = 0, tpDefense = 0;               // automatic default, manual holds RMB
     int fpSwingSelection = 1, tpSwingSelection = 1; // mouse direction, or native facing
     bool manualDefenseAvailable = false;            // runtime capability, not a saved row
+    unsigned unavailable = 0, faulted = 0; // runtime: cap* features missing on this game build, or off after a fault
     bool scriptRuntimeAvailable = false;            // runtime capability: ScriptRuntime.dll is loaded
     bool idleCrosshairAlways = false; // normal exploration crosshair; the aim marker is separate
     int spineFollow = 60; // how far the spine bends with the look (forward looking down, back looking up)
@@ -657,6 +682,10 @@ struct ModSettings {
     // Dependency hints are shown beside disabled controls; settings for the other
     // perspective remain configurable so players can prepare either control set.
     const wchar_t* inactiveReason(int row) const {
+        if (const unsigned cap = rowCapability(row)) {
+            if (faulted & cap) return L"Turned off after an error. Restart the game to retry.";
+            if (unavailable & cap) return L"Not available on this game version.";
+        }
         if ((row == setting::tpDeadzoneX || row == setting::tpDeadzoneY) && !tpCombatAimFree)
             return L"Choose Aim oval above to use this setting.";
         if ((row == setting::headRoll || row == setting::headPitch || row == setting::headYaw ||
