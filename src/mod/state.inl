@@ -488,7 +488,7 @@ struct WindowInstallation {
 };
 static SRWLOCK windowInstallationLock = SRWLOCK_INIT;
 static WindowInstallation windowInstallation;
-static HWND hookedWindow;
+static std::atomic<HWND> hookedWindow{nullptr};
 static float stockPose[12]{}, stockFov = 30;
 static std::atomic<int> selectedFov{75};
 // UI actions and FOV keys publish under one settings lock. Disk I/O never owns it. This lock
@@ -616,10 +616,22 @@ static std::wstring userSettingsDir(const std::wstring& profile, const std::wstr
     return dir;
 }
 static std::atomic<int> persistedFov{75}; // status reads without taking the settings lock
+static std::atomic<int> pendingModsByModSave{-1}; // -1 clean, 0/1 queued on GUI thread, written by worker
 static bool settingsSavePending(); // mod/settings.inl; coherent status for every saved row
 static void persistSettingsRows(unsigned budget); // mod/settings.inl; session worker only
 static void flushSettings(); // same owner, one full pass after native Apply retires
-static void saveFov() { persistSettingsRows(4); }
+static void flushPendingModsByMod() {
+    const int wanted = pendingModsByModSave.exchange(-1, std::memory_order_acq_rel);
+    if (wanted < 0 || !settingsPath[0]) return;
+    if (!WritePrivateProfileStringW(L"Settings", L"ModSettingsByMod", wanted ? L"1" : L"0", settingsPath)) {
+        int expected = -1;
+        pendingModsByModSave.compare_exchange_strong(expected, wanted, std::memory_order_acq_rel);
+    }
+}
+static void saveFov() {
+    persistSettingsRows(4);
+    flushPendingModsByMod();
+}
 static unsigned inputClock = ~0u;
 static wchar_t statusPath[MAX_PATH]{}, statusTempPath[MAX_PATH]{};
 static FILE* openStatus() {
@@ -632,7 +644,7 @@ static void publishStatus(FILE* f) {
     const bool ok = ferror(f) == 0;
     const bool closed = fclose(f) == 0;
     if (ok && closed)
-        MoveFileExW(statusTempPath, statusPath, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        MoveFileExW(statusTempPath, statusPath, MOVEFILE_REPLACE_EXISTING);
 }
 // Fault notice: the window title is invisible in fullscreen. A topmost,
 // click-through, non-activating banner over the game window states the fault.
@@ -713,11 +725,13 @@ static bool showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000,
         noticeVisible = false;
     }
     // An early activation fault can precede the first window enumeration.
-    if (!hookedWindow || !IsWindow(hookedWindow)) {
-        hookedWindow = nullptr;
-        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&hookedWindow));
+    HWND window = hookedWindow.load(std::memory_order_acquire);
+    if (!window || !IsWindow(window)) {
+        window = nullptr;
+        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&window));
+        hookedWindow.store(window, std::memory_order_release);
     }
-    if (!hookedWindow) return false;
+    if (!window) return false;
     static ATOM cls = 0;
     if (!cls) {
         WNDCLASSW wc{};
@@ -729,7 +743,7 @@ static bool showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000,
         if (!cls) return false;
     }
     RECT g;
-    if (!GetWindowRect(hookedWindow, &g)) return false;
+    if (!GetWindowRect(window, &g)) return false;
     const int gw = g.right - g.left, gh = g.bottom - g.top;
     if (gw < 200 || gh < 100) return false;
     const int width = gw * 4 / 5 < 1200 ? gw * 4 / 5 : 1200;
@@ -760,9 +774,10 @@ static bool pumpNotice() {
     const ULONGLONG now = GetTickCount64();
     if (noticeVisible) noticeShownMs += now - noticeLastTick;
     noticeLastTick = now;
-    const bool front = hookedWindow && GetForegroundWindow() == hookedWindow && !IsIconic(hookedWindow);
+    const HWND window = hookedWindow.load(std::memory_order_acquire);
+    const bool front = window && GetForegroundWindow() == window && !IsIconic(window);
     if (noticeShownMs >= noticeVisibleMs || now - noticeStarted >= noticeLifetimeMs ||
-        !IsWindow(hookedWindow)) {
+        !IsWindow(window)) {
         DestroyWindow(noticeWindow);
         noticeWindow = nullptr;
         noticeVisible = false;
@@ -815,9 +830,9 @@ static void reportFault(const char* reason, const char* hooks = "unknown",
     }
     // Immutable text remains valid even if the receiving window times out.
     const wchar_t* message = fp::faultMessage(verified, removed, strcmp(restoration, "not_required") == 0);
-    if (hookedWindow) {
+    if (const HWND window = hookedWindow.load(std::memory_order_acquire)) {
         DWORD_PTR ignored = 0;
-        SendMessageTimeoutW(hookedWindow, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(message), SMTO_ABORTIFHUNG | SMTO_BLOCK, 200,
+        SendMessageTimeoutW(window, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(message), SMTO_ABORTIFHUNG | SMTO_BLOCK, 200,
                             &ignored);
     }
     showNotice(notice ? notice : message + fp::faultTitlePrefix);

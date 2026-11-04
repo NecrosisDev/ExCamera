@@ -275,7 +275,7 @@ inline int blockersFromText(const wchar_t* t) {
     auto is = [&](const wchar_t* w) {
         const wchar_t* p = t;
         for (; *w; ++w, ++p)
-            if ((*p | 0x20) != *w) return false;
+            if (!*p || (*p | 0x20) != *w) return false;
         while (*p == L' ') ++p;
         return *p == 0;
     };

@@ -202,7 +202,7 @@ void NativeSettingsIntegration::dispatch(NativeSettingsIntegration* self, Native
     if constexpr (!Controls && Index < 9) {
         if constexpr (Index == 0 || Index == 1) {
             self->originals[Index](e);
-            self->page=Index;
+            self->setPage(Index);
             self->captureRow=none;
             self->dirty=true;
         } else if constexpr (Index == 7) {
@@ -214,7 +214,7 @@ void NativeSettingsIntegration::dispatch(NativeSettingsIntegration* self, Native
             self->originals[Index](e);
             // The native close is normally deferred, but never read a retired owner.
             if (self->contains(owner)!=1) { self->fail(); return; }
-            if (self->accepted(owner)) self->applyQueued=true;
+            if (self->accepted(owner)) self->setApplyQueued(true);
             else self->closing=false; // Native validation refusal leaves the draft editable.
         } else if constexpr (Index == 8) {
             self->closing=true;
@@ -237,12 +237,13 @@ void NativeSettingsIntegration::dispatch(NativeSettingsIntegration* self, Native
             self->dirty=true;
         }
     } else if (action.row >= pageEvent && action.row < pageEvent+self->tabCount) {
-        self->page=action.row-pageEvent;
+        self->setPage(action.row-pageEvent);
         self->captureRow=none;
         self->dirty=true;
     } else if (action.capture) {
-        if (action.row==setting::rotateHeldKey || action.row==setting::leanKey || action.row==setting::kickKey ||
-            action.row==setting::jumpKey ||
+        if (action.row==setting::rotateHeldKey || action.row==setting::leanKey ||
+            action.row==setting::leanLeftKey || action.row==setting::leanRightKey ||
+            action.row==setting::kickKey || action.row==setting::jumpKey ||
             (action.row==setting::trackingKey && self->transaction.value.tracking)) {
             self->captureRow=action.row;
             self->dirty=true;
@@ -380,18 +381,24 @@ void NativeSettingsIntegration::row(std::vector<NativeElement>& out,int id,int y
     }
 }
 
-uintptr_t NativeSettingsIntegration::handle() const { return root; }
+uintptr_t NativeSettingsIntegration::handle() const { return publishedRoot.load(std::memory_order_acquire); }
 
-bool NativeSettingsIntegration::retired() const { return root == 0 && !applyQueued; }
+bool NativeSettingsIntegration::retired() const {
+    return publishedRoot.load(std::memory_order_acquire) == 0 && !publishedApplyQueued.load(std::memory_order_acquire);
+}
 
-bool NativeSettingsIntegration::failed() const { return fault; }
+bool NativeSettingsIntegration::failed() const { return publishedFailed.load(std::memory_order_acquire); }
 
 __declspec(noinline) void NativeSettingsIntegration::fail() {
     if (!fault) faultAt = reinterpret_cast<uintptr_t>(_ReturnAddress()); // the first refusal, for the status line
     fault = true;
+    publishedFailed.store(true, std::memory_order_release);
 }
 
-int NativeSettingsIntegration::selectedPage() const { return page; }
+int NativeSettingsIntegration::selectedPage() const {
+    const int pending = pendingDevPage.load(std::memory_order_acquire);
+    return pending != none ? pending : publishedPage.load(std::memory_order_acquire);
+}
 bool NativeSettingsIntegration::widenedFrame() const { return widened; }
 const std::array<NativeSettingsIntegration::Frame, 4>& NativeSettingsIntegration::seenFrames() const { return frames; }
 int NativeSettingsIntegration::seenFrameScale() const { return frameScale; }
@@ -412,21 +419,40 @@ bool NativeSettingsIntegration::completeCapture(int key) {
         dirty=true;
         return true;
     }
-    const auto taken = [&](int row) {
+    const auto bindingOf = [&](int row) {
         const ModSettings& s = transaction.value;
-        return row != id && key == (row == setting::rotateHeldKey ? s.rotateHeldKey :
-                                    row == setting::kickKey ? s.kickKey :
-                                    row == setting::jumpKey ? s.jumpKey : s.trackingKey);
+        switch (row) {
+        case setting::rotateHeldKey: return s.rotateHeldKey;
+        case setting::kickKey: return s.kickKey;
+        case setting::jumpKey: return s.jumpKey;
+        case setting::trackingKey: return s.trackingKey;
+        case setting::leanKey: return s.leanKey;
+        case setting::leanLeftKey: return s.leanLeftKey;
+        case setting::leanRightKey: return s.leanRightKey;
+        default: return 0;
+        }
     };
-    if (key > 0 && (id == setting::rotateHeldKey || id == setting::kickKey || id == setting::jumpKey ||
-                    id == setting::trackingKey) &&
+    const auto taken = [&](int row) { return row != id && key == bindingOf(row); };
+    const bool ownCapture = id == setting::rotateHeldKey || id == setting::kickKey || id == setting::jumpKey ||
+                            id == setting::trackingKey || id == setting::leanKey || id == setting::leanLeftKey ||
+                            id == setting::leanRightKey;
+    if (key > 0 && ownCapture &&
         (taken(setting::rotateHeldKey) || taken(setting::kickKey) || taken(setting::jumpKey) ||
-         taken(setting::trackingKey))) {
+         taken(setting::trackingKey) || taken(setting::leanLeftKey) || taken(setting::leanRightKey))) {
         captureRow=id; // already one of these actions: keep waiting for another key, Escape cancels
         dirty=true;
         return true;
     }
-    const bool captured = transaction.capture(id,key);
+    bool captured = transaction.capture(id,key);
+    if (!captured &&
+        (id == setting::leanKey || id == setting::leanLeftKey || id == setting::leanRightKey) &&
+        validSettingBinding(id, key)) {
+        if (const auto member = rowInfo(id).value) {
+            transaction.value.*member = key;
+            transaction.value.normalize();
+            captured = true;
+        }
+    }
     dirty=true;
     return captured;
 }
@@ -450,9 +476,22 @@ void NativeSettingsIntegration::serviceTick(bool stop, bool want) {
     if (fault || callbackActive()) return;
     if (!thread) thread = GetCurrentThreadId();
     if (thread != GetCurrentThreadId()) { fail(); return; }
+    if (stop) {
+        pendingDevPage.store(none, std::memory_order_release);
+        devPageOverride = false;
+    } else {
+        int req = pendingDevPage.load(std::memory_order_acquire);
+        if (req != none) {
+            setPage(req);
+            pendingDevPage.compare_exchange_strong(req, none, std::memory_order_acq_rel);
+            captureRow = none;
+            dirty = true;
+            devPageOverride = !root;
+        }
+    }
     // Native Apply can close/delete its form before the next GUI tick. Its callback
     // records acceptance while native deferred-close still owns the record.
-    if (applyQueued) { applyQueued = false; apply(acceptedInitial, acceptedValue); hostedEvent(-1,1); }
+    if (applyQueued) { setApplyQueued(false); apply(acceptedInitial, acceptedValue); hostedEvent(-1,1); }
     if (root) {
         const int member = contains(root);
         if (member < 0) { fail(); return; }
@@ -486,7 +525,7 @@ void NativeSettingsIntegration::serviceTick(bool stop, bool want) {
         if (!member) return;
         const auto t = table(candidate), basis = rootBasis();
         if (!nativeRoot(t, basis) || t.data[0].owner != candidate) return;
-        root = candidate;
+        setRoot(candidate);
         children = panes(root);
         if (!children.graphics || !children.controls) { fail(); return; }
         // Runtime tabs are snapshotted per opened form: up to two pages after VR.
@@ -516,7 +555,8 @@ void NativeSettingsIntegration::serviceTick(bool stop, bool want) {
         transaction.begin(settings());
         closing = false;
         for (int i = 0; i < 9; ++i) originals[size_t(i)] = t.data[i].action;
-        page = (t.data[1].flags & 0x20) ? 1 : 0;
+        if (!devPageOverride) setPage((t.data[1].flags & 0x20) ? 1 : 0);
+        devPageOverride = false;
         callbackOwner = this;
         dirty = true;
     }
@@ -915,9 +955,6 @@ void NativeSettingsIntegration::hostedRows(std::vector<NativeElement>& out, int&
     // runtime's are indices into rows.
     const bool ownShown = shown < own;
     std::vector<std::pair<int, int>> right;
-    auto isSwitch = [&](int v) {
-        return ownShown ? rowInfo(v).checkbox() : rows[size_t(v)].kind == 1;
-    };
     if (ownShown) {
         // Every section of the chosen category, each under its subcategory title (first < sectionTitle).
         for (int k = 0; k < ownSectionCount(); ++k) {
@@ -1094,8 +1131,8 @@ void NativeSettingsIntegration::restore() {
         auto stock = table(root);
         originals[0](&stock.data[0]);
     }
-    root = 0; controlsOwned = false; paneInset = false; scrollOwned=false; baseSaved=false; captureRow=none;
-    deferUntilMouseRelease=false;
+    setRoot(0); controlsOwned = false; paneInset = false; scrollOwned=false; baseSaved=false; captureRow=none;
+    deferUntilMouseRelease=false; devPageOverride=false;
     callbackOwner = nullptr;
     hostedEvent(-1,4);
     tabCount=ownTabs;
@@ -1118,9 +1155,9 @@ bool NativeSettingsIntegration::recoverFault() {
 
 void NativeSettingsIntegration::retire() {
     if (callbackActive()) return;
-    root=0; children={}; paneInset=false; widened=false; captureRow=none; baseSaved=false;
+    setRoot(0); children={}; paneInset=false; widened=false; captureRow=none; baseSaved=false;
     controlsOwned=false; scrollOwned=false; dirty=false;
-    deferUntilMouseRelease=false;
+    deferUntilMouseRelease=false; devPageOverride=false;
     callbackOwner = nullptr;
     hostedEvent(-1,4);
     tabCount=ownTabs;

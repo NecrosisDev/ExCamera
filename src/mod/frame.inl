@@ -69,11 +69,11 @@ static bool ownedNativeSwap(HDC dc) {
 // cameraLock is held by swapProfileBody, which releases it even when a fault unwinds past.
 static void swapLocked(fp::CueSide& cueSideNow, LONG& cueX, LONG& cueY, float& cueFillNow, float& cueAlphaNow) {
     InterlockedExchange(&swapThread, LONG(GetCurrentThreadId()));
-    if (attackCue && InterlockedCompareExchange(&active, 0, 0) &&
+    if (attackCue.load(std::memory_order_relaxed) && InterlockedCompareExchange(&active, 0, 0) &&
         !InterlockedCompareExchange(&stopping, 0, 0) && InterlockedCompareExchange(&inputEnabled, 0, 0) &&
         !cursorFreeNow()) {
         AcquireSRWLockShared(&reticleLock);
-        const bool drawn = reticleFrame == InterlockedCompareExchange(&swapCalls, 0, 0);
+        const bool drawn = reticleFrame == *reinterpret_cast<const volatile LONG*>(&swapCalls);
         cueX = reticleX;
         cueY = reticleY;
         ReleaseSRWLockShared(&reticleLock);
@@ -115,8 +115,8 @@ static void swapLocked(fp::CueSide& cueSideNow, LONG& cueX, LONG& cueY, float& c
 static void devFrame();
 
 static BOOL WINAPI swapProfileBody(HDC dc) {
-    if (lightTrimCount && GetCurrentThreadId() == DWORD(InterlockedCompareExchange(&sectorThread, 0, 0))) {
-        __try { restoreLightTrims(); } __except (countFaultAndHandle(&swapFaults)) { lightTrimCount = 0; }
+    if (lightTrimPending.load(std::memory_order_relaxed)) {
+        __try { restoreLightTrims(); } __except (countFaultAndHandle(&swapFaults)) {}
     }
     if (!ownedNativeSwap(dc)) return fp::profile::invoke<fp::profile::Hook::swapNative>(originalSwap, dc);
     devFrame();
@@ -146,11 +146,28 @@ static BOOL WINAPI swap(HDC dc) {
 
 static void f8MouseStep() {}
 
+static SRWLOCK replaceLock = SRWLOCK_INIT;
+
 static bool replace(uintptr_t address, void* expected, void* value) {
-    DWORD old, tmp;
-    if (!VirtualProtect(reinterpret_cast<void*>(address), 8, PAGE_READWRITE, &old)) return false;
-    bool ok = InterlockedCompareExchangePointer(reinterpret_cast<void* volatile*>(address), value, expected) == expected;
+    AcquireSRWLockExclusive(&replaceLock);
+    MEMORY_BASIC_INFORMATION mbi{};
+    constexpr DWORD execMask = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    const DWORD writable =
+        VirtualQuery(reinterpret_cast<const void*>(address), &mbi, sizeof mbi) == sizeof mbi &&
+                (mbi.Protect & execMask)
+            ? PAGE_EXECUTE_READWRITE
+            : PAGE_READWRITE;
+    DWORD old = 0, tmp = 0;
+    if (!VirtualProtect(reinterpret_cast<void*>(address), 8, writable, &old)) {
+        ReleaseSRWLockExclusive(&replaceLock);
+        return false;
+    }
+    if ((old & execMask) && writable != PAGE_EXECUTE_READWRITE)
+        VirtualProtect(reinterpret_cast<void*>(address), 8, PAGE_EXECUTE_READWRITE, &tmp);
+    const bool ok =
+        InterlockedCompareExchangePointer(reinterpret_cast<void* volatile*>(address), value, expected) == expected;
     if (!VirtualProtect(reinterpret_cast<void*>(address), 8, old, &tmp)) InterlockedExchange(&protectionFailure, 1);
+    ReleaseSRWLockExclusive(&replaceLock);
     return ok;
 }
 
@@ -196,17 +213,47 @@ static MH_STATUS disableNativeHooks() {
     return status;
 }
 
+static bool hooksDrained() {
+    return InterlockedCompareExchange(&renderScopesInFlight, 0, 0) == 0 && stereoDrained();
+}
+
+static bool awaitHooksDrained(DWORD timeout = 500) {
+    const ULONGLONG start = GetTickCount64();
+    while (!hooksDrained()) {
+        if (GetTickCount64() - start >= timeout) return false;
+        hookRecoveryWait(5);
+    }
+    return true;
+}
+
+static void uninitializeNativeHooks() {
+    nativeSettingsBeforeStop();
+    disableNativeHooks();
+    awaitNativeHookRecovery();
+    const bool drained =
+        awaitNativeSettings(500) && awaitPoseBuilders() && awaitHooksDrained() && awaitCueRetirement();
+    if (drained && !nativeHookRecoveryPending()) {
+        MH_Uninitialize();
+        awaitNativeHookRecovery();
+    }
+}
+
 static bool rollbackDispatch(bool installedNav, bool installedPoint, bool installedBehavior) {
     bool ok = true;
     if (installedNav) ok = replace(gameAt(fp::sig::navSlot), reinterpret_cast<void*>(nav), reinterpret_cast<void*>(originalNav)) && ok;
     if (installedPoint) ok = replace(gameAt(fp::sig::pointSlot), reinterpret_cast<void*>(point), reinterpret_cast<void*>(originalPoint)) && ok;
     if (installedBehavior)
         ok = replace(gameAt(fp::sig::behaviorSlot), reinterpret_cast<void*>(behavior), reinterpret_cast<void*>(originalBehavior)) && ok;
+    nativeSettingsBeforeStop();
     if (!awaitCueRetirement()) return false;
     const bool unhooked = disableNativeHooks() == MH_OK;
+    awaitNativeHookRecovery();
+    const bool settingsReturned = awaitNativeSettings(500);
     const bool posesReturned = awaitPoseBuilders();
+    const bool scopesReturned = awaitHooksDrained();
     const bool cuesReturned = awaitCueRetirement();
-    return unhooked && posesReturned && cuesReturned && ok && !InterlockedCompareExchange(&protectionFailure, 0, 0);
+    return unhooked && settingsReturned && posesReturned && scopesReturned && cuesReturned && ok &&
+           !InterlockedCompareExchange(&protectionFailure, 0, 0);
 }
 
 static void normalize(float* v) {
@@ -241,6 +288,17 @@ static bool tpAncestry(uintptr_t node, uintptr_t world, uintptr_t* ancestors, un
     return count != 0;
 }
 
+struct TpCharacterCache {
+    LONG frame = 0;
+    uintptr_t world = 0, roster = 0, entries = 0, root = 0, playerMesh = 0;
+    int characters = -1;
+    bool valid = false, playerListed = false, hasAncestors = false;
+    unsigned extraCount = 0;
+    uintptr_t snapshot[256]{};
+    uintptr_t meshes[256]{};
+    uintptr_t extraAncestors[256]{};
+};
+
 static int tpHideCandidateProfileBody(uintptr_t hitNode, uintptr_t root, bool hideObjects, uintptr_t& target) {
     target = 0;
     const uintptr_t world = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::world));
@@ -265,33 +323,103 @@ static int tpHideCandidateProfileBody(uintptr_t hitNode, uintptr_t root, bool hi
         if ((flags & 0x7000) == 0x4000) loose = true;
         if ((flags & 0x2000) && (flags & 0xfff) != 0x11) target = ancestors[i];
     }
+    const bool needPropAncestry = target != 0 && hideObjects;
+    if (!loose && !needPropAncestry) return 0;
+
+    const LONG frame = *reinterpret_cast<const volatile LONG*>(&swapCalls);
+    thread_local TpCharacterCache cache;
+    if (frame > 0 && characters <= 256) {
+        const size_t listBytes = size_t(characters) * sizeof(uintptr_t);
+        const bool sameList =
+            cache.frame == frame && cache.world == world && cache.roster == roster && cache.entries == entries &&
+            cache.characters == characters && cache.root == root && cache.playerMesh == playerMesh &&
+            (!listBytes || std::memcmp(cache.snapshot, reinterpret_cast<const void*>(entries), listBytes) == 0);
+        if (!sameList || (needPropAncestry && !cache.hasAncestors)) {
+            cache.frame = frame;
+            cache.world = world;
+            cache.roster = roster;
+            cache.entries = entries;
+            cache.root = root;
+            cache.playerMesh = playerMesh;
+            cache.characters = characters;
+            cache.valid = true;
+            cache.playerListed = false;
+            cache.hasAncestors = needPropAncestry;
+            cache.extraCount = 0;
+            if (listBytes) std::memcpy(cache.snapshot, reinterpret_cast<const void*>(entries), listBytes);
+            bool overflow = false;
+            for (int i = 0; i < characters; ++i) {
+                const uintptr_t character = cache.snapshot[i];
+                if (!readable(character, field::character::sceneNode + sizeof(uintptr_t))) {
+                    cache.valid = false;
+                    break;
+                }
+                const uintptr_t mesh = *reinterpret_cast<const uintptr_t*>(character + field::character::sceneNode);
+                if (!mesh || mesh == world || !readable(mesh, field::sceneNode::parent + sizeof(uintptr_t))) {
+                    cache.valid = false;
+                    break;
+                }
+                cache.meshes[i] = mesh;
+                if (character == root && mesh == playerMesh) cache.playerListed = true;
+                if (needPropAncestry) {
+                    const uintptr_t meshParent = *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::parent);
+                    if (meshParent != world) {
+                        uintptr_t characterAncestors[64];
+                        unsigned characterCount = 0;
+                        if (!tpAncestry(mesh, world, characterAncestors, characterCount)) {
+                            cache.valid = false;
+                            break;
+                        }
+                        for (unsigned j = 1; j < characterCount; ++j) {
+                            if (cache.extraCount < std::size(cache.extraAncestors))
+                                cache.extraAncestors[cache.extraCount++] = characterAncestors[j];
+                            else
+                                overflow = true;
+                        }
+                    }
+                }
+            }
+            if (overflow) cache.frame = 0;
+        }
+        if (cache.frame == frame) {
+            if (!cache.valid || !cache.playerListed) return 0;
+            for (int i = 0; i < characters; ++i) {
+                const uintptr_t mesh = cache.meshes[i];
+                for (unsigned j = 0; j < count; ++j)
+                    if (ancestors[j] == mesh) return 0;
+            }
+            if (needPropAncestry) {
+                for (unsigned i = 0; i < cache.extraCount; ++i)
+                    if (cache.extraAncestors[i] == target) return 0;
+            }
+            if (loose) return 2;
+            return needPropAncestry ? 1 : 0;
+        }
+    }
+
     bool playerListed = false;
     for (int i = 0; i < characters; ++i) {
         const uintptr_t character = *reinterpret_cast<const uintptr_t*>(entries + size_t(i) * sizeof(uintptr_t));
         if (!readable(character, field::character::sceneNode + sizeof(uintptr_t))) return 0;
         const uintptr_t mesh = *reinterpret_cast<const uintptr_t*>(character + field::character::sceneNode);
-        if (!readable(mesh, field::sceneNode::parent + sizeof(uintptr_t))) return 0;
+        if (!mesh || mesh == world || !readable(mesh, field::sceneNode::parent + sizeof(uintptr_t))) return 0;
         if (character == root && mesh == playerMesh) playerListed = true;
         for (unsigned j = 0; j < count; ++j)
             if (ancestors[j] == mesh) return 0;
-        if (target && hideObjects) {
-            uintptr_t characterAncestors[64];
-            unsigned characterCount = 0;
-            if (!tpAncestry(mesh, world, characterAncestors, characterCount)) return 0;
-            for (unsigned j = 0; j < characterCount; ++j)
-                if (characterAncestors[j] == target) return 0;
+        if (needPropAncestry) {
+            const uintptr_t meshParent = *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::parent);
+            if (meshParent != world) {
+                uintptr_t characterAncestors[64];
+                unsigned characterCount = 0;
+                if (!tpAncestry(mesh, world, characterAncestors, characterCount)) return 0;
+                for (unsigned j = 1; j < characterCount; ++j)
+                    if (characterAncestors[j] == target) return 0;
+            }
         }
     }
     if (!playerListed) return 0;
-    if (target && hideObjects) {
-        uintptr_t playerAncestors[64];
-        unsigned playerCount = 0;
-        if (!tpAncestry(playerMesh, world, playerAncestors, playerCount)) return 0;
-        for (unsigned i = 0; i < playerCount; ++i)
-            if (playerAncestors[i] == target) return 0;
-    }
     if (loose) return 2;
-    return target && hideObjects ? 1 : 0;
+    return needPropAncestry ? 1 : 0;
 }
 
 static int tpHideCandidate(uintptr_t hitNode, uintptr_t root, bool hideObjects, uintptr_t& target) {
@@ -459,9 +587,10 @@ static void thirdPersonAimProfileBody(uintptr_t camera, const float* pose, const
         ReleaseSRWLockExclusive(&aimLock);
     };
     const uintptr_t viewport = pickViewportForCamera(camera);
+    const HWND window = hookedWindow.load(std::memory_order_acquire);
     RECT client{};
-    if (!viewport || !originalPickRay || !request.valid || request.sector != scene || !hookedWindow ||
-        !GetClientRect(hookedWindow, &client) || client.right != request.width ||
+    if (!viewport || !originalPickRay || !request.valid || request.sector != scene || !window ||
+        !GetClientRect(window, &client) || client.right != request.width ||
         client.bottom != request.height || *reinterpret_cast<const int*>(viewport + field::viewport::width) != request.width ||
         *reinterpret_cast<const int*>(viewport + field::viewport::height) != request.height ||
         *reinterpret_cast<const float*>(camera + field::camera::fov) != request.fov)
@@ -512,7 +641,7 @@ static void thirdPersonAimProfileBody(uintptr_t camera, const float* pose, const
     ok = ok && pickViewportForCamera(camera) == viewport &&
          *reinterpret_cast<const int*>(viewport + field::viewport::width) == request.width &&
          *reinterpret_cast<const int*>(viewport + field::viewport::height) == request.height &&
-         GetClientRect(hookedWindow, &after) && after.right == request.width &&
+         GetClientRect(window, &after) && after.right == request.width &&
          after.bottom == request.height && *reinterpret_cast<const float*>(camera + field::camera::fov) == request.fov;
     AcquireSRWLockExclusive(&aimLock);
     if (ok && tpAimRequestCurrent(request)) {

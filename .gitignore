@@ -1,4 +1,5 @@
 /build/
+/build/_cpp_tests/
 *.obj
 *.exe
 *.dll
@@ -20,10 +21,3 @@ Thumbs.db
 /game/
 /reference/
 /.tools/
-
-# Kept on disk, not published: development notes, tests and tools that do not build the mod
-/DECISIONS.md
-/PROFILING-README.txt
-/docs/HEADWEAR-RENDER-REVIEW.md
-/tools/profile.py
-/COMMIT_MSG.txt

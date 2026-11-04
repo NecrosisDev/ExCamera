@@ -2,19 +2,26 @@
 
 Run: python tools/check_generated.py
 Only the Python standard library is required. This detects source/header drift;
-it does not replace native executable validation with the two generators/checkers.
+it does not replace native executable validation with the generators/checkers.
 """
 import json
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
 import native_contracts as contracts
 import signatures
+import xr_contracts
 
 
 def check():
     spec = json.loads(contracts.SPEC.read_text(encoding='utf-8'))
     targets = json.loads(signatures.TARGETS.read_text(encoding='utf-8'))
+    xr_spec = json.loads(xr_contracts.SPEC.read_text(encoding='utf-8'))
     offsets = contracts.field_offsets((contracts.ROOT / 'src/game_structs.h').read_text(encoding='utf-8'))
     contracts.validate_spec(spec, offsets)
     entries = signatures.reviewed_entries(targets)
@@ -42,15 +49,34 @@ def check():
         instruction = contracts.number(field['instruction']) - contracts.number(owners[field['owner']]['rva'])
         if not witness['window_offset'] <= instruction < witness['window_offset'] + len(witness['pattern'].split()):
             raise ValueError('Field instruction leaves runtime witness: ' + field['name'])
-    expected = signatures.generated_header(entries, [(n, t['holds']) for n, t in targets['slots'].items()],
-                                            SimpleNamespace(base=int(targets['source_image_base'], 16)),
-                                            signatures.optional_groups(targets), targets['target_order'])
+    expected = signatures.generated_header(
+        entries,
+        [(n, t['holds']) for n, t in targets['slots'].items()],
+        SimpleNamespace(base=int(targets['source_image_base'], 16)),
+        signatures.optional_groups(targets),
+        targets['target_order'],
+    )
     if signatures.HEADER.read_text(encoding='utf-8') != expected:
         raise ValueError('Generated signature header is stale; review targets.json and regenerate')
     if contracts.HEADER.read_text(encoding='utf-8') != contracts.generated_header(spec):
         raise ValueError('Generated native-contract header is stale; review native_contracts.json and regenerate')
-    print('%d targets / %d signatures; %d owners / %d runtime witnesses; %d field declarations: consistent' % (
-        len(targets['target_order']), len(entries), len(owners), len(witnesses), len(offsets)))
+    xr_stats = xr_contracts.validate_offline(
+        xr_spec,
+        xr_contracts.HEADER.read_text(encoding='utf-8'),
+        expected_source_sha256=spec['source_sha256'],
+    )
+    print(
+        '%d targets / %d signatures; %d owners / %d runtime witnesses; %d field declarations; '
+        '%d XR contracts (%d bytes): consistent' % (
+            len(targets['target_order']),
+            len(entries),
+            len(owners),
+            len(witnesses),
+            len(offsets),
+            xr_stats['owners'],
+            xr_stats['bytes'],
+        )
+    )
 
 
 if __name__ == '__main__':

@@ -67,14 +67,54 @@ inline bool mapPeFile(const uint8_t* file, size_t fileSize, std::vector<uint8_t>
     return true;
 }
 
-struct Pattern {
-    std::vector<uint8_t> bytes, mask; // mask 1: must match
-    size_t anchor = 0;                // first fixed byte, searched with memchr
+struct PatternBytes {
+    static constexpr size_t capacity = 512;
+    uint8_t data_[capacity]{};
+    uint16_t size_ = 0;
+    void clear() noexcept { size_ = 0; }
+    bool push_back(uint8_t v) noexcept {
+        if (size_ >= capacity) return false;
+        data_[size_++] = v;
+        return true;
+    }
+    size_t size() const noexcept { return size_; }
+    bool empty() const noexcept { return size_ == 0; }
+    const uint8_t* data() const noexcept { return data_; }
+    const uint8_t* begin() const noexcept { return data_; }
+    const uint8_t* end() const noexcept { return data_ + size_; }
+    uint8_t operator[](size_t i) const noexcept { return data_[i]; }
+    uint8_t& operator[](size_t i) noexcept { return data_[i]; }
 };
+
+struct Pattern {
+    PatternBytes bytes, mask; // mask 0xFF (non-zero): must match
+    size_t anchor = 0;        // rarest/preferred fixed byte, searched with memchr
+};
+
+inline bool commonSignatureAnchorByte(uint8_t b) noexcept {
+    switch (b) {
+    case 0x00:
+    case 0xFF:
+    case 0x48:
+    case 0x89:
+    case 0x8B:
+    case 0x53:
+    case 0x55:
+    case 0x56:
+    case 0x57:
+    case 0x41:
+    case 0xCC:
+        return true;
+    default:
+        return false;
+    }
+}
 
 // "48 8B ?? 05": two hex digits per byte, ?? for any byte. False on anything else.
 inline bool parsePattern(const char* text, Pattern& out) {
-    out = Pattern{};
+    out.bytes.clear();
+    out.mask.clear();
+    out.anchor = 0;
     auto hex = [](char c) {
         return c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
     };
@@ -84,32 +124,52 @@ inline bool parsePattern(const char* text, Pattern& out) {
             continue;
         }
         if (p[0] == '?' && p[1] == '?') {
-            out.bytes.push_back(0);
-            out.mask.push_back(0);
+            if (!out.bytes.push_back(0) || !out.mask.push_back(0)) return false;
         } else if (hex(p[0]) >= 0 && hex(p[1]) >= 0) {
-            out.bytes.push_back(uint8_t(hex(p[0]) * 16 + hex(p[1])));
-            out.mask.push_back(1);
+            if (!out.bytes.push_back(uint8_t(hex(p[0]) * 16 + hex(p[1]))) || !out.mask.push_back(0xFF))
+                return false;
         } else
             return false;
         p += 2;
     }
-    while (out.anchor < out.mask.size() && !out.mask[out.anchor]) ++out.anchor;
-    return out.anchor < out.mask.size();
+    const size_t n = out.mask.size();
+    size_t firstFixed = n, preferred = n;
+    for (size_t i = 0; i < n; ++i) {
+        if (!out.mask[i]) continue;
+        if (firstFixed == n) firstFixed = i;
+        if (!commonSignatureAnchorByte(out.bytes[i])) {
+            preferred = i;
+            break;
+        }
+    }
+    if (firstFixed == n) return false;
+    out.anchor = preferred < n ? preferred : firstFixed;
+    return true;
 }
 
 // Matches of the pattern in [begin, end) of the view, as RVAs; stops counting at `limit`.
 inline unsigned findPattern(const ImageView& v, const Pattern& p, uint32_t begin, uint32_t end,
                             uint32_t* first, unsigned limit = 2) {
-    if (begin > end || end > v.size || p.bytes.size() > end - begin) return 0;
+    const size_t patSize = p.bytes.size();
+    const size_t anchor = p.anchor;
+    if (begin > end || end > v.size || patSize == 0 || patSize > end - begin || anchor >= patSize) return 0;
     unsigned found = 0;
-    const uint8_t* const lo = v.data + begin + p.anchor;
-    const uint8_t* const hi = v.data + end - p.bytes.size() + p.anchor + 1;
+    const uint8_t anchorByte = p.bytes[anchor];
+    const uint8_t* const patBytes = p.bytes.data();
+    const uint8_t* const patMask = p.mask.data();
+    const uint8_t* const lo = v.data + begin + anchor;
+    const uint8_t* const hi = v.data + end - patSize + anchor + 1;
     for (const uint8_t* at = lo; at < hi && found < limit;) {
-        at = (const uint8_t*)memchr(at, p.bytes[p.anchor], size_t(hi - at));
+        at = static_cast<const uint8_t*>(memchr(at, anchorByte, size_t(hi - at)));
         if (!at) break;
-        const uint8_t* start = at - p.anchor;
+        const uint8_t* const start = at - anchor;
         bool match = true;
-        for (size_t i = 0; i < p.bytes.size() && match; ++i) match = !p.mask[i] || start[i] == p.bytes[i];
+        for (size_t i = 0; i < patSize; ++i) {
+            if (patMask[i] && start[i] != patBytes[i]) {
+                match = false;
+                break;
+            }
+        }
         if (match) {
             if (!found && first) *first = uint32_t(start - v.data);
             ++found;

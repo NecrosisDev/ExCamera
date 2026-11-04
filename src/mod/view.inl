@@ -10,17 +10,44 @@ static inline bool readableRegionContains(const MEMORY_BASIC_INFORMATION& region
 
 // The last 32 readable regions this thread saw in the current frame (swap serial): the game's heaps are a
 // handful of large committed regions, so most checks land in one already queried. A region is never kept
-// past the frame it was queried in.
+// past the frame it was queried in. A tiny 4-slot front cache serves common pointer checks in L1 without
+// walking the full region table.
+struct ReadableTls {
+    LONG frame = -1;
+    uintptr_t base[4]{};
+    uintptr_t end[4]{};
+    unsigned next = 0;
+};
 struct RegionCache { LONG frame = -1; unsigned count = 0, next = 0; MEMORY_BASIC_INFORMATION regions[32]{}; };
+static thread_local ReadableTls readableTls;
 static thread_local RegionCache regionCache;
+
+static inline void readableTlsRecord(ReadableTls& tls, const MEMORY_BASIC_INFORMATION& m) {
+    const uintptr_t begin = reinterpret_cast<uintptr_t>(m.BaseAddress);
+    const uintptr_t limit = m.RegionSize <= UINTPTR_MAX - begin ? begin + m.RegionSize : UINTPTR_MAX;
+    tls.base[tls.next] = begin;
+    tls.end[tls.next] = limit;
+    tls.next = (tls.next + 1) & 3u;
+}
 
 static bool readableProfileBody(uintptr_t address, size_t size, MEMORY_BASIC_INFORMATION* region) {
     if (address < 0x10000) return false;
+    const LONG frame = *reinterpret_cast<const volatile LONG*>(&swapCalls);
+    ReadableTls& tls = readableTls;
+    if (tls.frame != frame) {
+        tls.frame = frame;
+        tls.next = 0;
+        for (unsigned k = 0; k < 4; ++k) tls.base[k] = tls.end[k] = 0;
+    } else if (!region) {
+        for (unsigned k = 0; k < 4; ++k)
+            if (address >= tls.base[k] && address <= tls.end[k] && size <= tls.end[k] - address)
+                return true;
+    }
     RegionCache& cache = regionCache;
-    const LONG frame = InterlockedCompareExchange(&swapCalls, 0, 0);
     if (cache.frame != frame) { cache.frame = frame; cache.count = cache.next = 0; }
     for (unsigned k = 0; k < cache.count; ++k)
         if (readableRegionContains(cache.regions[k], address, size)) {
+            readableTlsRecord(tls, cache.regions[k]);
             if (region) *region = cache.regions[k];
             return true;
         }
@@ -30,6 +57,7 @@ static bool readableProfileBody(uintptr_t address, size_t size, MEMORY_BASIC_INF
     cache.regions[cache.next] = m;
     cache.next = (cache.next + 1) % 32;
     cache.count = (std::min)(cache.count + 1, 32u);
+    readableTlsRecord(tls, m);
     if (region) *region = m;
     return true;
 }
@@ -283,10 +311,20 @@ static bool culledBefore(uintptr_t m) {
     return false;
 }
 static void rememberCulled(uintptr_t m, bool culled) {
+    unsigned firstTombstone = cullSlots;
     for (unsigned i = unsigned(m >> 4) % cullSlots, n = 0; n < 16; ++n, i = (i + 1) % cullSlots) {
-        if (culledMeshes[i] == m) { if (!culled) culledMeshes[i] = 1; return; }
-        if (!culledMeshes[i] || culledMeshes[i] == 1) { if (culled) culledMeshes[i] = m; return; }
+        const uintptr_t slot = culledMeshes[i];
+        if (slot == m) {
+            if (!culled) culledMeshes[i] = 1;
+            return;
+        }
+        if (!slot) {
+            if (culled) culledMeshes[firstTombstone < cullSlots ? firstTombstone : i] = m;
+            return;
+        }
+        if (slot == 1 && firstTombstone == cullSlots) firstTombstone = i;
     }
+    if (culled && firstTombstone < cullSlots) culledMeshes[firstTombstone] = m;
 }
 static void distanceCull(uintptr_t sector) {
     if (!InterlockedCompareExchange(&cameraReady, 0, 0) ||
@@ -505,15 +543,29 @@ static void createNodeMoveHook() {
 // render), never in the next: between frames a round or level change can free the meshes, and the write would
 // land in freed memory. A trim the swap did not put back is dropped unwritten.
 struct LightTrim { uintptr_t entry; unsigned active; };
+static SRWLOCK lightTrimLock = SRWLOCK_INIT;
+static std::atomic<unsigned> lightTrimPending{0};
 static LightTrim lightTrims[16384];
 static unsigned lightTrimCount = 0;
 static LONG lightTrimFrame = -1;
 static std::atomic<unsigned> lightsTrimmed{0};
-static void restoreLightTrims() { // render thread, at the swap
+static void restoreLightTrimsLocked() {
     for (unsigned k = 0; k < lightTrimCount; ++k)
         if (readable(lightTrims[k].entry, field::lightEntry::active + 4))
             *reinterpret_cast<unsigned*>(lightTrims[k].entry + field::lightEntry::active) = lightTrims[k].active;
-    lightTrimCount = 0;
+}
+static void restoreLightTrims() { // render thread, at the swap
+    AcquireSRWLockExclusive(&lightTrimLock);
+    __try {
+        __try {
+            restoreLightTrimsLocked();
+        } __except (countFaultAndHandle(&swapFaults)) {
+        }
+        lightTrimCount = 0;
+        lightTrimPending.store(0, std::memory_order_release);
+    } __finally {
+        ReleaseSRWLockExclusive(&lightTrimLock);
+    }
 }
 static void trimLights(uintptr_t sector) {
     if (!InterlockedCompareExchange(&cameraReady, 0, 0) ||
@@ -596,12 +648,18 @@ static void shadowSchedule(uintptr_t viewport) {
     }
 }
 
-static uintptr_t sectorUpdateProfileBody(uintptr_t sector) {
-    const LONG frame = InterlockedCompareExchange(&swapCalls, 0, 0);
+static void sectorTrimLightsLocked(uintptr_t sector, LONG frame) {
     if (frame != lightTrimFrame) { // a new frame; the swap put the last one's trims back
         lightTrimCount = 0;
         lightTrimFrame = frame;
+        lightTrimPending.store(0, std::memory_order_relaxed);
     }
+    trimLights(sector);
+    lightTrimPending.store(lightTrimCount, std::memory_order_release);
+}
+
+static uintptr_t sectorUpdateProfileBody(uintptr_t sector) {
+    const LONG frame = *reinterpret_cast<const volatile LONG*>(&swapCalls);
     const uintptr_t result = fp::profile::invoke<fp::profile::Hook::sectorNative>(originalSectorUpdate, sector);
     InterlockedExchange(&sectorThread, LONG(GetCurrentThreadId()));
     bool fault = false;
@@ -609,7 +667,6 @@ static uintptr_t sectorUpdateProfileBody(uintptr_t sector) {
     __try {
         if (hideMeshCount) maskSector(sector);
         distanceCull(sector);
-        trimLights(sector);
     } __except (countFaultAndHandle(&viewFaults)) {
         viewFault = 1;
         fault = true;
@@ -620,6 +677,19 @@ static uintptr_t sectorUpdateProfileBody(uintptr_t sector) {
         hideMeshCount = 0;
         hideScene = 0;
         ReleaseSRWLockExclusive(&hideLock);
+    } else {
+        AcquireSRWLockExclusive(&lightTrimLock);
+        __try {
+            __try {
+                sectorTrimLightsLocked(sector, frame);
+            } __except (countFaultAndHandle(&viewFaults)) {
+                viewFault = 1;
+                lightTrimCount = 0;
+                lightTrimPending.store(0, std::memory_order_release);
+            }
+        } __finally {
+            ReleaseSRWLockExclusive(&lightTrimLock);
+        }
     }
     return result;
 }

@@ -2,7 +2,7 @@
 
 ## Build boundaries
 
-`build.py` builds two Windows x64 binaries: the launcher (`src/launcher.cpp`) and the DLL (`src/first_person.cpp`). The DLL also links `src/native_settings.cpp`, `src/settings_presentation.cpp`, the bundled MinHook C sources, and `src/supersampling_shim.asm`.
+`build.py` builds two Windows x64 binaries: the launcher (`src/launcher.cpp`) and the DLL (`src/first_person.cpp`). The DLL also links `src/native_settings.cpp`, `src/settings_presentation.cpp`, the bundled MinHook C sources, and `src/supersampling_shim.asm` (plus `src/xr_host.cpp` when `--openxr-sdk` is passed).
 
 The files under `src/mod/` intentionally form **one translation unit** through ordered includes in `first_person.cpp`; `state.inl` also includes `activation.inl`. They share private state and helpers. Do not add these `.inl` files to the compiler's source list or reorder them as an organizational cleanup.
 
@@ -18,18 +18,20 @@ Paths in this section are relative to `src/`.
 - `mod/inventory.inl`: observed ordinary inventory-preview transactions and native commit cancellation.
 - `mod/held_throw.inl`: release intent, native body lifetime, and one-shot physics delivery.
 - `mod/supersampling.inl`, `supersampling_depth.h`, `supersampling_shim.asm`: rendering integration.
+- `mod/wounds.inl`, `mod/detail.inl`, `mod/blade.inl`: native procedural wounds, blood, surface detail, and blade drag/stab-sink physics.
 - `mod/overlay.inl`, `panel.inl`, `settings.inl`: overlay, settings integration, and persistence.
 - `native_settings.*`, `native_widgets.h`, `native_widget_contract.h`: native widget adapter and event contracts.
 - `settings_model.h`, `settings_draft.h`, `settings_presentation.*`: settings values, draft/Apply/Cancel handling, and display mapping.
+- `xr/`, `mod/xr_stereo.inl`, `xr_host.cpp`: OpenXR math, whole-function native contracts, and optional stereo/VR host.
 - `tracking.h`, `tracking_udp.h`: tracking data and receiver.
 
 ## Native compatibility is more than addresses
 
 `game_signatures.h` contains precomputed signature tables. `game_layout.h` resolves game targets. Finding a target is not proof that every field or call contract still matches the game.
 
-`game_structs.h` describes the layouts used by the mod. `game_contracts.h` contains precomputed owner/field evidence; `native_contracts.h` validates those contracts. `native_build.h` supplies the supported build identity. Native widget event semantics are separate again: `native_widget_contract.h` distinguishes checkbox selected-state handling from slider callback handling rather than treating all widgets identically.
+`game_structs.h` describes the layouts used by the mod. `game_contracts.h` contains precomputed owner/field evidence; `native_contracts.h` validates those contracts. `xr/native_contracts.h` captures whole-function byte patterns and the frustum template required before OpenXR replay is admitted. `native_build.h` supplies the supported build identity. Native widget event semantics are separate again: `native_widget_contract.h` distinguishes checkbox selected-state handling from slider callback handling rather than treating all widgets identically.
 
-Signature and contract tables are checked in alongside their authoritative specifications in `tools/targets.json` and `tools/native_contracts.json`. `python tools/check_generated.py` verifies source/header consistency using only the Python standard library; CI runs it before compiling. The optional native generators additionally require the reviewed executable, pefile and capstone, and are not needed for a normal build. See `tools/README.md`. Updating compatibility requires fresh native review, not simply changing the executable hash or accepting a successful signature match.
+Signature, field-contract, and XR-contract tables are checked in alongside their authoritative specifications in `tools/targets.json`, `tools/native_contracts.json`, and `tools/xr_contracts.json`. `python tools/check_generated.py` verifies source/header consistency across all three specifications offline using only the Python standard library; CI runs it before compiling. The optional native generators additionally require the reviewed executable, `pefile`, and `capstone`, and are not needed for a normal build. See `tools/README.md`. Updating compatibility requires fresh native review, not simply changing the executable hash or accepting a successful signature match.
 
 Core field witnesses validate the executable file; loaded entry/dispatch checks are separate. The optional capabilities documented below additionally compare their critical loaded instruction windows. These checks do not establish that every required function interior in memory is unchanged by another component.
 
@@ -41,15 +43,17 @@ The shared mesh queue checks the submitted pointer before validating a possible 
 
 The near-plane solver may cap proved-clear results at twice the caller's maximum near plane. Its initial segment ends at an endpoint of the original six-step bisection tree, so even a quantized result beyond it already saturates the filter. A hit uses the unchanged six-step search; unknown queries retain the original fallback. Props are still queried unless level clearance already forces the minimum plane. Every temporal sample retains current geometry queries and its own physical head pose, camera transform and filter evaluation. Held placement passes its first predicate result into clearance refinement and still checks final clearance before accepting an output.
 
-The native regression suites used during development compile production owners with owned-memory/native-boundary fixtures and compare against a pinned pre-change oracle. Their retained integration fixtures cover temporal sample order, extra requests, source faults, replacement, TP obstruction ownership and native view boundaries. They do not launch or attach to the game. The local development decisions record explains why cross-frame and cross-sample caches are deliberately absent; that file is not part of the published source tree.
+The native regression suites used during development compile production owners with owned-memory/native-boundary fixtures and compare against a pinned pre-change oracle. Their retained integration fixtures cover temporal sample order, extra requests, source faults, replacement, TP obstruction ownership and native view boundaries. They do not launch or attach to the game.
 
 ## Screen-effect quality diagnostics
 
 `first-person-status.json` reports the screen-effect input and intermediate target dimensions for ambient occlusion, reflections, and depth of field, plus `view_effects_low_tier`. These targets match the full view dimensions; the low-tier flag remains false because screen effects no longer reduce resolution under load. Nonzero dimensions describe the most recently supported rendered view, and are cleared when the effects skip or target creation fails. Use these values with the per-stage CPU/GPU timings to optimize shader and memory work without reducing output resolution.
 
-## Settings boundaries
+## Settings boundaries and `ScriptRuntime.dll` coexistence
 
 The native UI edits a draft. Apply publishes accepted values and queues per-row revisions under a short settings lock; Cancel discards draft edits. Only the session worker persists INI values, outside that lock, then acknowledges the exact revision written. Edits arriving during a write remain pending. Failed writes remain pending: running and cleanly stopped sessions retry on the same worker; a fault exit makes a final best-effort pass after its notice/recovery work ends. Native GUI callbacks never wait for disk I/O. Status files are best-effort snapshots and may remain stale if publication fails. The presentation layer maps internal values to labels without making the native controller Controls table into an ExCamera page. Preferences are external to the source and runtime package.
+
+ExCamera operates **100% standalone** — all camera modes, settings persistence, combat cues, and procedural wounds, blood, and fire run natively inside `ExanimaFirstPerson.dll` without requiring ExanimaLua (`ScriptRuntime.dll`). When `ScriptRuntime.dll` is loaded in the process, ExCamera optionally coexists with it by hosting third-party mods' registered Settings tabs inside ExCamera's widened native Options form and binding `ScriptRuntime` inventory exports when available for the VR hip pouch.
 
 Explicit leaning has no runtime input or pose path. Its four hidden legacy INI preferences, existing bulk-policy invalidation, and false/zero lean status fields remain for compatibility. The pose-cadence diagnostic (`held.physics_step`) also remains; it is not native release/throw timing. Active exploration spine-follow is separate and retains its native pose borrowing and restoration.
 
@@ -107,4 +111,4 @@ The attack cue owns its OpenGL resources and capability decisions per current na
 
 ## Validation boundary
 
-Compatibility checks and DLL export checks catch specific integration failures; they do not prove camera, input, or rendering behavior in a running game. Current observation status is recorded in `docs/RELEASE_CHECKLIST.md`. The optional generator tests under `tools/` are not required to build. Gameplay regression harnesses are kept outside the runtime source and are not part of the release ZIP.
+Offline compatibility checks (`tools/check_generated.py`), Python tool unit tests (`tools/tests/`), shipped C++ header unit tests (`tools/run_cpp_tests.py` under `/W4 /WX`), `--dev` and release `/WX` builds, and DLL export checks run automatically in CI (`build.yml` and `release.yml`). They catch build, contract, packaging, and pure-policy regressions, while live camera, input, and rendering behavior in a running game is tracked in `docs/RELEASE_CHECKLIST.md`.

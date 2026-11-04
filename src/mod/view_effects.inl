@@ -44,6 +44,7 @@ constexpr GLenum samplerBinding = 0x8919, currentProgram = 0x8B8D, vertexArrayBi
 constexpr GLenum arrayBuffer = 0x8892, arrayBufferBinding = 0x8894, staticDraw = 0x88E4, streamRead = 0x88E1;
 constexpr GLenum elementArrayBuffer = 0x8893, elementArrayBufferBinding = 0x8895, dynamicDraw = 0x88E8; // the VR hand stream
 constexpr GLenum pixelPackBuffer = 0x88EB, pixelPackBufferBinding = 0x88ED;
+constexpr GLenum pixelUnpackBuffer = 0x88EC, pixelUnpackBufferBinding = 0x88EF, scissorBox = 0x0C10;
 constexpr GLenum packRowLength = 0x0D02, packSkipRows = 0x0D03, packSkipPixels = 0x0D04;
 constexpr GLenum drawFramebufferBinding = 0x8CA6, readFramebufferBinding = 0x8CAA, readBuffer = 0x0C02, back = 0x0405;
 constexpr GLenum sampleBuffers = 0x80A8, maxTextureImageUnits = 0x8872, depthRange = 0x0B70;
@@ -62,6 +63,8 @@ constexpr GLenum linear = 0x2601, nearest = 0x2600, clampToEdge = 0x812F;
 constexpr GLenum syncGpuCommandsComplete = 0x9117, alreadySignaled = 0x911A, timeoutExpired = 0x911B,
                  conditionSatisfied = 0x911C;
 } // namespace glc
+
+#include "wound_glsl.h"
 
 // Shaders are GLSL 1.20 so they compile on the game's compatibility context.
 // Every fragment program is viewPrelude followed by its own body.
@@ -182,7 +185,7 @@ const float radius = 50.0; // cm: wide enough to reach into corners and along wa
 // off a flat surface by up to half a texel's depth change, which on floors and walls seen at an angle, and
 // more with distance, read as occlusion: a dark, noisy patch over the middle distance of the view.
 vec2 distanceCell(vec2 p) {
-    return distanceHalfOn > 0.5 ? (floor(p * halfSize) + 0.5) / halfSize : p;
+    return (floor(p * halfSize) + 0.5) / halfSize;
 }
 
 // A nearby surface facing this one both blocks ambient light and passes on the
@@ -208,8 +211,8 @@ void main() {
     if (raw >= skyDepth) return;
     // The origin from the same distance image as the taps (this pixel is one of its texel centres), so a
     // flat surface's taps and origin lie on one plane.
-    float own = tapDistance(uv);
-    vec3 p = distanceHalfOn > 0.5 && own < 5e4 ? positionFrom(uv, own) : viewPosition(uv, raw);
+    float own = distanceHalfOn > 0.5 ? tapDistance(uv) : 5e4;
+    vec3 p = own < 5e4 ? positionFrom(uv, own) : viewPosition(uv, raw);
     vec3 n = viewNormal(uv, p);
     float footprint = min(max(radius * projection.y * 0.5 / (texel.y * -p.z), 2.0), max(2.0, 32.0 * pixelScale));
     float jitter = noise();
@@ -371,45 +374,60 @@ uniform float ssrOn;        // 1 when reflections ran, else 0
 uniform float bounceStrength; // share of the bounced light added, 0 when it was not gathered
 
 vec4 shadeSurfaces(vec4 c) {
-    float d = distanceAt(uv);
-    // Edge-aware reconstruction: of the four nearest effect texels, those at this
-    // pixel's depth count; across a silhouette the other side is ignored.
-    vec2 at = uv * halfSize - 0.5;
-    vec2 cell = floor(at), f = at - cell;
-    float occlusion = 0.0, weights = 0.0;
+    float occlusion = 0.0;
     vec3 bounce = vec3(0.0);
     vec4 reflection = vec4(0.0);
-    for (int i = 0; i < 4; ++i) {
-        vec2 corner = vec2(mod(float(i), 2.0), floor(0.5 * float(i)));
-        vec2 p = (cell + corner + 0.5) / halfSize;
-        vec2 bilinear = mix(1.0 - f, f, corner);
-        float depthDiff = abs(tapDistance(p) - d);
-        float depthTol = 0.03 * d + 2.0;
-        float w = depthDiff < depthTol * 3.0 ? bilinear.x * bilinear.y * exp(-depthDiff / depthTol) : 0.0;
-        vec4 ao = texture2D(aoHalf, p);
-        occlusion += ao.r * w;
-        bounce += ao.gba * ao.gba * w;
-        weights += w;
-    }
-    occlusion = weights > 1e-4 ? finite(occlusion / weights) : 0.0;
-    bounce = weights > 1e-4 ? bounce / weights : vec3(0.0);
-    // Reflections are shaded on a grid half as fine again (ssrSize), upsampled the same way.
-    if (ssrOn > 0.0) {
-        at = uv * ssrSize - 0.5;
-        cell = floor(at);
-        f = at - cell;
-        weights = 0.0;
-        for (int i = 0; i < 4; ++i) {
-            vec2 corner = vec2(mod(float(i), 2.0), floor(0.5 * float(i)));
-            vec2 p = (cell + corner + 0.5) / ssrSize;
-            vec2 bilinear = mix(1.0 - f, f, corner);
-            float depthDiff = abs(tapDistance(p) - d);
-            float depthTol = 0.03 * d + 2.0;
-            float w = depthDiff < depthTol * 3.0 ? bilinear.x * bilinear.y * exp(-depthDiff / depthTol) : 0.0;
-            reflection += texture2D(ssrHalf, p) * w;
-            weights += w;
+    bool needAo = aoStrength > 0.0 || bounceStrength > 0.0;
+    bool needSsr = ssrOn > 0.0;
+    bool aoFull = abs(halfSize.x * texel.x - 1.0) < 1e-3 && abs(halfSize.y * texel.y - 1.0) < 1e-3;
+    bool ssrFull = abs(ssrSize.x * texel.x - 1.0) < 1e-3 && abs(ssrSize.y * texel.y - 1.0) < 1e-3;
+    float d = ((needAo && !aoFull) || (needSsr && !ssrFull)) ? distanceAt(uv) : 0.0;
+    if (needAo) {
+        if (aoFull) {
+            vec4 ao = finite(texture2D(aoHalf, uv));
+            occlusion = ao.r;
+            bounce = ao.gba * ao.gba;
+        } else {
+            // Edge-aware reconstruction: of the four nearest effect texels, those at this
+            // pixel's depth count; across a silhouette the other side is ignored.
+            vec2 at = uv * halfSize - 0.5;
+            vec2 cell = floor(at), f = at - cell;
+            float weights = 0.0;
+            for (int i = 0; i < 4; ++i) {
+                vec2 corner = vec2(mod(float(i), 2.0), floor(0.5 * float(i)));
+                vec2 p = (cell + corner + 0.5) / halfSize;
+                vec2 bilinear = mix(1.0 - f, f, corner);
+                float depthDiff = abs(tapDistance(p) - d);
+                float depthTol = 0.03 * d + 2.0;
+                float w = depthDiff < depthTol * 3.0 ? bilinear.x * bilinear.y * exp(-depthDiff / depthTol) : 0.0;
+                vec4 ao = texture2D(aoHalf, p);
+                occlusion += ao.r * w;
+                bounce += ao.gba * ao.gba * w;
+                weights += w;
+            }
+            occlusion = weights > 1e-4 ? finite(occlusion / weights) : 0.0;
+            bounce = weights > 1e-4 ? bounce / weights : vec3(0.0);
         }
-        reflection = weights > 1e-4 ? clamp(finite(reflection / weights), 0.0, 1.0) : vec4(0.0);
+    }
+    if (needSsr) {
+        if (ssrFull) {
+            reflection = clamp(finite(texture2D(ssrHalf, uv)), 0.0, 1.0);
+        } else {
+            vec2 at = uv * ssrSize - 0.5;
+            vec2 cell = floor(at), f = at - cell;
+            float weights = 0.0;
+            for (int i = 0; i < 4; ++i) {
+                vec2 corner = vec2(mod(float(i), 2.0), floor(0.5 * float(i)));
+                vec2 p = (cell + corner + 0.5) / ssrSize;
+                vec2 bilinear = mix(1.0 - f, f, corner);
+                float depthDiff = abs(tapDistance(p) - d);
+                float depthTol = 0.03 * d + 2.0;
+                float w = depthDiff < depthTol * 3.0 ? bilinear.x * bilinear.y * exp(-depthDiff / depthTol) : 0.0;
+                reflection += texture2D(ssrHalf, p) * w;
+                weights += w;
+            }
+            reflection = weights > 1e-4 ? clamp(finite(reflection / weights), 0.0, 1.0) : vec4(0.0);
+        }
     }
     if (bounceStrength > 0.0) {
         // The bounced light lands on this surface's own colour: its hue at a mid
@@ -1014,9 +1032,9 @@ vec3 levelSurface(vec3 color) {
     for (int i = 0; i < 6; ++i) {
         if (levelPeople[i].w <= 0.0) continue;
         vec3 d = p - levelPeople[i].xyz;
-        float h = clamp(d.y, -110.0, 110.0);
-        vec3 nearest = vec3(0.0, h, 0.0);
-        if (length(d - nearest) < 65.0) return color;
+        float dh = dot(d, worldUp.xyz);
+        vec3 dCapsule = d - worldUp.xyz * clamp(dh, -110.0, 110.0);
+        if (length(dCapsule) < 65.0) return color;
     }
     vec3 q = vec3(dot(levelRow0, vec4(p, 1.0)), dot(levelRow1, vec4(p, 1.0)), dot(levelRow2, vec4(p, 1.0)));
     vec3 light = toLight(color);
@@ -1240,10 +1258,6 @@ uniform vec4 capB[8];      // its facing (view space); w: 0 the stump, 1 the sev
 uniform float capCount;
 uniform float woundDebug;
 
-float woundHash(float x) {
-    return fract(sin(x * 12.9898) * 43758.5453);
-}
-
 // Wounds (wounds.inl) on the surface where they landed. They multiply the light already there, so a
 // wound in shadow stays in shadow; only wet blood adds a little shine, scaled by that same light.
 // A severed limb's cap where the view ray meets it in front of the scene: raw flesh around a pale bone
@@ -1323,37 +1337,20 @@ vec3 woundMarks(vec3 color) {
         if (kind > 4.0) { kind -= 4.0; scar = aux; aux = 0.0; } // a cut closing into a scar
         if (kind == 2.0) {
             // A bruise: mottled purple, red-brown where the blow landed hardest, torn there on a heavy one.
-            float mottle = 0.78 + 0.22 * sin(q.x * 0.9 + seed * 31.0) * sin(q.y * 1.3 - seed * 17.0);
-            float r = length(q) / (A.w * mottle);
-            float w = min((1.0 - smoothstep(0.3, 1.0, r)) * (0.5 + 0.4 * severity) * (1.0 + 0.35 * fracture), 1.0) *
-                      stick * (1.0 - layer) * (1.0 - baked); // skin only
-            // Fresh it is an angry red swelling; over the next minute and a half it darkens to purple. Over a
-            // broken bone it is wider and goes deep purple-black at its centre.
-            vec3 outer = mix(mix(vec3(0.85, 0.42, 0.4), vec3(0.62, 0.45, 0.62), aux), vec3(0.5, 0.33, 0.5), fracture);
-            vec3 inner = mix(mix(vec3(0.6, 0.18, 0.16), vec3(0.42, 0.17, 0.2), aux), vec3(0.26, 0.08, 0.13), fracture);
-            vec3 bruise = mix(outer, inner, 1.0 - smoothstep(0.0, 0.7, r));
-            if (woundDebug > 0.5) bruise = vec3(1.0, 0.05, 0.9) * 2.2;
-            float graze = severity > 0.6 ? step(0.8, woundHash(floor(q.x * 2.0) + floor(q.y * 2.0) * 57.0 + seed * 101.0)) *
-                                               (1.0 - smoothstep(0.0, 0.45, r)) : 0.0;
-            tint *= mix(vec3(1.0), mix(bruise, vec3(0.35, 0.05, 0.04), graze), w);
+            float wBase;
+            vec3 bruise = woundBruiseTint(q, A.w, severity, aux, seed, fracture, woundDebug, wBase);
+            float w = wBase * stick * (1.0 - layer) * (1.0 - baked); // skin only
+            tint *= mix(vec3(1.0), bruise, w);
             continue;
         }
         // A cut, or a thrust's short deep hole: a lens-shaped gash darkest at its depth, swollen lips,
         // blood smeared around it, and fresh blood running down from it.
-        float a = q.x / A.w;
-        float taper = sqrt(max(1.0 - a * a, 0.0));
-        float wobble = 0.22 * C.z * sin(a * 5.0 + seed * 40.0);
-        float x = abs(q.y - wobble) / max(C.z * (0.25 + 0.75 * taper), 0.05);
-        float inside = taper > 0.0 ? 1.0 - smoothstep(0.6, 1.0, x) : 0.0;
-        float lip = taper * smoothstep(0.7, 1.1, x) * (1.0 - smoothstep(1.3, 2.4, x));
-        float smear = (1.0 - smoothstep(1.2, 4.0, x)) * (1.0 - smoothstep(0.8, 1.25, abs(a))) *
-                      (0.6 + 0.4 * woundHash(floor(q.x * 1.5 + seed * 13.0) + floor(q.y * 1.5) * 31.0));
+        float a, taper, wobble, x, inside, lip, smear;
+        woundCutShape(q, A.w, C.z, seed, a, taper, wobble, x, inside, lip);
         float facing = dot(worldUp.xyz, s) * sign(q.y - wobble); // the lip facing up catches the light
         // Wet blood is bright red; dried blood goes dark brown.
         vec3 blood = mix(vec3(0.3, 0.08, 0.05), vec3(0.32, 0.02, 0.018), aux);
-        vec3 cut = mix(vec3(1.0), mix(vec3(0.55, 0.3, 0.24), vec3(0.7, 0.22, 0.2), aux), smear * (0.55 + 0.35 * severity));
-        cut = mix(cut, vec3(1.0, 0.5, 0.45) * (1.0 + 0.3 * facing), lip * 0.8);
-        cut = mix(cut, mix(vec3(0.5, 0.035, 0.03), vec3(0.07, 0.003, 0.003), 1.0 - smoothstep(0.0, 0.8, x)), inside);
+        vec3 cut = woundCutSkinTint(q, a, x, inside, lip, severity, aux, seed, facing, smear);
         // Through cloth or padding: a ragged slit with frayed threads at its edge and the dark wound behind,
         // and blood soaking outward through the weave, wider the longer the wound bleeds, with a dried rim.
         float rag = 0.35 * (woundHash(floor(q.x * 3.0) + seed * 17.0) - 0.5);
@@ -1373,8 +1370,7 @@ vec3 woundMarks(vec3 color) {
         fabric = mix(fabric, vec3(0.1, 0.02, 0.02), slit);
         vec3 plate = mix(vec3(1.0), blood * 1.6, smear * 0.6);
 )glsl" R"glsl(        // Healing into a scar: a pale, thin line with a faint pink halo.
-        float scarLine = taper * (1.0 - smoothstep(0.25, 0.6, x)), scarHalo = taper * (1.0 - smoothstep(0.6, 2.0, x));
-        cut = mix(cut, mix(mix(vec3(1.0), vec3(1.05, 0.9, 0.88), scarHalo * 0.45), vec3(1.14, 1.02, 0.97), scarLine * 0.85), scar);
+        cut = woundScarApply(cut, taper, x, scar);
         inside *= 1.0 - scar;
         cut = mix(cut, vec3(1.0), baked * (1.0 - layer)); // the skin already carries it
         cut = mix(cut, fabric, cloth);
@@ -1532,9 +1528,8 @@ vec3 fireRamp(float t) {
 }
 
 void main() {
-    vec4 scene = texture2D(sceneTex, uv);
     if (uv.x < fireRect.x || uv.y < fireRect.y || uv.x > fireRect.z || uv.y > fireRect.w) {
-        gl_FragColor = scene;
+        gl_FragColor = texture2D(sceneTex, uv);
         return;
     }
     float raw = texture2D(depthTex, uv).r;
@@ -1602,6 +1597,11 @@ void main() {
                 }
             }
         }
+    }
+    vec4 scene = texture2D(sceneTex, uv);
+    if (through >= 0.9999 && dot(light, light) <= 1e-10) {
+        gl_FragColor = scene;
+        return;
     }
     vec3 base = encoded > 0.5 ? pow(scene.rgb, vec3(2.2)) : scene.rgb;
     vec3 c = base * through + light;
@@ -1816,64 +1816,77 @@ static bool prepareViewTargets(gl::Api& g, fp::CueResources& r) {
 // Native-resolution occlusion, reflection and depth-of-field targets, plus half-float
 // occlusion/reflection histories (8 bits would stall a slow blend on a step). Binds on
 // unit 2 and leaves the entry framebuffer bound (0 for desktop, a VR eye target otherwise).
-static bool prepareHalfTargets(gl::Api& g, fp::CueResources& r, int width, int height, GLuint entryFramebuffer) {
+static bool prepareHalfTargets(gl::Api& g, fp::CueResources& r, int width, int height, GLuint entryFramebuffer,
+                               unsigned contextIndex, bool needAo, bool needSsr, bool needDof, bool temporal, bool bounce) {
     constexpr bool low = false;
-    const int w = width, h = height;
-    if (r.halfFbo[0] && r.halfWidth == w && r.halfHeight == h) {
-        publishViewTargetSizes(width, height, w, h, r.ssrWidth, r.ssrHeight, r.dofWidth, r.dofHeight, low);
-        return true;
+    const int w = width, h = height, rw = w, rh = h, dw = w, dh = h;
+    const unsigned ctxSlot = contextIndex < 8 ? contextIndex : 0;
+    static bool aoBounceAllocated[8]{};
+    if (r.halfWidth != w || r.halfHeight != h || (needAo && aoBounceAllocated[ctxSlot] != bounce)) {
+        r.retireHalf(g);
+        r.halfWidth = w;
+        r.halfHeight = h;
+        r.ssrWidth = rw;
+        r.ssrHeight = rh;
+        r.dofWidth = dw;
+        r.dofHeight = dh;
+        aoBounceAllocated[ctxSlot] = bounce;
     }
-    g.activeTexture(glc::texture2);
-    r.retireHalf(g);
-    g.genTextures(2, r.halfTex);
-    g.genFramebuffers(2, r.halfFbo);
-    for (unsigned i = 0; i < 2; ++i) {
-        g.genTextures(2, r.historyTex[i]);
-        g.genFramebuffers(2, r.historyFbo[i]);
-    }
-    g.genTextures(1, &r.dofTex);
-    g.genFramebuffers(1, &r.dofFbo);
-    g.genTextures(1, &r.distanceTex);
-    g.genFramebuffers(1, &r.distanceFbo);
-    const int rw = w, rh = h, dw = w, dh = h;
-    enum Size { occlusionSize, reflectionSize, blurSize };
-    struct Target { unsigned fbo, texture; GLenum format, layout, type, filter; Size size; };
-    const Target targets[8] = {
-        // The composite filters the current results by depth itself; the resolve
-        // reads a history between texels, where the camera saw it last frame. AO
-        // uses only red (bounced light is disabled), so keep its targets single-channel.
-        {r.halfFbo[0], r.halfTex[0], glc::r8, glc::red, GL_UNSIGNED_BYTE, glc::nearest, occlusionSize},
-        {r.halfFbo[1], r.halfTex[1], glc::rgba8, GL_RGBA, GL_UNSIGNED_BYTE, glc::nearest, reflectionSize},
-        {r.historyFbo[0][0], r.historyTex[0][0], glc::r16f, glc::red, GL_FLOAT, glc::linear, occlusionSize},
-        {r.historyFbo[0][1], r.historyTex[0][1], glc::r16f, glc::red, GL_FLOAT, glc::linear, occlusionSize},
-        {r.historyFbo[1][0], r.historyTex[1][0], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, reflectionSize},
-        {r.historyFbo[1][1], r.historyTex[1][1], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, reflectionSize},
-        {r.dofFbo, r.dofTex, glc::rgba8, GL_RGBA, GL_UNSIGNED_BYTE, glc::linear, blurSize},
-        {r.distanceFbo, r.distanceTex, glc::r32f, glc::red, GL_FLOAT, glc::nearest, occlusionSize}};
-    for (const Target& t : targets) {
-        g.bindTexture(GL_TEXTURE_2D, t.texture);
-        const int tw = t.size == reflectionSize ? rw : t.size == blurSize ? dw : w;
-        const int th = t.size == reflectionSize ? rh : t.size == blurSize ? dh : h;
-        glTexImage2D(GL_TEXTURE_2D, 0, GLint(t.format), tw, th, 0, t.layout, t.type, nullptr);
-        g.texParameteri(GL_TEXTURE_2D, glc::minFilter, GLint(t.filter));
-        g.texParameteri(GL_TEXTURE_2D, glc::magFilter, GLint(t.filter));
+    bool touchedGl = false;
+    auto allocTarget = [&](unsigned& fbo, unsigned& tex, GLenum format, GLenum pixelFormat, GLenum type, GLenum filter,
+                           int tw, int th) -> bool {
+        if (fbo && tex) return true;
+        if (!touchedGl) {
+            g.activeTexture(glc::texture2);
+            touchedGl = true;
+        }
+        if (!tex) g.genTextures(1, &tex);
+        if (!fbo) g.genFramebuffers(1, &fbo);
+        if (!tex || !fbo) return false;
+        g.bindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GLint(format), tw, th, 0, pixelFormat, type, nullptr);
+        g.texParameteri(GL_TEXTURE_2D, glc::minFilter, GLint(filter));
+        g.texParameteri(GL_TEXTURE_2D, glc::magFilter, GLint(filter));
         g.texParameteri(GL_TEXTURE_2D, glc::wrapS, glc::clampToEdge);
         g.texParameteri(GL_TEXTURE_2D, glc::wrapT, glc::clampToEdge);
-        g.bindFramebuffer(glc::framebuffer, t.fbo);
-        g.framebufferTexture2D(glc::framebuffer, glc::colorAttachment0, GL_TEXTURE_2D, t.texture, 0);
-        if (!t.fbo || !t.texture || g.checkFramebufferStatus(glc::framebuffer) != glc::framebufferComplete) {
-            g.bindFramebuffer(glc::framebuffer, entryFramebuffer);
-            r.retireHalf(g);
-            return false;
+        g.bindFramebuffer(glc::framebuffer, fbo);
+        g.framebufferTexture2D(glc::framebuffer, glc::colorAttachment0, GL_TEXTURE_2D, tex, 0);
+        return g.checkFramebufferStatus(glc::framebuffer) == glc::framebufferComplete;
+    };
+    const bool needDistance = (needAo || needSsr) && (w != width || h != height || rw != width || rh != height);
+    bool complete = true;
+    // The composite filters the current results by depth itself; the resolve
+    // reads a history between texels, where the camera saw it last frame. AO
+    // uses only red when bounced light is disabled, keeping its targets single-channel.
+    if (needAo) {
+        complete = complete && allocTarget(r.halfFbo[0], r.halfTex[0], bounce ? glc::rgba8 : glc::r8,
+                                           bounce ? GL_RGBA : glc::red, GL_UNSIGNED_BYTE, glc::nearest, w, h);
+        if (temporal) {
+            const GLenum histFmt = bounce ? glc::rgba16f : glc::r16f;
+            const GLenum histLayout = bounce ? GL_RGBA : glc::red;
+            complete = complete && allocTarget(r.historyFbo[0][0], r.historyTex[0][0], histFmt, histLayout, GL_FLOAT, glc::linear, w, h);
+            complete = complete && allocTarget(r.historyFbo[0][1], r.historyTex[0][1], histFmt, histLayout, GL_FLOAT, glc::linear, w, h);
         }
     }
-    g.bindFramebuffer(glc::framebuffer, entryFramebuffer);
-    r.halfWidth = w;
-    r.halfHeight = h;
-    r.ssrWidth = rw;
-    r.ssrHeight = rh;
-    r.dofWidth = dw;
-    r.dofHeight = dh;
+    if (needSsr) {
+        complete = complete && allocTarget(r.halfFbo[1], r.halfTex[1], glc::rgba8, GL_RGBA, GL_UNSIGNED_BYTE, glc::nearest, rw, rh);
+        if (temporal) {
+            complete = complete && allocTarget(r.historyFbo[1][0], r.historyTex[1][0], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, rw, rh);
+            complete = complete && allocTarget(r.historyFbo[1][1], r.historyTex[1][1], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, rw, rh);
+        }
+    }
+    if (needDof) {
+        complete = complete && allocTarget(r.dofFbo, r.dofTex, glc::rgba8, GL_RGBA, GL_UNSIGNED_BYTE, glc::linear, dw, dh);
+    }
+    if (needDistance) {
+        complete = complete && allocTarget(r.distanceFbo, r.distanceTex, glc::r32f, glc::red, GL_FLOAT, glc::nearest, w, h);
+    }
+    if (touchedGl) g.bindFramebuffer(glc::framebuffer, entryFramebuffer);
+    if (!complete) {
+        r.retireHalf(g);
+        r.halfWidth = r.halfHeight = 0;
+        return false;
+    }
     publishViewTargetSizes(width, height, w, h, rw, rh, dw, dh, low);
     return true;
 }
@@ -1928,10 +1941,12 @@ static bool prepareHeldNoise(gl::Api& g, fp::CueResources& r) {
                     texels[((z * size + y) * size + x) * 4 + c] = (unsigned char)std::lround(v);
                 }
             }
-    GLint previous = 0;
+    GLint previous = 0, prevUnpack = 0;
     glGetIntegerv(textureBinding3D, &previous);
+    glGetIntegerv(glc::pixelUnpackBufferBinding, &prevUnpack);
     g.genTextures(1, &r.heldNoise);
     if (!r.heldNoise) return false;
+    if (prevUnpack != 0) g.bindBuffer(glc::pixelUnpackBuffer, 0);
     g.bindTexture(texture3D, r.heldNoise);
     // Each level a 2 x 2 x 2 average of the one above, made in place.
     for (int level = 0, s = size;; ++level, s /= 2) {
@@ -1948,6 +1963,7 @@ static bool prepareHeldNoise(gl::Api& g, fp::CueResources& r) {
                         texels[((z * h + y) * h + x) * 4 + c] = (unsigned char)((sum + 4) / 8);
                     }
     }
+    if (prevUnpack != 0) g.bindBuffer(glc::pixelUnpackBuffer, GLuint(prevUnpack));
     g.texParameteri(texture3D, glc::minFilter, linearMipmapLinear);
     g.texParameteri(texture3D, glc::magFilter, glc::linear);
     g.texParameteri(texture3D, glc::wrapS, repeatWrap);
@@ -2423,8 +2439,8 @@ struct ViewRequest {
     WoundUniforms wounds;                // wounds in view, already in this view's space
     FireUniforms fires;                  // fire and smoke volumes in view (fire.inl), this view's space
     bool finish() const {
-        return smooth > 0.f || sharpen > 0.f || visor > 0.f || ghost || detail > 0.f || level > 0.f || hurt > 0.f || winded > 0.f ||
-               wounds.any() || fires.any();
+        return smooth > 0.f || sharpen > 0.f || visor > 0.f || ghost || detail > 0.f || armour > 0.f || objects > 0.f ||
+               level > 0.f || hurt > 0.f || winded > 0.f || damageFlash > 0.f || wounds.any() || fires.any();
     }
     bool any() const { return ao > 0.f || dof > 0.f || ssr > 0.f || adapt || finish(); }
 };
@@ -2716,6 +2732,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         unsigned failure;
         const char* name;
     };
+    constexpr bool subNativeHalf = false; // AO and SSR run at 1:1 native view resolution
     Effect effects[programCount] = { // in ViewProgram order
         {aoMode, &r.aoProgram, &owner->aoAttempted, nullptr, aoShader, viewAoFailed, "ambient occlusion"},
         {ssrMode, &r.ssrProgram, &owner->ssrAttempted, nullptr, ssrShader, viewSsrFailed, "reflections"},
@@ -2731,9 +2748,9 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
          viewDofCompositeFailed, "depth-of-field composite"},
         {float(request.adapt), &r.meterProgram, &owner->meterAttempted, nullptr, meterShader, viewMeterFailed,
          "eye adaptation meter"},
-        {float(aoMode || ssrMode), &r.distanceProgram, &owner->distanceAttempted, nullptr, distanceShader,
+        {float((aoMode || ssrMode) && subNativeHalf), &r.distanceProgram, &owner->distanceAttempted, nullptr, distanceShader,
          viewDistanceFailed, "view-distance target"},
-        {float(finishMode), &r.woundProgram, &owner->woundAttempted, nullptr, woundShader,
+        {float(finishMode), &r.woundProgram, &owner->woundAttempted, FP_WOUND_GLSL_HELPERS, woundShader,
          viewWoundsFailed, "wound marks"},
         {float(finishMode), &r.fireProgram, &owner->fireAttempted, nullptr, fireShader,
          viewFireFailed, "fire and smoke"}};
@@ -2764,46 +2781,50 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
 
     // Snapshot every piece of state the passes change; nothing is written
     // until the snapshot is complete.
-    GLint program = 0, vao = 0, buffer = 0, activeUnit = 0, pack = 0, packStore[3]{};
+    GLint program = 0, vao = 0, buffer = 0, activeUnit = 0, prevUnpack = 0, pack = 0, packStore[3]{};
     GLint texture[viewTextureUnits]{}, sampler[viewTextureUnits]{};
     GLint noise3D = 0; // the held-noise unit's 3D binding, restored when touched
     bool noiseTouched = false;
+    bool scissorTouched = false;
+    GLint prevScissorBox[4]{};
     GLint polygon[2]{};
     GLboolean colorMask[4]{};
     const GLenum caps[] = {GL_BLEND, GL_DEPTH_TEST, GL_CULL_FACE, GL_SCISSOR_TEST, GL_STENCIL_TEST,
                            glc::framebufferSrgb, glc::rasterizerDiscard, glc::alphaTest, glc::colorLogicOp};
     constexpr unsigned capCount = sizeof caps / sizeof caps[0];
     GLboolean enabled[capCount]{};
-    // Bindings change with whatever the game drew last: read every frame. Samplers, pixel
-    // packing, polygon mode, colour mask and the rarely used capabilities (stencil,
-    // discard, alpha test, logic op) hold still: read on audit frames and reused.
-    auto rareCap = [](unsigned i) { return i == 4 || i >= 6; };
+    const bool packNeeded = adaptMode || dofMode > 0.f;
     glGetIntegerv(glc::currentProgram, &program);
     glGetIntegerv(glc::vertexArrayBinding, &vao);
     glGetIntegerv(glc::arrayBufferBinding, &buffer);
+    glGetIntegerv(glc::pixelUnpackBufferBinding, &prevUnpack);
     glGetIntegerv(glc::activeTexture, &activeUnit);
     for (unsigned unit = 0; unit < viewTextureUnits; ++unit) {
         g.activeTexture(glc::texture0 + unit);
         glGetIntegerv(glc::textureBinding2D, &texture[unit]);
         if (unit == heldNoiseUnit) glGetIntegerv(textureBinding3D, &noise3D);
-        if (audit && g.bindSampler) glGetIntegerv(glc::samplerBinding, &owner->viewSampler[unit]);
-        sampler[unit] = owner->viewSampler[unit];
+        if (g.bindSampler) glGetIntegerv(glc::samplerBinding, &sampler[unit]);
+        owner->viewSampler[unit] = sampler[unit];
+    }
+    glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
+    memcpy(owner->viewColorMask, colorMask, sizeof colorMask);
+    for (unsigned i = 0; i < capCount; ++i) {
+        enabled[i] = glIsEnabled(caps[i]);
+        owner->viewRareCaps[i] = enabled[i];
+    }
+    if (packNeeded) {
+        glGetIntegerv(glc::pixelPackBufferBinding, &pack);
+        glGetIntegerv(glc::packRowLength, &packStore[0]);
+        glGetIntegerv(glc::packSkipRows, &packStore[1]);
+        glGetIntegerv(glc::packSkipPixels, &packStore[2]);
+        owner->viewPack = pack;
+        memcpy(owner->viewPackStore, packStore, sizeof packStore);
     }
     if (audit) {
-        glGetIntegerv(glc::pixelPackBufferBinding, &owner->viewPack);
-        glGetIntegerv(glc::packRowLength, &owner->viewPackStore[0]);
-        glGetIntegerv(glc::packSkipRows, &owner->viewPackStore[1]);
-        glGetIntegerv(glc::packSkipPixels, &owner->viewPackStore[2]);
         glGetIntegerv(glc::polygonMode, owner->viewPolygon);
-        glGetBooleanv(GL_COLOR_WRITEMASK, owner->viewColorMask);
-        for (unsigned i = 0; i < capCount; ++i)
-            if (rareCap(i)) owner->viewRareCaps[i] = glIsEnabled(caps[i]);
+        memcpy(polygon, owner->viewPolygon, sizeof polygon);
     }
-    pack = owner->viewPack;
-    memcpy(packStore, owner->viewPackStore, sizeof packStore);
-    memcpy(polygon, owner->viewPolygon, sizeof polygon);
-    memcpy(colorMask, owner->viewColorMask, sizeof colorMask);
-    for (unsigned i = 0; i < capCount; ++i) enabled[i] = rareCap(i) ? owner->viewRareCaps[i] : glIsEnabled(caps[i]);
+    const bool polygonTouched = audit && (polygon[0] != GLint(glc::fill) || polygon[1] != GLint(glc::fill));
     if (audit && glGetError() != GL_NO_ERROR) {
         g.activeTexture(GLenum(activeUnit));
         drainGl();
@@ -2855,6 +2876,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
     bool ok = false, halfFailed = false, skipped = false;
     float collectedExposure = 1.f, collectedFocus = 0.f;
     __try {
+        if (prevUnpack != 0) g.bindBuffer(glc::pixelUnpackBuffer, 0);
         // Earlier frames' meter and focus readbacks are collected here, before any pass is
         // issued and beside the state snapshot: their fence checks and buffer reads wait for
         // the driver, and here that wait finds nothing of ours queued.
@@ -2865,14 +2887,16 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         // see the same stored bytes, so the image round-trips unchanged.
         for (unsigned i = 0; i < capCount; ++i)
             if (enabled[i]) cueEnable(g, caps[i], false);
-        glPolygonMode(glc::frontAndBack, glc::fill);
+        if (polygonTouched) glPolygonMode(glc::frontAndBack, glc::fill);
         if (g.indexedMasks) g.colorMaskIndexed(0, 1, 1, 1, 1);
         else glColorMask(1, 1, 1, 1);
         if (g.bindSampler)
             for (unsigned unit = 0; unit < viewTextureUnits; ++unit) g.bindSampler(unit, 0);
         g.bindVertexArray(r.viewVao);
-        for (unsigned i = 0; i < 3; ++i) // the focus and meter readbacks need tightly packed rows
-            if (packStore[i]) glPixelStorei(glc::packRowLength + i, 0);
+        if (packNeeded) {
+            for (unsigned i = 0; i < 3; ++i) // the focus and meter readbacks need tightly packed rows
+                if (packStore[i]) glPixelStorei(glc::packRowLength + i, 0);
+        }
         // Offscreen sampling: the passes read and finally write the view texture through a
         // framebuffer of ours, and take the sampling target's depth copied to its size.
         GLuint target = GLuint(expectedFramebuffer), depthSource = GLuint(expectedFramebuffer);
@@ -2919,10 +2943,10 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             __leave;
         }
         const bool resize = r.viewWidth != viewport[2] || r.viewHeight != viewport[3];
-        // The window (desktop, not a VR eye): one blit of colour and depth into textures of the window's own
-        // depth format. copyTexSubImage from the window took the driver's slow path (13.75 ms of the 16.7 ms
-        // the effects cost at 2560x1440).
-        const bool blitWindow = !request.offscreen && target == 0;
+        // Fast hardware framebuffer blit for both the default window (target == 0) and offscreen /
+        // Super-sampling targets (target != 0). copyTexSubImage2D stalled the NVIDIA driver for ~9-14 ms.
+        const bool blitWindow = !request.offscreen && target == 0 && g.blitFramebuffer != nullptr;
+        const GLuint depthPair[2] = {r.viewDepthPrevious, r.viewDepth};
         if (temporal) std::swap(r.viewDepth, r.viewDepthPrevious); // blended frames keep last frame's depth
         if (blitWindow) {
             const GLint depthFormat = defaultDepthFormat();
@@ -2932,8 +2956,8 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.bindTexture(GL_TEXTURE_2D, r.viewColor);
                 glTexImage2D(GL_TEXTURE_2D, 0, GLint(glc::rgba8), viewport[2], viewport[3], 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
                 g.activeTexture(glc::texture1);
-                for (GLuint depth : {r.viewDepthPrevious, r.viewDepth}) {
-                    g.bindTexture(GL_TEXTURE_2D, depth);
+                for (unsigned d = 0; d < 2; ++d) {
+                    g.bindTexture(GL_TEXTURE_2D, depthPair[d]);
                     glTexImage2D(GL_TEXTURE_2D, 0, depthFormat, viewport[2], viewport[3], 0,
                                  packed ? 0x84F9 /* DEPTH_STENCIL */ : glc::depthComponent,
                                  packed ? 0x84FA /* UNSIGNED_INT_24_8 */ : GL_UNSIGNED_INT, nullptr);
@@ -2943,57 +2967,87 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             }
             g.bindFramebuffer(glc::framebuffer, r.viewCopyFbo);
             g.framebufferTexture2D(glc::framebuffer, glc::colorAttachment0, GL_TEXTURE_2D, r.viewColor, 0);
+            g.framebufferTexture2D(glc::framebuffer, 0x821A /* DEPTH_STENCIL_ATTACHMENT */, GL_TEXTURE_2D, 0, 0);
             g.framebufferTexture2D(glc::framebuffer, packed ? 0x821A /* DEPTH_STENCIL_ATTACHMENT */ : glc::depthAttachment,
                                    GL_TEXTURE_2D, r.viewDepth, 0);
             g.bindFramebuffer(glc::readFramebuffer, 0);
             g.blitFramebuffer(viewport[0], viewport[1], viewport[0] + viewport[2], viewport[1] + viewport[3], 0, 0,
                               viewport[2], viewport[3], GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, glc::nearest);
         } else {
-        g.activeTexture(glc::texture0);
-        g.bindTexture(GL_TEXTURE_2D, r.viewColor);
-        if (resize)
-            g.copyTexImage2D(GL_TEXTURE_2D, 0, glc::rgba8, viewport[0], viewport[1], viewport[2], viewport[3], 0);
-        else
-            g.copyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport[0], viewport[1], viewport[2], viewport[3]);
-        g.activeTexture(glc::texture1);
-        if (request.offscreen) {
-            // The sampling target's depth, blitted straight into the view's depth copy, which
-            // takes the target's format for it (a depth blit needs matching formats). Nearest:
-            // depth must not blend; a larger target scales down to the view texture.
-            if (resize || r.viewDepthFormat != r.offscreenDepthFormat) {
-                for (GLuint depth : {r.viewDepthPrevious, r.viewDepth}) {
-                    g.bindTexture(GL_TEXTURE_2D, depth);
-                    glTexImage2D(GL_TEXTURE_2D, 0, r.offscreenDepthFormat, viewport[2], viewport[3], 0,
-                                 r.offscreenDepthLayout, r.offscreenDepthType, nullptr);
+            if (g.blitFramebuffer) {
+                if (resize || !r.viewCopyFbo) {
+                    g.activeTexture(glc::texture0);
+                    g.bindTexture(GL_TEXTURE_2D, r.viewColor);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GLint(glc::rgba8), viewport[2], viewport[3], 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                    if (!r.viewCopyFbo) g.genFramebuffers(1, &r.viewCopyFbo);
                 }
-                r.viewDepthFormat = r.offscreenDepthFormat;
+                g.bindFramebuffer(glc::framebuffer, r.viewCopyFbo);
+                g.framebufferTexture2D(glc::framebuffer, 0x821A /* DEPTH_STENCIL_ATTACHMENT */, GL_TEXTURE_2D, 0, 0);
+                g.framebufferTexture2D(glc::framebuffer, glc::colorAttachment0, GL_TEXTURE_2D, r.viewColor, 0);
+                g.bindFramebuffer(glc::readFramebuffer, target);
+                GLint prevReadBuf = GLint(glc::colorAttachment0);
+                if (!request.offscreen && target != 0) {
+                    glGetIntegerv(glc::readBuffer, &prevReadBuf);
+                    if (prevReadBuf != GLint(glc::colorAttachment0)) glReadBuffer(glc::colorAttachment0);
+                }
+                g.blitFramebuffer(viewport[0], viewport[1], viewport[0] + viewport[2], viewport[1] + viewport[3], 0, 0,
+                                  viewport[2], viewport[3], GL_COLOR_BUFFER_BIT, glc::nearest);
+                if (!request.offscreen && target != 0 && prevReadBuf != GLint(glc::colorAttachment0))
+                    glReadBuffer(GLenum(prevReadBuf));
+            } else {
+                g.activeTexture(glc::texture0);
+                g.bindTexture(GL_TEXTURE_2D, r.viewColor);
+                if (resize)
+                    g.copyTexImage2D(GL_TEXTURE_2D, 0, glc::rgba8, viewport[0], viewport[1], viewport[2], viewport[3], 0);
+                else
+                    g.copyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport[0], viewport[1], viewport[2], viewport[3]);
             }
-            g.bindFramebuffer(glc::framebuffer, r.offscreenDepthFbo);
-            g.framebufferTexture2D(glc::framebuffer, r.offscreenDepthAttachment, GL_TEXTURE_2D, r.viewDepth, 0);
-            g.bindFramebuffer(glc::readFramebuffer, request.sceneFramebuffer);
-            g.blitFramebuffer(0, 0, r.offscreenSceneWidth, r.offscreenSceneHeight, 0, 0, viewport[2], viewport[3],
-                              GL_DEPTH_BUFFER_BIT, glc::nearest);
-        } else if (resize || r.viewDepthFormat != defaultDepthFormat()) {
-            for (GLuint depth : {r.viewDepthPrevious, r.viewDepth}) {
-                g.bindTexture(GL_TEXTURE_2D, depth);
-                g.copyTexImage2D(GL_TEXTURE_2D, 0, GLenum(defaultDepthFormat()), viewport[0], viewport[1], viewport[2],
-                                 viewport[3], 0);
+            g.activeTexture(glc::texture1);
+            if (request.offscreen) {
+                // The sampling target's depth, blitted straight into the view's depth copy, which
+                // takes the target's format for it (a depth blit needs matching formats). Nearest:
+                // depth must not blend; a larger target scales down to the view texture.
+                if (resize || r.viewDepthFormat != r.offscreenDepthFormat) {
+                    for (unsigned d = 0; d < 2; ++d) {
+                        g.bindTexture(GL_TEXTURE_2D, depthPair[d]);
+                        glTexImage2D(GL_TEXTURE_2D, 0, r.offscreenDepthFormat, viewport[2], viewport[3], 0,
+                                     r.offscreenDepthLayout, r.offscreenDepthType, nullptr);
+                    }
+                    r.viewDepthFormat = r.offscreenDepthFormat;
+                }
+                g.bindFramebuffer(glc::framebuffer, r.offscreenDepthFbo);
+                g.framebufferTexture2D(glc::framebuffer, r.offscreenDepthAttachment, GL_TEXTURE_2D, r.viewDepth, 0);
+                g.bindFramebuffer(glc::readFramebuffer, request.sceneFramebuffer);
+                g.blitFramebuffer(0, 0, r.offscreenSceneWidth, r.offscreenSceneHeight, 0, 0, viewport[2], viewport[3],
+                                  GL_DEPTH_BUFFER_BIT, glc::nearest);
+            } else if (resize || r.viewDepthFormat != defaultDepthFormat()) {
+                for (unsigned d = 0; d < 2; ++d) {
+                    g.bindTexture(GL_TEXTURE_2D, depthPair[d]);
+                    g.copyTexImage2D(GL_TEXTURE_2D, 0, GLenum(defaultDepthFormat()), viewport[0], viewport[1], viewport[2],
+                                     viewport[3], 0);
+                }
+                r.viewDepthFormat = defaultDepthFormat();
+            } else {
+                g.bindTexture(GL_TEXTURE_2D, r.viewDepth);
+                g.copyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport[0], viewport[1], viewport[2], viewport[3]);
             }
-            r.viewDepthFormat = defaultDepthFormat();
-        } else {
-            g.bindTexture(GL_TEXTURE_2D, r.viewDepth);
-            g.copyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewport[0], viewport[1], viewport[2], viewport[3]);
-        }
         }
         r.viewWidth = viewport[2];
         r.viewHeight = viewport[3];
         g.bindFramebuffer(glc::framebuffer, target);
         stampTo(1);
 
+        // At Strong the occlusion taps also gather one bounce of the light around them;
+        // blended over frames only, as a few taps of colour are grainy on their own.
+        // PROVISIONAL(2026-10-22, bounce gathered from 3 taps drew flickering lines under moving
+        // torchlight; off until it can be gathered smoothly, ratify-by: 2026-11-05)
+        const float bounceStrength = 0.f;
+        const bool bounce = bounceStrength > 0.f;
         // All screen-space effects start at native resolution; future performance
         // work must reduce shader or memory cost without silently lowering image size.
         if ((aoMode || ssrMode || dofMode) &&
-            !prepareHalfTargets(g, r, viewport[2], viewport[3], target)) {
+            !prepareHalfTargets(g, r, viewport[2], viewport[3], target, contextIndex, aoMode > 0.f, ssrMode > 0.f,
+                                dofMode > 0.f, temporal, bounce)) {
             publishViewTargetSizes(0, 0, 0, 0, 0, 0, 0, 0, false);
             halfFailed = true;
             aoMode = ssrMode = dofMode = 0;
@@ -3024,24 +3078,18 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             if (chain) source = source == r.viewColor ? r.chainTex : r.viewColor;
             else copyViewColor(g, r, viewport);
         };
-        // At Strong the occlusion taps also gather one bounce of the light around them;
-        // blended over frames only, as a few taps of colour are grainy on their own.
-        // Bounced light grows in from the middle of the scale to the old Strong.
-        // PROVISIONAL(2026-10-22, bounce gathered from 3 taps drew flickering lines under moving
-        // torchlight; off until it can be gathered smoothly, ratify-by: 2026-11-05)
-        const float bounceStrength = 0.f;
-        const bool bounce = bounceStrength > 0.f;
         // The composite folds into the finish pass whenever there is one: one full-screen pass
         // fewer. With depth of field on, occlusion and reflections then land on the blurred
         // image; being low-frequency they read the same.
         const bool fold = (aoMode || ssrMode) && finishMode;
+        const bool distances = r.distanceProgram != 0 && r.distanceFbo != 0 &&
+                               (r.halfWidth != viewport[2] || r.halfHeight != viewport[3]);
         // The composite reads each effect's blend when it has one, else this frame's result.
         GLuint results[2] = {r.halfTex[0], r.halfTex[1]};
         if (aoMode || ssrMode) {
             setViewport(g, 0, 0, r.halfWidth, r.halfHeight);
             const float offset = temporal ? 5.588238f * float(frameIndex % 64) : 0.f;
-            // Distances first; without the program the taps read the depth as before.
-            const bool distances = r.distanceProgram != 0;
+            // Distances first when half targets are sub-native; at 1:1 taps read viewDepth directly.
             if (distances) {
                 g.bindFramebuffer(glc::framebuffer, r.distanceFbo);
                 g.useProgram(r.distanceProgram);
@@ -3138,8 +3186,8 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             g.uniform1i(u.at[uSsrHalf], 3);
             g.uniform2f(u.at[uHalfSize], float(r.halfWidth), float(r.halfHeight));
             g.uniform2f(u.at[uSsrSize], float(r.ssrWidth), float(r.ssrHeight));
-            g.uniform1f(u.at[uDistanceHalfOn], r.distanceProgram ? 1.f : 0.f);
-            if (r.distanceProgram) {
+            g.uniform1f(u.at[uDistanceHalfOn], distances ? 1.f : 0.f);
+            if (distances) {
                 g.activeTexture(glc::texture0 + 6);
                 g.bindTexture(GL_TEXTURE_2D, r.distanceTex);
                 g.uniform1i(u.at[uDistanceHalf], 6);
@@ -3243,7 +3291,34 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             box[2] = std::clamp(box[2], 0.f, 1.f); box[3] = std::clamp(box[3], 0.f, 1.f);
             if (box[2] > box[0] && box[3] > box[1]) {
                 const auto& u = viewUniforms[contextIndex][programWounds];
-                beginPass(false);
+                const int px0 = (std::max)(0, int(std::floor(box[0] * float(viewport[2]))) - 2);
+                const int py0 = (std::max)(0, int(std::floor(box[1] * float(viewport[3]))) - 2);
+                const int px1 = (std::min)(int(viewport[2]), int(std::ceil(box[2] * float(viewport[2]))) + 2);
+                const int py1 = (std::min)(int(viewport[3]), int(std::ceil(box[3] * float(viewport[3]))) + 2);
+                const bool scissored = chain && g.blitFramebuffer && viewport[0] == 0 && viewport[1] == 0 &&
+                                       px1 > px0 && py1 > py0 &&
+                                       (long long)(px1 - px0) * (py1 - py0) < (long long)viewport[2] * viewport[3] * 3 / 4;
+                if (scissored) {
+                    if (!scissorTouched) {
+                        glGetIntegerv(glc::scissorBox, prevScissorBox);
+                        scissorTouched = true;
+                    }
+                    const GLuint srcFbo = source == r.viewColor ? r.chainFbo[0] : r.chainFbo[1];
+                    const GLuint scratchFbo = source == r.viewColor ? r.chainFbo[1] : r.chainFbo[0];
+                    const GLuint scratchTex = source == r.viewColor ? r.chainTex : r.viewColor;
+                    glDisable(GL_SCISSOR_TEST);
+                    g.bindFramebuffer(glc::readFramebuffer, srcFbo);
+                    g.bindFramebuffer(glc::drawFramebuffer, scratchFbo);
+                    g.blitFramebuffer(px0, py0, px1, py1, px0, py0, px1, py1, GL_COLOR_BUFFER_BIT, glc::nearest);
+                    g.activeTexture(glc::texture0);
+                    g.bindTexture(GL_TEXTURE_2D, scratchTex);
+                    g.bindFramebuffer(glc::framebuffer, srcFbo);
+                    setViewport(g, 0, 0, viewport[2], viewport[3]);
+                    glScissor(px0, py0, px1 - px0, py1 - py0);
+                    glEnable(GL_SCISSOR_TEST);
+                } else {
+                    beginPass(false);
+                }
                 g.activeTexture(glc::texture1);
                 g.bindTexture(GL_TEXTURE_2D, r.viewDepth);
                 glDisable(GL_BLEND);
@@ -3264,7 +3339,8 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform4f(u.at[uWorldUp], upX, upY, upZ, 0.f);
                 g.uniform1f(u.at[uWoundDebug], woundDebug.load(std::memory_order_relaxed) ? 1.f : 0.f);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-                endPass(false);
+                if (scissored) glDisable(GL_SCISSOR_TEST);
+                else endPass(false);
             }
         }
         // Fire and smoke (fire.inl) next, on the same image, only inside the box that holds every volume.
@@ -3294,7 +3370,34 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             box[2] = std::clamp(box[2], 0.f, 1.f); box[3] = std::clamp(box[3], 0.f, 1.f);
             if (box[2] > box[0] && box[3] > box[1]) {
                 const auto& u = viewUniforms[contextIndex][programFire];
-                beginPass(false);
+                const int px0 = (std::max)(0, int(std::floor(box[0] * float(viewport[2]))) - 2);
+                const int py0 = (std::max)(0, int(std::floor(box[1] * float(viewport[3]))) - 2);
+                const int px1 = (std::min)(int(viewport[2]), int(std::ceil(box[2] * float(viewport[2]))) + 2);
+                const int py1 = (std::min)(int(viewport[3]), int(std::ceil(box[3] * float(viewport[3]))) + 2);
+                const bool scissored = chain && g.blitFramebuffer && viewport[0] == 0 && viewport[1] == 0 &&
+                                       px1 > px0 && py1 > py0 &&
+                                       (long long)(px1 - px0) * (py1 - py0) < (long long)viewport[2] * viewport[3] * 3 / 4;
+                if (scissored) {
+                    if (!scissorTouched) {
+                        glGetIntegerv(glc::scissorBox, prevScissorBox);
+                        scissorTouched = true;
+                    }
+                    const GLuint srcFbo = source == r.viewColor ? r.chainFbo[0] : r.chainFbo[1];
+                    const GLuint scratchFbo = source == r.viewColor ? r.chainFbo[1] : r.chainFbo[0];
+                    const GLuint scratchTex = source == r.viewColor ? r.chainTex : r.viewColor;
+                    glDisable(GL_SCISSOR_TEST);
+                    g.bindFramebuffer(glc::readFramebuffer, srcFbo);
+                    g.bindFramebuffer(glc::drawFramebuffer, scratchFbo);
+                    g.blitFramebuffer(px0, py0, px1, py1, px0, py0, px1, py1, GL_COLOR_BUFFER_BIT, glc::nearest);
+                    g.activeTexture(glc::texture0);
+                    g.bindTexture(GL_TEXTURE_2D, scratchTex);
+                    g.bindFramebuffer(glc::framebuffer, srcFbo);
+                    setViewport(g, 0, 0, viewport[2], viewport[3]);
+                    glScissor(px0, py0, px1 - px0, py1 - py0);
+                    glEnable(GL_SCISSOR_TEST);
+                } else {
+                    beginPass(false);
+                }
                 g.activeTexture(glc::texture0 + heldNoiseUnit);
                 noiseTouched = true;
                 g.bindTexture(texture3D, r.heldNoise);
@@ -3314,7 +3417,8 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform4f(u.at[uFireRight], fires.right[0], fires.right[1], fires.right[2], 0.f);
                 g.uniform1f(u.at[uFrameOffset], float(frameIndex % 64u));
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-                endPass(false);
+                if (scissored) glDisable(GL_SCISSOR_TEST);
+                else endPass(false);
             }
         }
         if (finishMode) {
@@ -3333,8 +3437,8 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform1i(u.at[uDofHalf], 5);
             }
             // The edge-aware upsampling reads the shaded texels' own distances (unit 6).
-            g.uniform1f(u.at[uDistanceHalfOn], fold && r.distanceProgram ? 1.f : 0.f);
-            if (fold && r.distanceProgram) {
+            g.uniform1f(u.at[uDistanceHalfOn], fold && distances ? 1.f : 0.f);
+            if (fold && distances) {
                 g.activeTexture(glc::texture0 + 6);
                 g.bindTexture(GL_TEXTURE_2D, r.distanceTex);
                 g.uniform1i(u.at[uDistanceHalf], 6);
@@ -3371,7 +3475,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             static float rows[heldSlotLimit][16][4];
             memset(rows, 0, sizeof rows);
             bool held = false;
-            if ((request.detail > 0.f || request.armour > 0.f) && request.heldSlots && maskFits) {
+            if ((request.detail > 0.f || request.armour > 0.f || request.objects > 0.f) && request.heldSlots && maskFits) {
                 for (unsigned k = 0; k < heldSlotLimit; ++k) {
                     if (!(request.heldSlots & (uint64_t(1) << k))) continue;
                     const HeldPose& h = request.held[k];
@@ -3530,12 +3634,16 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
     } __finally {
         g.bindFramebuffer(glc::framebuffer, GLuint(expectedFramebuffer)); // entry required this framebuffer for drawing and reading
         setViewport(g, viewport[0], viewport[1], viewport[2], viewport[3]);
+        if (scissorTouched) glScissor(prevScissorBox[0], prevScissorBox[1], prevScissorBox[2], prevScissorBox[3]);
         g.useProgram(GLuint(program));
         g.bindVertexArray(GLuint(vao));
         g.bindBuffer(glc::arrayBuffer, GLuint(buffer));
-        g.bindBuffer(glc::pixelPackBuffer, GLuint(pack));
-        for (unsigned i = 0; i < 3; ++i)
-            if (packStore[i]) glPixelStorei(glc::packRowLength + i, packStore[i]);
+        if (prevUnpack != 0) g.bindBuffer(glc::pixelUnpackBuffer, GLuint(prevUnpack));
+        if (packNeeded) {
+            g.bindBuffer(glc::pixelPackBuffer, GLuint(pack));
+            for (unsigned i = 0; i < 3; ++i)
+                if (packStore[i]) glPixelStorei(glc::packRowLength + i, packStore[i]);
+        }
         for (unsigned unit = 0; unit < viewTextureUnits; ++unit) {
             g.activeTexture(glc::texture0 + unit);
             g.bindTexture(GL_TEXTURE_2D, GLuint(texture[unit]));
@@ -3546,8 +3654,10 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             g.bindTexture(texture3D, GLuint(noise3D));
         }
         g.activeTexture(GLenum(activeUnit));
-        glPolygonMode(glc::front, GLenum(polygon[0]));
-        glPolygonMode(glc::backFace, GLenum(polygon[1]));
+        if (polygonTouched) {
+            glPolygonMode(glc::front, GLenum(polygon[0]));
+            glPolygonMode(glc::backFace, GLenum(polygon[1]));
+        }
         if (g.indexedMasks) g.colorMaskIndexed(0, colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
         else glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
         for (unsigned i = 0; i < capCount; ++i)
@@ -3898,48 +4008,62 @@ static bool silhouettePart(const SilhouetteScope& s, const SilhouetteEntry& e, u
 // A held part's material, from the average colour of the texture its material
 // binds on unit 0 (unlit, so torchlight cannot fool it), as the mask code the
 // finish shader reads: 0 unknown, 0.15 steel, 0.25 wood, 0.35 leather, 0.45 other.
-// Read back once per texture from its smallest mip level; cueLock held.
+// Read back once per texture from a small mip level (<= 64 x 64 when mipmapped, capped at 256 x 256); cueLock held.
 struct HeldTextureKind { GLuint texture; GLint width; float code; };
 static HeldTextureKind heldTextureKinds[128];
 static unsigned heldTextureKindNext = 0;
 static std::atomic<unsigned> heldTextureReads{0};
 static float heldMaterialCode(gl::Api& g, bool isApparel) {
     GLint unit = 0, texture = 0, packBuffer = 0, pack[3]{};
+    bool packChanged = false;
     glGetIntegerv(glc::activeTexture, &unit);
     g.activeTexture(glc::texture0);
     glGetIntegerv(glc::textureBinding2D, &texture);
     float code = 0.f;
     __try {
-        glGetIntegerv(glc::pixelPackBufferBinding, &packBuffer);
-        glGetIntegerv(glc::packRowLength, &pack[0]);
-        glGetIntegerv(glc::packSkipRows, &pack[1]);
-        glGetIntegerv(glc::packSkipPixels, &pack[2]);
-        GLint width = 0, height = 0;
-        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
-        if (glGetError() != GL_NO_ERROR || texture <= 0 || width <= 0) __leave;
+        GLint mip0Width = 0, width = 0, height = 0;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &mip0Width);
+        if (glGetError() != GL_NO_ERROR || texture <= 0 || mip0Width <= 0) __leave;
         for (const HeldTextureKind& k : heldTextureKinds)
-            if (k.texture == GLuint(texture) && k.width == width) {
+            if (k.texture == GLuint(texture) && k.width == mip0Width) {
                 code = k.code;
                 __leave;
             }
-        // Writing into a bound pack buffer or with offsets would land elsewhere: leave it unknown.
-        if (packBuffer || pack[0] || pack[1] || pack[2]) __leave;
-        // The deepest level that exists, or the smallest one up to 64 x 64.
+        // Walk mip levels to find the highest existing mip <= 64 x 64 (or smallest existing mip).
         int level = 0;
-        for (int l = 1; l < 16; ++l) {
+        for (int l = 0; l < 13; ++l) {
             GLint w = 0, h = 0;
             glGetTexLevelParameteriv(GL_TEXTURE_2D, l, GL_TEXTURE_WIDTH, &w);
             glGetTexLevelParameteriv(GL_TEXTURE_2D, l, GL_TEXTURE_HEIGHT, &h);
             if (w <= 0 || h <= 0) break;
             level = l;
-            if (w * h <= 256 * 256) break; // fine enough to keep a mail texture's rings
+            width = w;
+            height = h;
+            if (w <= 64 && h <= 64) break;
         }
-        glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_WIDTH, &width);
-        glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_HEIGHT, &height);
-        if (glGetError() != GL_NO_ERROR || width <= 0 || height <= 0 || width * height > 1024 * 1024) __leave;
-        static unsigned char pixels[1024 * 1024 * 4];
+        if (glGetError() != GL_NO_ERROR || width <= 0 || height <= 0 || width * height > 256 * 256) {
+            heldTextureKinds[heldTextureKindNext++ % 128] = {GLuint(texture), mip0Width, 0.f};
+            __leave;
+        }
+        glGetIntegerv(glc::pixelPackBufferBinding, &packBuffer);
+        glGetIntegerv(glc::packRowLength, &pack[0]);
+        glGetIntegerv(glc::packSkipRows, &pack[1]);
+        glGetIntegerv(glc::packSkipPixels, &pack[2]);
+        if (packBuffer != 0) {
+            g.bindBuffer(glc::pixelPackBuffer, 0);
+            packChanged = true;
+        }
+        for (unsigned i = 0; i < 3; ++i)
+            if (pack[i] != 0) {
+                glPixelStorei(glc::packRowLength + i, 0);
+                packChanged = true;
+            }
+        static unsigned char pixels[256 * 256 * 4];
         glGetTexImage(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-        if (glGetError() != GL_NO_ERROR) __leave;
+        if (glGetError() != GL_NO_ERROR) {
+            heldTextureKinds[heldTextureKindNext++ % 128] = {GLuint(texture), mip0Width, 0.f};
+            __leave;
+        }
         heldTextureReads.fetch_add(1, std::memory_order_relaxed);
         double sum[3]{}, contrast = 0;
         unsigned count = 0;
@@ -3961,9 +4085,13 @@ static float heldMaterialCode(gl::Api& g, bool isApparel) {
             else if (r > b * 1.2f && gr > r * 0.45f && saturation < 0.8f) code = luma < 0.22f ? 0.35f : 0.25f;
             else code = 0.45f;                                     // cloth, paint, anything else
         }
-        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
-        heldTextureKinds[heldTextureKindNext++ % 128] = {GLuint(texture), width, code};
+        heldTextureKinds[heldTextureKindNext++ % 128] = {GLuint(texture), mip0Width, code};
     } __finally {
+        if (packChanged) {
+            if (packBuffer != 0) g.bindBuffer(glc::pixelPackBuffer, GLuint(packBuffer));
+            for (unsigned i = 0; i < 3; ++i)
+                if (pack[i] != 0) glPixelStorei(glc::packRowLength + i, pack[i]);
+        }
         g.activeTexture(GLenum(unit));
         drainGl();
     }
@@ -3973,15 +4101,15 @@ static float heldMaterialCode(gl::Api& g, bool isApparel) {
 // The same, remembered per native material (and the texture object in its first
 // slot, +0x48, so a reused material address re-reads): a known part costs no GL
 // queries at all, only a lookup.
-struct HeldMaterialKind { uintptr_t material, texture; float code; };
+struct HeldMaterialKind { uintptr_t material, texture; float code; bool valid; };
 static HeldMaterialKind heldMaterialKinds[64];
 static unsigned heldMaterialKindNext = 0;
 static float heldMaterialCodeFor(gl::Api& g, uintptr_t material, bool isApparel = false) {
     const uintptr_t texture = readable(material, 0x50) ? *(const uintptr_t*)(material + 0x48) : 0;
     for (const HeldMaterialKind& k : heldMaterialKinds)
-        if (k.material == material && k.texture == texture) return k.code;
+        if (k.valid && k.material == material && k.texture == texture) return k.code;
     const float code = heldMaterialCode(g, isApparel);
-    if (code > 0.f) heldMaterialKinds[heldMaterialKindNext++ % 64] = {material, texture, code};
+    if (material) heldMaterialKinds[heldMaterialKindNext++ % 64] = {material, texture, code, true};
     return code;
 }
 
@@ -4315,6 +4443,16 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                 replayBudgetCut.fetch_add(extra - replayBudget, std::memory_order_relaxed);
             }
         }
+        struct HeldMaterialBlend {
+            uintptr_t material;
+            uintptr_t texture;
+            GLboolean blending;
+            GLint blend[6];
+            bool valid;
+        };
+        static HeldMaterialBlend heldMaterialBlends[64];
+        static unsigned heldMaterialBlendNext = 0;
+        bool blendDirty = false;
         for (unsigned k = 0; k < s.count; ++k) {
             const SilhouetteEntry& e = s.entries[k];
             uintptr_t part = 0;
@@ -4322,18 +4460,46 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
             if (!silhouettePart(s, e, part, body, held)) continue;
             if (overBudget[k]) held = false;
             if (!body && !held) continue;
-            bind(e.material);
+            const uintptr_t matTex = readable(e.material, 0x50) ? *(const uintptr_t*)(e.material + 0x48) : 0;
+            const HeldMaterialBlend* cachedBlend = nullptr;
+            for (const HeldMaterialBlend& mb : heldMaterialBlends) {
+                if (mb.valid && mb.material == e.material && mb.texture == matTex) {
+                    cachedBlend = &mb;
+                    break;
+                }
+            }
+            if (cachedBlend) {
+                bind(e.material);
+                blending = cachedBlend->blending;
+                memcpy(blend, cachedBlend->blend, sizeof blend);
+            } else {
+                if (blendDirty) {
+                    (blending ? glEnable : glDisable)(GL_BLEND);
+                    g.blendEquationSeparate(GLenum(blend[4]), GLenum(blend[5]));
+                    g.blendFuncSeparate(GLenum(blend[0]), GLenum(blend[1]), GLenum(blend[2]), GLenum(blend[3]));
+                    blendDirty = false;
+                }
+                bind(e.material);
+                readBlend(blending, blend);
+                if (e.material) {
+                    HeldMaterialBlend& slot = heldMaterialBlends[heldMaterialBlendNext++ % 64];
+                    slot.material = e.material;
+                    slot.texture = matTex;
+                    slot.blending = blending;
+                    memcpy(slot.blend, blend, sizeof blend);
+                    slot.valid = true;
+                }
+            }
             const float material = held && heldBlendColor ? heldMaterialCodeFor(g, e.material, e.slot >= int(s.heldCount)) : 0.f;
             // The single path submits (uniforms) then draws. A multi-sample entry is replayed as its
             // first sample only, through the single-sample submit (0x200770, which the dispatcher
             // calls when there is one sample) at sample 0's viewport: one draw instead of one per sample.
             if (e.sampled) single(*(const uintptr_t*)gameAt(fp::sig::headwearWorldRenderer), e.node, e.part);
             else ((MaterialSubmit)(*(const uintptr_t*)(e.material + 0x80)))(e.node, e.part);
-            // The bind set the blend state through its cache; the draw's own state goes back onto it.
-            readBlend(blending, blend);
             glEnable(GL_BLEND);
             g.blendEquationSeparate(glc::funcAdd, glc::funcAdd);
             g.blendFuncSeparate(GL_ZERO, GL_ZERO, GL_ZERO, GL_ZERO);
+            blendDirty = true;
             const auto draw = (PartDraw)(*(const uintptr_t*)(part + 0x90));
             const uintptr_t drawArgument = *(const uintptr_t*)(part + 0x98);
             if (body) { // R: where the body lies behind something
@@ -4353,9 +4519,6 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                 draw(drawArgument);
                 drawn |= heldMaskSlot << e.slot;
             }
-            (blending ? glEnable : glDisable)(GL_BLEND);
-            g.blendEquationSeparate(GLenum(blend[4]), GLenum(blend[5]));
-            g.blendFuncSeparate(GLenum(blend[0]), GLenum(blend[1]), GLenum(blend[2]), GLenum(blend[3]));
         }
         if (glGetError() != GL_NO_ERROR) drawn = 0;
         // The poses the held items and body parts were drawn with, for their detail frames.

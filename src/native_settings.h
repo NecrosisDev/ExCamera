@@ -73,7 +73,7 @@ public:
     unsigned dispatches = 0, steps = 0, refusals = 0, refusedFlags = 0;
     int selectedPage() const;
 #if FP_DEV_TOOLS
-    void devSelectPage(int value) { page = value; captureRow = none; dirty = true; }
+    void devSelectPage(int value) { pendingDevPage.store(value, std::memory_order_release); }
 #endif
     bool widenedFrame() const; // the Settings form currently carries the five-tab width
     bool vrTab = true; // false in a build without the headset code: the VR tab is not shown, its page never reached
@@ -114,8 +114,15 @@ private:
     bool widened = false;
     DWORD thread = 0;
     bool fault = false, dirty = false, controlsOwned = false, wanted = false, openedFromKey = false,
-         closing = false, applyQueued = false, deferUntilMouseRelease = false, updating = false, valueRedraw = false;
+         closing = false, applyQueued = false, deferUntilMouseRelease = false, updating = false, valueRedraw = false,
+         devPageOverride = false;
     unsigned callbackDepth = 0, handlerDepth = 0;
+    std::atomic<int> pendingDevPage{none}, publishedPage{0};
+    std::atomic<bool> publishedFailed{false}, publishedApplyQueued{false};
+    std::atomic<uintptr_t> publishedRoot{0};
+    void setPage(int value) { page = value; publishedPage.store(value, std::memory_order_release); }
+    void setRoot(uintptr_t value) { root = value; publishedRoot.store(value, std::memory_order_release); }
+    void setApplyQueued(bool value) { applyQueued = value; publishedApplyQueued.store(value, std::memory_order_release); }
     std::atomic<uint64_t> correctedReleases{0}, zeroScrollReleases{0}, rejectedCoordinates{0}, nativeActions{0};
     ModSettings acceptedInitial, acceptedValue;
     int page = 0, captureRow = none, rootCount = 0, controlCount = 0, baseCount = 44,

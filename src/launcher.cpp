@@ -8,9 +8,12 @@
 #include <cstdint>
 #include <cstring>
 #include <shellapi.h>
+#include <shlobj.h>
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uuid.lib")
 // Windows 10 SDK flags; older and MinGW headers lack them.
 #ifndef RRF_SUBKEY_WOW6464KEY
 #define RRF_SUBKEY_WOW6464KEY 0x00010000
@@ -101,13 +104,28 @@ static bool ready(DWORD pid) {
 static fp::Layout layout;
 static std::vector<uint8_t> gameImage; // the exe as mapped, for the comparison with the running game
 static fp::ImageView gameView;
+static BY_HANDLE_FILE_INFORMATION resolvedFileInfo{};
+static bool hasResolvedFile = false;
 static wchar_t gameProblem[512];
+static bool sameFileIdentity(const BY_HANDLE_FILE_INFORMATION& a, const BY_HANDLE_FILE_INFORMATION& b) {
+    return a.dwVolumeSerialNumber == b.dwVolumeSerialNumber &&
+           a.nFileIndexHigh == b.nFileIndexHigh && a.nFileIndexLow == b.nFileIndexLow &&
+           a.nFileSizeHigh == b.nFileSizeHigh && a.nFileSizeLow == b.nFileSizeLow &&
+           a.ftLastWriteTime.dwLowDateTime == b.ftLastWriteTime.dwLowDateTime &&
+           a.ftLastWriteTime.dwHighDateTime == b.ftLastWriteTime.dwHighDateTime;
+}
 static bool resolveGameFile(const wchar_t* path) {
     gameProblem[0] = 0;
     HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (f == INVALID_HANDLE_VALUE) {
         swprintf_s(gameProblem, L"Could not read %s.", path);
         return false;
+    }
+    BY_HANDLE_FILE_INFORMATION fileInfo{};
+    const bool haveInfo = GetFileInformationByHandle(f, &fileInfo) != FALSE;
+    if (haveInfo && hasResolvedFile && gameView.data && sameFileIdentity(fileInfo, resolvedFileInfo)) {
+        CloseHandle(f);
+        return true;
     }
     LARGE_INTEGER size{};
     std::vector<uint8_t> file;
@@ -118,6 +136,7 @@ static bool resolveGameFile(const wchar_t* path) {
         ok = ReadFile(f, file.data(), DWORD(file.size()), &got, nullptr) && got == file.size();
     }
     CloseHandle(f);
+    hasResolvedFile = false;
     fp::ResolveReport report;
     if (!ok || !fp::mapPeFile(file.data(), file.size(), gameImage, gameView)) {
         swprintf_s(gameProblem, L"%s is not a 64-bit Exanima executable.", path);
@@ -135,6 +154,10 @@ static bool resolveGameFile(const wchar_t* path) {
             return false;
         }
         layout = candidate;
+        if (haveInfo) {
+            resolvedFileInfo = fileInfo;
+            hasResolvedFile = true;
+        }
         return true;
     }
     int at = swprintf_s(gameProblem,
@@ -150,9 +173,7 @@ static bool resolveGameFile(const wchar_t* path) {
         swprintf_s(gameProblem + at, 512 - at, L"%s).", listed > 4 ? L", ..." : L"");
     return false;
 }
-// Resolve against the module actually loaded: a newer DLL on disk can have
-// different export RVAs from the version still mapped in the game.
-static uintptr_t remoteExport(HANDLE process, DWORD pid, const char* name) {
+static uintptr_t remoteModule(DWORD pid, const wchar_t* moduleName, uint32_t* outSize = nullptr) {
     uintptr_t remoteBase = 0;
     uint32_t remoteSize = 0;
     for (int tries = 0; tries < 5 && !remoteBase; ++tries) {
@@ -164,7 +185,7 @@ static uintptr_t remoteExport(HANDLE process, DWORD pid, const char* name) {
             continue;
         }
         if (Module32FirstW(s, &m)) do {
-                if (!_wcsicmp(m.szModule, L"ExanimaFirstPerson.dll")) {
+                if (!_wcsicmp(m.szModule, moduleName)) {
                     if (remoteBase) { // two copies: do not guess which one to call
                         CloseHandle(s);
                         return 0;
@@ -175,8 +196,16 @@ static uintptr_t remoteExport(HANDLE process, DWORD pid, const char* name) {
             } while (Module32NextW(
                 s, &m)); // by name, as the already-loaded check: a path can be spelled many ways
         CloseHandle(s);
-        if (!remoteBase) Sleep(200);
+        if (!remoteBase && tries + 1 < 5) Sleep(200);
     }
+    if (outSize) *outSize = remoteSize;
+    return remoteBase;
+}
+// Resolve against the module actually loaded: a newer DLL on disk can have
+// different export RVAs from the version still mapped in the game.
+static uintptr_t remoteExport(HANDLE process, DWORD pid, const char* name) {
+    uint32_t remoteSize = 0;
+    const uintptr_t remoteBase = remoteModule(pid, L"ExanimaFirstPerson.dll", &remoteSize);
     if (!remoteBase || remoteSize > UINTPTR_MAX - remoteBase) return 0;
     auto read = [&](uint32_t rva, void* out, size_t size) {
         SIZE_T got = 0;
@@ -258,17 +287,25 @@ static int activate(HANDLE process, DWORD pid, const std::wstring& directory) {
 // [Compat] OtherHooks from the player's settings (the per-user file, else the one beside the launcher).
 static fp::OtherHooks otherHooksSetting(const std::wstring& directory) {
     std::wstring ini = directory + L"first-person.ini";
+    PWSTR docsFolder = nullptr;
+    const HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &docsFolder);
+    const std::wstring docs = SUCCEEDED(hr) && docsFolder ? docsFolder : L"";
+    if (docsFolder) CoTaskMemFree(docsFolder);
     wchar_t profile[MAX_PATH]{};
     const DWORD n = GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH);
-    if (n &&
-        n < MAX_PATH) // the DLL's per-user file (it copies one kept under the old ExaniMate name over once)
-        for (const wchar_t* folder : {L"\\Documents\\ExCamera", L"\\Documents\\ExaniMate"}) {
-            const std::wstring user = std::wstring(profile) + folder + L"\\first-person.ini";
-            if (GetFileAttributesW(user.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                ini = user;
-                break;
-            }
+    const std::wstring fallbackDocs = n && n < MAX_PATH ? std::wstring(profile) + L"\\Documents" : L"";
+    const std::wstring candidates[4] = {
+        docs.empty() ? L"" : docs + L"\\ExCamera\\first-person.ini",
+        fallbackDocs.empty() ? L"" : fallbackDocs + L"\\ExCamera\\first-person.ini",
+        docs.empty() ? L"" : docs + L"\\ExaniMate\\first-person.ini",
+        fallbackDocs.empty() ? L"" : fallbackDocs + L"\\ExaniMate\\first-person.ini",
+    };
+    for (const std::wstring& user : candidates) {
+        if (!user.empty() && GetFileAttributesW(user.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            ini = user;
+            break;
         }
+    }
     wchar_t value[16];
     GetPrivateProfileStringW(L"Compat", L"OtherHooks", L"ask", value, 16, ini.c_str());
     return fp::otherHooksFromText(value);
@@ -504,7 +541,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         CloseHandle(process);
         return fail(L"Exanima is taking too long to respond. Close it, then start it and ExCamera again.");
     }
-    if (!result) {
+    // GetExitCodeThread truncates LoadLibraryW's 64-bit HMODULE to 32 bits, which is 0 for 4 GB-aligned ASLR bases.
+    if (!remoteModule(pid, L"ExanimaFirstPerson.dll") && !result) {
         CloseHandle(process);
         return fail(L"Windows could not load ExanimaFirstPerson.dll.");
     }

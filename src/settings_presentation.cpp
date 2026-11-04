@@ -350,7 +350,7 @@ const wchar_t* settingTip(int id) {
     case setting::rawMouse: return L"Reads the mouse directly, without Windows' pointer acceleration.";
     case setting::hideHelmet: return L"Hides your helmet and hair from your own view when they get in the way, or always. Shadows and mirrors still show them.";
     case setting::grabRange: return L"Maximum interaction distance measured from the eyes, including in third person. Walls, item rules and carrying limits still apply. This does not change weapon reach.";
-    case setting::swingCrosshair: return L"(null)";
+    case setting::swingCrosshair: return L"Hides the combat crosshair while a weapon swing is in motion.";
     case setting::tpDistance: return L"How far behind you the camera sits. Walls and things in the way still pull it closer.";
     case setting::tpShoulder: return L"Which shoulder the camera looks over, and how far off-centre.";
     case setting::tpHeight: return L"Camera height compared to your eyes. Low ceilings can limit it.";
@@ -396,7 +396,7 @@ const wchar_t* settingTip(int id) {
     case setting::tpDefense: return L"Uses the same defense choice as first person. In ordinary combat, hold right mouse to ready the weapon and request native attack-specific interception; it does not guarantee a block or add a timing bonus. Right mouse no longer cursor-walks in ordinary close-view combat. Interaction and held objects keep their native controls. If Manual is unavailable, its choice stays saved and Automatic defense remains active.";
     case setting::fpSwingSelection: return L"Mouse: flick left or right before clicking to choose which side the swing starts from. Game: Exanima picks from your facing.";
     case setting::tpSwingSelection: return L"Choose independently for third person. Mouse direction works with both Aim oval and Screen centre. Move left or right before clicking to choose the swing's starting side; native weapon timing still applies.";
-    case setting::edgeSoftness: return L"Gradually shares outward mouse movement with camera turning across the outer portion of the aim oval. 25% is the default; 0% restores the original hard boundary. The cursor still slides along the rim, inward motion is immediate, and the camera does not keep drifting after mouse release. Applies in first and third-person Aim oval mode.";
+    case setting::edgeSoftness: return L"Gradually shares outward mouse movement with camera turning across the outer portion of the aim oval. 100% is the default; 0% restores the original hard boundary. The cursor still slides along the rim, inward motion is immediate, and the camera does not keep drifting after mouse release. Applies in first and third-person Aim oval mode.";
     case setting::tracking: return L"Receives processed view motion at 127.0.0.1:4243. Choose UDP over network in OpenTrack, or a compatible output in Beam. Tobii Game Hub can route through OpenTrack. Translation is unused. Device curves, calibration and eye contribution stay in that application.";
     case setting::trackingKey: return L"Records a neutral tracking pose without changing weapon aim. Unbound by default. Held-object rotation and lean bindings take precedence when shared.";
     case setting::invertY: return L"Mouse up looks down.";

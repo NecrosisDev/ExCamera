@@ -104,10 +104,7 @@ static bool finiteAimVector(const float* p) {
 }
 
 static uintptr_t aimSector(uintptr_t root) {
-    const auto mesh = readable(root, field::character::sceneNode + sizeof(uintptr_t))
-                          ? *reinterpret_cast<const uintptr_t*>(root + field::character::sceneNode)
-                          : 0;
-    return readable(mesh, field::sceneNode::sector + sizeof(uintptr_t)) ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector) : 0;
+    return characterSector(root);
 }
 
 static bool nativeAimEligible(uintptr_t root, uintptr_t behavior) {
@@ -258,16 +255,14 @@ static bool nativeAimPointLocked(uintptr_t behavior, float* out, const Aim& a) {
     s.viewport = *reinterpret_cast<const uintptr_t*>(behavior + field::behaviour::view);
     if (!readable(s.viewport, field::viewport::pickCamera + sizeof(uintptr_t))) return false;
     s.camera = *reinterpret_cast<const uintptr_t*>(s.viewport + field::viewport::pickCamera);
-    s.sector = aimSector(s.root);
-    if (!readable(s.sector, field::sector::origin + 3 * sizeof(float))) return false;
-    std::memcpy(s.sectorOrigin, reinterpret_cast<const void*>(s.sector + field::sector::origin), 3 * sizeof(float));
+    s.sector = characterSector(s.root);
+    if (!readSectorOrigin(s.sector, s.sectorOrigin)) return false;
     s.opponent = *reinterpret_cast<const uintptr_t*>(s.root + field::character::aimOpponent);
     if (s.opponent) {
-        s.opponentSector = aimSector(s.opponent);
-        if (!readable(s.opponentSector, field::sector::origin + 3 * sizeof(float))) return false;
-        std::memcpy(s.opponentOrigin, reinterpret_cast<const void*>(s.opponentSector + field::sector::origin), 3 * sizeof(float));
+        s.opponentSector = characterSector(s.opponent);
+        if (!readSectorOrigin(s.opponentSector, s.opponentOrigin)) return false;
     }
-    if (!finiteAimVector(s.sectorOrigin) || !finiteAimVector(s.opponentOrigin) || !nativeAimCurrent(s))
+    if (!nativeAimCurrent(s))
         return false;
     const int width = *reinterpret_cast<const int*>(s.viewport + field::viewport::width);
     const int height = *reinterpret_cast<const int*>(s.viewport + field::viewport::height);
@@ -612,12 +607,11 @@ static uintptr_t heldQuery(uintptr_t object, uintptr_t viewport, uintptr_t out, 
         pendingPlacement.query = out;
         pendingPlacement.root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
         pendingPlacement.scene = *(uintptr_t*)gameAt(fp::sig::currentScene);
-        pendingPlacement.sector = aimSector(pendingPlacement.root);
-        if (!readable(pendingPlacement.sector, field::sector::origin + 12)) {
+        pendingPlacement.sector = characterSector(pendingPlacement.root);
+        if (!readSectorOrigin(pendingPlacement.sector, pendingPlacement.sectorOrigin)) {
             pendingPlacement = {};
             return 0;
         }
-        memcpy(pendingPlacement.sectorOrigin, (void*)(pendingPlacement.sector + field::sector::origin), 12);
         pendingPlacement.generation = holdGeneration.load();
         pendingPlacement.mode = viewMode.load();
         pendingPlacement.distance = distance;
@@ -650,12 +644,11 @@ static uintptr_t heldQuery(uintptr_t object, uintptr_t viewport, uintptr_t out, 
     pendingPlacement.query = out;
     pendingPlacement.root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
     pendingPlacement.scene = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::currentScene));
-    pendingPlacement.sector = aimSector(pendingPlacement.root);
-    if (!readable(pendingPlacement.sector, field::sector::origin + 3 * sizeof(float))) {
+    pendingPlacement.sector = characterSector(pendingPlacement.root);
+    if (!readSectorOrigin(pendingPlacement.sector, pendingPlacement.sectorOrigin)) {
         pendingPlacement = {};
         return 0;
     }
-    std::memcpy(pendingPlacement.sectorOrigin, reinterpret_cast<const void*>(pendingPlacement.sector + field::sector::origin), 3 * sizeof(float));
     pendingPlacement.generation = holdGeneration.load();
     pendingPlacement.mode = viewMode.load();
     pendingPlacement.distance = *reinterpret_cast<const float*>(ray + field::pick::distance);
@@ -1251,22 +1244,38 @@ static bool atTitle() {
     return title;
 }
 
+struct ReticleFilterState {
+    uintptr_t root = 0, head = 0, scene = 0;
+    float sx = -1.f, sy = -1.f;
+    ULONGLONG st = 0;
+    float shownX = -1.f, shownY = -1.f;
+    bool markerShown = false;
+};
+
+static ReticleFilterState reticleFilter;
+static void resetCameraPassCache();
+
 // cameraLock is held by the caller, which releases it even when a fault unwinds past.
 static void cursorPositionLocked(LONG* x, LONG* y) {
     HWND window = gameWindow();
     RECT rect{};
+    const bool haveClient = window && cachedWindowClient(window, rect);
     Aim a;
     AcquireSRWLockShared(&aimLock);
     a = aim;
     ReleaseSRWLockShared(&aimLock);
     const uintptr_t viewport = pickViewportForCamera(savedCamera);
     const bool currentCamera = viewport && *reinterpret_cast<const uintptr_t*>(viewport + field::viewport::view) == savedView;
-    if (window && currentCamera && a.valid && a.root == filterRoot && a.head == filterHead &&
-        a.root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) && GetClientRect(window, &rect) &&
+    if (haveClient && currentCamera && a.valid && a.root == filterRoot && a.head == filterHead &&
+        a.root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) &&
         rect.right > 40 && rect.bottom > 40) {
-        auto mesh = *reinterpret_cast<const uintptr_t*>(a.root + field::character::sceneNode),
-             scene = mesh ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector) : 0;
-        if (scene) {
+        if (reticleFilter.root != a.root || reticleFilter.head != a.head || reticleFilter.scene != savedScene) {
+            reticleFilter = {};
+            reticleFilter.root = a.root;
+            reticleFilter.head = a.head;
+            reticleFilter.scene = savedScene;
+        }
+        if (characterSector(a.root)) {
             // Project through the achieved physical camera. Only exploration
             // presentation has the existing 35 ms filter and 1.5 px dead-zone.
             float px = 0, py = 0;
@@ -1274,30 +1283,27 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
                                                      float(rect.bottom), renderedFov, px, py);
             if (projected) {
                 const bool combat = *reinterpret_cast<const unsigned char*>(a.root + field::character::combatStance) != 0;
-                static float sx = -1, sy = -1;
-                static ULONGLONG st = 0;
                 const ULONGLONG nowMs = GetTickCount64();
-                const float dt = st ? float(nowMs - st) / 1000.f : 1.f;
-                st = nowMs;
-                const float dx = px - sx, dy = py - sy;
-                if (sx < 0 || dt > 0.25f || dx * dx + dy * dy > 80.f * 80.f || viewMode.load() != 0 ||
+                const float dt = reticleFilter.st ? float(nowMs - reticleFilter.st) / 1000.f : 1.f;
+                reticleFilter.st = nowMs;
+                const float dx = px - reticleFilter.sx, dy = py - reticleFilter.sy;
+                if (reticleFilter.sx < 0 || dt > 0.25f || dx * dx + dy * dy > 80.f * 80.f || viewMode.load() != 0 ||
                     combat) {
-                    sx = px;
-                    sy = py;
+                    reticleFilter.sx = px;
+                    reticleFilter.sy = py;
                 } else {
                     const float k = 1.f - std::exp(-dt / 0.035f);
-                    sx += dx * k;
-                    sy += dy * k;
+                    reticleFilter.sx += dx * k;
+                    reticleFilter.sy += dy * k;
                 }
-                static float shownX = -1, shownY = -1;
                 const float dead = 1.5f * float(rect.bottom) / 1080.f; // tiny wobbles do not move it at all
-                if (shownX < 0 || std::fabs(sx - shownX) > dead || std::fabs(sy - shownY) > dead ||
-                    viewMode.load() != 0 || combat) {
-                    shownX = sx;
-                    shownY = sy;
+                if (reticleFilter.shownX < 0 || std::fabs(reticleFilter.sx - reticleFilter.shownX) > dead ||
+                    std::fabs(reticleFilter.sy - reticleFilter.shownY) > dead || viewMode.load() != 0 || combat) {
+                    reticleFilter.shownX = reticleFilter.sx;
+                    reticleFilter.shownY = reticleFilter.sy;
                 }
-                px = shownX;
-                py = shownY;
+                px = reticleFilter.shownX;
+                py = reticleFilter.shownY;
             }
             if (projected) {
                 const bool inside = px >= 0 && py >= 0 && px <= rect.right - 1 && py <= rect.bottom - 1;
@@ -1329,7 +1335,6 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
                 // attack cue use the reticle published above, so doors, pick-ups and talking still work. Only the
                 // mod's own first and third person ever hide it; the overhead view and its blend are the game's.
                 const bool combat = *reinterpret_cast<const unsigned char*>(a.root + field::character::combatStance) != 0;
-                static bool markerShown = false; // the aim leads the head: show where it will land
                 {
                     float d[3];
                     float n = 0;
@@ -1341,13 +1346,14 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
                     const float c =
                         n > 0 ? -(d[0] * lastCamera[6] + d[1] * lastCamera[7] + d[2] * lastCamera[8]) / n
                               : 1.f; // the camera's forward is its back axis reversed
-                    markerShown = aimMarker.load() && viewMode.load() == 0 &&
-                                  fp::aimMarkerStep(markerShown, std::acos(std::clamp(c, -1.f, 1.f)));
+                    reticleFilter.markerShown =
+                        aimMarker.load() && viewMode.load() == 0 &&
+                        fp::aimMarkerStep(reticleFilter.markerShown, std::acos(std::clamp(c, -1.f, 1.f)));
                 }
                 if (aimIndicator.load() == 0 || (aimIndicator.load() == 1 && !combat) ||
                     (trackingPresented && !inside) || (viewMode.load() < 2 &&
                     !fp::crosshairDrawn(combat, swinging.load(), hideSwingCrosshair.load(),
-                                        idleCrosshairAlways.load(), markerShown,
+                                        idleCrosshairAlways.load(), reticleFilter.markerShown,
                                         hoverOutOfRange.load() &&
                                             GetTickCount64() - hoverRangeAt.load() <= reticleFreshMs))) {
                     *x = rect.right + 256;
@@ -1361,7 +1367,7 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
     AcquireSRWLockExclusive(&reticleLock);
     reticleFrame = -1;
     ReleaseSRWLockExclusive(&reticleLock);
-    if (trackingPresented && currentCamera && rect.right > 40 && rect.bottom > 40 &&
+    if (trackingPresented && currentCamera && haveClient && rect.right > 40 && rect.bottom > 40 &&
         a.valid && a.root == filterRoot && a.head == filterHead &&
         closeViewContext()) {
         *x = rect.right + 256;
@@ -1369,16 +1375,12 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
         return;
     }
     originalCursorPosition(x, y);
-    if (hideSwingCrosshair.load() && swinging.load() && currentCamera && a.valid &&
+    if (hideSwingCrosshair.load() && swinging.load() && currentCamera && haveClient && a.valid &&
         a.root == filterRoot && a.head == filterHead &&
         a.root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) && closeViewContext()) {
-        HWND w = gameWindow();
-        RECT r;
-        if (w && GetClientRect(w, &r)) {
-            *x = r.right + 256;
-            *y = r.bottom + 256;
-            ++swingHides;
-        }
+        *x = rect.right + 256;
+        *y = rect.bottom + 256;
+        ++swingHides;
     } // also when the projection failed
 }
 
@@ -1444,9 +1446,15 @@ static void resetViewHistory() {
     trackingView.clear();
     trackingPresented = false;
     cameraFrame.valid = false;
+    reticleFilter = {};
+    for (auto& plane : heldPlanes) plane = {};
+    lastDoorObject = 0;
+    doorGrabPointValid = false;
+    resetCameraPassCache();
     InterlockedExchange(&cameraReady, 0);
     nearPlane.reset();
     filterRoot = filterHead = 0;
+    clearPointerClipCache(false);
     releaseInput();
     AcquireSRWLockExclusive(&aimLock);
     aim.valid = false;

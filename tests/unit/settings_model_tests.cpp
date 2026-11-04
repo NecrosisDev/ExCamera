@@ -1,7 +1,10 @@
 #include "settings_model.h"
+#include "settings_presentation.h"
 
 #include <algorithm>
 #include <climits>
+#include <cwchar>
+#include <type_traits>
 
 #include "../test_support.hpp"
 
@@ -9,6 +12,28 @@ namespace {
 
 using panel::ModSettings;
 using panel::setting::count;
+
+namespace short_label_probe {
+struct Fallback {};
+template <typename... Args>
+inline Fallback settingShortLabel(Args&&...) {
+    return {};
+}
+
+inline const wchar_t* get(int row) {
+    using namespace panel;
+    auto result = settingShortLabel(row);
+    if constexpr (std::is_convertible_v<decltype(result), const wchar_t*>) {
+        return result;
+    } else {
+        return panel::settingLabel(row);
+    }
+}
+} // namespace short_label_probe
+
+bool valid_ui_text(const wchar_t* text) {
+    return text != nullptr && text[0] != L'\0' && std::wcscmp(text, L"(null)") != 0;
+}
 
 bool defaults_are_already_normalized() {
     ModSettings defaults, normalized;
@@ -106,6 +131,53 @@ bool normalize_clamps_and_repairs_values() {
     return true;
 }
 
+bool normalize_sanitizes_invalid_lean_bindings() {
+    const int invalidKeys[] = {VK_LBUTTON, VK_F7, -5, 999};
+    for (int bad : invalidKeys) {
+        ModSettings settings;
+        settings.leanKey = bad;
+        settings.leanLeftKey = bad;
+        settings.leanRightKey = bad;
+        settings.rotateHeldKey = bad;
+        settings.kickKey = bad;
+        settings.jumpKey = bad;
+        settings.trackingKey = bad;
+        settings.normalize();
+        CHECK(settings.leanKey == 0);
+        CHECK(settings.leanLeftKey == 0);
+        CHECK(settings.leanRightKey == 0);
+        CHECK(settings.rotateHeldKey == 0);
+        CHECK(settings.kickKey == 0);
+        CHECK(settings.jumpKey == 0);
+        CHECK(settings.trackingKey == 0);
+        CHECK(!settings.leanKeysMode);
+    }
+
+    ModSettings valid;
+    valid.leanKey = VK_MENU;
+    valid.leanLeftKey = 'Q';
+    valid.leanRightKey = 'E';
+    valid.normalize();
+    CHECK(valid.leanKey == VK_MENU);
+    CHECK(valid.leanLeftKey == 'Q');
+    CHECK(valid.leanRightKey == 'E');
+    CHECK(valid.leanKeysMode);
+    return true;
+}
+
+bool every_row_has_valid_presentation_labels_and_tips() {
+    const ModSettings defaults;
+    for (int row = 0; row < count; ++row) {
+        CHECK(valid_ui_text(ModSettings::label(row)));
+        CHECK(valid_ui_text(panel::settingLabel(row)));
+        CHECK(valid_ui_text(short_label_probe::get(row)));
+        CHECK(valid_ui_text(panel::settingTip(row)));
+        const std::wstring rendered = panel::settingValue(defaults, row);
+        CHECK(rendered.find(L"(null)") == std::wstring::npos);
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -115,5 +187,7 @@ int main() {
         {"switches and choices step", switches_and_choices_step},
         {"fixed rows do not step", fixed_rows_do_not_step},
         {"normalize clamps and repairs values", normalize_clamps_and_repairs_values},
+        {"normalize sanitizes invalid lean bindings", normalize_sanitizes_invalid_lean_bindings},
+        {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });
 }

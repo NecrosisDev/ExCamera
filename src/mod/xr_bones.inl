@@ -25,83 +25,100 @@ static uintptr_t trackedHandPart(uintptr_t root, unsigned side) { return *reinte
 // Where the hand holds an item, from the item's own mesh: along its long axis the cross-section is
 // measured in bins, and the narrowest bin within a hand's reach of the hand's origin is the grip (a
 // hilt below a guard, a haft, a handle). Gives the grip point in the hand part's frame and the
-// item's radius there. Cached per item node.
-struct HeldGrip { uintptr_t node = 0; unsigned count = 0; bool valid = false; XrVector3f point{}; float radiusMetres = 0; };
-static std::array<HeldGrip, 16> heldGripCache{};
+// item's radius there. The cross-section profile is cached by immutable vertex-stream geometry.
+struct HeldGripProfile {
+    static constexpr unsigned bins = 24;
+    uintptr_t data = 0;
+    unsigned count = 0;
+    unsigned char axis = 0;
+    bool valid = false;
+    XrVector3f mean{};
+    float lo = 0, hi = 0;
+    float width[bins]{};
+    unsigned fill[bins]{};
+};
+static std::array<HeldGripProfile, 128> heldGripCache{};
 static uintptr_t heldItemNode(uintptr_t root, unsigned side);
 static bool heldItemGrip(uintptr_t root, unsigned side, XrVector3f& point, float& radiusMetres) {
     const uintptr_t node = heldItemNode(root, side);
     if (!node || !readable(node, 0x2a0)) return false;
-    WearAttribute positions{};
-    if (!wearAttribute(node, 1, positions) || (positions.format & 0xffffff) != 0xf30001 || positions.count < 8 || positions.count > fp::wear::maxVertices ||
-        !readable(positions.data, size_t(positions.count) * 12)) return false;
-    HeldGrip* slot = &heldGripCache[0];
-    for (auto& c : heldGripCache) {
-        if (c.node == node && c.count == positions.count) { if (!c.valid) return false; point = c.point; radiusMetres = c.radiusMetres; return true; }
-        if (!c.node) { slot = &c; break; }
-    }
-    if (slot->node) slot = &heldGripCache[(node >> 4) % heldGripCache.size()]; // full: replace by hash
-    *slot = {node, positions.count, false, {}, 0};
     const float* e = reinterpret_cast<const float*>(node + 0x30);
     const float* local = reinterpret_cast<const float*>(node + field::sceneNode::localTransform);
     for (unsigned i = 0; i < 3; ++i)
         if (!std::isfinite(e[i]) || e[i] < 0) return false;
     for (unsigned i = 0; i < 12; ++i)
         if (!std::isfinite(local[i])) return false;
+    WearAttribute positions{};
+    if (!wearAttribute(node, 1, positions) || (positions.format & 0xffffff) != 0xf30001 || positions.count < 8 || positions.count > fp::wear::maxVertices ||
+        !readable(positions.data, size_t(positions.count) * 12)) return false;
     const unsigned L = e[0] >= e[1] && e[0] >= e[2] ? 0 : e[1] >= e[2] ? 1 : 2;
-    const float* v = reinterpret_cast<const float*>(positions.data);
-    XrVector3f mean{};
-    float lo = 1e9f, hi = -1e9f;
-    for (unsigned i = 0; i < positions.count; ++i) {
-        const XrVector3f p = {v[i * 3], v[i * 3 + 1], v[i * 3 + 2]};
-        if (!xd::finite(p)) return false;
-        mean = xd::add(mean, p);
-        const float a = (&p.x)[L];
-        lo = (std::min)(lo, a);
-        hi = (std::max)(hi, a);
+    const size_t setBase = (((positions.data >> 6) ^ (size_t(positions.count) * 131u) ^ size_t(L)) & 31u) * 4u;
+    HeldGripProfile* slot = nullptr;
+    for (size_t way = 0; way < 4; ++way) {
+        auto& c = heldGripCache[setBase + way];
+        if (c.data == positions.data && c.count == positions.count && c.axis == L) {
+            slot = &c;
+            break;
+        }
+        if (!c.data && !slot) slot = &c;
     }
-    mean = xd::scale(mean, 1.f / float(positions.count));
-    if (!(hi - lo > 2.f)) return false;
-    constexpr unsigned bins = 24;
-    float width[bins]{};
-    unsigned fill[bins]{};
-    for (unsigned i = 0; i < positions.count; ++i) {
-        const XrVector3f p = {v[i * 3], v[i * 3 + 1], v[i * 3 + 2]};
-        const unsigned b = (std::min)(bins - 1, unsigned(((&p.x)[L] - lo) / (hi - lo) * float(bins)));
-        XrVector3f d = xd::sub(p, mean);
-        (&d.x)[L] = 0;
-        width[b] = (std::max)(width[b], xd::length(d));
-        ++fill[b];
+    if (!slot) slot = &heldGripCache[setBase + (((positions.data >> 4) ^ size_t(positions.count)) & 3u)];
+    if (slot->data != positions.data || slot->count != positions.count || slot->axis != L) {
+        *slot = {};
+        slot->data = positions.data;
+        slot->count = positions.count;
+        slot->axis = static_cast<unsigned char>(L);
+        const float* v = reinterpret_cast<const float*>(positions.data);
+        XrVector3f mean{};
+        float lo = 1e9f, hi = -1e9f;
+        bool finiteAll = true;
+        for (unsigned i = 0; i < positions.count; ++i) {
+            const XrVector3f p = {v[i * 3], v[i * 3 + 1], v[i * 3 + 2]};
+            if (!xd::finite(p)) { finiteAll = false; break; }
+            mean = xd::add(mean, p);
+            const float a = (&p.x)[L];
+            lo = (std::min)(lo, a);
+            hi = (std::max)(hi, a);
+        }
+        if (finiteAll && (hi - lo > 2.f)) {
+            mean = xd::scale(mean, 1.f / float(positions.count));
+            for (unsigned i = 0; i < positions.count; ++i) {
+                const XrVector3f p = {v[i * 3], v[i * 3 + 1], v[i * 3 + 2]};
+                const unsigned b = (std::min)(HeldGripProfile::bins - 1, unsigned(((&p.x)[L] - lo) / (hi - lo) * float(HeldGripProfile::bins)));
+                XrVector3f d = xd::sub(p, mean);
+                (&d.x)[L] = 0;
+                slot->width[b] = (std::max)(slot->width[b], xd::length(d));
+                ++slot->fill[b];
+            }
+            slot->mean = mean;
+            slot->lo = lo;
+            slot->hi = hi;
+            slot->valid = true;
+        }
     }
+    if (!slot->valid) return false;
     // the hand's origin in the item's frame: p_hand = p_local . R + t, so p_local = (p_hand - t) . rows
     const XrVector3f t = {local[9], local[10], local[11]};
     XrVector3f handLocal{};
     for (unsigned i = 0; i < 3; ++i) (&handLocal.x)[i] = -(t.x * local[i * 3] + t.y * local[i * 3 + 1] + t.z * local[i * 3 + 2]);
     const float handAlong = (&handLocal.x)[L], reach = 12.f; // a hand's span along the item
     int best = -1;
-    for (unsigned b = 0; b < bins; ++b) {
-        const float centre = lo + (float(b) + .5f) / float(bins) * (hi - lo);
-        if (fill[b] < 3 || std::abs(centre - handAlong) > reach) continue;
-        if (best < 0 || width[b] < width[size_t(best)]) best = int(b);
+    for (unsigned b = 0; b < HeldGripProfile::bins; ++b) {
+        const float centre = slot->lo + (float(b) + .5f) / float(HeldGripProfile::bins) * (slot->hi - slot->lo);
+        if (slot->fill[b] < 3 || std::abs(centre - handAlong) > reach) continue;
+        if (best < 0 || slot->width[b] < slot->width[size_t(best)]) best = int(b);
     }
     if (best < 0) return false;
-    XrVector3f grip = mean;
-    (&grip.x)[L] = lo + (float(best) + .5f) / float(bins) * (hi - lo);
+    XrVector3f grip = slot->mean;
+    (&grip.x)[L] = slot->lo + (float(best) + .5f) / float(HeldGripProfile::bins) * (slot->hi - slot->lo);
     const XrVector3f handPoint = xd::add({grip.x * local[0] + grip.y * local[3] + grip.z * local[6], grip.x * local[1] + grip.y * local[4] + grip.z * local[7], grip.x * local[2] + grip.y * local[5] + grip.z * local[8]}, t);
     const float units = static_cast<float>(vrUnitsPerMetre.load(std::memory_order_relaxed));
     if (!xd::finite(handPoint) || !(units > 0)) return false;
-    slot->point = handPoint;
-    slot->radiusMetres = (std::min)(.08f, (std::max)(.008f, width[size_t(best)] / units));
-    slot->valid = true;
-    point = slot->point;
-    radiusMetres = slot->radiusMetres;
+    point = handPoint;
+    radiusMetres = (std::min)(.08f, (std::max)(.008f, slot->width[size_t(best)] / units));
     return true;
 }
-// The radius (metres) of what the hand holds: at its grip when the mesh gives one, else from its half extents.
-static float heldRadius(uintptr_t root, unsigned side) {
-    XrVector3f grip{};
-    float gripRadius = 0;
-    if (heldItemGrip(root, side, grip, gripRadius)) return gripRadius;
+static float heldRadiusFromExtents(uintptr_t root, unsigned side) {
     if (!root || !readable(root, 0x1300)) return 0;
     const uintptr_t hand = trackedHandPart(root, side);
     uintptr_t part = *reinterpret_cast<uintptr_t*>(root + field::character::heldItems + (1 - side) * 8);
@@ -121,6 +138,13 @@ static float heldRadius(uintptr_t root, unsigned side) {
     std::sort(e, e + 3);
     const float radius = std::sqrt(e[0] * e[1]) / static_cast<float>(vrUnitsPerMetre.load(std::memory_order_relaxed));
     return (std::min)(.08f, (std::max)(.008f, radius));
+}
+// The radius (metres) of what the hand holds: at its grip when the mesh gives one, else from its half extents.
+[[maybe_unused]] static float heldRadius(uintptr_t root, unsigned side) {
+    XrVector3f grip{};
+    float gripRadius = 0;
+    if (heldItemGrip(root, side, grip, gripRadius)) return gripRadius;
+    return heldRadiusFromExtents(root, side);
 }
 // The pose of what the hand holds: flat under a shield, the hilt of a wielded weapon, a hold on a carried item, else open.
 static xd::HandPose heldHandPose(uintptr_t root, unsigned side) {
@@ -171,6 +195,13 @@ struct Hand {
     std::array<int, 4> pieceIds{}; // bone ids of rigid pieces (gloves) merged into the skin under this hand
     unsigned pieceCount = 0;
     bool fitted = false;      // the rest skeleton has been fitted to the mesh's fingers
+    bool heldPoseValid = false;
+    xd::HandPose lastPose = xd::HandPose::open;
+    uintptr_t lastHeldNode = 0;
+    float lastCurl[5]{};
+    float lastRadius = -1.f, lastUnits = -1.f;
+    bool lastHasAxis = false, lastHasGrip = false;
+    XrVector3f lastAxis{}, lastGrip{};
     std::array<Bone, perHand> bones{};
     std::vector<std::pair<unsigned, fp::wear::Weights>> saved; // the vertices we rewrote, with their native weights
 };
@@ -220,8 +251,12 @@ static bool trackedBoneDrivenByVr = false; // set by the VR drive's tick, read a
 // The bones are plain scene nodes (T3DNode, 0x1C8 bytes): the mesh class's prepare (TMesh +D0, 5F860) logs
 // "Mesh has no faces" for a mesh without geometry, the plain node's (+D0, 511B0) only sets a flag. The bone
 // register D39B0 reads +300 of a node it has not registered yet, past a plain node's end; that word only picks
-// whether it first rebuilds the node's world from its parent, harmless either way (the world is set first).
+// whether it first rebuilds the node's world from its parent, harmless either way when the page past +1C8 is
+// mapped. Any T3DNode allocated within 0x308 bytes of an unmapped page boundary is parked unused and replaced.
 static constexpr size_t nodeSize = 0x1C8;
+static constexpr size_t boneRegisterSpan = 0x308;
+static uintptr_t parkedEdgeNodes[16]{};
+static unsigned parkedEdgeNodeCount = 0;
 // Rigid hand pieces into the skin. The skin build (D9940, equipment refresh) merges into the _SKIN aggregate every
 // mesh under the body tree whose +204 & 0xC00000 is 0x400000, each as its own bone; the refresh sets that bit from
 // the model's own bit 0x40 (E7550), which rigid gloves and gauntlets lack. Marking those pieces just before the build
@@ -301,10 +336,19 @@ static int skinPieceId(uintptr_t node, uintptr_t handNode) {
     return *reinterpret_cast<int*>(node + 0x17c);
 }
 // SEH-only frames around the game's own routines.
-static uintptr_t trackedBoneCtorCall() {
+static uintptr_t trackedBoneCtorRawCall() {
     __try {
         return reinterpret_cast<uintptr_t (*)(uintptr_t, intptr_t)>(gameAt(fp::sig::nodeCtor))(gameAt(fp::sig::nodeVmt), 1); // a plain scene node: no mesh, so no "Mesh has no faces"
     } __except (EXCEPTION_EXECUTE_HANDLER) { trackedBoneFault = true; return 0; }
+}
+static uintptr_t trackedBoneCtorCall() {
+    for (unsigned attempt = 0; attempt < 5; ++attempt) {
+        const uintptr_t node = trackedBoneCtorRawCall();
+        if (!node) return 0;
+        if (readable(node, boneRegisterSpan)) return node;
+        if (parkedEdgeNodeCount < std::size(parkedEdgeNodes)) parkedEdgeNodes[parkedEdgeNodeCount++] = node;
+    }
+    return 0;
 }
 static bool trackedBoneAttachCall(uintptr_t parent, uintptr_t child) {
     __try {
@@ -313,6 +357,7 @@ static bool trackedBoneAttachCall(uintptr_t parent, uintptr_t child) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { trackedBoneFault = true; return false; }
 }
 static int trackedBoneRegisterCall(uintptr_t skin, uintptr_t node) {
+    if (!node || !readable(node, boneRegisterSpan)) return 0;
     __try {
         return reinterpret_cast<int (*)(uintptr_t, uintptr_t)>(gameAt(fp::sig::boneRegister))(skin, node);
     } __except (EXCEPTION_EXECUTE_HANDLER) { trackedBoneFault = true; return 0; }
@@ -379,6 +424,7 @@ static void trackedBoneRestoreWeights(fingerbones::Hand& hand) {
 }
 // Bones back to rest (the hand's own frame) so whatever still reads them sees the hand.
 static void trackedBoneRest(fingerbones::Hand& hand) {
+    hand.heldPoseValid = false;
     for (unsigned b = 0; b < hand.created; ++b) {
         const uintptr_t node = hand.bones[b].node;
         if (!trackedBoneNodeValid(node, hand.handNode)) continue;
@@ -412,7 +458,7 @@ static void trackedBoneRestSkeleton(const fingerbones::Joints& joint, fingerbone
 // One bone node: made by the game, named, at the hand's frame, hung on the hand node, registered.
 static bool trackedBoneCreate(fingerbones::Hand& hand, unsigned index, const fingerbones::Skin& skin) {
     const uintptr_t node = trackedBoneCtorCall();
-    if (!node || !readable(node, nodeSize) || *reinterpret_cast<uintptr_t*>(node) != gameAt(fp::sig::nodeVmt)) { trackedBoneFault = true; return false; }
+    if (!node || !readable(node, boneRegisterSpan) || *reinterpret_cast<uintptr_t*>(node) != gameAt(fp::sig::nodeVmt)) { trackedBoneFault = true; return false; }
     char name[16]{};
     snprintf(name, sizeof name, "%s%02u", fingerbones::nodeNamePrefix, index);
     memcpy(reinterpret_cast<void*>(node + field::sceneNode::name), name, sizeof name);
@@ -542,6 +588,7 @@ static bool trackedBoneSync(fingerbones::Hand& hand, const fingerbones::Skin& sk
     }
     hand.skinNode = skin.node;
     hand.weightData = skin.weights.data;
+    hand.heldPoseValid = false;
     trackedBoneRewrites.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -629,6 +676,7 @@ static bool trackedBoneDrive(uintptr_t root, unsigned side, fingerbones::Hand& h
         }
     }
     if (hand.skinNode != skin.node && !trackedBoneSync(hand, skin, handId, reach)) { trackedBoneFault = true; return false; }
+    hand.heldPoseValid = false;
     trackedBonePose(hand, *posed);
     count += hand.created;
     return true;
@@ -707,62 +755,147 @@ static xd::HandPose heldDrivenPose(uintptr_t root, unsigned side) {
     }
     return held;
 }
+static void heldTargetCurls(xd::HandPose pose, float itemRadius, float (&out)[5]) {
+    float curlBase = 0.f;
+    switch (pose) {
+    case xd::HandPose::open: curlBase = 0.f; break;
+    case xd::HandPose::flat: curlBase = 0.05f; break;
+    case xd::HandPose::limp:
+        out[0] = 0.25f; out[1] = 0.30f; out[2] = 0.35f; out[3] = 0.40f; out[4] = 0.45f;
+        return;
+    case xd::HandPose::fist: curlBase = 1.f; break;
+    case xd::HandPose::hilt:
+        curlBase = std::clamp(0.92f - itemRadius * 4.f, 0.25f, 0.95f);
+        break;
+    case xd::HandPose::hold:
+        curlBase = std::clamp(0.95f - itemRadius * 8.f, 0.15f, 0.95f);
+        break;
+    }
+    for (float& c : out) c = curlBase;
+}
+static bool trackedBoneWorldCurrent(const fingerbones::Hand& hand) {
+    if (!hand.created || !hand.handNode || !readable(hand.handNode, field::sceneNode::transform + 48)) return false;
+    const uintptr_t boneNode = hand.bones[0].node;
+    if (!trackedBoneNodeValid(boneNode, hand.handNode)) return false;
+    const float* parent = reinterpret_cast<const float*>(hand.handNode + field::sceneNode::transform);
+    const float* local = reinterpret_cast<const float*>(boneNode + field::sceneNode::localTransform);
+    const float* world = reinterpret_cast<const float*>(boneNode + field::sceneNode::transform);
+    const XrVector3f wantRow0 = {local[0] * parent[0] + local[1] * parent[3] + local[2] * parent[6],
+                                 local[0] * parent[1] + local[1] * parent[4] + local[2] * parent[7],
+                                 local[0] * parent[2] + local[1] * parent[5] + local[2] * parent[8]};
+    const XrVector3f wantOrigin = fingerbones::apply12(parent, {local[9], local[10], local[11]});
+    const XrVector3f gotRow0 = {world[0], world[1], world[2]};
+    const XrVector3f gotOrigin = {world[9], world[10], world[11]};
+    return xd::finite(wantRow0) && xd::finite(wantOrigin) &&
+           xd::length(xd::sub(wantRow0, gotRow0)) < 1e-3f &&
+           xd::length(xd::sub(wantOrigin, gotOrigin)) < 1e-2f;
+}
+static bool trackedBoneReuseHeld(uintptr_t root, unsigned side, fingerbones::Hand& hand, const fingerbones::Skin& skin,
+                                 xd::HandPose pose, uintptr_t heldNode, const float (&curls)[5], float itemRadius,
+                                 float units, bool hasAxis, const XrVector3f& axis, bool hasGrip, const XrVector3f& grip,
+                                 unsigned& count) {
+    if (!hand.heldPoseValid || hand.created != fingerbones::perHand || hand.skinNode != skin.node) return false;
+    const uintptr_t part = trackedHandPart(root, side);
+    if (!part || !readable(part, field::bodyPart::character + 8) || *reinterpret_cast<uintptr_t*>(part + field::bodyPart::character) != root) return false;
+    const uintptr_t handNode = *reinterpret_cast<uintptr_t*>(part + field::bodyPart::meshNode);
+    if (!handNode || hand.handNode != handNode || !readable(handNode, 0x420)) return false;
+    if (trackedBoneHandId(skin, handNode) < 1) return false;
+    if (hand.lastPose != pose || hand.lastHeldNode != heldNode ||
+        std::fabs(hand.lastRadius - itemRadius) >= 1e-4f || std::fabs(hand.lastUnits - units) >= 1e-3f ||
+        hand.lastHasAxis != hasAxis || hand.lastHasGrip != hasGrip) return false;
+    for (unsigned f = 0; f < 5; ++f)
+        if (std::fabs(curls[f] - hand.lastCurl[f]) >= 1e-4f) return false;
+    if (hasAxis && xd::length(xd::sub(hand.lastAxis, axis)) >= 1e-4f) return false;
+    if (hasGrip && xd::length(xd::sub(hand.lastGrip, grip)) >= 1e-3f) return false;
+    for (const auto& entry : trackedBoneTable)
+        for (const auto& h : entry.hands)
+            if (&h != &hand && h.weightData && h.weightData == skin.weights.data && entry.root != root) return false;
+    for (unsigned b = 0; b < hand.created; ++b)
+        if (!trackedBoneNodeValid(hand.bones[b].node, handNode)) return false;
+    if (!trackedBoneWorldCurrent(hand)) {
+        for (unsigned b = 0; b < hand.created; ++b)
+            if (!trackedBonePropagateCall(hand.bones[b].node)) return false;
+    }
+    count += hand.created;
+    return true;
+}
 // The held-item poses of one character's two hands, laid out by the joint model, into its bones.
 static void trackedBoneDriveHeld(fingerbones::Root& entry, const fingerbones::Skin& skin, float units, unsigned& count, uintptr_t player) {
     for (unsigned side = 0; side < 2; ++side) {
-        fingerbones::Joints rest{}, posed{};
-        float reach = 0, unused = 0;
+        auto& hand = entry.hands[side];
         const xd::HandPose pose = heldDrivenPose(entry.root, side);
-        const bool laid = fingerbones::modelJoints(xd::HandPose::open, side == 1, 0, units, rest, unused) &&
-                          fingerbones::modelJoints(pose, side == 1, heldRadius(entry.root, side), units, posed, reach);
-        XrVector3f axis{};
-        const bool gripped = laid && (pose == xd::HandPose::hilt || pose == xd::HandPose::hold);
-        bool hasAxis = false;
-        if (gripped && heldItemAxis(entry.root, side, axis)) {
-            hasAxis = true;
-            // each finger's curl turns about its own base so the fingers wrap round the item's axis; the
-            // bases stay on the palm, and the turn is capped where a real hand would move the wrist instead
-            const float thumbSide = side == 1 ? 1.f : -1.f;
-            const XrVector3f from = {thumbSide, 0, 0};
-            const float angle = std::acos((std::min)(1.f, (std::max)(-1.f, xd::dot(from, axis)))), cap = 80.f * 3.14159265f / 180.f;
-            const float t = angle > cap ? cap / angle : 1.f;
-            const XrQuaternionf q = xd::directionRotation(from, xd::unit(xd::add(xd::scale(from, 1 - t), xd::scale(axis, t)), from));
-            for (unsigned finger = 0; finger < 5; ++finger) {
-                const xd::FingerChain c = xd::fingerChain(finger);
-                for (unsigned j = c.first + 1; j <= c.first + c.segments; ++j) posed[j] = xd::add(posed[c.first], xd::rotate(q, xd::sub(posed[j], posed[c.first])));
-            }
-        }
+        const uintptr_t heldNode = heldItemNode(entry.root, side);
         XrVector3f grip{};
-        float gripRadius = 0;
-        if (gripped && heldItemGrip(entry.root, side, grip, gripRadius)) {
-            // the fingers close where the item's grip is: the model's wrap centre (the index and middle
-            // fingers' middle joints and the thumb's tip) is moved onto the grip point, across the item's axis only,
-            // by at most three centimetres, the bases staying on the palm
-            XrVector3f centre = xd::scale(xd::add(xd::add(posed[8], posed[13]), posed[5]), 1.f / 3.f);
-            XrVector3f shift = xd::sub(grip, centre);
-            if (xd::length(axis) > .5f) shift = xd::sub(shift, xd::scale(axis, xd::dot(shift, axis)));
-            const float len = xd::length(shift), cap = 3.f;
-            if (len > cap) shift = xd::scale(shift, cap / len);
-            if (xd::finite(shift))
+        float itemRadius = 0;
+        const bool hasGrip = heldItemGrip(entry.root, side, grip, itemRadius);
+        if (!hasGrip) itemRadius = heldRadiusFromExtents(entry.root, side);
+        const bool gripPose = pose == xd::HandPose::hilt || pose == xd::HandPose::hold;
+        XrVector3f axis{};
+        const bool hasAxis = gripPose && heldItemAxis(entry.root, side, axis);
+        float curls[5]{};
+        heldTargetCurls(pose, itemRadius, curls);
+        if (!trackedBoneReuseHeld(entry.root, side, hand, skin, pose, heldNode, curls, itemRadius, units,
+                                  hasAxis, axis, gripPose && hasGrip, grip, count)) {
+            fingerbones::Joints rest{}, posed{};
+            float reach = 0, unused = 0;
+            const bool laid = fingerbones::modelJoints(xd::HandPose::open, side == 1, 0, units, rest, unused) &&
+                              fingerbones::modelJoints(pose, side == 1, itemRadius, units, posed, reach);
+            const bool gripped = laid && gripPose;
+            if (gripped && hasAxis) {
+                // each finger's curl turns about its own base so the fingers wrap round the item's axis; the
+                // bases stay on the palm, and the turn is capped where a real hand would move the wrist instead
+                const float thumbSide = side == 1 ? 1.f : -1.f;
+                const XrVector3f from = {thumbSide, 0, 0};
+                const float angle = std::acos((std::min)(1.f, (std::max)(-1.f, xd::dot(from, axis)))), cap = 80.f * 3.14159265f / 180.f;
+                const float t = angle > cap ? cap / angle : 1.f;
+                const XrQuaternionf q = xd::directionRotation(from, xd::unit(xd::add(xd::scale(from, 1 - t), xd::scale(axis, t)), from));
                 for (unsigned finger = 0; finger < 5; ++finger) {
                     const xd::FingerChain c = xd::fingerChain(finger);
-                    for (unsigned j = c.first + 1; j <= c.first + c.segments; ++j) posed[j] = xd::add(posed[j], shift);
+                    for (unsigned j = c.first + 1; j <= c.first + c.segments; ++j) posed[j] = xd::add(posed[c.first], xd::rotate(q, xd::sub(posed[j], posed[c.first])));
                 }
+            }
+            if (gripped && hasGrip) {
+                // the fingers close where the item's grip is: the model's wrap centre (the index and middle
+                // fingers' middle joints and the thumb's tip) is moved onto the grip point, across the item's axis only,
+                // by at most three centimetres, the bases staying on the palm
+                XrVector3f centre = xd::scale(xd::add(xd::add(posed[8], posed[13]), posed[5]), 1.f / 3.f);
+                XrVector3f shift = xd::sub(grip, centre);
+                if (xd::length(axis) > .5f) shift = xd::sub(shift, xd::scale(axis, xd::dot(shift, axis)));
+                const float len = xd::length(shift), cap = 3.f;
+                if (len > cap) shift = xd::scale(shift, cap / len);
+                if (xd::finite(shift))
+                    for (unsigned finger = 0; finger < 5; ++finger) {
+                        const xd::FingerChain c = xd::fingerChain(finger);
+                        for (unsigned j = c.first + 1; j <= c.first + c.segments; ++j) posed[j] = xd::add(posed[j], shift);
+                    }
+            }
+            if (trackedBoneDrive(entry.root, side, hand, skin, laid ? &rest : nullptr, laid ? &posed : nullptr, reach, count) &&
+                !trackedBoneFault.load()) {
+                hand.heldPoseValid = true;
+                hand.lastPose = pose;
+                hand.lastHeldNode = heldNode;
+                for (unsigned f = 0; f < 5; ++f) hand.lastCurl[f] = curls[f];
+                hand.lastRadius = itemRadius;
+                hand.lastUnits = units;
+                hand.lastHasAxis = hasAxis;
+                hand.lastAxis = axis;
+                hand.lastHasGrip = gripPose && hasGrip;
+                hand.lastGrip = grip;
+            }
         }
-        trackedBoneDrive(entry.root, side, entry.hands[side], skin, laid ? &rest : nullptr, laid ? &posed : nullptr, reach, count);
         if (entry.root == player) {
             if (side == 0) {
                 trackedPlayerPoseLeft = static_cast<int>(pose);
                 trackedPlayerGlovedLeft = handGloved(entry.root, side);
                 trackedPlayerGrippedLeft = hasAxis;
-                trackedPlayerFittedLeft = entry.hands[side].fitted;
-                trackedPlayerVerticesLeft = static_cast<unsigned>(entry.hands[side].saved.size());
+                trackedPlayerFittedLeft = hand.fitted;
+                trackedPlayerVerticesLeft = static_cast<unsigned>(hand.saved.size());
             } else {
                 trackedPlayerPoseRight = static_cast<int>(pose);
                 trackedPlayerGlovedRight = handGloved(entry.root, side);
                 trackedPlayerGrippedRight = hasAxis;
-                trackedPlayerFittedRight = entry.hands[side].fitted;
-                trackedPlayerVerticesRight = static_cast<unsigned>(entry.hands[side].saved.size());
+                trackedPlayerFittedRight = hand.fitted;
+                trackedPlayerVerticesRight = static_cast<unsigned>(hand.saved.size());
             }
         }
         if (trackedBoneFault.load()) return;
@@ -798,8 +931,45 @@ static void trackedBonesEnd(unsigned count, unsigned roots) {
     trackedBoneRootsDriven = roots;
     if (trackedBoneFault.load()) { trackedBoneFaults.fetch_add(1, std::memory_order_relaxed); trackedBoneRetire(); }
 }
-// The held-pose driver, every build: the VR hands' item poses laid out by the joint model, for every
-// character the world lists (the player first, then the list's order, up to maxRoots). In VR the
+static bool trackedBoneActorWorld(uintptr_t root, float (&worldOut)[3], bool requireShown) {
+    if (!root || !readable(root, field::character::sceneNode + 8)) return false;
+    const uintptr_t actor = *reinterpret_cast<const uintptr_t*>(root + field::character::sceneNode);
+    if (!actor || !readable(actor, field::sceneNode::sector + 8)) return false;
+    const uintptr_t sector = *reinterpret_cast<const uintptr_t*>(actor + field::sceneNode::sector);
+    if (!sector || !readable(sector, 0x31c)) return false;
+    if (requireShown && *reinterpret_cast<const int*>(sector + 0x318) == 0) return false;
+    const float* t = reinterpret_cast<const float*>(actor + field::sceneNode::transform) + 9;
+    const float* o = reinterpret_cast<const float*>(sector + field::sector::origin);
+    const float wx = t[0] + o[0], wy = t[1] + o[1], wz = t[2] + o[2];
+    if (!std::isfinite(wx) || !std::isfinite(wy) || !std::isfinite(wz)) return false;
+    worldOut[0] = wx;
+    worldOut[1] = wy;
+    worldOut[2] = wz;
+    return true;
+}
+static bool trackedBoneCameraWorld(float (&worldOut)[3]) {
+    if (!TryAcquireSRWLockShared(&cameraLock)) return false;
+    bool ok = false;
+    __try {
+        uintptr_t view = 0, camera = 0;
+        currentCamera(view, camera);
+        if (camera && readable(camera + field::camera::pose, 48)) {
+            const float* eye = reinterpret_cast<const float*>(camera + field::camera::pose) + 9;
+            if (std::isfinite(eye[0]) && std::isfinite(eye[1]) && std::isfinite(eye[2])) {
+                worldOut[0] = eye[0];
+                worldOut[1] = eye[1];
+                worldOut[2] = eye[2];
+                ok = true;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+    ReleaseSRWLockShared(&cameraLock);
+    return ok;
+}
+// The held-pose driver, every build: the VR hands' item poses laid out by the joint model, for nearby
+// visible characters the world lists (the player first, then the list's order, up to maxRoots). In VR the
 // drive's tick ran just before this one from the same hook; when it drove the player's bones, the
 // player is left to it here.
 static void fingerPosesTick(uintptr_t player) {
@@ -809,22 +979,41 @@ static void fingerPosesTick(uintptr_t player) {
         if (!vr && !trackedBoneTable.empty()) trackedBoneRetire();
         return;
     }
+    static std::vector<uintptr_t> worldRoster;
     static std::vector<uintptr_t> roster;
-    if (fingerPosesOthers.load(std::memory_order_relaxed)) trackedBoneRoster(roster);
-    else roster.clear();
-    if (player && readable(player, 0x1300) && player == *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) && std::find(roster.begin(), roster.end(), player) == roster.end()) roster.push_back(player);
-    else if (!player || !readable(player, 0x1300) || player != *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot))) player = 0;
-    // entries whose root the world no longer lists are dropped untouched; the rest keep their bones
-    for (auto& entry : trackedBoneTable)
-        if (std::find(roster.begin(), roster.end(), entry.root) == roster.end()) entry = {};
-    trackedBoneTable.erase(std::remove_if(trackedBoneTable.begin(), trackedBoneTable.end(), [](const fingerbones::Root& e) { return e.root == 0; }), trackedBoneTable.end());
-    if (player && std::find(roster.begin(), roster.end(), player) != roster.end()) { // the player goes first
-        roster.erase(std::find(roster.begin(), roster.end(), player));
-        roster.insert(roster.begin(), player);
+    const bool othersOn = fingerPosesOthers.load(std::memory_order_relaxed) != 0;
+    if (othersOn || !trackedBoneTable.empty()) trackedBoneRoster(worldRoster);
+    else worldRoster.clear();
+    if (!player || !readable(player, 0x1300) || player != *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot))) player = 0;
+    if (player && std::find(worldRoster.begin(), worldRoster.end(), player) == worldRoster.end()) worldRoster.push_back(player);
+    // entries whose root the world no longer lists are dropped untouched; retired non-player entries restore weights
+    for (auto& entry : trackedBoneTable) {
+        if (std::find(worldRoster.begin(), worldRoster.end(), entry.root) == worldRoster.end()) entry = {};
+        else if (!othersOn && entry.root != player) trackedBoneRetireEntry(entry, readable(entry.root, 0x1300));
     }
-    if (roster.size() > fingerbones::maxRoots) roster.resize(fingerbones::maxRoots);
-    unsigned count = 0, driven = 0;
+    trackedBoneTable.erase(std::remove_if(trackedBoneTable.begin(), trackedBoneTable.end(), [](const fingerbones::Root& e) { return e.root == 0; }), trackedBoneTable.end());
     const float units = static_cast<float>(vrUnitsPerMetre.load(std::memory_order_relaxed));
+    const float scaleUnits = (std::isfinite(units) && units > 0.f) ? units : 100.f;
+    const float maxDist = 15.f * scaleUnits;
+    const float maxDistSq = maxDist * maxDist;
+    float refWorld[3]{};
+    const bool hasRef = trackedBoneCameraWorld(refWorld) || (player && trackedBoneActorWorld(player, refWorld, false));
+    roster.clear();
+    if (player) roster.push_back(player);
+    if (othersOn) {
+        for (const uintptr_t root : worldRoster) {
+            if (roster.size() >= fingerbones::maxRoots) break;
+            if (root == player) continue;
+            float actorWorld[3]{};
+            if (!trackedBoneActorWorld(root, actorWorld, true)) continue;
+            if (hasRef) {
+                const float dx = actorWorld[0] - refWorld[0], dy = actorWorld[1] - refWorld[1], dz = actorWorld[2] - refWorld[2];
+                if (dx * dx + dy * dy + dz * dz > maxDistSq) continue;
+            }
+            roster.push_back(root);
+        }
+    }
+    unsigned count = 0, driven = 0;
     for (const uintptr_t root : roster) {
         if (vr && root == player) { // the VR tick already posed the player; count its bones
             for (const auto& hand : trackedBoneEntry(root).hands) count += hand.created;
@@ -836,6 +1025,10 @@ static void fingerPosesTick(uintptr_t player) {
         trackedBoneDriveHeld(trackedBoneEntry(root), skin, units, count, player);
         ++driven;
         if (trackedBoneFault.load()) break;
+    }
+    for (const auto& entry : trackedBoneTable) {
+        if (std::find(roster.begin(), roster.end(), entry.root) != roster.end()) continue;
+        for (const auto& hand : entry.hands) count += hand.created;
     }
     fingerPoseTicks.fetch_add(1, std::memory_order_relaxed);
     trackedBonesEnd(count, driven);

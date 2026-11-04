@@ -662,9 +662,9 @@ struct ModSettings {
 // The ini words of the rows that are not plain integers.
 inline constexpr int badText = INT_MIN;
 inline bool iniIs(const wchar_t* t, const wchar_t* w) {
-    while (*t == L' ') ++t;
+    if (!t || !w) return false; while (*t == L' ') ++t;
     for (; *w; ++t, ++w)
-        if ((*t | 0x20) != *w) return false;
+        if (!*t || (*t | 0x20) != *w) return false;
     while (*t == L' ') ++t;
     return !*t;
 }
@@ -977,7 +977,7 @@ inline const RowInfo& rowInfo(int row) {
         {setting::edgeSoftness, L"Aim oval: edge softness", RowInfo::number, &ModSettings::edgeSoftness,
          nullptr, L"Input", L"AimEdgeSoftness", nullptr, nullptr,
          L"Gradually shares outward mouse movement with camera turning across the outer portion of the "
-         L"aim oval. 25% is the default; 0% restores the original hard boundary. "
+         L"aim oval. 100% is the default; 0% restores the original hard boundary. "
          L"The cursor still slides along the rim, inward motion is immediate, and the camera does not "
          L"keep drifting after mouse release. Applies in first and third-person Aim oval mode."},
         {setting::tracking, L"Head / eye tracking (OpenTrack UDP)", RowInfo::toggle,
@@ -1225,6 +1225,9 @@ inline void ModSettings::normalize() {
     if (!validSettingBinding(setting::rotateHeldKey, rotateHeldKey)) rotateHeldKey = 0;
     if (!validSettingBinding(setting::kickKey, kickKey)) kickKey = 0;
     if (!validSettingBinding(setting::jumpKey, jumpKey)) jumpKey = 0;
+    if (!validSettingBinding(setting::leanKey, leanKey)) leanKey = 0;
+    if (!validSettingBinding(setting::leanLeftKey, leanLeftKey)) leanLeftKey = 0;
+    if (!validSettingBinding(setting::leanRightKey, leanRightKey)) leanRightKey = 0;
     if (fpDefense != 1) fpDefense = 0;
     if (tpDefense != 1) tpDefense = 0;
     if (fpSwingSelection != 0) fpSwingSelection = 1;
@@ -1238,12 +1241,12 @@ inline void ModSettings::normalize() {
             // An effect strength in percent; the old Subtle and Strong (1 and 2) are 50 and 100.
             int& v = this->*i.value;
             v = v == 1 ? 50 : v == 2 ? 100 : std::clamp(v, 0, 100);
-        } else if (i.kind == RowInfo::choice && (this->*i.value < 0 || this->*i.value > 2))
+        } else if (i.kind == RowInfo::choice && (this->*i.value < 0 || this->*i.value > (r == setting::vrTurning ? 3 : 2)))
             this->*i.value = defaults.*i.value;
     }
     headSteady = headRoll = headPitch = headYaw = headBob = fp::fixedHeadStabilization;
     fpDeadzoneX = fpDeadzoneY = tpDeadzoneX = tpDeadzoneY = fp::fixedAimHalfExtent;
-    edgeSoftness = 100;
+    edgeSoftness = fp::defaultAimEdgeSoftness;
     autoRecenter = true;
     eyeSetback = fixedEyeSetbackCm;
     nearClip = fixedNearClipTenths;

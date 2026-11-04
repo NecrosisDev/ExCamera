@@ -305,7 +305,7 @@ Fix coordinate mapping and make native UI interaction predictable.
 
 ## Phase 5: Optional ExanimaLua settings backend (abandoned)
 
-Status: Abandoned in v0.3.0. ExCamera uses its native settings form and keeps its own setting values; the unfinished hosted settings path was removed. The remaining hosted-tab bridge is only for tabs registered by other mods, and ExanimaLua is optional (needed only for wound marks). The objective, work, and exit criteria below are retained as design history and will not be completed.
+Status: Abandoned in v0.3.0. ExCamera uses its native settings form, keeps its own setting values, and ships native procedural wounds, blood, and fire standalone; the unfinished ExanimaLua-hosted ExCamera settings path was removed. When `ScriptRuntime.dll` (ExanimaLua) is present, ExCamera optionally hosts tabs registered by other mods inside its widened Options form and uses `ScriptRuntime` inventory exports for the VR hip pouch. The objective, work, and exit criteria below are retained as design history and will not be completed.
 
 ### Objective:
 

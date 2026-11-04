@@ -10,6 +10,108 @@ static void recordHeldThrow(int wheel, float distance);
 static bool manualCombatNow();
 static bool bindingContextNow();
 static bool nativeSettingsBindingInput(UINT message, WPARAM wp, LPARAM lp);
+static bool readable(uintptr_t address, size_t size);
+static bool readable(uintptr_t address, size_t size, MEMORY_BASIC_INFORMATION& region);
+static inline bool readableRegionContains(const MEMORY_BASIC_INFORMATION& region, uintptr_t address, size_t size);
+
+inline uintptr_t characterSector(uintptr_t characterRoot) {
+    const uintptr_t mesh = readable(characterRoot, field::character::sceneNode + sizeof(uintptr_t))
+                               ? *reinterpret_cast<const uintptr_t*>(characterRoot + field::character::sceneNode)
+                               : 0;
+    return readable(mesh, field::sceneNode::sector + sizeof(uintptr_t))
+               ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector)
+               : 0;
+}
+
+inline bool readSectorOrigin(uintptr_t sector, float* out) {
+    if (!readable(sector, field::sector::origin + 3 * sizeof(float))) return false;
+    std::memcpy(out, reinterpret_cast<const void*>(sector + field::sector::origin), 3 * sizeof(float));
+    return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
+}
+
+inline void addSectorOrigin(const float* localPos, uintptr_t sector, float* worldPos) {
+    const auto* sectorOrig = reinterpret_cast<const float*>(sector + field::sector::origin);
+    for (int i = 0; i < 3; ++i) worldPos[i] = localPos[i] + sectorOrig[i];
+}
+
+inline void resolveNearerSectorWorld(const float* rawPos, const float* sectorOrig, const float* refWorld,
+                                     float* worldOut) {
+    float dRaw = 0.f, dShifted = 0.f, shifted[3];
+    for (int i = 0; i < 3; ++i) {
+        shifted[i] = rawPos[i] + sectorOrig[i];
+        const float a = rawPos[i] - refWorld[i], b = shifted[i] - refWorld[i];
+        dRaw += a * a;
+        dShifted += b * b;
+    }
+    const float* best = dShifted < dRaw ? shifted : rawPos;
+    for (int i = 0; i < 3; ++i) worldOut[i] = best[i];
+}
+
+struct CachedWindowGeometry {
+    LONGLONG fgQpc = 0;
+    unsigned fgEpoch = 0;
+    HWND foreground = nullptr;
+    LONGLONG rectQpc = 0;
+    unsigned rectEpoch = 0;
+    HWND rectWindow = nullptr;
+    RECT client{};
+    RECT screenClip{};
+    POINT screenCenter{};
+    bool rectValid = false;
+};
+
+static SRWLOCK windowCacheLock = SRWLOCK_INIT;
+static CachedWindowGeometry windowCache{};
+static std::atomic<unsigned> windowCacheEpoch{1};
+
+static SRWLOCK pointerCaptureLock = SRWLOCK_INIT;
+static RECT lastClipRect{-1, -1, -1, -1};
+static HWND lastClipWindow = nullptr;
+
+inline void invalidateWindowGeometryCache() {
+    windowCacheEpoch.fetch_add(1, std::memory_order_release);
+}
+
+static void clearPointerClipCache(bool unclip) {
+    AcquireSRWLockExclusive(&pointerCaptureLock);
+    lastClipRect = {-1, -1, -1, -1};
+    lastClipWindow = nullptr;
+    ReleaseSRWLockExclusive(&pointerCaptureLock);
+    if (unclip && InterlockedExchange(&cursorClipped, 0)) ClipCursor(nullptr);
+}
+
+static bool pointerClipMatches(HWND w, const RECT& screenClip) {
+    if (!w || !InterlockedCompareExchange(&cursorClipped, 0, 0)) return false;
+    AcquireSRWLockShared(&pointerCaptureLock);
+    const bool matches = lastClipWindow == w && EqualRect(&screenClip, &lastClipRect) != 0;
+    ReleaseSRWLockShared(&pointerCaptureLock);
+    return matches;
+}
+
+static void syncPointerCapture(HWND w, const RECT& screenClip, const POINT& center, bool wantCapture) {
+    if (!wantCapture || !w) {
+        InterlockedExchange(&mouseCaptured, 0);
+        clearPointerClipCache(true);
+        return;
+    }
+    const bool clipped = InterlockedCompareExchange(&cursorClipped, 0, 0) != 0;
+    AcquireSRWLockExclusive(&pointerCaptureLock);
+    const bool needClip = !clipped || lastClipWindow != w || !EqualRect(&screenClip, &lastClipRect);
+    if (needClip) {
+        if (ClipCursor(&screenClip)) {
+            lastClipRect = screenClip;
+            lastClipWindow = w;
+            InterlockedExchange(&cursorClipped, 1);
+        } else {
+            lastClipRect = {-1, -1, -1, -1};
+            lastClipWindow = nullptr;
+            InterlockedExchange(&cursorClipped, 0);
+        }
+    }
+    ReleaseSRWLockExclusive(&pointerCaptureLock);
+    SetCursorPos(center.x, center.y);
+    InterlockedExchange(&mouseCaptured, 1);
+}
 
 static inline bool alternateBindingKey(unsigned key) {
     const unsigned alternate = nativeBinding(6);
@@ -162,9 +264,27 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     if (owner.window != w || !owner.previous || owner.retired)
         return DefWindowProcW(w, message, wp, lp);
     if (message == WM_NCDESTROY) {
+        invalidateWindowGeometryCache();
+        clearPointerClipCache(true);
         const LRESULT result = CallWindowProcW(owner.previous, w, message, wp, lp);
         retireWindowInstallation(owner);
         return result;
+    }
+    if (message == WM_MOVE || message == WM_MOVING || message == WM_SIZE || message == WM_SIZING ||
+        message == WM_ENTERSIZEMOVE || message == WM_EXITSIZEMOVE || message == WM_WINDOWPOSCHANGED ||
+        message == WM_DISPLAYCHANGE) {
+        invalidateWindowGeometryCache();
+        if (message == WM_MOVE || message == WM_SIZE || message == WM_ENTERSIZEMOVE ||
+            message == WM_EXITSIZEMOVE || message == WM_DISPLAYCHANGE) {
+            InterlockedExchange(&mouseCaptured, 0);
+            clearPointerClipCache(true);
+            AcquireSRWLockExclusive(&rawLock);
+            rawLook.reset();
+            ReleaseSRWLockExclusive(&rawLock);
+        }
+    } else if (message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_ACTIVATE ||
+               message == WM_ACTIVATEAPP || message == WM_CANCELMODE) {
+        invalidateWindowGeometryCache();
     }
     if (InterlockedCompareExchange(&stopping, 0, 0))
         return CallWindowProcW(owner.previous, w, message, wp, lp);
@@ -402,6 +522,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     if (message == WM_KILLFOCUS || message == WM_CANCELMODE || (message == WM_ACTIVATEAPP && !wp)) {
         ++inventoryOwnerEpoch;
         rmbEvent(fp::RmbEvent::focusLost, false);
+        clearPointerClipCache(false);
         releaseInput();
     }
     return CallWindowProcW(owner.previous, w, message, wp, lp);
@@ -413,11 +534,93 @@ static bool consoleWindow(HWND w) {
     return GetClassNameW(w, c, 32) && !wcscmp(c, L"ConsoleWindowClass");
 }
 
+static inline LONGLONG windowCacheNowTicks(LONGLONG& maxAgeTicks) {
+    LARGE_INTEGER qpc{};
+    QueryPerformanceCounter(&qpc);
+    const LONGLONG freq = frequency.QuadPart;
+    if (freq > 0) {
+        maxAgeTicks = freq / 500; // 2 ms usermode QPC cache window
+        if (maxAgeTicks < 1) maxAgeTicks = 1;
+        return qpc.QuadPart;
+    }
+    maxAgeTicks = 2;
+    return LONGLONG(GetTickCount64());
+}
+
 static HWND gameWindow() {
+    LONGLONG maxAge = 0;
+    const LONGLONG nowTicks = windowCacheNowTicks(maxAge);
+    const unsigned epoch = windowCacheEpoch.load(std::memory_order_acquire);
+    AcquireSRWLockShared(&windowCacheLock);
+    if (windowCache.fgEpoch == epoch && nowTicks >= windowCache.fgQpc &&
+        nowTicks - windowCache.fgQpc <= maxAge) {
+        const HWND cached = windowCache.foreground;
+        ReleaseSRWLockShared(&windowCacheLock);
+        return cached;
+    }
+    ReleaseSRWLockShared(&windowCacheLock);
+
     HWND w = GetForegroundWindow();
     DWORD pid = 0;
-    GetWindowThreadProcessId(w, &pid);
-    return pid == GetCurrentProcessId() && !consoleWindow(w) ? w : nullptr;
+    if (w) GetWindowThreadProcessId(w, &pid);
+    const HWND resolved = w && pid == GetCurrentProcessId() && !consoleWindow(w) ? w : nullptr;
+
+    AcquireSRWLockExclusive(&windowCacheLock);
+    windowCache.fgQpc = nowTicks;
+    windowCache.fgEpoch = epoch;
+    windowCache.foreground = resolved;
+    ReleaseSRWLockExclusive(&windowCacheLock);
+    return resolved;
+}
+
+static bool cachedWindowClient(HWND w, RECT& client, RECT* screenClip = nullptr, POINT* screenCenter = nullptr) {
+    if (!w) return false;
+    LONGLONG maxAge = 0;
+    const LONGLONG nowTicks = windowCacheNowTicks(maxAge);
+    const unsigned epoch = windowCacheEpoch.load(std::memory_order_acquire);
+    AcquireSRWLockShared(&windowCacheLock);
+    if (windowCache.rectEpoch == epoch && windowCache.rectWindow == w && nowTicks >= windowCache.rectQpc &&
+        nowTicks - windowCache.rectQpc <= maxAge) {
+        const bool valid = windowCache.rectValid;
+        if (valid) {
+            client = windowCache.client;
+            if (screenClip) *screenClip = windowCache.screenClip;
+            if (screenCenter) *screenCenter = windowCache.screenCenter;
+        }
+        ReleaseSRWLockShared(&windowCacheLock);
+        return valid;
+    }
+    ReleaseSRWLockShared(&windowCacheLock);
+
+    RECT localClient{}, localScreen{};
+    POINT localCenter{};
+    bool valid = GetClientRect(w, &localClient) && localClient.right > 0 && localClient.bottom > 0;
+    if (valid) {
+        localScreen = localClient;
+        SetLastError(0);
+        if (!MapWindowPoints(w, nullptr, reinterpret_cast<POINT*>(&localScreen), 2) && GetLastError() != 0)
+            valid = false;
+        else
+            localCenter = {localScreen.left + localClient.right / 2, localScreen.top + localClient.bottom / 2};
+    }
+
+    AcquireSRWLockExclusive(&windowCacheLock);
+    windowCache.rectQpc = nowTicks;
+    windowCache.rectEpoch = epoch;
+    windowCache.rectWindow = w;
+    windowCache.rectValid = valid;
+    if (valid) {
+        windowCache.client = localClient;
+        windowCache.screenClip = localScreen;
+        windowCache.screenCenter = localCenter;
+    }
+    ReleaseSRWLockExclusive(&windowCacheLock);
+
+    if (!valid) return false;
+    client = localClient;
+    if (screenClip) *screenClip = localScreen;
+    if (screenCenter) *screenCenter = localCenter;
+    return true;
 }
 
 static BOOL CALLBACK findWindow(HWND w, LPARAM out) {
@@ -567,6 +770,7 @@ static thread_local bool updateAimLocked = false; // behavior() releases aimLock
 
 static void updateAim(uintptr_t behavior) {
     if (!controls(behavior)) {
+        clearPointerClipCache(false);
         releaseInput();
         inputClock = ~0u;
         return;
@@ -581,19 +785,20 @@ static void updateAim(uintptr_t behavior) {
     inputClock = clock;
     const uintptr_t head = *reinterpret_cast<const uintptr_t*>(root + field::character::headPart);
     if (!head) {
+        clearPointerClipCache(false);
         releaseInput();
         return;
     }
     HWND w = gameWindow();
-    RECT rect;
-    POINT cursor, center;
-    if (!w || !GetClientRect(w, &rect) || !GetCursorPos(&cursor)) {
+    RECT rect{}, screenClip{};
+    POINT cursor{}, center{};
+    if (!w || !cachedWindowClient(w, rect, &screenClip, &center) || !GetCursorPos(&cursor)) {
+        clearPointerClipCache(false);
         releaseInput();
         return;
     }
-    center = {rect.right / 2, rect.bottom / 2};
-    ClientToScreen(w, &center);
     if (!MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) {
+        clearPointerClipCache(false);
         releaseInput();
         return;
     }
@@ -628,8 +833,19 @@ static void updateAim(uintptr_t behavior) {
         for (int a = 0; a < 3; a++) aim.anchor[a] = anchor[a];
     }
 
+    static uintptr_t boxRoot = 0, boxHead = 0;
     static int boxMode = -1, previousBoxX = -1, previousBoxY = -1;
     static LONG previousBoxWidth = -1, previousBoxHeight = -1;
+    if (boxRoot != root || boxHead != head) {
+        boxRoot = root;
+        boxHead = head;
+        boxMode = -1;
+        previousBoxX = -1;
+        previousBoxY = -1;
+        previousBoxWidth = -1;
+        previousBoxHeight = -1;
+        tpAimBox = fp::AimBox{};
+    }
     const int mode = viewMode.load();
     const bool combat = *reinterpret_cast<const unsigned char*>(root + field::character::combatStance) != 0;
     const unsigned generation = inputOwner.generation(), policy = inputOwner.policyRevision();
@@ -657,8 +873,10 @@ static void updateAim(uintptr_t behavior) {
     boxMode = mode;
     previousBoxX = boxX;
     previousBoxY = boxY;
+    const bool clipConsistent = pointerClipMatches(w, screenClip);
     if (!freeCursor && InterlockedCompareExchange(&mouseCaptured, 0, 0)) {
-        float dx = float(cursor.x - center.x), dy = float(cursor.y - center.y);
+        float dx = clipConsistent ? float(cursor.x - center.x) : 0.f,
+              dy = clipConsistent ? float(cursor.y - center.y) : 0.f;
         if (InterlockedCompareExchange(&rawRegistered, 0, 0)) {
             long rx = 0, ry = 0;
             AcquireSRWLockExclusive(&rawLock);
@@ -758,16 +976,7 @@ static void updateAim(uintptr_t behavior) {
     ++aim.revision;
     updateAimLocked = false;
     ReleaseSRWLockExclusive(&aimLock);
-    if (!freeCursor) {
-        SetCursorPos(center.x, center.y);
-        InterlockedExchange(&mouseCaptured, 1);
-        if (!InterlockedCompareExchange(&cursorClipped, 0, 0)) {
-            RECT clip = rect;
-            MapWindowPoints(w, nullptr, reinterpret_cast<POINT*>(&clip), 2);
-            if (ClipCursor(&clip)) InterlockedExchange(&cursorClipped, 1);
-        }
-    } else
-        InterlockedExchange(&mouseCaptured, 0);
+    syncPointerCapture(w, screenClip, center, !freeCursor);
     ++controlCalls;
 }
 
@@ -1052,9 +1261,10 @@ static void steadyHeadAround(uintptr_t root, void (*build)(uintptr_t, float, uns
     float wobble = 1.f;
     {
         static fp::HeadWobble seen;
-        static uintptr_t seenHead = 0;
-        if (head != seenHead) {
+        static uintptr_t seenRoot = 0, seenHead = 0;
+        if (root != seenRoot || head != seenHead) {
             seen = fp::HeadWobble();
+            seenRoot = root;
             seenHead = head;
         }
         if (meshReadable) {
@@ -1586,6 +1796,11 @@ static void publishCue(uintptr_t self) {
     cueOrigin.store(int(fp::originSide(cue, swingHands(root, cue, in.motion))));
     {
         static fp::Windup w;
+        static uintptr_t windupRoot = 0;
+        if (root != windupRoot) {
+            w = fp::Windup{};
+            windupRoot = root;
+        }
         const int motion = *reinterpret_cast<const int*>(root + field::character::motion);
         const bool on = attackCue && in.owned && in.combat && motion >= 5 && motion <= 12 &&
                         (motion != 11 || cueThrust.load());
@@ -1721,8 +1936,8 @@ static bool sampleWorldPointer(uintptr_t gui, WorldPointerSample& sample) {
                 !(interact > 0 && interact < 256 && (keyState(int(interact)) & 0x8000)))
                 return false;
         }
-        RECT rect;
-        if (!reticleForUi(&sample.x, &sample.y) || !GetClientRect(gameWindow(), &rect) ||
+        RECT rect{};
+        if (!reticleForUi(&sample.x, &sample.y) || !cachedWindowClient(gameWindow(), rect) ||
             rect.right <= 40 || rect.bottom <= 40 || sample.x < 0 || sample.y < 0 ||
             sample.x >= rect.right || sample.y >= rect.bottom)
             return false;
@@ -2210,13 +2425,10 @@ static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
 
 static float holdReachClamp(const float* origin, const float* dir, float t) {
     const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
-    const uintptr_t mesh = root ? *reinterpret_cast<const uintptr_t*>(root + field::character::sceneNode) : 0,
-                    scene = mesh ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector) : 0;
-    if (scene) {
+    const uintptr_t sector = root ? characterSector(root) : 0;
+    if (sector && readable(sector, field::sector::origin + 3 * sizeof(float))) {
         float body[3];
-        for (int i = 0; i < 3; i++)
-            body[i] = *reinterpret_cast<const float*>(root + field::character::position + i * 4) +
-                      *reinterpret_cast<const float*>(scene + field::sector::origin + i * 4);
+        addSectorOrigin(reinterpret_cast<const float*>(root + field::character::position), sector, body);
         const float reach = fp::rayInSphere(origin, dir, body, fp::holdSphere(float(grabRange.load())));
         if (reach >= 0) t = std::fmin(t, reach);
     }
@@ -2250,8 +2462,8 @@ static float viewClearanceProfileBody(const float* pose, float fov, float maxCle
     const uintptr_t level = levelGrid();
     if (!level || !levelRay || !levelRay2) return -1;
     float aspect = 16.f / 9.f;
-    RECT r;
-    if (hookedWindow && GetClientRect(hookedWindow, &r) && r.bottom > 0 && r.right > 0)
+    RECT r{};
+    if (hookedWindow && cachedWindowClient(hookedWindow, r) && r.bottom > 0 && r.right > 0)
         aspect = float(r.right) / float(r.bottom);
     const float tv = std::tan(fov * 3.14159265f / 360.f), th = tv * aspect;
     float best = 1e9f;
@@ -2268,23 +2480,16 @@ static float viewClearanceProfileBody(const float* pose, float fov, float maxCle
         for (float& v : d) v = float(v / n);
         const float length = std::fmax(16.f, 9.f * float(n));
         const float depthScale = float(1.0 / n);
-        float probe = length;
-        if (std::isfinite(maxClearance) && maxClearance > 0.f && length * depthScale > maxClearance) {
-            float lo = 0.f, hi = length;
-            for (int i = 0; i < 6; ++i) {
-                const float mid = (lo + hi) * .5f;
-                if (mid * depthScale >= maxClearance) hi = mid;
-                else lo = mid;
-            }
-            probe = hi;
-        }
+        const float clearanceLimit =
+            std::isfinite(maxClearance) && maxClearance > 0.f ? maxClearance * float(n) : length;
+        const float probe = std::fmin(length, clearanceLimit);
         const int hit = levelBlocked(level, pose + 9, d, probe);
         if (hit < 0) return -1;
         if (hit == 0) {
             if (probe < length) best = std::fmin(best, maxClearance);
             continue;
         }
-        float lo = 0, hi = length;
+        float lo = 0.f, hi = probe;
         for (int i = 0; i < 6; i++) {
             const float mid = (lo + hi) * .5f;
             const int m = levelBlocked(level, pose + 9, d, mid);

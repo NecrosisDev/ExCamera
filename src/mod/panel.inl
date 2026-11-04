@@ -55,7 +55,7 @@ static std::atomic<bool> nativeSettingsWanted{false}, nativeSettingsRetired{true
     nativeSettingsFaulted{false};
 static bool nativeSettingsConfigured = false;
 
-static thread_local bool inNativeSettingsMaintenance = false;
+// inNativeSettingsMaintenance is declared in session.inl for recordFault.
 static volatile LONG nativeSettingsInFlight = 0, nativeSettingsThread = 0;
 static uintptr_t nativeOptionsDesktop = 0;
 static int nativeOptionsContains(uintptr_t form) {
@@ -200,7 +200,7 @@ static void configureNativeSettings() {
     nativeSettings.recenter = [] { ++trackingReset; };
     nativeSettings.modsByMod = settingsPath[0] && GetPrivateProfileIntW(L"Settings", L"ModSettingsByMod", 0, settingsPath) != 0;
     nativeSettings.saveModsByMod = [](bool byMod) {
-        if (settingsPath[0]) WritePrivateProfileStringW(L"Settings", L"ModSettingsByMod", byMod ? L"1" : L"0", settingsPath);
+        pendingModsByModSave.store(byMod ? 1 : 0, std::memory_order_release);
     };
     // The Exanima Lua runtime's Settings tabs (its "Mod Settings" tab): this form already owns GUI maintenance,
     // so it hosts them instead of the runtime hooking the same step. Version 1 and every export must be present.

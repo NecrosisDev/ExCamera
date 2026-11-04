@@ -23,8 +23,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = ROOT / 'tools' / 'targets.json'
-# The public repository keeps sources in src/; the development tree keeps them beside tools/.
-HEADER = (ROOT / 'src' if (ROOT / 'src').is_dir() else ROOT) / 'game_signatures.h'
+HEADER_PATH = ROOT / 'src/game_signatures.h'
+HEADER = HEADER_PATH
 MIN_BYTES, MAX_BYTES = 24, 160
 MD = None
 

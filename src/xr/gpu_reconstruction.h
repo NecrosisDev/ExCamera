@@ -1,7 +1,13 @@
 #pragma once
-#include "reconstruction.h"
-#include <GL/gl.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
+#include <GL/gl.h>
+#include "reconstruction.h"
 
 namespace fp::xr {
 // GPU reconstruction: a backward warp that, for every eye pixel, marches its view ray through
@@ -186,7 +192,7 @@ void main() {
 
 public:
     struct Target { GLuint framebuffer, texture; int width, height; };
-    ~GpuReconstructor() { if (program_) deleteProgram(program_); }
+    ~GpuReconstructor() { if (program_ && wglGetCurrentContext() != nullptr) deleteProgram(program_); }
     const char* name() const override { return "gpu-backward-warp"; }
     bool available(std::string& reason) const override {
         if (!failure_.empty()) reason = failure_;

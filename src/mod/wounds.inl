@@ -105,7 +105,7 @@ static BodyDamageFn originalBodyDamage = nullptr;
 using PhysicalImpactFn = void (*)(uintptr_t);
 static PhysicalImpactFn originalPhysicalImpact = nullptr;
 static thread_local uintptr_t currentImpactAttacker = 0;
-static std::atomic<ULONGLONG> characterHitsProbed{0};
+static std::atomic<int> characterHitsState{0}; // 0 unprobed, 1 ready, -1 absent
 static std::atomic<unsigned> woundsTaken{0}, woundsRetired{0}, woundFaults{0}, woundsMended{0};
 static unsigned woundSkinVersion = 1; // woundLock: bumped when a baked (mapped) mark changes or goes
 // Injuries' "injuries.burn" mark: a burn level (0..255) per character scene node, read each frame; woundLock.
@@ -160,38 +160,50 @@ using WoundMarkNodes = int (*)(const char*, uintptr_t*, uint32_t*, int);
 using WoundMarksVersion = uint32_t (*)();
 constexpr unsigned woundMendLimit = 64;
 static std::atomic<WoundMarkNodes> woundMarkNodes{nullptr};
-static std::atomic<ULONGLONG> woundMarksProbed{0};
+static std::atomic<int> woundMarksState{0}; // 0 unprobed, 1 ready, -1 absent
 static ULONGLONG woundFadeTick = 0; // woundLock
 
+// Looked up once: ScriptRuntime.dll loads before game play if installed, and is pinned once found.
 static WoundMarkNodes woundMarkExport() {
-    if (auto fn = woundMarkNodes.load(std::memory_order_acquire)) return fn;
-    const ULONGLONG now = GetTickCount64();
-    if (now - woundMarksProbed.load(std::memory_order_relaxed) < 2000) return nullptr;
-    woundMarksProbed.store(now, std::memory_order_relaxed);
+    const int state = woundMarksState.load(std::memory_order_acquire);
+    if (state < 0) return nullptr;
+    if (state > 0) return woundMarkNodes.load(std::memory_order_relaxed);
     HMODULE runtime = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) return nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) {
+        woundMarksState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
     const auto version = reinterpret_cast<WoundMarksVersion>(GetProcAddress(runtime, "character_marks_version"));
     const auto fn = reinterpret_cast<WoundMarkNodes>(GetProcAddress(runtime, "character_mark_nodes"));
-    if (!version || !fn || version() != 1) return nullptr;
-    woundMarkNodes.store(fn, std::memory_order_release);
+    if (!version || !fn || version() != 1) {
+        woundMarksState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
+    woundMarkNodes.store(fn, std::memory_order_relaxed);
+    woundMarksState.store(1, std::memory_order_release);
     return fn;
 }
 
-// The runtime's export, looked up again at most every two seconds until found; the module is pinned
-// once found, so the cached entry stays valid for the life of the process.
+// Looked up once; the module is pinned once found, so the cached entry stays valid for the life of the process.
 static CharacterHits characterHitsExport() {
-    if (auto fn = characterHits.load(std::memory_order_acquire)) return fn;
-    const ULONGLONG now = GetTickCount64();
-    if (now - characterHitsProbed.load(std::memory_order_relaxed) < 2000) return nullptr;
-    characterHitsProbed.store(now, std::memory_order_relaxed);
+    const int state = characterHitsState.load(std::memory_order_acquire);
+    if (state < 0) return nullptr;
+    if (state > 0) return characterHits.load(std::memory_order_relaxed);
     HMODULE runtime = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) return nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) {
+        characterHitsState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
     const auto version = reinterpret_cast<CharacterHitsVersion>(GetProcAddress(runtime, "character_hits_version"));
     const auto fn = reinterpret_cast<CharacterHits>(GetProcAddress(runtime, "character_hits"));
     const uint32_t found = version ? version() : 0;
-    if (!fn || (found != 1 && found != 2)) return nullptr;
+    if (!fn || (found != 1 && found != 2)) {
+        characterHitsState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
     characterHitsVersion.store(found, std::memory_order_relaxed);
-    characterHits.store(fn, std::memory_order_release);
+    characterHits.store(fn, std::memory_order_relaxed);
+    characterHitsState.store(1, std::memory_order_release);
     return fn;
 }
 
@@ -479,20 +491,16 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
     uintptr_t mendNodes[woundMendLimit]{};
     uint32_t mendSeconds[woundMendLimit]{};
     int mendCount = 0;
-    if (const WoundMarkNodes marks = woundMarkExport()) {
-        __try { mendCount = marks("injuries.mend", mendNodes, mendSeconds, int(woundMendLimit)); }
-        __except (EXCEPTION_EXECUTE_HANDLER) { mendCount = 0; woundFaults.fetch_add(1, std::memory_order_relaxed); }
-        mendCount = std::clamp(mendCount, 0, int(woundMendLimit));
-    }
     uintptr_t brokenNodes[woundMendLimit]{};
     uint32_t brokenBits[woundMendLimit]{};
     int brokenCount = 0;
     if (const WoundMarkNodes marks = woundMarkExport()) {
+        __try { mendCount = marks("injuries.mend", mendNodes, mendSeconds, int(woundMendLimit)); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { mendCount = 0; woundFaults.fetch_add(1, std::memory_order_relaxed); }
+        mendCount = std::clamp(mendCount, 0, int(woundMendLimit));
         __try { brokenCount = marks("injuries.broken", brokenNodes, brokenBits, int(woundMendLimit)); }
         __except (EXCEPTION_EXECUTE_HANDLER) { brokenCount = 0; woundFaults.fetch_add(1, std::memory_order_relaxed); }
         brokenCount = std::clamp(brokenCount, 0, int(woundMendLimit));
-    }
-    if (const WoundMarkNodes marks = woundMarkExport()) {
         woundReadLevels(marks, "injuries.burn", woundBurns, woundBurnCount);
         woundReadLevels(marks, "injuries.burnscar", woundBurnScars, woundBurnScarCount);
         woundReadLevels(marks, "injuries.severed", woundSevered, woundSeveredCount);

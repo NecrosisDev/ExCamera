@@ -15,49 +15,44 @@ af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70  0.9.5.2g
 9a7839d5f948d3c3fa94d57de2a047fed77c8319007519ea6946d91ad6e85815  0.9.5.2g Hellmode
 ```
 
+### Standalone operation and `ScriptRuntime.dll` coexistence
+
+ExCamera runs **100% standalone** with zero external dependencies — camera modes, input, native Settings UI, and procedural wounds, blood, and fire are all built into `ExanimaFirstPerson.dll`. When `ScriptRuntime.dll` (ExanimaLua) is also installed, ExCamera **optionally coexists and integrates** with it: hosting other mods' registered Settings tabs inside ExCamera's widened native Options form and enabling VR hip-pouch inventory hooks when `ScriptRuntime` inventory exports are present.
+
 ## Changes
 
 See [CHANGELOG.md](CHANGELOG.md) for changes since the 0.2.0 source baseline. The changelog is separate from the automatically generated GitHub release notes.
 
 ## Build
 
-Requires Windows x64, Python 3.8 or newer, Visual Studio 2022 C++ Build Tools with the x64 C++ tools, and the Windows SDK. The build script locates MSVC through Visual Studio's `vswhere.exe`. No game executable or game assets are needed to compile.
+Requires Windows 10/11 x64, Python 3.10 or newer, Visual Studio 2022 C++ Build Tools with the x64 C++ tools, and the Windows SDK. The build script locates MSVC through Visual Studio's `vswhere.exe`. No game executable or game assets are needed to compile.
 
 From this folder:
 
 ```powershell
-py build.py --package
+python build.py --package --wx
 ```
 
 Outputs:
 
 - `build/ExCamera.exe` — launcher.
 - `build/ExanimaFirstPerson.dll` — mod.
-- `build/ExCamera-<version>-minimal.zip` — runtime ZIP containing those two files, `manifest.toml`, `README.txt` (from `docs/PLAYER_README.txt`), `LICENSE.txt`, and `LICENSE-MinHook.txt`.
+- `build/manifest.toml` — EMTK mod manifest stamped with `FP_BUILD`.
+- `build/ExCamera-<version>-minimal.zip` — runtime ZIP containing `ExCamera.exe`, `ExanimaFirstPerson.dll`, `manifest.toml`, `README.txt` (from `docs/PLAYER_README.txt`), `LICENSE.txt`, and `LICENSE-MinHook.txt`.
 
-Use `py build.py` to build without refreshing the ZIP. The package name follows `FP_BUILD` in `src/build_identity.h`. Compilation and validation use isolated staging under `build/`; success publishes the runtime files and replaces the ZIP individually.
-
-On failure, previous outputs are retained or restored, not newly built. If rollback cannot finish (for example, a running program locks a file), the error identifies retained recovery files; do not use the mixed outputs. Exit the game and launcher before rebuilding. Publication is not crash-atomic across multiple files. Unrelated files in `build/` are preserved; its persistent `.build.lock` file is only a coordination file, not a stale-lock sentinel.
+Use `python build.py` to build without refreshing the ZIP, or pass `--openxr-sdk <path>` to compile the optional OpenXR stereo integration (staging `openxr_loader.dll` and packaging `ExCamera-<version>-openxr.zip`). Compilation and validation use isolated staging under `build/`; on failure, previous outputs are retained or restored. Exit the game and launcher before rebuilding. See [CONTRIBUTING.md](CONTRIBUTING.md) for full build flags, Python and C++ unit test commands, profiling, and failure recovery.
 
 ## Releases and automatic changelog
 
-**Pushing to `main` publishes a new `FP_BUILD`:** Auto release tags any `FP_BUILD` that has no tag yet and starts Release. Test the exact build first; see [the release checklist](docs/RELEASE_CHECKLIST.md). To publish a version that is not the checked-in `FP_BUILD`, push a new version tag such as `v0.3.1` or `v0.3.1-rc.1` together with `main`; Auto release sees the tag and skips. The Release workflow validates the tag and sets `FP_BUILD` to its version in the CI checkout before compiling both binaries. It preserves `FP_REVISION` and does not edit your source commit or move the tag. Local builds continue to use the checked-in header.
-
-Accepted tags are `vX.Y.Z` with an optional SemVer prerelease suffix. Numeric components cannot have leading zeros. Build metadata (`+...`) is not supported by the package naming convention. Prerelease tags are published as GitHub prereleases.
-
-Release notes automatically list commit subjects since the prior reachable valid version tag selected by `git describe`, with commit links and a full comparison link. This uses Git's bounded candidate search, not version-number sorting or a guarantee of the globally closest tag. It includes direct commits, not only pull requests. The first tagged release lists the initial history. These are raw commit summaries, not inferred feature claims. Use clear commit subjects for useful notes.
-
-The Build and Release workflows check generated compatibility tables, build the Windows runtime, check its exports and verify the runtime ZIP.
-
-Only successful source checks, build, export check, ZIP check, and artifact upload can reach publication. The ZIP contains exactly the two runtime binaries, the manifest, the player readme and two licenses. Existing releases are not overwritten. See [release installation instructions](INSTALL.txt) for tagging and failure recovery.
+- **Updating `FP_BUILD` on `main`:** When `src/build_identity.h` changes on `main` (with a matching `version` in `manifest.toml`), `.github/workflows/auto-release.yml` validates the SemVer version, creates `v<FP_BUILD>` if absent, and dispatches the Release workflow. Test the exact build first; see [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md).
+- **Direct tag push or manual dispatch:** Pushing an annotated `vX.Y.Z` (or `vX.Y.Z-rc.1`) tag also triggers `.github/workflows/release.yml` directly, and maintainers can retry publication for an existing tag via `workflow_dispatch` with `tag: vX.Y.Z`.
+- **Verification gates:** Both `build.yml` and `release.yml` validate generated compatibility tables (`tools/check_generated.py`), run Python and C++ unit tests (`tools/tests` and `tools/run_cpp_tests.py`), compile with `/WX` (`--wx`), verify DLL exports, and validate the runtime ZIP before uploading or publishing. See [CONTRIBUTING.md](CONTRIBUTING.md) for step-by-step release and recovery instructions.
 
 ## Run and configure
 
 1. Extract the runtime ZIP, keeping the launcher and DLL together.
 2. Run `ExCamera.exe`. It starts Exanima through Steam, or attaches to a running game.
 3. Open the game's Settings window to configure ExCamera.
-
-Wound marks (cuts, thrusts, bruises, and weapon blood) are native and fully integrated; everything runs standalone without external dependencies.
 
 Controls:
 
@@ -84,18 +79,16 @@ The Headwear setting controls helmets and other headwear in first person. **Hide
 
 ## Source layout
 
-- `build.py` — Windows build and minimal runtime packaging.
-- `src/first_person.cpp`, `src/mod/` — DLL entry point and camera/input/game integration.
+- `build.py` — Windows x64 build, export verification, and runtime packaging.
+- `src/first_person.cpp`, `src/mod/` — DLL entry point and camera/input/rendering/game integration.
 - `src/launcher.cpp` — launcher and activation flow.
 - `src/native_settings.*`, `src/settings_*` — native settings UI, presentation, and draft model.
-- `src/game_*`, `src/native_contracts.h`, `src/native_build.h` — game compatibility data and validation.
+- `src/game_*`, `src/native_contracts.h`, `src/native_build.h`, `src/xr/` — game compatibility data, validation, and optional OpenXR host/contracts.
 - `src/vendor/minhook/` — bundled x64 hook library.
+- `tools/` — offline contract verification (`check_generated.py`), C++ header test runner (`run_cpp_tests.py`), release checks (`release.py`), profiling (`profile.py`), and Python unit tests (`tools/tests/`).
+- `tests/` — shipped C++ header unit tests (`tests/unit/`).
 
-See [Architecture](docs/ARCHITECTURE.md) for the compilation model and native integration boundaries, and the [documentation map](docs/README.md) for the status of parked and historical notes.
-
-## Development notes
-
-A clean rebuild of the camera core is parked in `src/excamera/`, `src/runtime/`, `src/launcher/` and `src/platform/`; see [its notes](docs/rebuild/REBUILD_README.md). It isn't part of the release. ExanimaLua is not required.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for developer workflows, [Architecture](docs/ARCHITECTURE.md) for the compilation model and native integration boundaries, and the [documentation map](docs/README.md) for document status labels. *(An earlier experimental CMake prototype is archived separately on branch `archive/rebuild-prototype` and is not part of `main` or releases.)*
 
 ## License
 

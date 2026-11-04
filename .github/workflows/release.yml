@@ -3,14 +3,20 @@ name: Release
 on:
   push:
     tags: ['v*']
-  # auto-release.yml starts this on a tag it just created (a token-made tag push starts no workflow).
+  # auto-release.yml starts this on a tag it just created (a token-made tag push starts no workflow),
+  # and maintainers can also run this manually from the Actions UI by supplying an existing vX.Y.Z tag.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vX.Y.Z tag to build and publish (optional when run on a tag ref)'
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: excamera-release-${{ github.ref }}
+  group: excamera-release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -20,11 +26,13 @@ jobs:
       contents: write
     runs-on: windows-2022
     timeout-minutes: 20
+    env:
+      INPUT_TAG: ${{ inputs.tag }}
     steps:
       - name: Check out tagged source and full history
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.tag || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -43,15 +51,19 @@ jobs:
         shell: pwsh
         run: python tools/check_generated.py
 
-      - name: Run unit tests
+      - name: Run Python unit tests
         shell: pwsh
-        run: python -m unittest discover tools/tests
+        run: python -m unittest discover -s tools/tests -v
 
-      # build.py initializes x64 MSVC and checks DLL exports.
+      - name: Run C++ header unit tests
+        shell: pwsh
+        run: python tools/run_cpp_tests.py
+
+      # build.py initializes x64 MSVC, enforces /WX, and checks DLL exports.
       # The CI checks need only source and Python, never a game executable.
       - name: Build and package
         shell: pwsh
-        run: python build.py --package
+        run: python build.py --package --wx
 
       - name: Verify tagged runtime ZIP
         shell: pwsh

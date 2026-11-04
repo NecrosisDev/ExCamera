@@ -38,6 +38,7 @@ inline void check(XrResult r, const char* operation) {
 // runtime registration, so an emulation run cannot reach a real headset by accident.
 struct Api {
     HMODULE loader{};
+    bool skipUnload = false;
     PFN_xrGetInstanceProcAddr get{};
     PFN_xrEnumerateInstanceExtensionProperties xrEnumerateInstanceExtensionProperties{};
     PFN_xrCreateInstance xrCreateInstance{};
@@ -69,7 +70,7 @@ struct Api {
         load(instance, "xrDestroyHandTrackerEXT", xrDestroyHandTrackerEXT);
         load(instance, "xrLocateHandJointsEXT", xrLocateHandJointsEXT);
     }
-    ~Api() { if (loader) FreeLibrary(loader); }
+    ~Api() { if (loader && !skipUnload) FreeLibrary(loader); }
     Api(const Api&) = delete;
     Api& operator=(const Api&) = delete;
 };
@@ -104,7 +105,7 @@ struct ImageLease {
         ready = false;
     }
     ~ImageLease() {
-        if (!ready) return;
+        if (!ready || wglGetCurrentContext() == nullptr) return;
         XrSwapchainImageReleaseInfo info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
         api.xrReleaseSwapchainImage(chain, &info);
     }
@@ -127,6 +128,10 @@ struct Client {
     XrTime displayTime = 0;
     explicit Client(Api& a) : api(a) {}
     ~Client() {
+        if (session && wglGetCurrentContext() == nullptr) {
+            api.skipUnload = true;
+            return;
+        }
         if (begun && api.xrEndFrame) {
             XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO};
             end.displayTime = displayTime;
@@ -280,13 +285,19 @@ private:
 public:
     explicit Hands(Api& api) : api_(api) {}
     ~Hands() {
+        if (session_ && wglGetCurrentContext() == nullptr) {
+            api_.skipUnload = true;
+            return;
+        }
         for (auto tracker : trackers_)
-            if (tracker) api_.xrDestroyHandTrackerEXT(tracker);
+            if (tracker && api_.xrDestroyHandTrackerEXT) api_.xrDestroyHandTrackerEXT(tracker);
+        for (auto space : trackerSpaces_)
+            if (space && api_.xrDestroySpace) api_.xrDestroySpace(space);
         for (auto space : spaces_)
-            if (space) api_.xrDestroySpace(space);
+            if (space && api_.xrDestroySpace) api_.xrDestroySpace(space);
         for (auto space : aimSpaces_)
-            if (space) api_.xrDestroySpace(space);
-        if (set_) api_.xrDestroyActionSet(set_);
+            if (space && api_.xrDestroySpace) api_.xrDestroySpace(space);
+        if (set_ && api_.xrDestroyActionSet) api_.xrDestroyActionSet(set_);
     }
     void initialize(Client& client) {
         instance_ = client.instance;
