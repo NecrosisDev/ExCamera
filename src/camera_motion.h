@@ -507,6 +507,20 @@ inline float tpCast(Clear& clear, const float* origin, const float* dir, float l
         a = clear(origin, dir, length);
     return std::isfinite(a) && a < length ? a : length;
 }
+// Third person follows the look angle outside combat: looking down lifts the camera and pulls it back so the
+// ground ahead shows, looking up brings it closer and lower so the ceiling does not fill the view. look runs
+// from -1 (full up) through 0 (level) to 1 (full down), lookFollowFullPitch and beyond counting as full; the
+// caller eases it, so the boom never jumps with the mouse.
+inline constexpr float lookFollowFullPitch = 1.05f; // about 60 degrees
+inline float lookFollowTarget(float pitch) {
+    return std::isfinite(pitch) ? std::clamp(-pitch / lookFollowFullPitch, -1.f, 1.f) : 0.f;
+}
+inline void lookFollowFraming(float look, float& distanceScale, float& heightCm) {
+    look = std::isfinite(look) ? std::clamp(look, -1.f, 1.f) : 0.f;
+    distanceScale = 1.f + (look >= 0.f ? 0.25f : 0.20f) * look; // +25 % down, -20 % up
+    heightCm = (look >= 0.f ? 30.f : 15.f) * look;               // +30 cm down, -15 cm up
+}
+inline constexpr float lookFollowEaseSeconds = 0.4f;
 // A change of the chosen shoulder (the setting or the swap key) slides the camera across over this long, eased
 // in and out, instead of jumping. `left` counts down from shoulderSlideSeconds; the return is the side now.
 inline constexpr float shoulderSlideSeconds = 0.35f;
@@ -523,6 +537,7 @@ struct ThirdPerson {
     // easing back as the room opens.
     float side = 0.f, sideNow = 0.f, pinned = 0.f, swapHold = 0.f, lastSign = 0.f;
     float slideFrom = 0.f, slideLeft = 0.f; // a chosen-side change in progress (shoulderSlide)
+    float look = 0.f; // the eased look-angle framing, -1 up .. 1 down (lookFollowFraming); the caller owns it
     unsigned swaps = 0;
     // feel: lag 0..100 slows the pivot's follow and leads it toward where the eye travels (up to 0.4 s ahead,
     // 50 cm at most). Knockdown: while down, the pivot follows the given body point with 0.3 s.
@@ -548,6 +563,7 @@ struct ThirdPerson {
         pinned = 0.f;
         swapHold = 0.f;
         slideLeft = 0.f;
+        look = 0.f;
         haveEye = false;
         down = false;
         knock = {};

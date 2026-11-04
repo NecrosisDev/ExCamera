@@ -225,6 +225,7 @@ struct NavPassKey {
     bool tight = false;
     bool combat = false;
     bool down = false;
+    bool lookFollow = false;
 };
 
 inline NavPassKey captureNavPassKey(int mode) noexcept {
@@ -240,6 +241,7 @@ inline NavPassKey captureNavPassKey(int mode) noexcept {
     key.tight = tpTight.load(std::memory_order_relaxed);
     key.combat = tpCombat.load(std::memory_order_relaxed);
     key.down = tpDown.load(std::memory_order_relaxed);
+    key.lookFollow = tpLookFollow.load(std::memory_order_relaxed);
     return key;
 }
 
@@ -247,7 +249,7 @@ inline bool sameNavPassKey(const NavPassKey& a, const NavPassKey& b) noexcept {
     return a.mode == b.mode && a.distance == b.distance && a.shoulder == b.shoulder &&
            a.height == b.height && a.blockers == b.blockers && a.lag == b.lag &&
            a.nearTenths == b.nearTenths && a.eyeBack == b.eyeBack &&
-           a.tight == b.tight && a.combat == b.combat && a.down == b.down;
+           a.tight == b.tight && a.combat == b.combat && a.down == b.down && a.lookFollow == b.lookFollow;
 }
 
 struct NavSolvedPass {
@@ -645,8 +647,21 @@ inline uintptr_t navLocked(void* self, float offset) {
                         state.third.downPoint[i] = 0.5f * (target[i] + body[i]) + (i == 1 ? 40.f : 0.f);
                 state.third.down = downNow;
             }
-            state.third.update(target, yaw, pitch, static_cast<float>(passKey.distance) * (1.f - 0.2f * state.combat),
-                               static_cast<float>(passKey.shoulder) * (1.f - 0.7f * state.combat), static_cast<float>(passKey.height), dt,
+            // Follow the look angle (fp::lookFollowFraming): out of combat and on your feet only, eased in and out
+            // so the boom glides, and a wall that pins the camera still decides how far back it gets.
+            {
+                const float wanted = passKey.lookFollow && state.combat < 0.1f && !state.third.down
+                                         ? fp::lookFollowTarget(pitch) : 0.f;
+                const bool fresh = !state.third.valid || !std::isfinite(dt) || dt < 0.f || dt > 0.5f;
+                state.third.look = fresh ? wanted
+                                         : state.third.look + (wanted - state.third.look) *
+                                                                  (1.f - std::exp(-dt / fp::lookFollowEaseSeconds));
+            }
+            float lookScale = 1.f, lookHeight = 0.f;
+            fp::lookFollowFraming(state.third.look, lookScale, lookHeight);
+            state.third.update(target, yaw, pitch, static_cast<float>(passKey.distance) * (1.f - 0.2f * state.combat) * lookScale,
+                               static_cast<float>(passKey.shoulder) * (1.f - 0.7f * state.combat),
+                               static_cast<float>(passKey.height) + lookHeight, dt,
                                clear, evaluatedPose, passKey.tight,
                                cameraFrame.tracked ? trackedFacing : nullptr);
         } else {

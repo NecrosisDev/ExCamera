@@ -109,6 +109,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.tpLag = tpLag.load();
     s.tpBlockers = tpBlockers.load();
     s.tpDown = tpDown.load();
+    s.tpLookFollow = tpLookFollow.load();
     s.tpCombatAimFree = tpCombatAimFree.load();
     s.attackCue = attackCue.load();
     s.bladeDrag = bladeDrag.load();
@@ -244,6 +245,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     vrEyeScalePercent = s.vrEyeScale;
     tpBlockers = s.tpBlockers;
     tpDown = s.tpDown;
+    tpLookFollow = s.tpLookFollow;
     tpCombatAimFree = s.tpCombatAimFree;
     attackCue = s.attackCue;
     bladeDrag = s.bladeDrag;

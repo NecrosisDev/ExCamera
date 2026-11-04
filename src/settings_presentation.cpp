@@ -235,6 +235,8 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return L"";
     case setting::hitReaction:
         return settings.hitReaction ? std::to_wstring(settings.hitReaction) + L"%" : L"Off";
+    case setting::tpLookFollow:
+        return L"";
     case setting::f6Cycle:
         return settings.f6Cycle ? L"1st/3rd only" : L"1st/3rd/game";
     default: return L"";
@@ -282,6 +284,7 @@ const wchar_t* settingLabel(int id) {
     case setting::kickKey: return L"Kick";
     case setting::jumpKey: return L"Jump";
     case setting::swapShoulderKey: return L"Swap shoulder";
+    case setting::tpLookFollow: return L"Follow look angle";
     case setting::leanKey: return L"Lean";
     case setting::holdHeading: return L"Heading correction";
     case setting::autoRecenter: return L"Auto-center";
@@ -391,6 +394,7 @@ const wchar_t* settingTip(int id) {
     case setting::rotateHeldKey: return L"Hold and move the mouse to turn what you're holding. The view stays still meanwhile. Delete clears the key.";
     case setting::kickKey: return L"Plays the game's unused kick. Fighting stance, upright, needs most of your stamina. Delete clears the key.";
     case setting::jumpKey: return L"Plays the game's unused jump. Upright, needs half your stamina. Delete clears the key.";
+    case setting::tpLookFollow: return L"Out of combat, looking down lifts the camera and moves it back so the ground ahead shows; looking up brings it closer and lower. Walls still pull it in.";
     case setting::swapShoulderKey: return L"Third person: slides the camera over your other shoulder and keeps it there. Does nothing with the camera centred. Delete clears the key.";
     case setting::leanKey: return L"Hold it and move the mouse to lean your upper body: left and right, forward and back. The view stays where it points and goes with your head. Let go to straighten up. In combat, the game's alternate-attack binding takes priority over lean. Any key can be set in first-person.ini ([Input] LeanKey).";
     case setting::holdHeading: return L"Looking up or down, the game's head turns a few degrees off where you aim, so the view slid sideways. This corrects the physics head heading, and the view follows it. A bigger difference, the head still catching up with a fast turn, is left as it is.";

@@ -127,6 +127,7 @@ enum : int {
     f6Cycle,
     hitReaction,
     swapShoulderKey,
+    tpLookFollow,
     count
 };
 }
@@ -258,6 +259,7 @@ struct ModSettings {
         50; // the crosshair while the head catches up; how much a flick's lead is eased // how much head wobble on each axis stiffens the neck (0 = not at all)
     int tpLag = 40;
     bool tpDown = true;
+    bool tpLookFollow = true; // third person: the camera rises and backs off looking down, comes in looking up
     int tpBlockers =
         fp::blockersSmart; // what is in the way: hide / push in / smart (characters and placed objects pull in)
     bool tpCombatAimFree = true;
@@ -574,6 +576,8 @@ struct ModSettings {
                                      : std::to_wstring(edgeSoftness) + L"% of oval radius";
         case setting::tpDown:
             return tpDown ? L"follow the body" : L"follow the head";
+        case setting::tpLookFollow:
+            return tpLookFollow ? L"on" : L"off";
         case setting::attackCue:
             return attackCue ? L"shown while a swing winds up" : L"off";
         case setting::cueSize:
@@ -1242,6 +1246,11 @@ inline const RowInfo& rowInfo(int row) {
          L"In third person, moves the camera over your other shoulder with a short slide, and keeps it there "
          L"(Third person: shoulder changes side). Does nothing with the camera centred. Unbound until you pick a "
          L"key; the game does not see that key in third person while it is bound here."},
+        {setting::tpLookFollow, L"Third person: follow look angle", RowInfo::toggle, nullptr, &ModSettings::tpLookFollow,
+         L"ThirdPerson", L"FollowLookAngle", nullptr, nullptr,
+         L"Out of combat, looking down raises the camera and moves it back a little (up to a quarter farther and "
+         L"30 cm higher) so the ground ahead shows; looking up brings it closer and lower. It eases in and out, "
+         L"and walls still pull the camera in. The field of view does not change."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};

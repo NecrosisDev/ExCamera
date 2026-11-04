@@ -294,6 +294,42 @@ bool camera_motion_shoulder_slide() {
     return true;
 }
 
+bool camera_motion_look_follow_framing() {
+    // Pitch is positive looking up: down gives a positive look, saturating at the full angle.
+    CHECK(near_equal(fp::lookFollowTarget(0.f), 0.f));
+    CHECK(near_equal(fp::lookFollowTarget(-fp::lookFollowFullPitch), 1.f));
+    CHECK(near_equal(fp::lookFollowTarget(-3.f), 1.f));
+    CHECK(near_equal(fp::lookFollowTarget(fp::lookFollowFullPitch / 2.f), -0.5f));
+    CHECK(near_equal(fp::lookFollowTarget(NAN), 0.f));
+    float scale = 0.f, height = 0.f;
+    fp::lookFollowFraming(0.f, scale, height);
+    CHECK(near_equal(scale, 1.f) && near_equal(height, 0.f));
+    fp::lookFollowFraming(1.f, scale, height); // full down: a quarter farther, 30 cm up
+    CHECK(near_equal(scale, 1.25f) && near_equal(height, 30.f));
+    fp::lookFollowFraming(-1.f, scale, height); // full up: a fifth closer, lower
+    CHECK(near_equal(scale, 0.8f) && height < 0.f);
+    fp::lookFollowFraming(5.f, scale, height);
+    CHECK(near_equal(scale, 1.25f));
+    fp::lookFollowFraming(NAN, scale, height);
+    CHECK(near_equal(scale, 1.f) && near_equal(height, 0.f));
+    // Continuous through level: no jump between a little up and a little down.
+    float up = 0.f, down = 0.f, hu = 0.f, hd = 0.f;
+    fp::lookFollowFraming(-1e-4f, up, hu);
+    fp::lookFollowFraming(1e-4f, down, hd);
+    CHECK(near_equal(up, down, 1e-3f) && near_equal(hu, hd, 1e-2f));
+
+    // A camera pinned by a wall keeps its distance while the wanted length grows: no pumping.
+    auto wall = [](const float*, const float*, float length) { return std::fmin(length, 120.f); };
+    fp::ThirdPerson tp;
+    const float eye[3] = {0.f, 100.f, 0.f};
+    float pose[12]{};
+    for (int i = 0; i < 60; ++i) tp.update(eye, 0.f, 0.f, 250.f, 0.f, 0.f, 0.016f, wall, pose);
+    const float pinned = tp.distance;
+    for (int i = 0; i < 60; ++i) tp.update(eye, 0.f, 0.f, 250.f * 1.25f, 0.f, 0.f, 0.016f, wall, pose);
+    CHECK(near_equal(tp.distance, pinned, 0.5f));
+    return true;
+}
+
 bool hook_health_menu_immunity_and_stalled_poll_input() {
     fp::HookHealth health{};
     uint32_t hits[fp::healthHooks] = {5, 5, 5, 5, 5, 5};
@@ -820,6 +856,7 @@ int main() {
         {"camera motion FOV, AimBox, NearPlane, and eye stabilization",
          camera_motion_fov_aimbox_nearplane_and_eye_stabilization},
         {"camera motion shoulder slide", camera_motion_shoulder_slide},
+        {"camera motion look-follow framing", camera_motion_look_follow_framing},
         {"hook health menu immunity and stalled pollInput",
          hook_health_menu_immunity_and_stalled_poll_input},
         {"PointerSet and JsonOut formatting", pointer_set_and_status_json_formatting},

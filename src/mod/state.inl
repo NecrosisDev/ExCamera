@@ -355,6 +355,8 @@ static std::atomic<int> tpFov{0};
 // camera and the player instead of pulling in (walls still pull in), and the knockdown follow.
 static std::atomic<int> tpLag{40};
 static std::atomic<bool> tpDown{true};
+// [ThirdPerson] FollowLookAngle: looking down lifts and pulls the camera back, up brings it in (camera.inl).
+static std::atomic<bool> tpLookFollow{true};
 static std::atomic<unsigned> tpHidden{0};
 static std::atomic<ULONGLONG> tpBlendStart{0};
 static float tpCombatK = 0.f; // swap shoulder / closer framing in tight spaces

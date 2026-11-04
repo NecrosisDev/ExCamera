@@ -254,6 +254,16 @@ bool unavailable_and_faulted_rows_say_why() {
     return true;
 }
 
+bool look_follow_row_is_a_saved_switch() {
+    ModSettings settings;
+    CHECK(settings.tpLookFollow);
+    const auto& info = panel::rowInfo(panel::setting::tpLookFollow);
+    CHECK(info.checkbox() && info.key != nullptr);
+    CHECK(settings.step(panel::setting::tpLookFollow, 1));
+    CHECK(!settings.tpLookFollow);
+    return true;
+}
+
 bool every_row_has_valid_presentation_labels_and_tips() {
     const ModSettings defaults;
     for (int row = 0; row < count; ++row) {
@@ -281,6 +291,7 @@ int main() {
         {"hit reaction row is a percent slider", hit_reaction_row_is_a_percent_slider},
         {"normalize drops duplicate mod bindings", normalize_drops_duplicate_mod_bindings},
         {"unavailable and faulted rows say why", unavailable_and_faulted_rows_say_why},
+        {"look-follow row is a saved switch", look_follow_row_is_a_saved_switch},
         {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });
 }
