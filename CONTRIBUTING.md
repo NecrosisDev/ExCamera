@@ -77,6 +77,8 @@ python build.py --package --wx
 python tools/release.py verify --local
 ```
 
+After a game update, `python tools/check_game.py` finds `Exanima.exe` (or takes a path), identifies the build by hash, and runs the signature, field-contract and VR checks read-only. See [tools/README.md](tools/README.md).
+
 `tools/run_cpp_tests.py` uses `build/_cpp_tests/` for object files and test executables so it never contends with `build/.build.lock`.
 
 ## Profiling (`tools/profile.py`)
