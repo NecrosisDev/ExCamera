@@ -1716,7 +1716,7 @@ static fp::SwingHands swingHands(uintptr_t root, fp::OriginCue cue, int motion) 
         if (!w) s.slot = -1;
     }
     const uintptr_t table = gameAt(fp::sig::gripTable);
-    constexpr uintptr_t stride = 0xb8;
+    const uintptr_t stride = field::grip::stride;
     uintptr_t entry = s.slot == 1 ? table + 5 * stride
                                   : (s.slot == 0 ? *reinterpret_cast<const uintptr_t*>(root + field::character::gripEntry) : 0);
     if (entry < table || entry >= table + 6 * stride || (entry - table) % stride) entry = 0;

@@ -66,8 +66,10 @@ struct WoundSkinMesh {
     WearAttribute positions{}, weights{}, uvs{};
 };
 
+// The mesh, skin and attribute offsets below are the ones headwear_render.inl reads; they are proved only
+// by its admitted whole-function contracts, so without them there is no layout to map or draw with.
 static bool woundSkinMesh(uintptr_t node, WoundSkinMesh& m) {
-    if (!readable(node, 0x300)) return false;
+    if (!headwearRenderReady.load(std::memory_order_relaxed) || !readable(node, 0x300)) return false;
     m.node = node;
     m.lastFace = *(int*)(node + 0x268);
     m.lastVertex = *(int*)(node + 0x288);
@@ -820,7 +822,7 @@ static int woundBonePart(const WoundSkinMesh& m, int k) {
     const uintptr_t node = transform - field::sceneNode::transform;
     const uintptr_t part = *(const uintptr_t*)(node + field::sceneNode::bodyPart);
     if (!part) return -1;
-    const int index = *(const int*)(part + woundPartIndex);
+    const int index = *(const int*)(part + field::bodyPart::index);
     return index >= 0 && index < 18 ? index : -1;
 }
 

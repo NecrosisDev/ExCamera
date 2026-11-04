@@ -31,12 +31,10 @@ constexpr unsigned woundLimit = 96, woundsPerPart = 4;
 constexpr unsigned woundShownLimit = 12; // the finishing program's arrays
 constexpr float woundReachCm = 3000.f, woundMergeCm = 2.5f;
 enum WoundKind : uint8_t { woundCut = 1, woundCrush = 2, woundThrust = 3 };
-// The character's bleeding rate (0..20): 0x168410 raises it from the wound inflow (+0x10D4) and, above
-// 1, drains health and balance with it; it falls by 0.1 a tick once the inflow stops.
-constexpr size_t woundCharacterBleed = 0x10DC;
-// Injuries' "injuries.broken" mark: one bit per limb bone, the part indices (+0x468) each covers. A fracture
-// bruise spreads this much wider.
-constexpr size_t woundPartIndex = 0x468;
+// The character's bleeding rate (character::bleed, 0..20): 0x168410 raises it from the wound inflow and,
+// above 1, drains health and balance with it; it falls by 0.1 a tick once the inflow stops.
+// Injuries' "injuries.broken" mark: one bit per limb bone, the part indices (bodyPart::index) each covers.
+// A fracture bruise spreads this much wider.
 constexpr float woundFractureScale = 1.6f;
 inline int woundBoneBit(int part) {
     switch (part) {
@@ -52,9 +50,9 @@ inline int woundBoneBit(int part) {
     }
 }
 constexpr float woundBleedFull = 6.f, woundFreshSeconds = 10.f, woundDrySeconds = 60.f, woundBruiseSeconds = 90.f;
-// A struck body part's character, where the game's weapon impact (0x159A60) reads its victim; that impact
-// hands the same pointer to the damage applier, so it equals the record's victim.
-constexpr size_t woundPartCharacter = 0x420;
+// A struck body part's character is its body's root (bodyPart::rootPart): the game's weapon impact
+// (0x159A60) reads its victim there and hands the same pointer to the damage applier, so it equals the
+// record's victim.
 
 struct Wound {
     uintptr_t part = 0, owner = 0; // the part, and the character it named at the hit; a change retires the mark
@@ -272,8 +270,8 @@ static void addWound(const CharacterHitRecord& h) {
     w.part = uintptr_t(h.part);
     float healthMax = 1.f;
     __try {
-        if (!w.part || !readable(w.part, woundPartCharacter + 8)) return;
-        w.owner = *(const uintptr_t*)(w.part + woundPartCharacter);
+        if (!w.part || !readable(w.part, field::bodyPart::rootPart + 8)) return;
+        w.owner = *(const uintptr_t*)(w.part + field::bodyPart::rootPart);
         if (h.victim && readable(uintptr_t(h.victim), field::character::healthMax + 4))
             healthMax = *(const float*)(uintptr_t(h.victim) + field::character::healthMax);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -316,7 +314,7 @@ static void addWound(const CharacterHitRecord& h) {
                                     : std::clamp(0.35f + 2.f * health / healthMax, 0.35f, 1.f);
     w.kind = kind;
     __try {
-        const int index = *(const int*)(w.part + woundPartIndex);
+        const int index = *(const int*)(w.part + field::bodyPart::index);
         w.partIndex = int8_t(index >= 0 && index < 18 ? index : -1);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         w.partIndex = -1;
@@ -583,8 +581,8 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         uintptr_t owner = 0;
         bool read = false;
         __try {
-            if (readable(w.part, woundPartCharacter + 8)) {
-                owner = *(const uintptr_t*)(w.part + woundPartCharacter);
+            if (readable(w.part, field::bodyPart::rootPart + 8)) {
+                owner = *(const uintptr_t*)(w.part + field::bodyPart::rootPart);
                 memcpy(pose, (const void*)(w.part + field::bodyPart::pose), sizeof pose);
                 const uintptr_t node = *(const uintptr_t*)(w.part + field::bodyPart::meshNode);
                 const uintptr_t sector = node && readable(node, field::sceneNode::sector + 8)
@@ -607,7 +605,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         __try {
             alive = (*(const unsigned*)(owner + field::character::lifeFlags) & 0x100) == 0;
             if (mendCount || brokenCount) ownerNode = *(const uintptr_t*)(owner + field::character::sceneNode);
-            (void)*(const volatile float*)(owner + woundCharacterBleed);
+            (void)*(const volatile float*)(owner + field::character::bleed);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             ownerGone = true;
         }
@@ -653,7 +651,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
             // Blood runs while the game says this character bleeds (and for the first seconds after any
             // cut), then dries. The dead keep bleeding out of their cuts for a few minutes, slower and slower.
             float bleed = 0.f;
-            __try { bleed = *(const float*)(owner + woundCharacterBleed); }
+            __try { bleed = *(const float*)(owner + field::character::bleed); }
             __except (EXCEPTION_EXECUTE_HANDLER) { bleed = 0.f; }
             if (!std::isfinite(bleed)) bleed = 0.f;
             const float age = float(now - w.born) / 1000.f;
@@ -1027,24 +1025,24 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, 
 
     uintptr_t part = 0;
     int32_t index = -1;
-    if (!readable(attacker + 0xc20, sizeof(uintptr_t))) return;
-    part = *reinterpret_cast<const uintptr_t*>(attacker + 0xc20);
-    if (!part || !readable(part + woundPartIndex, sizeof(int32_t))) return;
-    index = *reinterpret_cast<const int32_t*>(part + woundPartIndex);
+    if (!readable(attacker + field::character::impactTarget, sizeof(uintptr_t))) return;
+    part = *reinterpret_cast<const uintptr_t*>(attacker + field::character::impactTarget);
+    if (!part || !readable(part + field::bodyPart::index, sizeof(int32_t))) return;
+    index = *reinterpret_cast<const int32_t*>(part + field::bodyPart::index);
     if (index < 0 || index >= 18) return;
     r.part = part;
 
-    if (!readable(attacker + 0xc28, 12) || !readable(part + field::bodyPart::pose, 48)) return;
-    std::memcpy(r.point, reinterpret_cast<const void*>(attacker + 0xc28), 12);
+    if (!readable(attacker + field::character::impactPoint, 12) || !readable(part + field::bodyPart::pose, 48)) return;
+    std::memcpy(r.point, reinterpret_cast<const void*>(attacker + field::character::impactPoint), 12);
     std::memcpy(r.pose, reinterpret_cast<const void*>(part + field::bodyPart::pose), 48);
 
     uintptr_t weapon = 0;
     float now[12]{}, before[12]{};
-    if (readable(attacker + 0xc38, sizeof(uintptr_t))) {
-        weapon = *reinterpret_cast<const uintptr_t*>(attacker + 0xc38);
-        if (weapon && readable(weapon + 0xf0, 48) && readable(weapon + 0x120, 48)) {
-            std::memcpy(now, reinterpret_cast<const void*>(weapon + 0xf0), 48);
-            std::memcpy(before, reinterpret_cast<const void*>(weapon + 0x120), 48);
+    if (readable(attacker + field::character::impactWeapon, sizeof(uintptr_t))) {
+        weapon = *reinterpret_cast<const uintptr_t*>(attacker + field::character::impactWeapon);
+        if (weapon && readable(weapon + field::bodyPart::points, 48) && readable(weapon + field::bodyPart::history, 48)) {
+            std::memcpy(now, reinterpret_cast<const void*>(weapon + field::bodyPart::points), 48);
+            std::memcpy(before, reinterpret_cast<const void*>(weapon + field::bodyPart::history), 48);
             for (int axis = 0; axis < 3; ++axis) {
                 float a = 0.f, b = 0.f;
                 for (int k = 0; k < 4; ++k) {

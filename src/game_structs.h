@@ -35,6 +35,7 @@ inline constexpr size_t behaviour = 0xD40;      // its behaviour object (namespa
 inline constexpr size_t postureReadiness = 0xD58; // float: native B7560 readiness gate (>= .01)
 inline constexpr size_t health = 0xD5C;          // float: current health
 inline constexpr size_t healthMax = 0x103C;      // float: its maximum
+inline constexpr size_t bleed = 0x10DC;          // float 0..20: bleed rate (0x168410 raises it from the wound inflow)
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
 inline constexpr size_t stateFlags =
     0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
@@ -103,6 +104,9 @@ inline constexpr size_t poseForward = pose + 0x18;
 inline constexpr size_t poseOrigin = pose + 0x24;
 inline constexpr size_t rootPart = 0x420; // the body's root part (its own rootPart is itself)
 inline constexpr size_t parentPart = 0x428;
+inline constexpr size_t index = 0x468; // int: skeletal part index (0..17 for a character), negative for none
+inline constexpr size_t armour = 0x690;      // float[6]: under-layer protection row (row 1 follows at +0x18)
+inline constexpr size_t armourOuter = armour + 0x18; // float[6]: outer protection row; [4] pierce
 inline constexpr size_t character = 0x580;     // the owner: a freed or reused part no longer names it
 inline constexpr size_t extraRotation = 0x5EC; // float[4] quaternion (x y z w)
 inline constexpr size_t slackCap = 0x77C;      // float: how far the head target may lag (head part)

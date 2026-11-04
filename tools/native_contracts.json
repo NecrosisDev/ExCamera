@@ -1162,6 +1162,13 @@
       "target": "roomClassify",
       "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 90 48 89 4C 24 20 49 89 D7 C6 44 24 68 01 48 8B 44",
       "entry_offset": 0
+    },
+    {
+      "name": "characterBleed",
+      "rva": "0x168410",
+      "end_rva": "0x168731",
+      "pattern": "53 48 8D 64 24 B0 66 0F 7F 74 24 30 66 44 0F 7F 44 24 40 48 89 CB 8B 83 F4 0D 00 00 25 00 0A 00",
+      "entry_offset": 0
     }
   ],
   "fields": [
@@ -4758,6 +4765,36 @@
       "width": 4,
       "provenance": "mov eax, dword ptr [rbx + rax*8 + 4]: grid cell on the far side of an edge record.",
       "optional_group": "farRooms"
+    },
+    {
+      "name": "character::bleed",
+      "value": "0x10dc",
+      "owner": "characterBleed",
+      "witness": "character::bleedUpdate",
+      "instruction": "0x168467",
+      "width": 4,
+      "provenance": "movss xmm1, dword ptr [rbx + 0x10dc]: the character's bleed rate, raised by the wound inflow and clamped in the same window.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "bodyPart::index",
+      "value": "0x468",
+      "owner": "characterMove",
+      "witness": "bodyPart::indexFallback",
+      "instruction": "0x170d5c",
+      "width": 4,
+      "provenance": "cmp dword ptr [r13 + 0x468], 0: skeletal part index; negative parts use their parent (+428).",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "bodyPart::armour",
+      "value": "0x690",
+      "owner": "physicalImpact",
+      "witness": "bodyPart::armourRows",
+      "instruction": "0x15af07",
+      "width": 8,
+      "provenance": "lea rax, [rdx + rax + 0x690]: first protection row of the struck body part.",
+      "optional_group": "xrPhysicalContacts"
     }
   ],
   "references": [
@@ -4969,6 +5006,15 @@
       "base": "meshRayQuery::scratchBank",
       "add": 4,
       "provenance": "Buffer extent includes the last witnessed four-byte scratchBank member."
+    },
+    {
+      "name": "bodyPart::armourOuter",
+      "value": "0x6a8",
+      "base": "bodyPart::armour",
+      "add": 24,
+      "provenance": "physicalImpact 0x159A60 indexes the protection rows as armour + row*18 (imul rax, rax, 0x18 inside the bodyPart::armourRows window) for rows 0 and 1; row 1 is the outer row the blade-sink test reads.",
+      "reviewed_native_instruction": "0x15af03",
+      "extent": 24
     }
   ],
   "constants": [
@@ -5722,6 +5768,30 @@
       "pattern": "41 8B 41 18 67 44 8D 50 FF 45 85 D2 7C 3C 41 BE FF FF FF FF 66 90 41 83 C6 01 48 8B 44 24 20 4C 8B 40 20 4C 8B 58 28 49 8B 59 1C 49 63 C6 8B 44 C3 04 49 63 04 83 48 6B C0 54 41 C7 44 00",
       "provenance": "Neighbour walk of the room classifier 0x143C20: entry +18 edge count, entry +1C 8-byte edge records whose second dword is a grid cell, level+28 cell table holding room index + 1 (hence the -24 = +30 - 54 store into the neighbour's state).",
       "optional_group": "farRooms"
+    },
+    {
+      "name": "character::bleedUpdate",
+      "owner": "characterBleed",
+      "window_offset": 87,
+      "pattern": "F3 0F 10 8B DC 10 00 00 F3 0F 58 C8 F3 0F 11 8B DC 10 00 00 F3 0F 10 83 DC 10 00 00 0F 2F 05 ?? ?? ?? ?? 7A 10 76 0E 8B 05 ?? ?? ?? ?? 89 83 DC 10 00 00",
+      "provenance": "Character bleed tick 0x168410 (RBX = character): adds the scaled wound inflow (+10D4) to the bleed rate +10DC, stores it, reloads it, compares with the maximum constant and clamps the stored rate. Combat wounds read +10DC to size and age blood.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "bodyPart::indexFallback",
+      "owner": "characterMove",
+      "window_offset": 1347,
+      "pattern": "8B 46 2C 89 46 44 0F 1F 00 41 83 BD 68 04 00 00 00 7D 22 49 8B 85 28 04 00 00",
+      "provenance": "characterMove 0x170810 (R13 = a character body part): a negative skeletal part index at +468 falls back to the parent part +428 (bodyPart::parentPart). Combat wounds use +468 (0..17) to choose the bone a wound belongs to.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "bodyPart::armourRows",
+      "owner": "physicalImpact",
+      "window_offset": 5276,
+      "pattern": "48 8B 53 08 8B 45 D0 48 6B C0 18 48 8D 84 02 90 06 00 00 F3 0F 10 00",
+      "provenance": "physicalImpact 0x159A60 walks the struck part's ([rbx+8]) two protection rows from row 1 down to row 0: part + 690 + row*18, six floats each, compared with the hit's scalar. Blade sinking reads the same rows (690 under, 6A8 outer).",
+      "optional_group": "xrPhysicalContacts"
     }
   ],
   "closures": {

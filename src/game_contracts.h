@@ -60,6 +60,7 @@ namespace character {
     inline size_t health = fp::game::character::health;
     inline size_t healthMax = fp::game::character::healthMax;
     inline size_t transform = fp::game::character::transform;
+    inline size_t bleed = fp::game::character::bleed;
 }
 namespace behaviour {
     inline size_t character = fp::game::behaviour::character;
@@ -105,8 +106,11 @@ namespace bodyPart {
     inline size_t joints = fp::game::bodyPart::joints;
     inline size_t weaponData = fp::game::bodyPart::weaponData;
     inline size_t velocityTetra = fp::game::bodyPart::velocityTetra;
+    inline size_t index = fp::game::bodyPart::index;
+    inline size_t armour = fp::game::bodyPart::armour;
     inline size_t poseForward = fp::game::bodyPart::poseForward;
     inline size_t poseOrigin = fp::game::bodyPart::poseOrigin;
+    inline size_t armourOuter = fp::game::bodyPart::armourOuter;
 }
 namespace camera {
     inline size_t pose = fp::game::camera::pose;
@@ -375,6 +379,7 @@ inline void recomputeDerivedOffsets() noexcept {
     bodyPart::poseOrigin = bodyPart::pose * 1u + 36u;
     bindings::interact = bindings::stride * 9u + 0u;
     pick::requiredSize = pick::scratchBank * 1u + 4u;
+    bodyPart::armourOuter = bodyPart::armour * 1u + 24u;
 }
 inline void resetLiveOffsets() noexcept {
     character::sceneNode = fp::game::character::sceneNode;
@@ -633,11 +638,15 @@ inline void resetLiveOffsets() noexcept {
     room::edgeCount = fp::game::room::edgeCount;
     room::edges = fp::game::room::edges;
     roomEdge::cell = fp::game::roomEdge::cell;
+    character::bleed = fp::game::character::bleed;
+    bodyPart::index = fp::game::bodyPart::index;
+    bodyPart::armour = fp::game::bodyPart::armour;
     bodyPart::poseForward = fp::game::bodyPart::poseForward;
     bodyPart::poseOrigin = fp::game::bodyPart::poseOrigin;
     bindings::stride = fp::game::bindings::stride;
     bindings::interact = fp::game::bindings::interact;
     pick::requiredSize = fp::game::pick::requiredSize;
+    bodyPart::armourOuter = fp::game::bodyPart::armourOuter;
     recomputeDerivedOffsets();
 }
 } // namespace fp::game::live
@@ -800,6 +809,7 @@ inline constexpr ContractOwner owners[] = {
     {"meshLightRecount", sig::targetCount, "83 B9 DC 01 00 00 00 0F 8C 88 00 00 00 48 8B 05 ?? ?? ?? ?? 8B 90 F0 01 00 00 83 FA", 0},
     {"shadowSchedule", sig::targetCount, "55 48 89 E5 48 8D 64 24 B0 48 89 5D D0 48 89 75 D8 48 89 4D F8 8B 0D ?? ?? ?? ?? E8", 0},
     {"roomClassify", sig::roomClassify, "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 90 48 89 4C 24 20 49 89 D7 C6 44 24 68 01 48 8B 44", 0},
+    {"characterBleed", sig::targetCount, "53 48 8D 64 24 B0 66 0F 7F 74 24 30 66 44 0F 7F 44 24 40 48 89 CB 8B 83 F4 0D 00 00 25 00 0A 00", 0},
 };
 inline constexpr FieldContract fields[] = {
     {"character::sceneNode", 9, 0x3F9, "89 44 24 40 48 8B 73 28 48 8B 46 18 48 8B 80 30 01 00 00 48 8D 50 64 48 8D 4C 24 38", nullptr},
@@ -1163,8 +1173,11 @@ inline constexpr FieldContract fields[] = {
     {"engineLog::messageLineBody", 150, 0x0, "53 56 48 8D 64 24 C8 8B 35 63 4B 47 00 83 FE 0F 7C 04 31 DB EB 04 67 8D 5E 01 3B 1D 40 4B 47 00 0F 84 7A 00 00 00 48 89 4C 24 20 48 8D 05 CE 30 2D 00 48 89 44 24 28 48 89 54 24 30 48 8D 54 24 20 89 F0 48 C1 E0 04 48 8D 0D 32 4B 47 00 48 01 C1 45 31 C9 41 B8 02 00 00 00 E8 E1 2A FE FF 48 8D 05 1A 4B 47 00 89 F2 48 C1 E2 04 48 8B 0C 10 48 85 C9 74 04 48 8B 49 F8 48 6B C9 32 8B 15 AD 3D 47 00 48 81 C2 D0 07 00 00 48 01 CA 21 F6 48 C1 E6 04 89 54 30 08 89 1D D3 4A 47 00 0F 1F 00 E8 FB 06 00 00 90 48 8D 64 24 38 5E 5B C3", "engineLog"},
     {"level::roomRenderSync", 156, 0x5E0, "48 8B 44 24 20 8B 40 1C 67 44 8D 40 FF 45 85 C0 0F 8C 76 00 00 00 BA FF FF FF FF 0F 1F 44 00 00 83 C2 01 48 8B 44 24 20 48 8B 48 20 48 63 C2 48 6B C0 54 4C 8D 0C 01 4C 89 C8 8B 48 30 3B 48 2C 74 42 41 8B 41 30 41 89 41 2C 83 F8 01 75 10 49 8B 41 34 C7 80 18 03 00 00 02 00 00 00 EB 25 41 83 79 2C 02 75 10 49 8B 41 34 C7 80 18 03 00 00 01 00 00 00 EB 0E 49 8B 41 34 C7 80 18 03 00 00 00 00 00 00 41 39 D0", "farRooms"},
     {"level::roomNeighbours", 156, 0x4C2, "41 8B 41 18 67 44 8D 50 FF 45 85 D2 7C 3C 41 BE FF FF FF FF 66 90 41 83 C6 01 48 8B 44 24 20 4C 8B 40 20 4C 8B 58 28 49 8B 59 1C 49 63 C6 8B 44 C3 04 49 63 04 83 48 6B C0 54 41 C7 44 00", "farRooms"},
+    {"character::bleedUpdate", 157, 0x57, "F3 0F 10 8B DC 10 00 00 F3 0F 58 C8 F3 0F 11 8B DC 10 00 00 F3 0F 10 83 DC 10 00 00 0F 2F 05 ?? ?? ?? ?? 7A 10 76 0E 8B 05 ?? ?? ?? ?? 89 83 DC 10 00 00", "wounds"},
+    {"bodyPart::indexFallback", 151, 0x543, "8B 46 2C 89 46 44 0F 1F 00 41 83 BD 68 04 00 00 00 7D 22 49 8B 85 28 04 00 00", "wounds"},
+    {"bodyPart::armourRows", 140, 0x149C, "48 8B 53 08 8B 45 D0 48 6B C0 18 48 8D 84 02 90 06 00 00 F3 0F 10 00", "xrPhysicalContacts"},
 };
-inline constexpr std::array<FieldOffsetBinding, 249> fieldBindings = {{
+inline constexpr std::array<FieldOffsetBinding, 252> fieldBindings = {{
     {0u, 8u, 24, false, game::character::sceneNode, &game::live::character::sceneNode},
     {1u, 14u, 1224, false, game::character::physicsLive, &game::live::character::physicsLive},
     {2u, 10u, 2336, false, game::character::weaponCount, &game::live::character::weaponCount},
@@ -1414,6 +1427,9 @@ inline constexpr std::array<FieldOffsetBinding, 249> fieldBindings = {{
     {360u, 0u, 24, false, game::room::edgeCount, &game::live::room::edgeCount},
     {360u, 39u, 28, false, game::room::edges, &game::live::room::edges},
     {360u, 46u, 4, false, game::roomEdge::cell, &game::live::roomEdge::cell},
+    {361u, 0u, 4316, false, game::character::bleed, &game::live::character::bleed},
+    {362u, 9u, 1128, false, game::bodyPart::index, &game::live::bodyPart::index},
+    {363u, 11u, 1680, false, game::bodyPart::armour, &game::live::bodyPart::armour},
 }};
 inline constexpr std::array<ClosureCallee, 115> closureCallees = {{
     {"callee_1240", "FF 25 ?? ?? ?? ??"},
@@ -2446,11 +2462,15 @@ static_assert(game::level::roomCells == 0x28, "Review native contract after chan
 static_assert(game::room::edgeCount == 0x18, "Review native contract after changing room::edgeCount");
 static_assert(game::room::edges == 0x1C, "Review native contract after changing room::edges");
 static_assert(game::roomEdge::cell == 0x4, "Review native contract after changing roomEdge::cell");
+static_assert(game::character::bleed == 0x10DC, "Review native contract after changing character::bleed");
+static_assert(game::bodyPart::index == 0x468, "Review native contract after changing bodyPart::index");
+static_assert(game::bodyPart::armour == 0x690, "Review native contract after changing bodyPart::armour");
 static_assert(game::bodyPart::poseForward == 0x2B8, "Review native contract after changing bodyPart::poseForward");
 static_assert(game::bodyPart::poseOrigin == 0x2C4, "Review native contract after changing bodyPart::poseOrigin");
 static_assert(game::bindings::stride == 0x10, "Review native contract after changing bindings::stride");
 static_assert(game::bindings::interact == 0x90, "Review native contract after changing bindings::interact");
 static_assert(game::pick::requiredSize == 0x38, "Review native contract after changing pick::requiredSize");
 static_assert(game::meshRayQuery::requiredSize == 0x48, "Review native contract after changing meshRayQuery::requiredSize");
+static_assert(game::bodyPart::armourOuter == 0x6A8, "Review native contract after changing bodyPart::armourOuter");
 static_assert(game::bindings::count == 0xA, "Review native contract after changing bindings::count");
 } // namespace fp::contract
