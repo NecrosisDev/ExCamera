@@ -128,6 +128,7 @@ enum : int {
     hitReaction,
     swapShoulderKey,
     tpLookFollow,
+    fpKnockdown,
     count
 };
 }
@@ -195,7 +196,8 @@ struct ModSettings {
     bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
     bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
     int hitReaction = 100; // percent of the first-person view's kick when a hit lands; 100 as before
-    int f6Cycle = 0; // 0: F6 steps first, third, the game's camera; 1: first and third, the game's camera held
+    int f6Cycle = 0;
+    int fpKnockdown = 1; // 1: knocked down in first person shows third person until you are up; 0 stays first // 0: F6 steps first, third, the game's camera; 1: first and third, the game's camera held
     bool woundMarks = true; // cuts, bruises and running blood where weapons got through; on by default (owner's request)
     bool woundDebug = false; // neon debug highlight for wounds, blade blood and spatters
     bool tracking = false;
@@ -312,6 +314,7 @@ struct ModSettings {
         case setting::drawDistance: drawDistance = std::clamp(drawDistance + delta * 10, 0, 200); break;
         case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
         case setting::f6Cycle: f6Cycle = f6Cycle ? 0 : 1; break;
+        case setting::fpKnockdown: fpKnockdown = fpKnockdown ? 0 : 1; break;
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -578,6 +581,8 @@ struct ModSettings {
             return tpDown ? L"follow the body" : L"follow the head";
         case setting::tpLookFollow:
             return tpLookFollow ? L"on" : L"off";
+        case setting::fpKnockdown:
+            return fpKnockdown ? L"Show third person" : L"Stay in first person";
         case setting::attackCue:
             return attackCue ? L"shown while a swing winds up" : L"off";
         case setting::cueSize:
@@ -753,6 +758,12 @@ inline int iniF6Cycle(const wchar_t* text) {
 }
 inline const wchar_t* iniF6CycleText(int mode) {
     return mode ? L"two" : L"three";
+}
+inline int iniKnockdownView(const wchar_t* text) {
+    return iniIs(text, L"third") ? 1 : iniIs(text, L"first") ? 0 : badText;
+}
+inline const wchar_t* iniKnockdownViewText(int mode) {
+    return mode ? L"third" : L"first";
 }
 inline int iniSwingSelection(const wchar_t* text) {
     return iniIs(text, L"mouse") ? 1 : iniIs(text, L"native") ? 0 : badText;
@@ -1251,6 +1262,11 @@ inline const RowInfo& rowInfo(int row) {
          L"Out of combat, looking down raises the camera and moves it back a little (up to a quarter farther and "
          L"30 cm higher) so the ground ahead shows; looking up brings it closer and lower. It eases in and out, "
          L"and walls still pull the camera in. The field of view does not change."},
+        {setting::fpKnockdown, L"First person: knocked down", RowInfo::choice, &ModSettings::fpKnockdown, nullptr,
+         L"FirstPerson", L"Knockdown", iniKnockdownView, iniKnockdownViewText,
+         L"Show third person: when you are knocked down in first person, the view goes to third person so you see "
+         L"where you fell, and back to first person a moment after you are up. Pressing F6 meanwhile keeps your "
+         L"choice; death never switches. Stay in first person keeps the view in your eyes."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
@@ -1314,6 +1330,7 @@ inline void ModSettings::normalize() {
     if (fpSwingSelection != 0) fpSwingSelection = 1;
     if (tpSwingSelection != 0) tpSwingSelection = 1;
     if (f6Cycle != 1) f6Cycle = 0;
+    if (fpKnockdown != 0) fpKnockdown = 1;
     const ModSettings defaults;
     for (int r = 0; r < setting::count; ++r) {
         const RowInfo& i = rowInfo(r);

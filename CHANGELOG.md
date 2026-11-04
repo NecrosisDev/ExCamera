@@ -8,6 +8,7 @@ Unreleased
 - New Swap shoulder key (Settings > Controls > Keys, unbound by default): in third person it slides the camera over your other shoulder and remembers the side. Changing the Shoulder setting's side slides too, instead of jumping. It can't share a key with Rotate, Kick, Jump or Recenter, and a hand-edited ini that binds one key to two of these keeps only the first.
 - A greyed-out setting now says why in its help line: "Not available on this game version." when this Exanima build lacks what it needs (for example far rooms or finger poses on Hellmode, screen effects or manual defense where the game code differs), or "Turned off after an error. Restart the game to retry." when the feature stopped itself after a fault.
 - Third person follows your look angle out of combat: looking down raises the camera and moves it back a little so you see the ground ahead, looking up brings it closer and lower. It eases in and out and walls still pull the camera in. Turn it off with Third person: follow look angle.
+- Knocked down in first person, the view now switches to third person so you can see where you fell, and back to first person a moment after you are up. Pressing F6 meanwhile keeps your choice, and dying never switches the view. Settings > Camera > Switching views > Knocked down can keep you in first person instead.
 
 v0.3.0 (revision 60)
 

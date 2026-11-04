@@ -310,6 +310,11 @@ static std::atomic<int> viewMode{0}, tpDistance{250}, tpShoulder{40}, tpHeight{1
 // worker.
 static std::atomic<int> f6Cycle{0};
 static std::atomic<ULONGLONG> f6HoldStart{0};
+// Every view change F6 made (fp::knockdownViewStep reads it as the player's choice), and [FirstPerson] Knockdown:
+// 1 shows third person while knocked down in first person. The camera asks, the worker switches:
+// knockdownViewRequest 1 to third person, 2 back to first, 0 nothing pending.
+static std::atomic<unsigned> f6Presses{0};
+static std::atomic<int> fpKnockdown{1}, knockdownViewRequest{0};
 // [VR] rows: eye separation in mm (0: the headset's own), game units per metre, render mode.
 static std::atomic<uintptr_t> nativeSettingsFaultAt{0};
 static std::atomic<unsigned> nativeSettingsDispatches{0}, nativeSettingsSteps{0}, nativeSettingsRefused{0},

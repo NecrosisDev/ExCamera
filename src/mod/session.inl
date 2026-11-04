@@ -1366,6 +1366,12 @@ static DWORD runSession() {
                 if (start && GetTickCount64() - start >= fp::f6HoldMs && f6HoldStart.compare_exchange_strong(start, 0))
                     applyF6Step(fp::f6ReleaseStep(GetTickCount64() - start, viewMode.load()));
             }
+            // The camera's knockdown switch, applied here like F6 (input released) but not counted as one.
+            if (const int want = knockdownViewRequest.exchange(0); want && f6Running() &&
+                viewMode.load() == (want == 1 ? 0 : 1)) {
+                viewMode = want == 1 ? 1 : 0;
+                releaseInput();
+            }
             hookHealthTick();
             if (i % 10 == 0) {
                 static unsigned stepsBefore = 0;

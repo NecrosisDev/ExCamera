@@ -330,6 +330,49 @@ bool camera_motion_look_follow_framing() {
     return true;
 }
 
+bool camera_motion_knockdown_view() {
+    using Step = fp::KnockdownViewStep;
+    const unsigned knocked = 0x40, dead = fp::deadLifeBit;
+    // Down in first person: third person at once, first person again after the settle, not before.
+    fp::KnockdownView k;
+    CHECK(fp::knockdownViewStep(k, true, 0, 0, 0, 0, 1000) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 0, knocked, 0, 0, 1100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(k, true, 1, knocked, 0, 0, 1200) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2000) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, knocked, 0, 0, 2100) == Step::none); // down again: no flicker
+    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2200) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2200 + fp::knockdownViewSettleMs - 1) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2200 + fp::knockdownViewSettleMs) == Step::toFirst);
+    CHECK(fp::knockdownViewStep(k, true, 0, 0, 0, 0, 5000) == Step::none);
+
+    // Off, or already in third person: nothing.
+    fp::KnockdownView off;
+    CHECK(fp::knockdownViewStep(off, false, 0, knocked, 0, 0, 100) == Step::none);
+    fp::KnockdownView third;
+    CHECK(fp::knockdownViewStep(third, true, 1, knocked, 0, 0, 100) == Step::none);
+    CHECK(fp::knockdownViewStep(third, true, 1, 0, 0, 0, 1000) == Step::none);
+    CHECK(fp::knockdownViewStep(third, true, 1, 0, 0, 0, 2000) == Step::none);
+
+    // F6 during the knockdown is the player's choice: no switch back, and no switch again.
+    fp::KnockdownView manual;
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 4, 100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 200) == Step::none); // F6 back to first
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 300) == Step::none);
+    CHECK(fp::knockdownViewStep(manual, true, 0, 0, 0, 5, 400) == Step::none);
+    CHECK(fp::knockdownViewStep(manual, true, 0, 0, 0, 5, 2000) == Step::none);
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 3000) == Step::toThird); // a new knockdown
+
+    // Death never switches, and keeps the view it found.
+    fp::KnockdownView death;
+    CHECK(fp::knockdownViewStep(death, true, 0, knocked, dead, 0, 100) == Step::none);
+    fp::KnockdownView fell;
+    CHECK(fp::knockdownViewStep(fell, true, 0, knocked, 0, 0, 100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(fell, true, 1, knocked, dead, 0, 200) == Step::none);
+    CHECK(fp::knockdownViewStep(fell, true, 1, 0, 0, 0, 300) == Step::none);
+    CHECK(fp::knockdownViewStep(fell, true, 1, 0, 0, 0, 2000) == Step::none);
+    return true;
+}
+
 bool hook_health_menu_immunity_and_stalled_poll_input() {
     fp::HookHealth health{};
     uint32_t hits[fp::healthHooks] = {5, 5, 5, 5, 5, 5};
@@ -857,6 +900,7 @@ int main() {
          camera_motion_fov_aimbox_nearplane_and_eye_stabilization},
         {"camera motion shoulder slide", camera_motion_shoulder_slide},
         {"camera motion look-follow framing", camera_motion_look_follow_framing},
+        {"camera motion knockdown view", camera_motion_knockdown_view},
         {"hook health menu immunity and stalled pollInput",
          hook_health_menu_immunity_and_stalled_poll_input},
         {"PointerSet and JsonOut formatting", pointer_set_and_status_json_formatting},

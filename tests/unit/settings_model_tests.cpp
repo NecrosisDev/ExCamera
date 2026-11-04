@@ -264,6 +264,19 @@ bool look_follow_row_is_a_saved_switch() {
     return true;
 }
 
+bool knockdown_view_row_steps_and_saves() {
+    ModSettings settings;
+    CHECK(settings.fpKnockdown == 1);
+    CHECK(settings.step(panel::setting::fpKnockdown, 1));
+    CHECK(settings.fpKnockdown == 0);
+    const auto& info = panel::rowInfo(panel::setting::fpKnockdown);
+    CHECK(info.fromText(L"first") == 0 && info.fromText(L"Third") == 1 && info.fromText(L"x") == panel::badText);
+    settings.fpKnockdown = 3;
+    settings.normalize();
+    CHECK(settings.fpKnockdown == 1);
+    return true;
+}
+
 bool every_row_has_valid_presentation_labels_and_tips() {
     const ModSettings defaults;
     for (int row = 0; row < count; ++row) {
@@ -292,6 +305,7 @@ int main() {
         {"normalize drops duplicate mod bindings", normalize_drops_duplicate_mod_bindings},
         {"unavailable and faulted rows say why", unavailable_and_faulted_rows_say_why},
         {"look-follow row is a saved switch", look_follow_row_is_a_saved_switch},
+        {"knockdown view row steps and saves", knockdown_view_row_steps_and_saves},
         {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });
 }

@@ -493,6 +493,53 @@ inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned life
     }
     return k.down;
 }
+// First person while knocked down ("Show third person"): the view goes to third person as a knockdown starts and
+// back to first once the character has been up for knockdownViewSettleMs. Never for a death (and a death keeps
+// whatever view it found), and never against the player: an F6 during the knockdown keeps the view it chose.
+// f6Presses is a counter of F6 view changes; the caller applies the returned step.
+inline constexpr unsigned long long knockdownViewSettleMs = 400;
+struct KnockdownView {
+    bool down = false, switched = false, manual = false;
+    unsigned long long upSince = 0;
+    unsigned presses = 0;
+};
+enum class KnockdownViewStep { none, toThird, toFirst };
+inline KnockdownViewStep knockdownViewStep(KnockdownView& k, bool enabled, int mode, unsigned stateFlags,
+                                           unsigned lifeFlags, unsigned f6Presses, unsigned long long ms) {
+    const bool pressed = f6Presses != k.presses;
+    k.presses = f6Presses;
+    if (lifeFlags & deadLifeBit) {
+        k = KnockdownView{};
+        k.presses = f6Presses;
+        return KnockdownViewStep::none;
+    }
+    if (stateFlags & knockdownStateBits) {
+        k.upSince = 0;
+        if (!k.down) {
+            k.down = true;
+            k.switched = k.manual = false;
+        } else if (pressed) {
+            k.manual = true;
+            k.switched = false;
+        }
+        if (enabled && !k.manual && !k.switched && mode == 0) {
+            k.switched = true;
+            return KnockdownViewStep::toThird;
+        }
+        return KnockdownViewStep::none;
+    }
+    if (!k.down) return KnockdownViewStep::none;
+    if (pressed) {
+        k.manual = true;
+        k.switched = false;
+    }
+    if (!k.upSince) k.upSince = ms ? ms : 1;
+    if (ms - k.upSince < knockdownViewSettleMs) return KnockdownViewStep::none;
+    const bool back = k.switched && mode == 1;
+    k = KnockdownView{};
+    k.presses = f6Presses;
+    return back ? KnockdownViewStep::toFirst : KnockdownViewStep::none;
+}
 // The half-size of the box the camera is kept clear by (cm): bigger than the near plane's own rectangle, so
 // a wall beside the view never comes inside the near plane and shows through.
 inline constexpr float tpCameraRadius = 12.f;

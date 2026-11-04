@@ -263,6 +263,7 @@ static bool f6Running() {
     return InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0);
 }
 static void applyF6Step(fp::F6Step step) {
+    if (step != fp::F6Step::none && step != fp::F6Step::holdPending) ++f6Presses;
     switch (step) {
     case fp::F6Step::toThird:
     case fp::F6Step::toFirst:

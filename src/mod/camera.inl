@@ -390,6 +390,24 @@ inline uintptr_t navLocked(void* self, float offset) {
     if (!scene) return reject(5);
     const uintptr_t worldScene = *(uintptr_t*)gameAt(fp::sig::currentScene);
     if (viewMode.load() < 2 && updateCameraEntry(root, head, worldScene, scene)) wasLive = false;
+    { // Knocked down in first person: ask the worker for third person, and back after getting up.
+        static fp::KnockdownView knockdownView;
+        static uintptr_t knockdownRoot = 0;
+        if (knockdownRoot != root) {
+            knockdownView = fp::KnockdownView{};
+            knockdownView.presses = f6Presses.load();
+            knockdownRoot = root;
+        }
+        const int shown = viewMode.load();
+        if (shown < 2 && readable(root + field::character::stateFlags, 4) && readable(root + field::character::lifeFlags, 4)) {
+            const auto step = fp::knockdownViewStep(knockdownView, fpKnockdown.load() == 1, shown,
+                                                    *(unsigned*)(root + field::character::stateFlags),
+                                                    *(unsigned*)(root + field::character::lifeFlags), f6Presses.load(),
+                                                    GetTickCount64());
+            if (step != fp::KnockdownViewStep::none)
+                knockdownViewRequest = step == fp::KnockdownViewStep::toThird ? 1 : 2;
+        }
+    }
     const int mode = viewMode.load();
     const LONG serial = InterlockedCompareExchange(&swapCalls, 0, 0);
     const bool sameLifetime = filterRoot == root && filterHead == head &&
