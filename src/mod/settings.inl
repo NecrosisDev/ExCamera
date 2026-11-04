@@ -120,6 +120,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.rotateHeldKey = rotateHeldKey.load();
     s.kickKey = kickKey.load();
     s.jumpKey = jumpKey.load();
+    s.swapShoulderKey = swapShoulderKey.load();
     s.leanKey = leanKey.load();
     s.holdHeading = holdHeadingOn.load();
     s.autoRecenter = aimAutoRecenter.load();
@@ -247,6 +248,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     rotateHeldKey = s.rotateHeldKey;
     kickKey = s.kickKey;
     jumpKey = s.jumpKey;
+    swapShoulderKey = s.swapShoulderKey;
     leanKey = s.leanKey;
     holdHeadingOn = s.holdHeading;
     aimAutoRecenter = s.autoRecenter;
@@ -417,6 +419,15 @@ static void acceptVrQuickSaves() {
 static void flushSettings() {
     acceptVrQuickSaves();
     persistSettingsRows(panel::setting::count);
+}
+// The swap-shoulder key: Third person: shoulder negated and published like an Apply, so its revision is
+// queued and the session worker saves it. The camera slides across (fp::shoulderSlide).
+static void swapShoulder() {
+    SettingsGuard guard;
+    const auto live = readLiveSettings();
+    auto swapped = live;
+    swapped.tpShoulder = -live.tpShoulder;
+    commitSettings(swapped, live);
 }
 // Native Apply owns a draft. Merge only edited rows into the latest state so a
 // menu opened before a FOV key or raw-input fallback cannot overwrite that work.

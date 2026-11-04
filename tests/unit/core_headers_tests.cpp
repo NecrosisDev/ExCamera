@@ -259,6 +259,41 @@ bool camera_motion_fov_aimbox_nearplane_and_eye_stabilization() {
     return true;
 }
 
+bool camera_motion_shoulder_slide() {
+    // The pure slide: eased, finished after shoulderSlideSeconds, never past its target.
+    float left = fp::shoulderSlideSeconds;
+    const float first = fp::shoulderSlide(1.f, -1.f, left, 0.016f);
+    CHECK(first < 1.f && first > 0.95f);
+    const float half = fp::shoulderSlide(1.f, -1.f, left, fp::shoulderSlideSeconds / 2.f - 0.016f);
+    CHECK(near_equal(half, 0.f, 1e-3f));
+    CHECK(near_equal(fp::shoulderSlide(1.f, -1.f, left, 1.f), -1.f));
+    CHECK(left == 0.f);
+    CHECK(near_equal(fp::shoulderSlide(1.f, -1.f, left, NAN), -1.f));
+
+    // ThirdPerson: a change of the chosen side slides the camera across in both modes, where it used to jump.
+    auto open = [](const float*, const float*, float length) { return length; };
+    for (bool tight : {false, true}) {
+        fp::ThirdPerson tp;
+        const float eye[3] = {0.f, 100.f, 0.f};
+        float pose[12]{};
+        for (int i = 0; i < 30; ++i) tp.update(eye, 0.f, 0.f, 250.f, 40.f, 0.f, 0.016f, open, pose, tight);
+        const float before = pose[9];
+        CHECK(std::fabs(before) > 30.f);
+        tp.update(eye, 0.f, 0.f, 250.f, -40.f, 0.f, 0.016f, open, pose, tight);
+        CHECK(std::fabs(pose[9] - before) < 0.1f * std::fabs(before)); // one frame in: barely moved
+        for (int i = 0; i < 30; ++i) tp.update(eye, 0.f, 0.f, 250.f, -40.f, 0.f, 0.016f, open, pose, tight);
+        CHECK(near_equal(pose[9], -before, 1.f)); // across, mirrored (the boom length itself eases)
+        if (tight) CHECK(tp.swapHold > 0.f || tp.side == -1.f);
+    }
+    // A fresh camera starts on its side at once.
+    fp::ThirdPerson fresh;
+    const float eye[3] = {0.f, 100.f, 0.f};
+    float pose[12]{};
+    fresh.update(eye, 0.f, 0.f, 250.f, -40.f, 0.f, 0.016f, open, pose, false);
+    CHECK(pose[9] > 30.f);
+    return true;
+}
+
 bool hook_health_menu_immunity_and_stalled_poll_input() {
     fp::HookHealth health{};
     uint32_t hits[fp::healthHooks] = {5, 5, 5, 5, 5, 5};
@@ -784,6 +819,7 @@ int main() {
         {"input F6 cycle policy", input_f6_cycle_policy},
         {"camera motion FOV, AimBox, NearPlane, and eye stabilization",
          camera_motion_fov_aimbox_nearplane_and_eye_stabilization},
+        {"camera motion shoulder slide", camera_motion_shoulder_slide},
         {"hook health menu immunity and stalled pollInput",
          hook_health_menu_immunity_and_stalled_poll_input},
         {"PointerSet and JsonOut formatting", pointer_set_and_status_json_formatting},

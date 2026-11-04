@@ -126,6 +126,7 @@ enum : int {
     farRooms,
     f6Cycle,
     hitReaction,
+    swapShoulderKey,
     count
 };
 }
@@ -243,6 +244,7 @@ struct ModSettings {
     int edgeSoftness = fp::defaultAimEdgeSoftness; // percent of oval radius used to feather camera turning
     int leanKey = 0x12; // held, the mouse leans the upper body (virtual-key code; 0 unbound)
     int kickKey = 0, jumpKey = 0; // the game's unused kick and jump clips (virtual-key codes; 0 unbound, the default)
+    int swapShoulderKey = 0; // third person: puts the camera over the other shoulder (virtual-key code; 0 unbound)
     int rotateHeldKey =
         0x02; // the key that turns a held object (virtual-key code; 0 unbound) // in combat the crosshair moves inside a box; the view turns at its edge // camera lag, hide what is in the way, knockdown follow // closer and centred in combat; third person's own field of view (0 = as first person)
     bool operator==(const ModSettings& o) const; // every row's value
@@ -324,6 +326,9 @@ struct ModSettings {
             break;
         case setting::jumpKey:
             jumpKey = nextKey(jumpKey, delta);
+            break;
+        case setting::swapShoulderKey:
+            swapShoulderKey = nextKey(swapShoulderKey, delta);
             break;
         case setting::leanKey:
             leanKey = nextKey(leanKey, delta);
@@ -531,6 +536,8 @@ struct ModSettings {
             return fp::heldKeyName(kickKey);
         case setting::jumpKey:
             return fp::heldKeyName(jumpKey);
+        case setting::swapShoulderKey:
+            return fp::heldKeyName(swapShoulderKey);
         case setting::leanKey:
             return fp::heldKeyName(leanKey);
         case setting::holdHeading:
@@ -1201,6 +1208,11 @@ inline const RowInfo& rowInfo(int row) {
          L"HitReaction", nullptr, nullptr,
          L"First person only. How hard the view jolts and tilts when a blow lands on you. Zero keeps the view "
          L"still; the damage flash stays. Never in a VR headset.", {0,100,10,10}},
+        {setting::swapShoulderKey, L"Swap shoulder", RowInfo::keyList, &ModSettings::swapShoulderKey, nullptr, L"Input",
+         L"SwapShoulderKey", fp::heldKeyFromText, nullptr,
+         L"In third person, moves the camera over your other shoulder with a short slide, and keeps it there "
+         L"(Third person: shoulder changes side). Does nothing with the camera centred. Unbound until you pick a "
+         L"key; the game does not see that key in third person while it is bound here."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
@@ -1249,9 +1261,16 @@ inline void ModSettings::normalize() {
     if (!validSettingBinding(setting::rotateHeldKey, rotateHeldKey)) rotateHeldKey = 0;
     if (!validSettingBinding(setting::kickKey, kickKey)) kickKey = 0;
     if (!validSettingBinding(setting::jumpKey, jumpKey)) jumpKey = 0;
+    if (!validSettingBinding(setting::swapShoulderKey, swapShoulderKey)) swapShoulderKey = 0;
     if (!validSettingBinding(setting::leanKey, leanKey)) leanKey = 0;
     if (!validSettingBinding(setting::leanLeftKey, leanLeftKey)) leanLeftKey = 0;
     if (!validSettingBinding(setting::leanRightKey, leanRightKey)) leanRightKey = 0;
+    // One key, one of the mod's actions (Settings refuses a taken key; an ini can hold anything): a later
+    // duplicate in this order is unbound.
+    int* const keys[] = {&rotateHeldKey, &kickKey, &jumpKey, &swapShoulderKey, &trackingKey, &leanLeftKey, &leanRightKey};
+    for (size_t i = 1; i < std::size(keys); ++i)
+        for (size_t j = 0; j < i; ++j)
+            if (*keys[i] && *keys[i] == *keys[j]) *keys[i] = 0;
     if (fpDefense != 1) fpDefense = 0;
     if (tpDefense != 1) tpDefense = 0;
     if (fpSwingSelection != 0) fpSwingSelection = 1;

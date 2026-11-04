@@ -140,6 +140,7 @@ static void markRestorationUnknown() {
 // 3 restoring, 4 restored, 5 faulted.
 static std::atomic<int> cameraOwnershipState{0};
 static void releaseInput();
+static void swapShoulder(); // mod/settings.inl: the swap-shoulder key, through the settings revisions
 static bool gameplayOwnsPointer();
 static float stockNear = 100;
 static std::atomic<unsigned> samples{0};
@@ -1057,6 +1058,7 @@ static std::atomic<bool> hoverOutOfRange{false};
 static std::atomic<ULONGLONG> hoverRangeAt{0};
 static std::atomic<int> rotateHeldKey{0x02};
 static std::atomic<int> kickKey{0}, jumpKey{0}; // motions.inl; unbound until the player picks a key
+static std::atomic<int> swapShoulderKey{0}; // [Input] SwapShoulderKey: third person, the other shoulder
 static std::atomic<bool> motionKickRequested{false}, motionJumpRequested{false}; // a key press claimed by the window handler, taken on the game thread
 // Preserve legacy INI preferences only. Explicit leaning is disabled; these
 // values never claim input or change torso pose.

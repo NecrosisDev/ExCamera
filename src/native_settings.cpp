@@ -26,7 +26,7 @@ static const OwnSection ownSections[] = {
     {L"Combat", L"Blocking and aim", {setting::fpDefense, setting::fpSwingSelection, setting::tpCombatAim, setting::indicator}, 4},
     {L"Combat", L"Wind-up arc", {setting::attackCue, setting::cueThrust, setting::cueSize, setting::cueOpacity}, 4},
     {L"Combat", L"Blades", {setting::bladeDrag, setting::stabSink, setting::bladeGain}, 3},
-    {L"Controls", L"Keys", {setting::rotateHeldKey, setting::kickKey, setting::jumpKey}, 3},
+    {L"Controls", L"Keys", {setting::rotateHeldKey, setting::kickKey, setting::jumpKey, setting::swapShoulderKey}, 4},
     {L"Controls", L"Mouse and movement", {mouse, setting::sensitivity, setting::invertY, setting::rawMouse, movement,
                                           setting::crouchMode}, 6},
     {L"Controls", L"Head tracking", {setting::tracking, setting::trackingKey}, 2},
@@ -245,7 +245,7 @@ void NativeSettingsIntegration::dispatch(NativeSettingsIntegration* self, Native
     } else if (action.capture) {
         if (action.row==setting::rotateHeldKey || action.row==setting::leanKey ||
             action.row==setting::leanLeftKey || action.row==setting::leanRightKey ||
-            action.row==setting::kickKey || action.row==setting::jumpKey ||
+            action.row==setting::kickKey || action.row==setting::jumpKey || action.row==setting::swapShoulderKey ||
             (action.row==setting::trackingKey && self->transaction.value.tracking)) {
             self->captureRow=action.row;
             self->dirty=true;
@@ -427,6 +427,7 @@ bool NativeSettingsIntegration::completeCapture(int key) {
         case setting::rotateHeldKey: return s.rotateHeldKey;
         case setting::kickKey: return s.kickKey;
         case setting::jumpKey: return s.jumpKey;
+        case setting::swapShoulderKey: return s.swapShoulderKey;
         case setting::trackingKey: return s.trackingKey;
         case setting::leanKey: return s.leanKey;
         case setting::leanLeftKey: return s.leanLeftKey;
@@ -436,10 +437,12 @@ bool NativeSettingsIntegration::completeCapture(int key) {
     };
     const auto taken = [&](int row) { return row != id && key == bindingOf(row); };
     const bool ownCapture = id == setting::rotateHeldKey || id == setting::kickKey || id == setting::jumpKey ||
+                            id == setting::swapShoulderKey ||
                             id == setting::trackingKey || id == setting::leanKey || id == setting::leanLeftKey ||
                             id == setting::leanRightKey;
     if (key > 0 && ownCapture &&
         (taken(setting::rotateHeldKey) || taken(setting::kickKey) || taken(setting::jumpKey) ||
+         taken(setting::swapShoulderKey) ||
          taken(setting::trackingKey) || taken(setting::leanLeftKey) || taken(setting::leanRightKey))) {
         captureRow=id; // already one of these actions: keep waiting for another key, Escape cancels
         dirty=true;

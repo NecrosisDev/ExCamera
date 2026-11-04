@@ -367,6 +367,13 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 if (bindingKey == jumpKey.load()) motionJumpRequested = true;
                 return xbutton ? TRUE : 0;
             }
+            // Third person, a side chosen, Settings (F8) closed: the other shoulder. Anywhere else the game keeps it.
+            if (canTake && bindingKey == swapShoulderKey.load() && viewMode.load() == 1 && tpShoulder.load() != 0 &&
+                !cursorFreeBitSet(cursorFreeBit)) {
+                inputOwner.windowClaim(bindingKey);
+                swapShoulder();
+                return xbutton ? TRUE : 0;
+            }
             if (canTake && trackingEnabled.load() && bindingKey == trackingRecenterKey.load()) {
                 inputOwner.windowClaim(bindingKey);
                 ++trackingReset;

@@ -42,7 +42,7 @@ static const char excameraManualPageText[] =
     "- Small mouse movements steer your weapon and point of aim within the central aim oval; sweeping toward and past its rim turns your head and body.\r\n"
     "- Move your mouse left or right before striking to choose the starting side of a swing, step through blows to build momentum, and thrust with [inpt13].\r\n"
     "- Defense defaults to Exanima's automatic parry; switching Defense to [tcol=FFE399]Manual[/tcol] in Mod Settings lets holding [tcol=FFE399]Right Mouse[/tcol] ready your guard and actively intercept incoming strikes.\r\n"
-    "- Optional [tcol=FFE399]Attack Wind-Up Arc[/tcol], [tcol=FFE399]Blade Drag Cuts[/tcol], [tcol=FFE399]Stabs Sink In[/tcol], and unbound [tcol=FFE399]Kick / Jump[/tcol] keys can be tuned or bound under Mod Settings.\r\n\r\n\r\n"
+    "- Optional [tcol=FFE399]Attack Wind-Up Arc[/tcol], [tcol=FFE399]Blade Drag Cuts[/tcol], [tcol=FFE399]Stabs Sink In[/tcol], and unbound [tcol=FFE399]Kick / Jump / Swap Shoulder[/tcol] keys can be tuned or bound under Mod Settings.\r\n\r\n\r\n"
     "[algn=2][tcol=FFE399]WORLD INTERACTION & ITEM HANDLING[/tcol]\r\n"
     "[algn=0]\r\n"
     "Objects, doors, and containers are handled directly in 3D space:\r\n\r\n"

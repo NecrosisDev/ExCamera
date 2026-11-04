@@ -199,6 +199,36 @@ bool hit_reaction_row_is_a_percent_slider() {
     return true;
 }
 
+bool normalize_drops_duplicate_mod_bindings() {
+    ModSettings settings;
+    settings.rotateHeldKey = 'R';
+    settings.kickKey = 'R';
+    settings.jumpKey = 'F';
+    settings.swapShoulderKey = 'F';
+    settings.trackingKey = 'G';
+    settings.leanLeftKey = 'G';
+    settings.leanRightKey = 'E';
+    settings.normalize();
+    CHECK(settings.rotateHeldKey == 'R');
+    CHECK(settings.kickKey == 0);
+    CHECK(settings.jumpKey == 'F');
+    CHECK(settings.swapShoulderKey == 0);
+    CHECK(settings.trackingKey == 'G');
+    CHECK(settings.leanLeftKey == 0);
+    CHECK(settings.leanRightKey == 'E');
+
+    ModSettings swap;
+    CHECK(swap.swapShoulderKey == 0);
+    swap.swapShoulderKey = VK_F6; // F6-F11 belong to the mod
+    swap.normalize();
+    CHECK(swap.swapShoulderKey == 0);
+    swap.swapShoulderKey = 'Q';
+    swap.normalize();
+    CHECK(swap.swapShoulderKey == 'Q');
+    CHECK(panel::rowInfo(panel::setting::swapShoulderKey).kind == panel::RowInfo::keyList);
+    return true;
+}
+
 bool every_row_has_valid_presentation_labels_and_tips() {
     const ModSettings defaults;
     for (int row = 0; row < count; ++row) {
@@ -224,6 +254,7 @@ int main() {
         {"normalize sanitizes invalid lean bindings", normalize_sanitizes_invalid_lean_bindings},
         {"F6 cycle row steps, saves and normalizes", f6_cycle_row_steps_saves_and_normalizes},
         {"hit reaction row is a percent slider", hit_reaction_row_is_a_percent_slider},
+        {"normalize drops duplicate mod bindings", normalize_drops_duplicate_mod_bindings},
         {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });
 }
