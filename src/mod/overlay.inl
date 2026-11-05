@@ -899,10 +899,10 @@ static bool crouchAllowedReadable(uintptr_t root, bool rootReadable) {
         return false;
     const unsigned state = *reinterpret_cast<unsigned*>(root + field::character::stateFlags);
     return !*reinterpret_cast<unsigned char*>(root + field::character::combatStance) &&
-           !(state & (0xac0 | 0x40204 | 0xa00)) &&
-           // 0xa00 above includes 0x800, death (set by 0x156480). Life flag 0x100 is not death: only 0x17B100 sets it,
-           // with a collapse motion, from spell effects; crouching stays refused through that collapse too.
-           !(*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100) && !dialogueOpen();
+           // Masks the game itself applies to the state (0xAC0 at 0x16388A, 0x40204 at 0xBFF90, 0xA00 at 0xAB3E7); 0xA00
+           // covers death (& 0x800: 0x800 and 0xA00). The old life-flag 0x100 test was meant as "dead", but only
+           // 0x17B100 sets that bit (a spell collapse), so it is gone.
+           !(state & (0xac0 | 0x40204 | 0xa00)) && !dialogueOpen();
 }
 static bool crouchAllowed(uintptr_t root) {
     return crouchAllowedReadable(root, root && readable(root, 0x1300));
