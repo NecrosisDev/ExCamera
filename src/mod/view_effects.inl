@@ -965,8 +965,11 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
         float grind = 0.5 + 0.5 * sin(q.z * 55.0 + q.x * 18.0 + shared.a * 4.0);
         tint = mix(tint, tint * (1.2 + 0.15 * mix(1.0, grind, resolved(0.12, footprint))), honed);
     }
-    // Blood from its hits: smeared along the length, ragged at the rim, dark red,
-    // glossy while wet and dull brown once dry.
+    // Blood from its hits: smeared along the length, ragged at the rim. A liquid film on the steel, not a
+    // stain in it: thick at the middle (dark, opaque), thin at the rim (the metal shows through, tinted),
+    // a slightly darker meniscus at the edge; while wet a smooth clear coat over the blade's own shape
+    // (a sharp highlight off its real normal, the steel's mirror dimmed but not gone), drying to a dull,
+    // dark brown crust.
     float blood = 0.0, wet = 0.0;
     for (int k = 0; k < 4; ++k) {
         if (float(k) >= condition.z) break; // condition.z: how many spots this item carries
@@ -981,10 +984,19 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
         blood = max(blood, here);
         wet = max(wet, here * wetness);
     }
+    float film = 0.0; // how thick the blood lies, 0 bare .. 1 opaque
     if (blood > 0.0) {
-        tint = mix(tint, luma * mix(vec3(0.24, 0.07, 0.045), vec3(1.5, 0.08, 0.05), wet), blood * 0.92);
+        film = smoothstep(0.15, 0.75, blood);
+        float meniscus = smoothstep(0.08, 0.3, blood) * (1.0 - smoothstep(0.3, 0.6, blood)) * wet;
+        // Thin: the metal seen through red (blood absorbs green and blue first); thick: blood's own colour,
+        // deep red while wet, brown-black once dry. Relative to the item's own brightness, as the rest.
+        vec3 through = tint * mix(vec3(1.0), vec3(0.62, 0.1, 0.07), smoothstep(0.0, 0.35, blood));
+        vec3 body = luma * mix(vec3(0.2, 0.055, 0.04), vec3(0.55, 0.035, 0.025), wet);
+        tint = mix(through, body, film) * (1.0 - 0.3 * meniscus);
         if (woundDebug > 0.5) tint = mix(tint, vec3(0.0, 1.0, 0.95) * 2.5, blood * 0.95);
-        mirror = mix(mirror, 1.0, blood);
+        // Under a thin wet film the steel still mirrors; dried blood and thick blood do not.
+        mirror = mix(mirror, 1.0, film * (1.0 - 0.5 * wet) + (1.0 - wet) * blood * 0.5);
+        shine *= 1.0 - 0.8 * film;
         honed *= 1.0 - blood;
     }
     if (slotKind > 1.5 && metal < 0.5) {
@@ -997,9 +1009,17 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     // Highlights take the lights' colour (a torch's warmth); bevel wear takes the surface's.
     vec3 sheen = mix(vec3(luma), base, 0.5 * metal);
     surface += sheen * mix(vec3(1.0), lightTint, lightInfo.w) * shine * spec + sheen * (metal > 0.5 ? 1.2 : 0.4) * edge;
-    // Wet blood shines in a broad, soft highlight.
-    surface += luma * vec3(1.0, 0.85, 0.8) * mix(vec3(1.0), lightTint, lightInfo.w) * 0.8 * wet *
-               pow(max(dot(bumped, halfway), 0.0), 30.0);
+    // Wet blood is a smooth clear coat: it fills the grind and scratches, so its highlight follows the
+    // blade's real shape (n, not the bumped normal), sharp and bright, stronger towards grazing angles,
+    // plus a faint broad sheen; both fade as it dries.
+    if (wet > 0.0) {
+        vec3 lightColour = mix(vec3(1.0), lightTint, lightInfo.w);
+        float facing = max(dot(n, halfway), 0.0);
+        float fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(n, view), 0.0), 5.0);
+        float lit = max(dot(n, lightDir), 0.0);
+        // Scaled by how lit the item is here (its luma), so a blade in the dark does not glint.
+        surface += lightColour * wet * min(luma * 2.5, 1.0) * (lit * (1.4 * pow(facing, 90.0) + 0.12 * pow(facing, 10.0)) + 0.35 * fresnel * luma);
+    }
     // The honed strip catches the light in a thin, sharp line.
     surface += sheen * mix(vec3(1.0), lightTint, lightInfo.w) * 1.5 * honed * pow(max(dot(bumped, halfway), 0.0), 120.0);
     return toStored(clamp(mix(light, surface, strength), 0.0, 1.0));
