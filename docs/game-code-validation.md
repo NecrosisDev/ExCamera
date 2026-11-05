@@ -27,8 +27,8 @@ Date: 2026-11-05.
 
 ## Decisions for Hunter (all in one place)
 
-1. **Remove "Winded" from Hurt and winded, or turn it into a magic effect.** Recommended: remove it. The game has
-   no stamina bar for it to read.
+1. **Winded**: Hunter wants it reworked onto a real game value. The game has no stamina or fatigue system (section
+   1b); the real candidates are balance, footing and the shield guard. Render owns the rework.
 2. **Fix the "dead" check everywhere to use the game's death test, `(+DF4 & 0x800) != 0`.** That covers both
    dying (0x800) and corpse (0xA00), and it's the same test the game itself makes 32 times. Recommended: yes. It's a
    straight correction and the feature thread owns it.
@@ -36,7 +36,7 @@ Date: 2026-11-05.
    hasn't been re-decoded line by line. Recommended: keep the plumbing (removing it removes the mod) and remove or
    disable only the **game-rule** claims marked UNPROVEN until each one is decoded. Say if you'd rather pull
    everything unproven.
-4. **The knocked-down camera is now mostly proven.** Its state check matches the game's on-the-ground, getting-up
+4. **Knocked-down camera: paused until Hunter says otherwise (2026-11-05).** It is now mostly proven. Its state check matches the game's on-the-ground, getting-up
    and dead states. Only its use of the spell-stun bit as "dead" is wrong (fix #2 covers it). Recommended: keep it.
 5. **The game's own vocabulary.** The game's loading tips say "Impact mainly deals stamina damage" (exe text at
    0x316F00), so the developer seems to call recoverable health loss "stamina damage". The mod should use your terms
@@ -91,6 +91,26 @@ Date: 2026-11-05.
 | Walking (`walking`) | +12EA | Set by explore BFEA0 / player tick, cleared by motionPlay and the spell stun. | **UNPROVEN** meaning | Spine-follow, gait |
 | Grip flags / weapon class (`gripFlags`) | +1068 | Grip selector 1523F0 (and its twin 152660) sets it to the low 16 bits of the primary weapon's item record (weapon +18 → +198 → word 0), then keeps & 0xF0. From that class it picks the motion set by the game's own named table at 0x2ED0F0 (name then code, read at 258CE5): **0x10 → "One Handed"** (motion set 1), or **0x90 with two weapons → "2W Light"** (set 4). **0x20 → "Two Handed"** (set 0x10), **"2H Light"** (0x20, item code bit 0 set) or **"Greatsword"** (0x30, item code 0x521). **0x30 → "Polearm"** (set 0x40). No recognised class gives 0x80, or 0xC0 when body +AF8+58 & 0x100. A shield gives sets 0x100/0x200/0x300 ("1H & Shield" / "Shield C1" / "Shield C2") and a special held item gives "1H & Torch" (3); in those two paths +1068 keeps the item code. The grip table lookup 155250 indexes G2BAC50 by (grip & 0x70) >> 4, using 1 for 0x90 and 5 when its second argument is 1. | **PROVEN** with the game's own names. Kick `classify` (one-handed / dual / two-handed / polearm / unarmed / shield) **matches**. `wide = gripFlags != 0` (input.inl:1173, 1834) is **PROVEN**: it's the game's own side-threshold test (C24C3: 15° when +1068 == 0, 20° otherwise). (An earlier version of this doc called it wrong; that was a mistake.) `grip & 0x80` = "alternate" (input.inl:1746) is **PROVEN**: the opposite-family starter 157700 makes exactly that test at 157AB3 and swings with weapon slot 1 (+930) when the bit is set, slot 0 (+928) otherwise, and for an unarmed character slot 1 is the other fist. (This doc earlier said it held only for 0x90; the feature thread's reading was right.) | Kick weapon table, wide swing threshold, swing hands |
 | Impact record | +C18 / +C20 / +C28 / +C38 | Written in physicalContact 1590D0 (a TMotileDynamics/TMotilePart method). Read by impact 159A60. | Location **PROVEN**, field meanings **PLAUSIBLE** | Blade drag, VR contacts, wound weapon lookup |
+
+## 1b. Is there a stamina, exertion or fatigue system? (asked 2026-11-05)
+
+**No.** The search: every per-character float that the dynamics step 169200 or the HUD 13E0F0 changes or reads was
+listed and traced. They are: current / restorable / max health (+D58 / +D5C / +103C), magic and its ceiling and
+spend-and-fade terms (+D74 … +D88, with the regen helper +1014 and the booster +1304), balance (+10B8 / +10BC),
+the impact shock timer +10C4 (set by 159A60, decays 0.01 a step), bleed (+10DC), crouch (+100C), the block fade
+terms +11F0 / +11F4 and +11BC, the **shield guard** (+D60, below), and **footing** (+590, below). Attacks and
+running drain none of them except balance and the shield guard. The exe has no "stamina" or "fatigue" text apart
+from the loading tip "Impact mainly deals stamina damage", which refers to recoverable health. So the "Winded"
+effect had nothing in the game to read, and a rebuilt effect should use one of the three real values:
+
+| Value | Game location | What it does (decoded) | Verdict |
+|---|---|---|---|
+| **Balance** | +10B8 / +10BC | See section 1: hits and force spells knock it down, +0.005 a step back, under max − 0.05 the game plays Rebalance (0x21) and interrupts (169B99). Death timing (1.2 − balance) × 300 ms. | **PROVEN** |
+| **Footing / stance** | +590 (0..1) | Set by the leg-support routine 1603F0 (160545) and re-grown by 156B20: +0.001 a step (plus (1 − progress)² × 0.001 while getting up), capped at 1, only while recovery bit +DF8 & 0x20 is set (16A414). Under 0.85 the dynamics step plays Defence stance (3) and sets the stumble state 0x100 (16AFF1–16B05C). It scales pose strength (151580) and gait (163EF0 at 16467B). While dying it fades 0.003 a step and the body switches off under 0.25 (167ED0). | **PROVEN** |
+| **Shield guard** | +D60 (0..1), rate +D64, last-hit time +D68 | The HUD's third bar (13CC90, greys 0x2BA4B0–0x2BA510), drawn only with a shield in combat (13DF60 fades it in over 500 ms). Impact 159A60 lowers it by hit × +C0C × 0.4 under active defense (15B861–15B88A), × (0.3 × x + 0.3) in the parry window (15B9EF–15BA29), × 0.8 otherwise (15BA40–15BA69), clamps at 0 and resets the rate (15BAC1–15BAE2). The dynamics step regrows it: rate +2e-6 a step up to a cap, guard += rate, capped at 1 (16BAA5–16BB3B). The shield constraint multiplies the shield's hold strength +C08 by it (162F80 at 16334B, 1634CB, 163557), so a battered guard holds weakly. | **PROVEN** |
+
+Recommendation for the render thread: a "winded"-style effect should key off **balance** (universal, PROVEN,
+already read by the kick gate) or **footing**; the shield guard is a third option for shield users only.
 
 ### Knocked-down verdict (every value the mod's mask matches)
 
