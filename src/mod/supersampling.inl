@@ -96,6 +96,7 @@ inline bool admitSupersampleRender(uintptr_t viewport, SupersampleRenderScope& s
         // the ownership bookkeeping above let go: parked, owner or identity changed) is admitted with the last
         // admitted frame's stock values. A camera the game moved, or set its own fov or near on, is not ours.
         if (!admitted && main && camera && lastAdmittedScope.owned && !InterlockedCompareExchange(&restorationUnknown, 0, 0) &&
+            *(const uintptr_t*)gameAt(fp::sig::playerRoot) && // a player to draw the effects for
             readable(camera + field::camera::pose, 48) &&
             *(const float*)(camera + field::camera::fov) == renderedFov &&
             *(const float*)(camera + field::camera::nearPlane) == renderedNear &&

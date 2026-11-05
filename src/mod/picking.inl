@@ -1507,6 +1507,8 @@ static bool identityChanged() {
 }
 
 static void writeStock(uintptr_t view, uintptr_t camera, const float* pose, float fov, float stockNearValue) {
+    // The camera is the game's again (restore, park, F6 off, stop): no frame is admitted by our last pose after this.
+    std::memset(writtenPose, 0, sizeof writtenPose);
     std::memcpy(reinterpret_cast<void*>(camera + field::camera::pose), pose, 12 * sizeof(float));
     std::memcpy(reinterpret_cast<void*>(camera + field::camera::pose2), pose, 12 * sizeof(float));
     *reinterpret_cast<float*>(camera + field::camera::fov) = fov;
