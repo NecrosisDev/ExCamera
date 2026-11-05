@@ -107,7 +107,6 @@ enum : int {
     vrFingerBones,
     ambientOcclusion,
     depthOfField,
-    screenSpaceReflections,
     edgeSmoothing,
     helmetVisor,
     playerGhost,
@@ -137,9 +136,6 @@ enum : int {
 // Whether the game's own material data (steel, wood, leather...) is decoded; until it is, the held, armour,
 // object and level detail rows are inactive and their effects draw nothing (colourMaterialGuesses, wounds.inl).
 inline constexpr bool materialDataDecoded = false;
-// Whether the game's per-surface shininess (its specular data) is read; until it is, Screen-space reflections are
-// inactive and do not run (they had weighted floors by colour, a guess).
-inline constexpr bool surfaceShininessDecoded = false;
 // Whether the helmet view is shaped by the helmet's own geometry; until it is, Helmet view is inactive (it had
 // treated anything within 18 cm of the eye as helmet).
 inline constexpr bool helmetShapeDecoded = false;
@@ -169,7 +165,7 @@ inline unsigned rowCapability(int row) {
     switch (row) {
     case setting::fingerPoses: case setting::fingerPosesOthers: return capFingers;
     case setting::farRooms: return capFarRooms;
-    case setting::ambientOcclusion: case setting::depthOfField: case setting::screenSpaceReflections:
+    case setting::ambientOcclusion: case setting::depthOfField:
     case setting::edgeSmoothing: case setting::helmetVisor: case setting::playerGhost:
     case setting::conditionEffects: case setting::lightSmoothing: case setting::heldDetail:
     case setting::armourDetail: case setting::objectDetail: case setting::levelDetail:
@@ -192,7 +188,6 @@ struct ModSettings {
     int indicator = 1;
     int ambientOcclusion = 0; // optional screen-space contact shading
     int depthOfField = 0; // optional first-person depth-aware texture softening
-    int screenSpaceReflections = 0; // optional screen-space scene reflections
     bool edgeSmoothing = false, helmetVisor = false, playerGhost = false; // optional finishing effects
     bool fingerPoses = true; // finger bones on the skeleton posed to what each hand holds; on by default, as asked
     bool fingerPosesOthers = true; // the same for other characters in the level
@@ -248,7 +243,7 @@ struct ModSettings {
     int vrPosture = 0;    // 0 standing (room walking and tracked legs); 1 seated (the game's own legs, stick only)
     int vrHeadset = 0;    // 1 starts the real OpenXR runtime at the next game start; 0 leaves VR off
     int vrTurning = 1;    // 0 off, 1 snap 30, 2 snap 45, 3 smooth: the right stick turns the body as the mouse does
-    int vrEffects = 0;    // 1 runs the View page's ambient occlusion and reflections on each headset eye; never depth of field
+    int vrEffects = 0;    // 1 runs the View page's ambient occlusion on each headset eye; never depth of field
     int vrGripAngle = 0;  // degrees of pitch added to a controller grip, -45..45
     int vrHaptics = 100;  // pulse strength in percent, 0..200
     int vrPanelWidth = 120, vrPanelDistance = 150; // the head-locked UI quad, centimetres
@@ -319,8 +314,6 @@ struct ModSettings {
         case setting::indicator: indicator = (indicator + (delta < 0 ? 2 : 1)) % 3; break;
         case setting::ambientOcclusion: ambientOcclusion = std::clamp(ambientOcclusion + delta * 10, 0, 100); break;
         case setting::depthOfField: depthOfField = std::clamp(depthOfField + delta * 10, 0, 100); break;
-        case setting::screenSpaceReflections:
-            screenSpaceReflections = std::clamp(screenSpaceReflections + delta * 10, 0, 100); break;
         case setting::heldDetail: heldDetail = std::clamp(heldDetail + delta * 10, 0, 100); break;
         case setting::armourDetail: armourDetail = std::clamp(armourDetail + delta * 10, 0, 100); break;
         case setting::objectDetail: objectDetail = std::clamp(objectDetail + delta * 10, 0, 100); break;
@@ -504,8 +497,6 @@ struct ModSettings {
         case setting::indicator: return indicator == 0 ? L"Off" : indicator == 1 ? L"Combat" : L"Always";
         case setting::ambientOcclusion: return ambientOcclusion ? std::to_wstring(ambientOcclusion) + L"%" : L"Off";
         case setting::depthOfField: return depthOfField ? std::to_wstring(depthOfField) + L"%" : L"Off";
-        case setting::screenSpaceReflections:
-            return screenSpaceReflections ? std::to_wstring(screenSpaceReflections) + L"%" : L"Off";
         case setting::heldDetail: return heldDetail ? std::to_wstring(heldDetail) + L"%" : L"Off";
         case setting::armourDetail: return armourDetail ? std::to_wstring(armourDetail) + L"%" : L"Off";
         case setting::objectDetail: return objectDetail ? std::to_wstring(objectDetail) + L"%" : L"Off";
@@ -663,7 +654,7 @@ struct ModSettings {
         case setting::vrTurning:
             return vrTurning == 1 ? L"snap 30 degrees" : vrTurning == 2 ? L"snap 45 degrees" : vrTurning == 3 ? L"smooth" : L"off";
         case setting::vrEffects:
-            return vrEffects ? L"occlusion and reflections per eye" : L"off";
+            return vrEffects ? L"occlusion per eye" : L"off";
         case setting::vrGripAngle:
             return std::to_wstring(vrGripAngle) + L" degrees";
         case setting::vrHaptics:
@@ -734,8 +725,6 @@ struct ModSettings {
         if (!materialDataDecoded && (row == setting::heldDetail || row == setting::armourDetail ||
                                      row == setting::objectDetail || row == setting::levelDetail))
             return L"Off until the game's own material data is decoded.";
-        if (!surfaceShininessDecoded && row == setting::screenSpaceReflections)
-            return L"Off until the game's own surface shininess is read.";
         if (!helmetShapeDecoded && row == setting::helmetVisor)
             return L"Off until the helmet's own shape is used.";
         return nullptr;
@@ -1129,8 +1118,8 @@ inline const RowInfo& rowInfo(int row) {
          L"turns a fixed angle per flick; smooth turns while held. Off leaves turning to the head and mouse."},
         {setting::vrEffects, L"VR: effects", RowInfo::choice, &ModSettings::vrEffects, nullptr, L"VR",
          L"Effects", fp::vrEffectsFromText, fp::vrEffectsText,
-         L"On runs the View page's ambient occlusion and screen-space reflections on each headset eye, at their "
-         L"View strengths. Depth of field never runs in the headset: a fixed focus fights your own eyes."},
+         L"On runs the View page's ambient occlusion on each headset eye, at its "
+         L"View strength. Depth of field never runs in the headset: a fixed focus fights your own eyes."},
         {setting::vrGripAngle, L"VR: grip angle", RowInfo::number, &ModSettings::vrGripAngle, nullptr, L"VR",
          L"GripAngleDegrees", nullptr, nullptr,
          L"Tilts the controller's grip so a held hilt sits the way you hold it. Tracked hands are not tilted.", {-45,45,5,18}},
@@ -1206,12 +1195,6 @@ inline const RowInfo& rowInfo(int row) {
          L"Softens near and far textures while keeping the center of the first-person view in focus. "
          L"This is a restrained screen-space blur, not a physical lens simulation. It is skipped in third person, "
          L"menus and unsupported or multisampled frames. Subtle is recommended for play.", {0,100,5,20}},
-        {setting::screenSpaceReflections, L"Screen-space reflections", RowInfo::choice,
-         &ModSettings::screenSpaceReflections, nullptr, L"View", L"ScreenSpaceReflections", nullptr, nullptr,
-         L"Adds faint screen-space reflections on camera-up-facing surfaces. This is a camera-relative surface proxy, "
-         L"not a material reflectivity mask; it complements native material reflections and is limited by what is on screen. "
-         L"It is skipped on unsupported or multisampled frames. "
-         L"Off is recommended where screen-space artifacts are visible.", {0,100,5,20}},
         {setting::edgeSmoothing, L"Edge smoothing", RowInfo::toggle, nullptr, &ModSettings::edgeSmoothing,
          L"View", L"EdgeSmoothing", nullptr, nullptr,
          L"Smooths jagged edges in one cheap pass. Fine shimmer on distant patterned walls remains. With "

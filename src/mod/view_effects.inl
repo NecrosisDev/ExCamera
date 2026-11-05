@@ -1,4 +1,4 @@
-// Optional screen-space view effects: ambient occlusion, reflections, depth of
+// Optional screen-space view effects: ambient occlusion, depth of
 // field, edge smoothing, and the helmet, ghost and hurt/winded finishing pass.
 // They run inside the native renderer, straight after the main view's world
 // pass and before the game's bloom and UI (see renderSampledViews below), on
@@ -8,7 +8,7 @@
 // whose exact-context GL owner and retirement path it reuses.
 // Each effect's strength, 0..1; 0 skips its passes. The look the settings used to call Subtle
 // (and an on/off effect's on) is 0.5, Strong is 1 (see effectStrength, settings.inl).
-static std::atomic<float> ambientOcclusion{0.5f}, depthOfField{0.5f}, screenSpaceReflections{0.5f};
+static std::atomic<float> ambientOcclusion{0.5f}, depthOfField{0.5f};
 static std::atomic<float> edgeSmoothing{0.5f}, helmetVisor{0.f}, playerGhost{0.f}, conditionEffects{0.5f};
 static std::atomic<float> heldDetail{0.5f}; // procedural surface detail on held items; Subtle by default
 static std::atomic<float> armourDetail{0.35f}; // the same on worn armour and clothing; 35% by default (frame cost)
@@ -107,7 +107,7 @@ float distanceAt(vec2 p) {
     return raw >= skyDepth ? 1e5 : viewDepth(raw);
 }
 
-// The occlusion and reflection taps read precomputed view distance from distanceShader
+// The occlusion taps read precomputed view distance from distanceShader
 // instead of converting the full-resolution depth for every tap.
 uniform sampler2D distanceHalf;
 uniform float distanceHalfOn;
@@ -166,7 +166,7 @@ float finite(float x) { return x >= -1e20 && x <= 1e20 ? x : 0.0; }
 vec4 finite(vec4 v) { return vec4(finite(v.x), finite(v.y), finite(v.z), finite(v.w)); }
 )glsl";
 
-// Half resolution: each texel's view distance (sky 1e5), for the occlusion and reflection taps.
+// Half resolution: each texel's view distance (sky 1e5), for the occlusion taps.
 static const char* const distanceShader = R"glsl(
 void main() {
     gl_FragColor = vec4(distanceAt(uv));
@@ -234,86 +234,7 @@ void main() {
 }
 )glsl";
 
-// Writes premultiplied reflection colour and its weight.
-static const char* const ssrShader = R"glsl(
-uniform float strength; // largest reflection weight, 0..1
-uniform int taps;       // ray steps
-uniform vec4 worldUp;   // world +Y in view space; w unused
-const float reach = 350.0; // cm
-
-bool sceneGap(vec3 p, out vec2 at, out float gap) {
-    if (p.z > -1.0) return false;
-    at = project(p);
-    if (any(lessThan(at, vec2(0.0))) || any(greaterThan(at, vec2(1.0)))) return false;
-    float d = tapDistance(at);
-    gap = d >= 5e4 ? 1e6 : d + p.z; // > 0: the ray is in front of the scene
-    return true;
-}
-
-void main() {
-    gl_FragColor = vec4(0.0);
-    float raw = texture2D(depthTex, uv).r;
-    if (raw >= skyDepth) return;
-    vec3 p = viewPosition(uv, raw);
-    vec3 n = viewNormal(uv, p);
-    // Floors, steps and tabletops only: the slope test. How reflective a surface is must come from the
-    // game's own specular data (render-assumptions.md); until that path exists the pass is off
-    // (panel::surfaceShininessDecoded).
-    float surface = smoothstep(0.7, 0.92, dot(n, worldUp.xyz));
-    if (surface <= 0.0) return;
-    vec3 toEye = normalize(-p);
-    vec3 ray = reflect(-toEye, n);
-    vec3 origin = p + n;
-    float jitter = noise();
-    float previousT = 0.0, previousGap = 1.0;
-    vec2 hitUv = vec2(0.0);
-    float hitT = -1.0;
-    for (int i = 0; i < 32; ++i) {
-        if (i >= taps) break;
-        float u = (float(i) + jitter) / float(taps);
-        float t = reach * u * u; // dense near the surface, where contact reflections are
-        vec2 at;
-        float gap;
-        if (!sceneGap(origin + ray * t, at, gap)) break;
-        if (gap < 0.0 && previousGap >= 0.0) {
-            float a = previousT, b = t;
-            for (int j = 0; j < 3; ++j) { // an eighth of the step: about a reflection texel
-                float m = 0.5 * (a + b);
-                vec2 mAt;
-                float mGap;
-                if (!sceneGap(origin + ray * m, mAt, mGap)) break;
-                if (mGap < 0.0) b = m;
-                else a = m;
-            }
-            float bGap;
-            sceneGap(origin + ray * b, at, bGap);
-            // A thin crossing is a hit; a deep one passed behind a foreground
-            // object, so keep marching beyond it.
-            if (-bGap < max(3.0, 0.02 * -(origin.z + ray.z * b))) {
-                hitUv = at;
-                hitT = b;
-                break;
-            }
-        }
-        previousT = t;
-        previousGap = gap;
-    }
-    if (hitT < 0.0) return;
-    vec2 edge = min(hitUv, 1.0 - hitUv);
-    float fade = smoothstep(0.0, 0.1, min(edge.x, edge.y)) * (1.0 - smoothstep(0.6 * reach, reach, hitT));
-    float f = 1.0 - clamp(dot(n, toEye), 0.0, 1.0);
-    float fresnel = mix(0.35, 1.0, f * f * f * f * f);
-    vec3 hit = texture2D(sceneTex, hitUv).rgb;
-    hit *= min(1.0, 0.55 / max(dot(hit, vec3(0.2126, 0.7152, 0.0722)), 1e-3));
-    // Light sources and lit walls read as reflections; dark surroundings would only
-    // dim the floor, so they reflect weakly.
-    float bright = smoothstep(0.08, 0.5, dot(hit, vec3(0.2126, 0.7152, 0.0722)));
-    float weight = strength * surface * fade * fresnel * mix(0.3, 1.0, bright);
-    gl_FragColor = clamp(finite(vec4(hit * weight, weight)), 0.0, 1.0);
-}
-)glsl";
-
-// Half resolution, after the occlusion or reflection pass: blends this frame's
+// Half resolution, after the occlusion pass: blends this frame's
 // result with the earlier frames' at the same surface, found through the
 // previous frame's camera. The noise turns every frame, so the blend averages
 // away the grain of a few taps.
@@ -342,7 +263,7 @@ void main() {
     }
     now = clamp(now, low, high);
     gl_FragColor = now;
-    // Held items, worn gear and objects in the mask take no occlusion or reflection from these passes. They
+    // Held items, worn gear and objects in the mask take no occlusion from these passes. They
     // were kept out of the blend over frames (they move with the camera, so their history trails), which left
     // them this frame's raw result: a few taps whose noise turns every frame (frameOffset), so the item's
     // surface and the blood on it flickered. The held-item detail shades them itself.
@@ -372,26 +293,21 @@ void main() {
 }
 )glsl";
 
-// Applies the occlusion and reflections. Shared by
-// the composite and, when nothing between them reads neighbouring pixels, the finish pass.
+// Applies the occlusion. Shared by the composite and, when nothing between them reads neighbouring pixels,
+// the finish pass. Contact shadows are this mod's own visual addition on top of the game's voxel-GI occlusion
+// (its ambient shader); they make no claim about the game's data and darken every pixel evenly.
 static const char* const surfaceShading = R"glsl(
 uniform sampler2D aoHalf;   // half resolution: occlusion in r, square-rooted bounced light in gba
-uniform sampler2D ssrHalf;  // half resolution: reflection colour (premultiplied) and weight
 uniform vec2 halfSize;      // effect target size in texels
-uniform vec2 ssrSize;       // the reflection target's size in texels (half the above)
 uniform float aoStrength;   // largest darkening, 0 when ambient occlusion is off
-uniform float ssrOn;        // 1 when reflections ran, else 0
 uniform float bounceStrength; // share of the bounced light added, 0 when it was not gathered
 
 vec4 shadeSurfaces(vec4 c) {
     float occlusion = 0.0;
     vec3 bounce = vec3(0.0);
-    vec4 reflection = vec4(0.0);
     bool needAo = aoStrength > 0.0 || bounceStrength > 0.0;
-    bool needSsr = ssrOn > 0.0;
     bool aoFull = abs(halfSize.x * texel.x - 1.0) < 1e-3 && abs(halfSize.y * texel.y - 1.0) < 1e-3;
-    bool ssrFull = abs(ssrSize.x * texel.x - 1.0) < 1e-3 && abs(ssrSize.y * texel.y - 1.0) < 1e-3;
-    float d = ((needAo && !aoFull) || (needSsr && !ssrFull)) ? distanceAt(uv) : 0.0;
+    float d = needAo && !aoFull ? distanceAt(uv) : 0.0;
     if (needAo) {
         if (aoFull) {
             vec4 ao = finite(texture2D(aoHalf, uv));
@@ -419,26 +335,6 @@ vec4 shadeSurfaces(vec4 c) {
             bounce = weights > 1e-4 ? bounce / weights : vec3(0.0);
         }
     }
-    if (needSsr) {
-        if (ssrFull) {
-            reflection = clamp(finite(texture2D(ssrHalf, uv)), 0.0, 1.0);
-        } else {
-            vec2 at = uv * ssrSize - 0.5;
-            vec2 cell = floor(at), f = at - cell;
-            float weights = 0.0;
-            for (int i = 0; i < 4; ++i) {
-                vec2 corner = vec2(mod(float(i), 2.0), floor(0.5 * float(i)));
-                vec2 p = (cell + corner + 0.5) / ssrSize;
-                vec2 bilinear = mix(1.0 - f, f, corner);
-                float depthDiff = abs(tapDistance(p) - d);
-                float depthTol = 0.03 * d + 2.0;
-                float w = depthDiff < depthTol * 3.0 ? bilinear.x * bilinear.y * exp(-depthDiff / depthTol) : 0.0;
-                reflection += texture2D(ssrHalf, p) * w;
-                weights += w;
-            }
-            reflection = weights > 1e-4 ? clamp(finite(reflection / weights), 0.0, 1.0) : vec4(0.0);
-        }
-    }
     if (bounceStrength > 0.0) {
         // The bounced light lands on this surface's own colour: its hue at a mid
         // brightness, as the colour of an unlit corner says little about how bright it is.
@@ -446,16 +342,7 @@ vec4 shadeSurfaces(vec4 c) {
         vec3 albedo = clamp(0.5 * light / max(dot(light, vec3(0.2126, 0.7152, 0.0722)), 0.02), 0.0, 1.0);
         c.rgb = toStored(light + bounceStrength * bounce * albedo);
     }
-    if (aoStrength > 0.0) {
-        // Ambient occlusion removes indirect light only; bright pixels are mostly
-        // direct light (torches, highlights), so they keep their brightness.
-        float luma = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
-        c.rgb *= 1.0 - aoStrength * occlusion * (1.0 - smoothstep(0.3, 0.7, luma));
-    }
-    if (ssrOn > 0.0) {
-        float keep = 1.0 - smoothstep(0.35, 0.75, dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)));
-        c.rgb = c.rgb * (1.0 - 0.15 * reflection.a * keep) + reflection.rgb * keep;
-    }
+    if (aoStrength > 0.0) c.rgb *= 1.0 - aoStrength * occlusion; // evenly: no guess at which light is direct
     return c;
 }
 )glsl";
@@ -1238,7 +1125,7 @@ void main() {
     vec4 c = texture2D(sceneTex, uv);
     vec3 color = smoothEdges > 0.0 ? mix(c.rgb, smoothed(c.rgb), smoothEdges) : sharpen > 0.0 ? sharpened(c.rgb) : c.rgb;
     // Held items first, re-surfaced from the image as the game drew it: wound marks,
-    // depth of field, occlusion and reflections below then fall on the new surface.
+    // depth of field and occlusion below then fall on the new surface.
     // The mask's code here and whether it changes within this pixel quad, taken where every pixel
     // runs (a derivative inside a branch is undefined).
     float maskCode = floor(texture2D(silhouette, uv).g * 255.0 + 0.5);
@@ -1256,7 +1143,7 @@ void main() {
     }
     // Level surfaces: pixels no held item, worn gear or world object claims, near the camera.
     if (levelDetail.x > 0.0 && (levelDetail.w < 0.5 || maskCode > 254.5)) color = levelSurface(color);
-    // Occlusion and reflections are low-frequency: applied after the edge passes they look
+    // Occlusion is low-frequency: applied after the edge passes they look
     // the same as before them, and this pass then needs no neighbouring shaded pixels.
     // Sharpened or smoothed first, then blurred where out of focus: blurred areas need neither.
     if (dofOn > 0.5 && !(maskCode >= 0.0 && maskCode < 240.0)) {
@@ -2121,7 +2008,7 @@ void main() {
 enum ViewUniform : unsigned {
     uScene, uDepth, uTexel, uProjection, uDepthLinear, uPixelScale, uEncoded,
     uStrength, uTaps, uWorldUp, uFocus, uMaxBlur, uLens, uSmoothEdges, uVisor, uGhostA, uGhostB, uCondition,
-    uAoHalf, uSsrHalf, uHalfSize, uAoStrength, uSsrOn, uBounceOn, uBounceStrength, uSharpen, uPreviousDepth, uSurfacesOn, uSsrSize, uDofOn, uDistanceHalf, uDistanceHalfOn,
+    uAoHalf, uHalfSize, uAoStrength, uBounceOn, uBounceStrength, uSharpen, uPreviousDepth, uSurfacesOn, uDofOn, uDistanceHalf, uDistanceHalfOn,
     uFrameOffset, uCurrent, uHistory, uToPrevious, uPreviousProjection, uHistoryWeight, uDofHalf, uCells, uExposure,
     uSilhouette, uSilhouetteOn, uHeldDetail, uHeldNoise, uHeldData, uLevelDetail, uLevelRow0, uLevelRow1, uLevelRow2, uLevelPeople, uLevelLight, uLevelLightColour,
     uWoundA, uWoundB, uWoundC, uWoundM, uWoundCount, uWoundRect, uDripA, uDripCount,
@@ -2131,7 +2018,7 @@ enum ViewUniform : unsigned {
 static const char* const viewUniformNames[viewUniformCount] = {
     "sceneTex", "depthTex", "texel", "projection", "depthLinear", "pixelScale", "encoded",
     "strength", "taps", "worldUp", "focus", "maxBlur", "lens", "smoothEdges", "visor", "ghostA", "ghostB", "condition",
-    "aoHalf", "ssrHalf", "halfSize", "aoStrength", "ssrOn", "bounceOn", "bounceStrength", "sharpen", "previousDepth", "surfacesOn", "ssrSize", "dofOn", "distanceHalf", "distanceHalfOn",
+    "aoHalf", "halfSize", "aoStrength", "bounceOn", "bounceStrength", "sharpen", "previousDepth", "surfacesOn", "dofOn", "distanceHalf", "distanceHalfOn",
     "frameOffset", "current", "history", "toPrevious", "previousProjection", "historyWeight", "dofHalf", "cells", "exposure",
     "silhouette", "silhouetteOn", "heldDetail", "heldNoise", "heldData", "levelDetail", "levelRow0", "levelRow1", "levelRow2", "levelPeople", "levelLight", "levelLightColour",
     "woundA", "woundB", "woundC", "woundM", "woundCount", "woundRect", "dripA", "dripCount",
@@ -2139,7 +2026,7 @@ static const char* const viewUniformNames[viewUniformCount] = {
     "bloodMap", "bloodMapInfo", "bloodMapTime", "splatA", "splatB", "splatC", "fallA", "fallB", "fallCount"};
 struct ViewProgramUniforms { GLint at[viewUniformCount]; };
 enum ViewProgram : unsigned {
-    programAo, programSsr, programDof, programFinish, programComposite, programResolve, programDofComposite,
+    programAo, programDof, programFinish, programComposite, programResolve, programDofComposite,
     programMeter, programDistance, programWounds, programFire, programBloodSplat, programCount
 };
 static ViewProgramUniforms viewUniforms[8][programCount]; // [cue context][ViewProgram]; cueLock
@@ -2147,7 +2034,7 @@ static ViewProgramUniforms viewUniforms[8][programCount]; // [cue context][ViewP
 // Why the effects are off, for first-person-status.json. Render thread writes
 // under cueLock; the status writer reads after the flag publishes the text.
 enum ViewEffectUnavailable : unsigned {
-    viewHookMissing = 1, viewApiMissing = 2, viewTargetsFailed = 4, viewAoFailed = 8, viewSsrFailed = 16,
+    viewHookMissing = 1, viewApiMissing = 2, viewTargetsFailed = 4, viewAoFailed = 8, // 16: the removed reflections
     viewDofFailed = 32, viewFaulted = 64, viewFinishFailed = 128, viewCompositeFailed = 256, viewResolveFailed = 512,
     viewDofCompositeFailed = 1024, viewMeterFailed = 2048,
     viewDistanceFailed = 4096, viewWoundsFailed = 8192, viewFireFailed = 16384, viewBloodFailed = 32768
@@ -2163,12 +2050,12 @@ constexpr unsigned viewAuditFrames = 120;
 
 // Why the last main-view frame drew no effects ("" when it drew), for first-person-status.json.
 static std::atomic<const char*> viewEffectsSkip{""};
-static void publishViewTargetSizes(int width, int height, int aoWidth, int aoHeight, int ssrWidth, int ssrHeight,
+static void publishViewTargetSizes(int width, int height, int aoWidth, int aoHeight,
                                    int dofWidth, int dofHeight, bool low);
 static void skipViewEffects(const char* why) {
     viewEffectsSkip.store(why, std::memory_order_relaxed);
     if (why && *why)
-        publishViewTargetSizes(0, 0, 0, 0, 0, 0, 0, 0, false);
+        publishViewTargetSizes(0, 0, 0, 0, 0, 0, false);
 }
 
 static void noteViewEffectFailure(unsigned bit, const char* what, const char* detail = "") {
@@ -2321,21 +2208,19 @@ static bool prepareViewTargets(gl::Api& g, fp::CueResources& r) {
     return true;
 }
 
-// Native-resolution occlusion, reflection and depth-of-field targets, plus half-float
-// occlusion/reflection histories (8 bits would stall a slow blend on a step). Binds on
+// Native-resolution occlusion and depth-of-field targets, plus half-float
+// occlusion histories (8 bits would stall a slow blend on a step). Binds on
 // unit 2 and leaves the entry framebuffer bound (0 for desktop, a VR eye target otherwise).
 static bool prepareHalfTargets(gl::Api& g, fp::CueResources& r, int width, int height, GLuint entryFramebuffer,
-                               unsigned contextIndex, bool needAo, bool needSsr, bool needDof, bool temporal, bool bounce) {
+                               unsigned contextIndex, bool needAo, bool needDof, bool temporal, bool bounce) {
     constexpr bool low = false;
-    const int w = width, h = height, rw = w, rh = h, dw = w, dh = h;
+    const int w = width, h = height, dw = w, dh = h;
     const unsigned ctxSlot = contextIndex < 8 ? contextIndex : 0;
     static bool aoBounceAllocated[8]{};
     if (r.halfWidth != w || r.halfHeight != h || (needAo && aoBounceAllocated[ctxSlot] != bounce)) {
         r.retireHalf(g);
         r.halfWidth = w;
         r.halfHeight = h;
-        r.ssrWidth = rw;
-        r.ssrHeight = rh;
         r.dofWidth = dw;
         r.dofHeight = dh;
         aoBounceAllocated[ctxSlot] = bounce;
@@ -2361,26 +2246,19 @@ static bool prepareHalfTargets(gl::Api& g, fp::CueResources& r, int width, int h
         g.framebufferTexture2D(glc::framebuffer, glc::colorAttachment0, GL_TEXTURE_2D, tex, 0);
         return g.checkFramebufferStatus(glc::framebuffer) == glc::framebufferComplete;
     };
-    const bool needDistance = (needAo || needSsr) && (w != width || h != height || rw != width || rh != height);
+    const bool needDistance = needAo && (w != width || h != height);
     bool complete = true;
     // The composite filters the current results by depth itself; the resolve
     // reads a history between texels, where the camera saw it last frame. AO
     // uses only red when bounced light is disabled, keeping its targets single-channel.
     if (needAo) {
-        complete = complete && allocTarget(r.halfFbo[0], r.halfTex[0], bounce ? glc::rgba8 : glc::r8,
+        complete = complete && allocTarget(r.halfFbo, r.halfTex, bounce ? glc::rgba8 : glc::r8,
                                            bounce ? GL_RGBA : glc::red, GL_UNSIGNED_BYTE, glc::nearest, w, h);
         if (temporal) {
             const GLenum histFmt = bounce ? glc::rgba16f : glc::r16f;
             const GLenum histLayout = bounce ? GL_RGBA : glc::red;
-            complete = complete && allocTarget(r.historyFbo[0][0], r.historyTex[0][0], histFmt, histLayout, GL_FLOAT, glc::linear, w, h);
-            complete = complete && allocTarget(r.historyFbo[0][1], r.historyTex[0][1], histFmt, histLayout, GL_FLOAT, glc::linear, w, h);
-        }
-    }
-    if (needSsr) {
-        complete = complete && allocTarget(r.halfFbo[1], r.halfTex[1], glc::rgba8, GL_RGBA, GL_UNSIGNED_BYTE, glc::nearest, rw, rh);
-        if (temporal) {
-            complete = complete && allocTarget(r.historyFbo[1][0], r.historyTex[1][0], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, rw, rh);
-            complete = complete && allocTarget(r.historyFbo[1][1], r.historyTex[1][1], glc::rgba16f, GL_RGBA, GL_FLOAT, glc::linear, rw, rh);
+            complete = complete && allocTarget(r.historyFbo[0], r.historyTex[0], histFmt, histLayout, GL_FLOAT, glc::linear, w, h);
+            complete = complete && allocTarget(r.historyFbo[1], r.historyTex[1], histFmt, histLayout, GL_FLOAT, glc::linear, w, h);
         }
     }
     if (needDof) {
@@ -2395,11 +2273,11 @@ static bool prepareHalfTargets(gl::Api& g, fp::CueResources& r, int width, int h
         r.halfWidth = r.halfHeight = 0;
         return false;
     }
-    publishViewTargetSizes(width, height, w, h, rw, rh, dw, dh, low);
+    publishViewTargetSizes(width, height, w, h, dw, dh, low);
     return true;
 }
 
-constexpr unsigned viewTextureUnits = 9; // scene, depth, masks, occlusion, reflections, blur, distances, held noise
+constexpr unsigned viewTextureUnits = 9; // scene, depth, masks, occlusion, blur, distances, held noise
 constexpr unsigned heldNoiseUnit = 7;    // a 3D texture: its binding is saved and restored on its own
 constexpr unsigned heldDataUnit = 8;     // the held items' and body parts' per-slot data
 
@@ -2732,18 +2610,15 @@ static std::atomic<float> viewEffectsCpuMs[viewTimerCount];
 static std::atomic<float> viewGpuLagMs{0.f}, viewGpuFrameMs{0.f}, viewCpuFrameMs{0.f};
 static std::atomic<int> viewEffectsInputWidth{0}, viewEffectsInputHeight{0};
 static std::atomic<int> viewEffectsAoWidth{0}, viewEffectsAoHeight{0};
-static std::atomic<int> viewEffectsSsrWidth{0}, viewEffectsSsrHeight{0};
 static std::atomic<int> viewEffectsDofWidth{0}, viewEffectsDofHeight{0};
 static std::atomic<bool> viewEffectsLowTier{false};
 static bool effectsLowTier() { return viewEffectsLowTier.load(std::memory_order_relaxed); }
-static void publishViewTargetSizes(int width, int height, int aoWidth, int aoHeight, int ssrWidth, int ssrHeight,
+static void publishViewTargetSizes(int width, int height, int aoWidth, int aoHeight,
                                    int dofWidth, int dofHeight, bool low) {
     viewEffectsInputWidth.store(width, std::memory_order_relaxed);
     viewEffectsInputHeight.store(height, std::memory_order_relaxed);
     viewEffectsAoWidth.store(aoWidth, std::memory_order_relaxed);
     viewEffectsAoHeight.store(aoHeight, std::memory_order_relaxed);
-    viewEffectsSsrWidth.store(ssrWidth, std::memory_order_relaxed);
-    viewEffectsSsrHeight.store(ssrHeight, std::memory_order_relaxed);
     viewEffectsDofWidth.store(dofWidth, std::memory_order_relaxed);
     viewEffectsDofHeight.store(dofHeight, std::memory_order_relaxed);
     viewEffectsLowTier.store(low, std::memory_order_relaxed);
@@ -2915,7 +2790,7 @@ struct HeldPose { float pose[12]; float sectorOrigin[3]; float light[4]; float l
                   float condition[4]; bool object; };
 
 struct ViewRequest {
-    float ao = 0.f, dof = 0.f, ssr = 0.f, smooth = 0.f, sharpen = 0.f, visor = 0.f; // strengths, 0 off
+    float ao = 0.f, dof = 0.f, smooth = 0.f, sharpen = 0.f, visor = 0.f; // strengths, 0 off
     bool visorHidden = false, ghost = false;
     float ghostStrength = 0.f, conditionStrength = 0.f;
     // A VR eye: the passes run outside the sampled-views detour on the eye's own target, whose
@@ -2950,7 +2825,7 @@ struct ViewRequest {
         return smooth > 0.f || sharpen > 0.f || visor > 0.f || ghost || detail > 0.f || armour > 0.f || objects > 0.f ||
                level > 0.f || hurt > 0.f || winded > 0.f || damageFlash > 0.f || wounds.any() || fires.any();
     }
-    bool any() const { return ao > 0.f || dof > 0.f || ssr > 0.f || adapt || finish(); }
+    bool any() const { return ao > 0.f || dof > 0.f || adapt || finish(); }
 };
 
 // World point to the native view space (row-major, row vector times matrix).
@@ -3585,9 +3460,9 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
     ViewEffectProjectionSnapshot projection;
     if (!readViewMatrices(view, projection)) return;
     // Strengths, 0..1 (0 skips the effect); used as on/off where only that matters.
-    float aoMode = request.ao, dofMode = request.dof, ssrMode = projection.worldUpValid ? request.ssr : 0.f;
+    float aoMode = request.ao, dofMode = request.dof;
     bool finishMode = request.finish();
-    if (!aoMode && !dofMode && !ssrMode && !finishMode && !request.adapt) return;
+    if (!aoMode && !dofMode && !finishMode && !request.adapt) return;
     ViewFrame frame{};
     // Every GL query or error check makes the game's thread wait for the driver's
     // (a threaded driver answers only once it has caught up). The state that does not
@@ -3664,7 +3539,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         // Out of memory after a resize, a lost surface: retry a few times, then stay off.
         if (owner->viewRetries >= viewRetryLimit || GetTickCount64() < owner->viewRetryAt) return;
         owner->viewTargetsFailed = false;
-        owner->aoAttempted = owner->ssrAttempted = owner->dofAttempted = owner->finishAttempted =
+        owner->aoAttempted = owner->dofAttempted = owner->finishAttempted =
             owner->compositeAttempted = owner->resolveAttempted = owner->dofCompositeAttempted =
             owner->meterAttempted = owner->distanceAttempted = owner->woundAttempted = owner->fireAttempted =
                 owner->bloodSplatAttempted = false;
@@ -3688,23 +3563,22 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         unsigned failure;
         const char* name;
     };
-    constexpr bool subNativeHalf = false; // AO and SSR run at 1:1 native view resolution
+    constexpr bool subNativeHalf = false; // AO runs at 1:1 native view resolution
     Effect effects[programCount] = { // in ViewProgram order
         {aoMode, &r.aoProgram, &owner->aoAttempted, nullptr, aoShader, viewAoFailed, "ambient occlusion"},
-        {ssrMode, &r.ssrProgram, &owner->ssrAttempted, nullptr, ssrShader, viewSsrFailed, "reflections"},
         {dofMode, &r.dofProgram, &owner->dofAttempted, dofLens, dofShader, viewDofFailed, "depth of field"},
         {float(finishMode || request.adapt), &r.finishProgram, &owner->finishAttempted, surfaceShading, finishShader,
          viewFinishFailed, "finishing pass"},
-        {float(aoMode || ssrMode), &r.compositeProgram, &owner->compositeAttempted, surfaceShading, compositeShader,
-         viewCompositeFailed, "occlusion/reflection composite"},
+        {aoMode, &r.compositeProgram, &owner->compositeAttempted, surfaceShading, compositeShader,
+         viewCompositeFailed, "occlusion composite"},
         // VR eyes alternate on one context, so one history would mix both eyes; they stay per frame.
-        {float((aoMode || ssrMode) && !request.eye), &r.resolveProgram, &owner->resolveAttempted, nullptr, resolveShader,
-         viewResolveFailed, "occlusion/reflection blending over frames"},
+        {float(aoMode && !request.eye), &r.resolveProgram, &owner->resolveAttempted, nullptr, resolveShader,
+         viewResolveFailed, "occlusion blending over frames"},
         {dofMode, &r.dofCompositeProgram, &owner->dofCompositeAttempted, dofLens, dofCompositeShader,
          viewDofCompositeFailed, "depth-of-field composite"},
         {float(request.adapt), &r.meterProgram, &owner->meterAttempted, nullptr, meterShader, viewMeterFailed,
          "eye adaptation meter"},
-        {float((aoMode || ssrMode) && subNativeHalf), &r.distanceProgram, &owner->distanceAttempted, nullptr, distanceShader,
+        {float(aoMode && subNativeHalf), &r.distanceProgram, &owner->distanceAttempted, nullptr, distanceShader,
          viewDistanceFailed, "view-distance target"},
         {float(finishMode), &r.woundProgram, &owner->woundAttempted, FP_WOUND_GLSL_HELPERS, woundShader,
          viewWoundsFailed, "wound marks"},
@@ -3723,14 +3597,13 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         initWoundBakeResources(g, r);
     }
     if (!r.aoProgram) aoMode = 0;
-    if (!r.ssrProgram) ssrMode = 0;
     if (!r.dofProgram || !r.dofCompositeProgram) dofMode = 0;
     if (!r.finishProgram) finishMode = false;
-    if (!r.compositeProgram) aoMode = ssrMode = 0;
+    if (!r.compositeProgram) aoMode = 0;
     const bool adaptMode = request.adapt && r.meterProgram && r.finishProgram;
-    if (!aoMode && !dofMode && !ssrMode && !finishMode && !adaptMode) return;
+    if (!aoMode && !dofMode && !finishMode && !adaptMode) return;
     // Blending over frames needs last frame's camera, from a frame drawn just before this one.
-    const bool temporal = (aoMode || ssrMode) && !request.eye && r.resolveProgram;
+    const bool temporal = aoMode && !request.eye && r.resolveProgram;
     const unsigned frameIndex = owner->viewFrame;
     const ULONGLONG now = GetTickCount64();
     float toPrevious[16] = {1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f};
@@ -3895,7 +3768,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             if (std::abs(exposure - 1.f) > 0.003f) finishMode = true;
             else exposure = 1.f;
         }
-        if (!aoMode && !ssrMode && !dofMode && !finishMode) {
+        if (!aoMode && !dofMode && !finishMode) {
             stampTo(5);
             ok = !audit || glGetError() == GL_NO_ERROR;
             __leave;
@@ -4003,12 +3876,12 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         const bool bounce = bounceStrength > 0.f;
         // All screen-space effects start at native resolution; future performance
         // work must reduce shader or memory cost without silently lowering image size.
-        if ((aoMode || ssrMode || dofMode) &&
-            !prepareHalfTargets(g, r, viewport[2], viewport[3], target, contextIndex, aoMode > 0.f, ssrMode > 0.f,
-                                dofMode > 0.f, temporal, bounce)) {
-            publishViewTargetSizes(0, 0, 0, 0, 0, 0, 0, 0, false);
+        if ((aoMode || dofMode) &&
+            !prepareHalfTargets(g, r, viewport[2], viewport[3], target, contextIndex, aoMode > 0.f, dofMode > 0.f,
+                                temporal, bounce)) {
+            publishViewTargetSizes(0, 0, 0, 0, 0, 0, false);
             halfFailed = true;
-            aoMode = ssrMode = dofMode = 0;
+            aoMode = dofMode = 0;
         }
         // Depth of field needs a focus; decided now so every pass knows whether it is the last.
         float focus = 0.f;
@@ -4037,14 +3910,14 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             else copyViewColor(g, r, viewport);
         };
         // The composite folds into the finish pass whenever there is one: one full-screen pass
-        // fewer. With depth of field on, occlusion and reflections then land on the blurred
-        // image; being low-frequency they read the same.
-        const bool fold = (aoMode || ssrMode) && finishMode;
+        // fewer. With depth of field on, the occlusion then lands on the blurred
+        // image; being low-frequency it reads the same.
+        const bool fold = aoMode && finishMode;
         const bool distances = r.distanceProgram != 0 && r.distanceFbo != 0 &&
                                (r.halfWidth != viewport[2] || r.halfHeight != viewport[3]);
-        // The composite reads each effect's blend when it has one, else this frame's result.
-        GLuint results[2] = {r.halfTex[0], r.halfTex[1]};
-        // The occlusion, reflection and blend passes read the scene copy on unit 0 and the depth copy on
+        // The composite reads the occlusion's blend when it has one, else this frame's result.
+        GLuint occlusionResult = r.halfTex;
+        // The occlusion and blend passes read the scene copy on unit 0 and the depth copy on
         // unit 1 and bind neither themselves. The window copy above is a framebuffer blit, which binds no
         // texture, so those units would still hold what the game's last draw bound through its unit cache
         // (0x6FC30): a character's hair or skin maps, read as depth (a hair-atlas flash, black speckles).
@@ -4052,12 +3925,12 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         g.bindTexture(GL_TEXTURE_2D, r.viewColor);
         g.activeTexture(glc::texture1);
         g.bindTexture(GL_TEXTURE_2D, r.viewDepth);
-        auditViewInputs(g, r, "occlusion/reflection inputs", viewport);
+        auditViewInputs(g, r, "occlusion inputs", viewport);
         // The silhouette mask only when it was drawn for this view at this size (as the finish pass asks).
         const bool resolveMask = r.silhouetteMask && (request.silhouette || request.heldSlots) &&
             (request.offscreen ? r.silhouetteWidth == r.offscreenSceneWidth && r.silhouetteHeight == r.offscreenSceneHeight
                                : r.silhouetteWidth == viewport[2] && r.silhouetteHeight == viewport[3]);
-        if (aoMode || ssrMode) {
+        if (aoMode) {
             setViewport(g, 0, 0, r.halfWidth, r.halfHeight);
             const float offset = temporal ? 5.588238f * float(frameIndex % 64) : 0.f;
             // Distances first when half targets are sub-native; at 1:1 taps read viewDepth directly.
@@ -4070,7 +3943,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.bindTexture(GL_TEXTURE_2D, r.distanceTex);
             }
             if (aoMode) {
-                g.bindFramebuffer(glc::framebuffer, r.halfFbo[0]);
+                g.bindFramebuffer(glc::framebuffer, r.halfFbo);
                 g.useProgram(r.aoProgram);
                 const auto& u = viewUniforms[contextIndex][programAo];
                 setViewUniforms(g, u, frame);
@@ -4082,21 +3955,6 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform1i(u.at[uDistanceHalf], distances ? 4 : 1); // never a unit left with a game texture
                 g.uniform1f(u.at[uDistanceHalfOn], distances ? 1.f : 0.f);
                 g.uniform2f(u.at[uHalfSize], float(r.halfWidth), float(r.halfHeight));
-                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            }
-            if (ssrMode) {
-                setViewport(g, 0, 0, r.ssrWidth, r.ssrHeight);
-                g.bindFramebuffer(glc::framebuffer, r.halfFbo[1]);
-                g.useProgram(r.ssrProgram);
-                const auto& u = viewUniforms[contextIndex][programSsr];
-                setViewUniforms(g, u, frame);
-                g.uniform1f(u.at[uFrameOffset], offset);
-                g.uniform1f(u.at[uStrength], (std::max)(effectScale(ssrMode, 0.6f, 0.85f), 0.02f));
-                g.uniform1i(u.at[uTaps], int(std::lround(temporal ? std::clamp(6.f + 4.f * ssrMode, 6.f, 10.f)
-                                                                    : std::clamp(6.f + 12.f * ssrMode, 6.f, 18.f))));
-                g.uniform4f(u.at[uWorldUp], frame.worldUp[0], frame.worldUp[1], frame.worldUp[2], 0.f);
-                g.uniform1i(u.at[uDistanceHalf], distances ? 4 : 1);
-                g.uniform1f(u.at[uDistanceHalfOn], distances ? 1.f : 0.f);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             }
             if (temporal) {
@@ -4121,42 +3979,33 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 } else {
                     g.uniform1f(u.at[uSilhouetteOn], 0.f);
                 }
-                const float modes[2] = {aoMode, ssrMode};
-                for (unsigned e = 0; e < 2; ++e) {
-                    if (!modes[e]) continue;
-                    // Responsive 0.65 history weight prevents smearing and ghosting during movement.
-                    const bool usable = cameraContinues && r.historyFrame[e] == frameIndex;
-                    g.uniform1f(u.at[uHistoryWeight], usable ? 0.65f : 0.f);
-                    const int width = e ? r.ssrWidth : r.halfWidth, height = e ? r.ssrHeight : r.halfHeight;
-                    setViewport(g, 0, 0, width, height);
-                    g.uniform2f(u.at[uHalfSize], float(width), float(height));
-                    g.activeTexture(glc::texture2);
-                    g.bindTexture(GL_TEXTURE_2D, r.halfTex[e]);
-                    g.activeTexture(glc::texture3);
-                    g.bindTexture(GL_TEXTURE_2D, r.historyTex[e][r.historySlot]);
-                    g.bindFramebuffer(glc::framebuffer, r.historyFbo[e][next]);
-                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-                    results[e] = r.historyTex[e][next];
-                    r.historyFrame[e] = frameIndex + 1;
-                }
+                // Responsive 0.65 history weight prevents smearing and ghosting during movement.
+                const bool usable = cameraContinues && r.historyFrame == frameIndex;
+                g.uniform1f(u.at[uHistoryWeight], usable ? 0.65f : 0.f);
+                setViewport(g, 0, 0, r.halfWidth, r.halfHeight);
+                g.uniform2f(u.at[uHalfSize], float(r.halfWidth), float(r.halfHeight));
+                g.activeTexture(glc::texture2);
+                g.bindTexture(GL_TEXTURE_2D, r.halfTex);
+                g.activeTexture(glc::texture3);
+                g.bindTexture(GL_TEXTURE_2D, r.historyTex[r.historySlot]);
+                g.bindFramebuffer(glc::framebuffer, r.historyFbo[next]);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                occlusionResult = r.historyTex[next];
+                r.historyFrame = frameIndex + 1;
                 r.historySlot = next;
             }
             stampTo(2);
         }
-        if ((aoMode || ssrMode) && !fold) {
+        if (aoMode && !fold) {
             const bool last = !dofMode && !finishMode;
             beginPass(last);
             g.activeTexture(glc::texture2);
-            g.bindTexture(GL_TEXTURE_2D, results[0]);
-            g.activeTexture(glc::texture3);
-            g.bindTexture(GL_TEXTURE_2D, results[1]);
+            g.bindTexture(GL_TEXTURE_2D, occlusionResult);
             g.useProgram(r.compositeProgram);
             const auto& u = viewUniforms[contextIndex][programComposite];
             setViewUniforms(g, u, frame);
             g.uniform1i(u.at[uAoHalf], 2);
-            g.uniform1i(u.at[uSsrHalf], 3);
             g.uniform2f(u.at[uHalfSize], float(r.halfWidth), float(r.halfHeight));
-            g.uniform2f(u.at[uSsrSize], float(r.ssrWidth), float(r.ssrHeight));
             g.uniform1f(u.at[uDistanceHalfOn], distances ? 1.f : 0.f);
             if (distances) {
                 g.activeTexture(glc::texture0 + 6);
@@ -4165,7 +4014,6 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             }
             g.uniform1f(u.at[uAoStrength], aoMode > 0.f ? (std::max)(effectScale(aoMode, 0.65f, 0.9f), 0.f) : 0.f);
             g.uniform1f(u.at[uBounceStrength], bounceStrength);
-            g.uniform1f(u.at[uSsrOn], ssrMode ? 1.f : 0.f);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             endPass(last);
         }
@@ -4449,16 +4297,11 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             g.uniform1f(u.at[uSurfacesOn], fold ? 1.f : 0.f);
             if (fold) {
                 g.activeTexture(glc::texture3);
-                g.bindTexture(GL_TEXTURE_2D, results[0]);
-                g.activeTexture(glc::texture0 + 4);
-                g.bindTexture(GL_TEXTURE_2D, results[1]);
+                g.bindTexture(GL_TEXTURE_2D, occlusionResult);
                 g.uniform1i(u.at[uAoHalf], 3);
-                g.uniform1i(u.at[uSsrHalf], 4);
                 g.uniform2f(u.at[uHalfSize], float(r.halfWidth), float(r.halfHeight));
-                g.uniform2f(u.at[uSsrSize], float(r.ssrWidth), float(r.ssrHeight));
                 g.uniform1f(u.at[uAoStrength], aoMode > 0.f ? (std::max)(effectScale(aoMode, 0.65f, 0.9f), 0.f) : 0.f);
                 g.uniform1f(u.at[uBounceStrength], bounceStrength);
-                g.uniform1f(u.at[uSsrOn], ssrMode ? 1.f : 0.f);
             }
             const float visor = (std::min)(request.visor * 1.2f, 0.9f); // the old on, 0.6, at 0.5
             g.uniform1f(u.at[uVisor], request.visorHidden ? -visor : visor);
@@ -4664,7 +4507,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             r.timerCall[timerSlot] = r.timerCalls;
             r.timerSlot = (timerSlot + 1) % 4;
         }
-        if (temporal && (aoMode || ssrMode)) {
+        if (temporal && aoMode) {
             owner->viewFrame = frameIndex + 1;
             owner->previousTick = now;
             memcpy(owner->previousView, projection.view, sizeof owner->previousView);
@@ -5258,8 +5101,9 @@ static std::atomic<unsigned> heldConditionReads{0};
 static void heldConditionOf(uintptr_t node, bool apparel, float* out) {
     out[0] = out[1] = out[2] = out[3] = 0.f;
     if constexpr (!unprovenRenderReads) return; // item record layout unproven (render-assumptions.md): read as unknown
-    if (!node || !layout.optionalGroupAvailable("itemCondition") || !readable(node, 0x184)) return;
-    const uint32_t id = *(const uint32_t*)(node + 0x180);
+    // The item id: node +0x184, where the item builder 0x107600 stores it (0x1077B8); +0x180 was wrong.
+    if (!node || !layout.optionalGroupAvailable("itemCondition") || !readable(node, 0x188)) return;
+    const uint32_t id = *(const uint32_t*)(node + 0x184);
     if (!id) return;
     const fp::sig::Target table = (id & 0x80000000u) ? fp::sig::levelItemDatabase
                                   : (id & 0x40000000u) ? fp::sig::worldItemDatabase : fp::sig::itemDatabase;
@@ -6068,8 +5912,6 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
     ViewRequest request = eye ? *eye : ViewRequest{};
     request.ao = ambientOcclusion.load(std::memory_order_relaxed);
     request.dof = mode == 0 && !eye ? depthOfField.load(std::memory_order_relaxed) : 0;
-    // Reflections need the game's per-surface shininess, not yet read: off until then (settings_model.h).
-    request.ssr = !eye && panel::surfaceShininessDecoded ? screenSpaceReflections.load(std::memory_order_relaxed) : 0;
     // Supersample already averages jittered samples across every edge.
     const bool supersampled = viewEffectsSupersampled || presentingOffscreen;
     request.smooth = supersampled ? 0.f : edgeSmoothing.load(std::memory_order_relaxed);

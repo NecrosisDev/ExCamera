@@ -55,7 +55,7 @@ struct CueResources {
     unsigned viewDepthPrevious = 0;
     unsigned viewCopyFbo = 0; // the window's colour and depth blitted into viewColor / viewDepth
     int viewDepthFormat = 0; // both copies' internal format; 0 until defined
-    unsigned aoProgram = 0, ssrProgram = 0, dofProgram = 0, finishProgram = 0, compositeProgram = 0,
+    unsigned aoProgram = 0, dofProgram = 0, finishProgram = 0, compositeProgram = 0,
              resolveProgram = 0, dofCompositeProgram = 0, meterProgram = 0, distanceProgram = 0;
     // Wound marks' own pass (view_effects.inl): program, framebuffer over the image, the box's quad.
     unsigned woundProgram = 0, woundFbo = 0, woundQuadVao = 0, woundQuadVbo = 0;
@@ -70,17 +70,17 @@ struct CueResources {
     float bloodMapBaseY = 0.f, bloodMapCamera[3]{}, bloodBox[6]{};
     unsigned long long bloodMapEpoch = 0;
     bool bloodAny = false, bloodMapKnown = false, bloodMapFailed = false;
-    // Ambient occlusion and reflections render at half resolution: [0] occlusion, [1] reflection.
-    unsigned halfFbo[2]{}, halfTex[2]{};
-    // Their blend over frames, same size and lifetime: [effect][ping-pong]. historySlot
-    // holds the newest; historyFrame[effect] is the blended frame it is usable in, 0 none.
-    unsigned historyFbo[2][2]{}, historyTex[2][2]{};
-    unsigned historySlot = 0, historyFrame[2]{};
+    // Ambient occlusion's target (native size since the half-resolution passes were retired).
+    unsigned halfFbo = 0, halfTex = 0;
+    // Its blend over frames, same size and lifetime: [ping-pong]. historySlot holds the
+    // newest; historyFrame is the blended frame it is usable in, 0 none.
+    unsigned historyFbo[2]{}, historyTex[2]{};
+    unsigned historySlot = 0, historyFrame = 0;
     // Depth of field gathers at half resolution too, filtered for its composite.
     unsigned dofFbo = 0, dofTex = 0;
-    // Half-resolution view distances for the occlusion and reflection taps.
+    // Half-resolution view distances for the occlusion taps.
     unsigned distanceFbo = 0, distanceTex = 0;
-    int halfWidth = 0, halfHeight = 0, ssrWidth = 0, ssrHeight = 0; // reflections: half the half size
+    int halfWidth = 0, halfHeight = 0;
     int dofWidth = 0, dofHeight = 0; // the depth-of-field blur keeps a half (a third above 1200 px)
     int viewWidth = 0, viewHeight = 0;
     // The full-resolution passes hand the image on between viewColor and chainTex
@@ -111,10 +111,9 @@ struct CueResources {
     bool viewLive() const {
         return viewVao || viewVbo || viewColor || viewDepth || viewDepthPrevious || offscreenFbo ||
                offscreenDepthFbo || timerQueries[0][0] ||
-               timerQueries[1][0] || timerQueries[2][0] || timerQueries[3][0] || aoProgram || ssrProgram || dofProgram || finishProgram || woundProgram || fireProgram || woundFbo || woundQuadVao || woundQuadVbo || bloodMapTex || bloodMapFbo || bloodSplatProgram ||
-               compositeProgram || resolveProgram || chainTex || chainFbo[0] || chainFbo[1] || dofCompositeProgram || dofFbo || dofTex || distanceProgram || distanceFbo || distanceTex || halfFbo[0] || halfFbo[1] || halfTex[0] || halfTex[1] ||
-               historyFbo[0][0] || historyFbo[0][1] || historyFbo[1][0] || historyFbo[1][1] ||
-               historyTex[0][0] || historyTex[0][1] || historyTex[1][0] || historyTex[1][1] ||
+               timerQueries[1][0] || timerQueries[2][0] || timerQueries[3][0] || aoProgram || dofProgram || finishProgram || woundProgram || fireProgram || woundFbo || woundQuadVao || woundQuadVbo || bloodMapTex || bloodMapFbo || bloodSplatProgram ||
+               compositeProgram || resolveProgram || chainTex || chainFbo[0] || chainFbo[1] || dofCompositeProgram || dofFbo || dofTex || distanceProgram || distanceFbo || distanceTex || halfFbo || halfTex ||
+               historyFbo[0] || historyFbo[1] || historyTex[0] || historyTex[1] ||
                focusBuffers[0] || focusBuffers[1] || focusFences[0] || focusFences[1] || meterProgram || meterFbo ||
                meterTex || meterSourceFbo || meterSourceTex || meterBuffers[0] || meterBuffers[1] || meterFences[0] || meterFences[1] || silhouetteFbo ||
                silhouetteMask || silhouetteDepth || heldNoise || heldData;
@@ -223,17 +222,15 @@ struct CueResources {
         silhouetteWidth = silhouetteHeight = 0;
     }
     template <class Api> void retireHalf(Api& g) {
-        if (halfFbo[0] || halfFbo[1]) g.deleteFramebuffers(2, halfFbo);
-        halfFbo[0] = halfFbo[1] = 0;
-        if (halfTex[0] || halfTex[1]) g.deleteTextures(2, halfTex);
-        halfTex[0] = halfTex[1] = 0;
-        for (unsigned i = 0; i < 2; ++i) {
-            if (historyFbo[i][0] || historyFbo[i][1]) g.deleteFramebuffers(2, historyFbo[i]);
-            historyFbo[i][0] = historyFbo[i][1] = 0;
-            if (historyTex[i][0] || historyTex[i][1]) g.deleteTextures(2, historyTex[i]);
-            historyTex[i][0] = historyTex[i][1] = 0;
-            historyFrame[i] = 0;
-        }
+        if (halfFbo) g.deleteFramebuffers(1, &halfFbo);
+        halfFbo = 0;
+        if (halfTex) g.deleteTextures(1, &halfTex);
+        halfTex = 0;
+        if (historyFbo[0] || historyFbo[1]) g.deleteFramebuffers(2, historyFbo);
+        historyFbo[0] = historyFbo[1] = 0;
+        if (historyTex[0] || historyTex[1]) g.deleteTextures(2, historyTex);
+        historyTex[0] = historyTex[1] = 0;
+        historyFrame = 0;
         historySlot = 0;
         if (dofFbo) g.deleteFramebuffers(1, &dofFbo);
         dofFbo = 0;
@@ -243,11 +240,10 @@ struct CueResources {
         distanceFbo = 0;
         if (distanceTex) g.deleteTextures(1, &distanceTex);
         distanceTex = 0;
-        halfWidth = halfHeight = ssrWidth = ssrHeight = dofWidth = dofHeight = 0;
+        halfWidth = halfHeight = dofWidth = dofHeight = 0;
     }
     template <class Api> void retireView(Api& g) {
         retireProgram(g, aoProgram);
-        retireProgram(g, ssrProgram);
         retireProgram(g, dofProgram);
         retireProgram(g, finishProgram);
         retireProgram(g, compositeProgram);

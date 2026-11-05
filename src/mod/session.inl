@@ -894,8 +894,6 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.num("view_effects_input_height", viewEffectsInputHeight.load(std::memory_order_relaxed));
     j.num("view_effects_ao_width", viewEffectsAoWidth.load(std::memory_order_relaxed));
     j.num("view_effects_ao_height", viewEffectsAoHeight.load(std::memory_order_relaxed));
-    j.num("view_effects_ssr_width", viewEffectsSsrWidth.load(std::memory_order_relaxed));
-    j.num("view_effects_ssr_height", viewEffectsSsrHeight.load(std::memory_order_relaxed));
     j.num("view_effects_dof_width", viewEffectsDofWidth.load(std::memory_order_relaxed));
     j.num("view_effects_dof_height", viewEffectsDofHeight.load(std::memory_order_relaxed));
     j.boolean("view_effects_low_tier", viewEffectsLowTier.load(std::memory_order_relaxed));
@@ -903,7 +901,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.str("view_effects_skip", viewEffectsSkip.load(std::memory_order_relaxed)); // "" while they draw
     {
         // GPU milliseconds per view-effect stage, eased; their sum is the whole stack's cost.
-        static const char* const timerNames[viewTimerCount] = {"gpu_ms_copies", "gpu_ms_occlusion_reflections",
+        static const char* const timerNames[viewTimerCount] = {"gpu_ms_copies", "gpu_ms_occlusion",
                                                           "gpu_ms_composite", "gpu_ms_depth_of_field", "gpu_ms_finish"};
         double total = 0.0;
         for (unsigned k = 0; k < viewTimerCount; ++k) {
@@ -915,7 +913,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         }
         j.fixed("gpu_ms_view_effects", total, 3);
         // The same stages' CPU time, and the whole frame; viewGpuLagMs says how to read them.
-        static const char* const cpuNames[viewTimerCount] = {"cpu_ms_copies", "cpu_ms_occlusion_reflections",
+        static const char* const cpuNames[viewTimerCount] = {"cpu_ms_copies", "cpu_ms_occlusion",
                                                              "cpu_ms_composite", "cpu_ms_depth_of_field", "cpu_ms_finish"};
         for (unsigned k = 0; k < viewTimerCount; ++k)
             j.fixed(cpuNames[k], viewEffectsCpuMs[k].load(std::memory_order_relaxed), 3);

@@ -58,7 +58,7 @@ static void trackedComfortEye() {
     if (trackedComfortObserver) trackedComfortObserver();
 }
 static void (*trackedEffectsObserver)(bool desktopShowsIt) = nullptr; // test seam: the image changed under the probe
-// The desktop's own AO and SSR, run on an eye image while it is still in the native target. When
+// The desktop's own AO, run on an eye image while it is still in the native target. When
 // that same image becomes the desktop frame (mirror, reconstruction), the desktop pass is told.
 static void trackedEffectsEye(bool desktopShowsIt) {
     if (!vrEffects.load(std::memory_order_relaxed) || !stereoView) return;

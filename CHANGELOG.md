@@ -18,14 +18,15 @@ Unreleased
 v0.3.0 (revision 60)
 
 - Fixed level loading hitches and stuttering: eliminated synchronous shader double-compilation in glShaderSource, gated sector traversals and roster scans during level population, precompiled wound/fire/bake shaders, paused worker disk logging while loading, and generated procedural stone textures asynchronously on a background worker thread.
-- Fixed floor reflection artifacts: corrected Screen-Space Reflection (SSR) dielectric blending so reflected dark objects (such as shields) no longer carve black silhouette hollows into the floor.
+- Removed the mod's Screen-space reflections: the game already draws its own reflections from each surface's specular data, and ours added a second, guessed one on top. An old `View/ScreenSpaceReflections` value is ignored.
+- Contact shadows now darken evenly instead of fading out on bright pixels; they are a visual addition on top of the game's own occlusion.
 - Fixed procedural wounds and impact feedback: hooked damage and physical impact detours to enable procedural cuts, blunt bruises, bloody weapon drips, directional camera impact kicks, and damage flash vignettes.
 - Fixed finger posing and sector transfers: activated dynamic stack node movement hook to prevent native stack overflow crashes and enable full finger bone physics drive.
 - Added live telemetry toast and wound debug mode (F12) to inspect real-time active wounds, drips, blade blood saturation, and finger poses with vibrant neon highlights.
 - Enabled native in-game Manual First Person page hook on the main menu.
 - Added native in-game Manual page: "First Person" guide page dynamically injected into the main menu MANUAL tab, complete with rich-text formatting, keybindings, combat guidance, and object manipulation tips without modifying on-disk archives.
 - Fixed character movement and turning jitter/rubberbanding by propagating head stabilization deltas into the physical history buffer so integration velocities remain continuous.
-- Fixed visual artifacts and ghosting/black rings in perspective post-processing effects (SSAO, SSR, and contact shadows) at full native resolution with all graphics settings enabled.
+- Fixed visual artifacts and ghosting/black rings in perspective post-processing effects (ambient occlusion and contact shadows) at full native resolution with all graphics settings enabled.
 - Fixed container and inventory item drops to the ground: items dragged out of open containers or bags can now be dropped directly onto the floor or level surfaces freely.
 - Polished 3D object manipulation: holding RMB while dragging an item rotates it freely along pitch and yaw in true 3D space.
 - Fresh installs no longer lose the Mod Settings tab. The default third-person FOV now says "Same", which fits its slider; any other value too long for it is just shortened.
@@ -49,9 +50,9 @@ v0.3.0 (revision 60)
 - If the displayed-pointer sample becomes stale during a native click, fall back to the game's own pick coordinates instead of consuming the pickup. Record how often that fallback occurs.
 - Dying no longer freezes the game. A hook that faulted while reading your freshly dead character used to keep its lock forever; now it lets go.
 - Blood and decals stop flickering in first person with supersampling on. The depth correction was shrinking their offset to about two depth steps; it now keeps at least sixteen.
-- Screen-space reflections, depth of field and ambient occlusion, drawn before the UI. With supersampling they run once on the averaged image. Admitted only when every hooked function matches byte for byte, so Hellmode qualifies too.
+- Depth of field and ambient occlusion, drawn before the UI. With supersampling they run once on the averaged image. Admitted only when every hooked function matches byte for byte, so Hellmode qualifies too.
 - New F8 rows, all off by default: edge smoothing, helmet view, a see-through ghost when something blocks the third-person camera, and a hurt/winded overlay read from health and stamina.
-- OpenXR VR, only in `build.py --openxr-sdk` builds: per-eye AO and reflections behind a "VR: effects" row, a stab modifier on the left trigger, a mirror mode, a comfort vignette (off by default), and rows for grip angle, haptics strength, panel width and panel distance. Half-resolution AO/SSR now hands back the framebuffer it found, which the headset eyes needed. Normal builds don't contain it and play exactly as before.
+- OpenXR VR, only in `build.py --openxr-sdk` builds: per-eye AO behind a "VR: effects" row, a stab modifier on the left trigger, a mirror mode, a comfort vignette (off by default), and rows for grip angle, haptics strength, panel width and panel distance. Half-resolution AO/SSR now hands back the framebuffer it found, which the headset eyes needed. Normal builds don't contain it and play exactly as before.
 - Settings gets a VR tab with its own Defaults, CONTROLS is just Controls now, and the window is wider. VR also has a hands-only body mode, and a "VR: main menu" row that shows the title level in stereo with the menu on a panel standing in it.
 - Hellmode is a recognised build now, so it skips the "untested version" banner. Banners that do show wrap instead of getting cut off.
 - Third-person camera stops pumping in and out when a pillar or someone walks past: after a pull-in it waits a quarter second before easing back, and eases back slower the higher Camera lag is set. Its follow point also rides vertical head bob more softly.

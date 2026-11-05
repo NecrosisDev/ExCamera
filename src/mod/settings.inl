@@ -48,7 +48,6 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     // View effects keep a 0..1 strength (view_effects.inl); these rows store it as before.
     s.ambientOcclusion = int(std::lround(ambientOcclusion.load() * 100.f)); // percent, as the sliders store it
     s.depthOfField = int(std::lround(depthOfField.load() * 100.f));
-    s.screenSpaceReflections = int(std::lround(screenSpaceReflections.load() * 100.f));
     s.edgeSmoothing = edgeSmoothing.load() > 0.f;
     s.helmetVisor = helmetVisor.load() > 0.f;
     s.playerGhost = playerGhost.load() > 0.f;
@@ -188,7 +187,6 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     aimIndicator = s.indicator;
     ambientOcclusion = effectStrength(s.ambientOcclusion);
     depthOfField = effectStrength(s.depthOfField);
-    screenSpaceReflections = effectStrength(s.screenSpaceReflections);
     edgeSmoothing = s.edgeSmoothing ? 0.5f : 0.f; // on/off rows: on is the old look, 0.5
     helmetVisor = s.helmetVisor ? 0.5f : 0.f;
     playerGhost = s.playerGhost ? 0.5f : 0.f;

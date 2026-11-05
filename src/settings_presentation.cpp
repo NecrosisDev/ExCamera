@@ -200,7 +200,6 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return settings.vrFingerBones ? L"On" : L"Off";
     case setting::ambientOcclusion:
     case setting::depthOfField:
-    case setting::screenSpaceReflections:
         return settings.value(id); // "Off" or a percent
     case setting::edgeSmoothing:
         return L"";
@@ -342,7 +341,6 @@ const wchar_t* settingLabel(int id) {
     case setting::vrFingerBones: return L"VR finger bones";
     case setting::ambientOcclusion: return L"Contact shadows";
     case setting::depthOfField: return L"Focus blur";
-    case setting::screenSpaceReflections: return L"Reflections";
     case setting::edgeSmoothing: return L"Anti-aliasing";
     case setting::helmetVisor: return L"Helmet edges";
     case setting::playerGhost: return L"See-through";
@@ -436,7 +434,7 @@ const wchar_t* settingTip(int id) {
     case setting::vrPosture: return L"Standing drives the legs from trackers and walks the room. Seated keeps the game's own legs and ignores room walking and crouching, so a chair never reads as a crouch. Recenter after changing it.";
     case setting::vrHeadset: return L"On starts the OpenXR runtime of the headset the next time the game starts with the mod, using the loader shipped beside the mod. The view is the tracked head; nothing else changes until then.";
     case setting::vrTurning: return L"The right stick turns the body the way the mouse does, so the view and the body never part. Snap turns a fixed angle per flick; smooth turns while held. Off leaves turning to the head and mouse.";
-    case setting::vrEffects: return L"On runs the View page's ambient occlusion and screen-space reflections on each headset eye, at their View strengths. Depth of field never runs in the headset: a fixed focus fights your own eyes.";
+    case setting::vrEffects: return L"On runs the View page's ambient occlusion on each headset eye, at their View strengths. Depth of field never runs in the headset: a fixed focus fights your own eyes.";
     case setting::vrGripAngle: return L"Tilts the controller's grip so a held hilt sits the way you hold it. Tracked hands are not tilted.";
     case setting::vrHaptics: return L"Strength of the controller pulses on grab, on your weapon landing and on being hit. Zero turns them off.";
     case setting::vrPanelWidth: return L"Width of the floating panel that shows the game's menus and the F8 panel in the headset.";
@@ -456,7 +454,6 @@ const wchar_t* settingTip(int id) {
     case setting::vrFingerBones: return L"Experimental. On: finger bones are added to your body's own skeleton and the skinned body mesh bends its fingers to the tracked joints. Shows on the full body; the hands-only body hides that mesh.";
     case setting::ambientOcclusion: return L"Soft shadow in corners, under objects and where things touch. High values can darken narrow gaps.";
     case setting::depthOfField: return L"Softens very near and very far things while the middle stays sharp. First person only.";
-    case setting::screenSpaceReflections: return L"Faint reflections on floors and other upward-facing surfaces, from what's on screen. Turn off if you see smearing.";
     case setting::edgeSmoothing: return L"Smooths jagged edges in one cheap pass. With Supersample on, it lightly sharpens instead.";
     case setting::helmetVisor: return L"Darkens the edges of the view in the shape of the helmet you wear: a great helm's slit, a nasal guard, an open face.";
     case setting::playerGhost: return L"Shows a faint outline of you wherever walls or pillars hide you.";

@@ -53,7 +53,7 @@ static const char excameraManualPageText[] =
     "[algn=0]\r\n"
     "Perspective-aware rendering options can be tailored in [tcol=FFE399]Mod Settings[/tcol] ([tcol=FFE399]F8[/tcol]):\r\n\r\n"
     "- Smooth bounce lighting, extended doorway room visibility, surface detail, articulated finger grips, and persistent combat wounds.\r\n"
-    "- Optional Screen-Space Ambient Occlusion, Screen-Space Reflections, Depth of Field, Edge Smoothing, Helmet View framing, and low-health sight effects.\r\n";
+    "- Optional Screen-Space Ambient Occlusion, Depth of Field, Edge Smoothing, Helmet View framing, and low-health sight effects.\r\n";
 
 static bool tryAugmentManualRPK(uintptr_t rpk, uintptr_t stream) {
     if (!stream || !readable(stream, 16)) return false;
