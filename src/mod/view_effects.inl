@@ -1465,9 +1465,11 @@ vec4 fallAt(vec3 ray, float sceneT, float level) {
     }
     return vec4(0.0);
 }
-// A severed limb's cap where the view ray meets it in front of the scene: raw flesh around a pale bone
-// with its marrow, a rim of skin and fat, lit from above and scaled by the skin's light around it.
-// Opaque; 0 coverage elsewhere.
+// A severed limb's cap where the view ray meets it in front of the scene, as a real cross-section: a thin
+// rim of skin over a lobed yellow layer of fat, muscle cut across its bundles (dark red, parted by pale
+// fascia), the cut vessels oozing, and an ivory ring of bone, a little off centre, round dark red marrow.
+// Fresh blood wells over it and gathers at its lowest side; all of it is wet, so the game's lights near
+// the player glint off it. Opaque; 0 coverage elsewhere.
 vec4 capAt(vec3 p) {
     vec3 ray = normalize(p);
     for (int k = 0; k < 8; ++k) {
@@ -1478,23 +1480,141 @@ vec4 capAt(vec3 p) {
         float t = dot(A.xyz, B.xyz) / facing;
         if (t <= 0.0 || t > length(p) + 2.0) continue; // behind the camera, or the scene stands in front
         vec3 hit = ray * t - A.xyz;
-        float r = length(hit) / A.w;
+        // The cut's own frame on its plane: one axis level, the other running down it.
+        vec3 side = cross(B.xyz, worldUp.xyz);
+        side = dot(side, side) > 1e-4 ? normalize(side) : normalize(cross(B.xyz, vec3(1.0, 0.0, 0.0)));
+        vec3 downhill = cross(B.xyz, side); // along the plane, towards the ground where the cut is not level
+        if (dot(downhill, worldUp.xyz) > 0.0) downhill = -downhill;
+        vec2 c2 = vec2(dot(hit, side), dot(hit, downhill)) / A.w; // 1 at the rim
+        float seed = fract(dot(A.xyz, vec3(0.0123, 0.0217, 0.0311))) * 50.0 + B.w * 17.0;
+        float angle = atan(c2.y, c2.x);
+        // A ragged rim: the skin retracts unevenly from the cut.
+        float rimAt = 1.0 + 0.05 * sin(angle * 7.0 + seed) + 0.03 * sin(angle * 13.0 - seed);
+        float r = length(c2) / rimAt;
         if (r > 1.0) continue;
         vec3 n = facing < 0.0 ? B.xyz : -B.xyz;
-        vec3 flesh = mix(vec3(0.45, 0.06, 0.05), vec3(0.32, 0.03, 0.03), smoothstep(0.3, 0.8, sin(hit.x * 1.7) * sin(hit.y * 2.3) * 0.5 + 0.5));
-        vec3 c = mix(flesh, vec3(0.78, 0.6, 0.45), smoothstep(0.82, 0.95, r));         // skin and fat at the rim
-        c = mix(c, vec3(0.85, 0.8, 0.68), 1.0 - smoothstep(0.24, 0.3, r));             // the bone
-        c = mix(c, vec3(0.35, 0.08, 0.06), 1.0 - smoothstep(0.09, 0.13, r));           // its marrow
-        vec3 side = normalize(cross(B.xyz, abs(B.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+        vec2 cm = c2 * A.w; // cm on the cut
+        // Muscle: bundles a centimetre or so across, each finely stippled, parted by thin pale fascia.
+        float bundles = woundValueNoise(cm * 0.9 + seed);
+        float fascia = (1.0 - smoothstep(0.0, 0.06, abs(bundles - 0.5))) * 0.7 +
+                       (1.0 - smoothstep(0.0, 0.04, abs(woundValueNoise(cm * 2.1 + seed * 1.7) - 0.5))) * 0.35;
+        float stipple = woundValueNoise(cm * 7.0 + seed * 3.1);
+        vec3 muscle = mix(vec3(0.36, 0.035, 0.03), vec3(0.5, 0.075, 0.06), stipple * 0.7 + bundles * 0.3);
+        vec3 c = mix(muscle, vec3(0.62, 0.42, 0.36), clamp(fascia, 0.0, 1.0) * 0.6);
+        // Fat under the skin: yellow lobules, wider where the limb is fleshier.
+        float lobes = woundValueNoise(cm * 1.6 + seed * 0.7);
+        float fatInner = 0.74 + 0.06 * sin(angle * 5.0 + seed * 2.0);
+        vec3 fat = mix(vec3(0.82, 0.66, 0.36), vec3(0.93, 0.8, 0.52), lobes) * (0.85 + 0.15 * stipple);
+        c = mix(c, fat, smoothstep(fatInner - 0.03, fatInner + 0.02, r));
+        // Skin: a thin pale-pink band, rolled outward.
+        c = mix(c, vec3(0.8, 0.58, 0.5), smoothstep(0.93, 0.97, r));
+        // Bone, a little off centre: ivory cortex with a fine grain, round dark spongy marrow.
+        vec2 boneAt = vec2(woundHash(seed) - 0.5, woundHash(seed + 1.0) - 0.5) * 0.16;
+        float rb = length(c2 - boneAt);
+        vec3 cortex = vec3(0.86, 0.8, 0.68) * (0.92 + 0.08 * woundValueNoise(cm * 9.0 + seed));
+        vec3 marrow = mix(vec3(0.42, 0.1, 0.07), vec3(0.62, 0.36, 0.18), woundValueNoise(cm * 5.0 + seed * 2.3));
+        float bone = 1.0 - smoothstep(0.25, 0.28, rb);
+        float inMarrow = 1.0 - smoothstep(0.14, 0.17, rb);
+        c = mix(c, mix(cortex, marrow, inMarrow), bone);
+        // Cut vessels round the bone: dark, with blood welling out of each.
+        float vessel = 0.0;
+        for (int v = 0; v < 3; ++v) {
+            float fv = float(v);
+            float va = woundHash(seed + fv * 3.7) * 6.2831853;
+            vec2 at = boneAt + vec2(cos(va), sin(va)) * (0.38 + 0.15 * woundHash(seed + fv * 5.1));
+            vessel = max(vessel, 1.0 - smoothstep(0.035, 0.06, length(c2 - at)));
+        }
+        // Fresh blood: welling from the vessels and the marrow, sheeting over the muscle, pooled along
+        // the lowest part of the rim; little on the bone's cortex, none on the skin.
+        float well = woundValueNoise(cm * 0.6 + seed * 1.3);
+        float pool = smoothstep(0.1, 0.9, c2.y * 0.7 + r * 0.5) * smoothstep(0.35, 1.0, r);
+        float film = clamp(0.25 + 0.6 * smoothstep(0.45, 0.75, well) + 0.7 * pool, 0.0, 1.0);
+        film = max(film * (1.0 - 0.7 * bone * (1.0 - inMarrow)) * (1.0 - smoothstep(0.95, 1.0, r)), vessel);
+        c *= mix(vec3(1.0), bloodFilm(0.15 + 0.6 * film + 0.5 * vessel, 0.0), film);
+        // Light: the skin's light around the cut sets the level; a soft key from the light's side.
         float around = dot(toLight(texture2D(sceneTex, project(A.xyz + side * A.w * 1.4)).rgb), vec3(0.2126, 0.7152, 0.0722));
         vec3 lightDir = normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6));
-        float shade = 0.35 + 0.65 * max(dot(n, lightDir), 0.0);
-        return vec4(toStored(clamp(c * shade * min(around * 2.5 + 0.02, 1.2), 0.0, 1.0)), 1.0);
+        vec3 lightColour = vec3(1.0);
+        float found = 0.0;
+        vec3 sum = vec3(0.0);
+        for (int i = 0; i < 2; ++i) {
+            vec4 lamp = levelLight[i];
+            if (lamp.w <= 0.0) continue;
+            vec3 toLamp = lamp.xyz - (A.xyz + hit);
+            float d2 = dot(toLamp, toLamp);
+            float w = lamp.w / (1.0 + d2 / 90000.0);
+            sum += w * toLamp * inversesqrt(max(d2, 1.0));
+            lightColour = mix(lightColour, levelLightColour[i].rgb, clamp(w * 2.0, 0.0, 1.0));
+            found += w;
+        }
+        if (found > 0.0 && dot(sum, sum) > 1e-6) lightDir = normalize(mix(lightDir, normalize(sum), clamp(found * 2.0, 0.0, 1.0)));
+        // The surface undulates with the bundles and the fat's lobes; bone stands proud and smooth.
+        vec3 bump = (side * (woundValueNoise(cm * 0.9 + seed + vec2(0.3, 0.0)) - bundles) +
+                     downhill * (woundValueNoise(cm * 0.9 + seed + vec2(0.0, 0.3)) - bundles)) * 2.5 * (1.0 - bone);
+        vec3 N = normalize(n + bump * (1.0 - 0.6 * film));
+        float level = min(around * 2.5 + 0.02, 1.2);
+        float shade = 0.3 + 0.7 * max(dot(N, lightDir), 0.0);
+        vec3 lit = c * shade * level;
+        // Wet: a GGX highlight (roughness 0.1, sharper where blood lies) and Fresnel for a ~1.35 liquid.
+        vec3 V = -ray;
+        vec3 H = normalize(lightDir + V);
+        float NV = max(dot(N, V), 1e-3), NL = max(dot(N, lightDir), 0.0), NH = max(dot(N, H), 0.0);
+        float rough = mix(0.14, 0.07, film);
+        float a2 = rough * rough * rough * rough;
+        float dn = NH * NH * (a2 - 1.0) + 1.0;
+        float D = min(a2 / (3.14159 * dn * dn), 60.0);
+        float fresnel = 0.02 + 0.98 * pow(1.0 - NV, 5.0);
+        lit += lightColour * D * NL / (4.0 * NV * max(NL, 0.05) + 1e-3) * NL * fresnel * level * 1.5;
+        if (abs(woundDebug - 1.0) < 0.5) lit = mix(lit, vec3(1.0, 0.3, 0.0) * 2.0, 0.6);
+        return vec4(toStored(clamp(lit, 0.0, 1.0)), 1.0);
     }
     return vec4(0.0);
 }
 
-vec3 woundMarks(vec3 color) {
+)glsl" R"glsl(// Blood sheeting from a severed limb's cut down the limb beside it: streaks leave the rim and run along the
+// skin, all round when the cut faces up, along the low side when it lies level, none when it faces down
+// (it drips off). On the scene's surface at p; tint and wetness for woundMarks' lighting.
+void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout vec3 n) {
+    for (int k = 0; k < 8; ++k) {
+        if (float(k) >= capCount) break;
+        vec4 A = capA[k], B = capB[k];
+        vec3 rel = p - A.xyz;
+        float behind = -dot(rel, B.xyz); // cm back from the cut along the limb
+        if (behind < -0.5 || behind > A.w * 6.0) continue;
+        vec3 radial = rel + B.xyz * behind;
+        float rad = length(radial);
+        if (rad < A.w * 0.6 || rad > A.w * 1.6) continue; // the limb's own surface, about its radius out
+        radial /= rad;
+        float up = dot(B.xyz, worldUp.xyz);
+        vec3 low = -worldUp.xyz + B.xyz * up;
+        low = dot(low, low) > 1e-4 ? normalize(low) : radial;
+        // How much runs here: everywhere round a cut facing up, the low side of a level one.
+        float lowSide = smoothstep(0.2, 0.9, dot(radial, low));
+        float flow = max(smoothstep(0.1, 0.6, up), lowSide * (1.0 - smoothstep(0.2, 0.6, -up)));
+        if (flow <= 0.0) continue;
+        float seed = fract(dot(A.xyz, vec3(0.0123, 0.0217, 0.0311))) * 50.0 + B.w * 17.0;
+        vec3 side = cross(B.xyz, worldUp.xyz);
+        side = dot(side, side) > 1e-4 ? normalize(side) : normalize(cross(B.xyz, vec3(1.0, 0.0, 0.0)));
+        float around = atan(dot(radial, cross(B.xyz, side)), dot(radial, side)) * A.w; // cm round the limb
+        float lane = floor(around / 0.9);
+        float len = A.w * (0.6 + 3.2 * woundHash(lane + seed)) * flow;
+        float x = fract(around / 0.9) - 0.5;
+        float width = 0.18 + 0.12 * smoothstep(len * 0.7, len, behind);
+        float streak = (1.0 - smoothstep(width, width + 0.12, abs(x + 0.15 * sin(behind * 0.7 + lane)))) *
+                       step(0.35, woundHash(lane * 1.7 + seed)) * (1.0 - smoothstep(len * 0.85, len, behind));
+        float sheet = max(streak, 1.0 - smoothstep(0.0, A.w * 0.35 * flow, behind)); // a band right at the rim
+        if (sheet <= 0.0) continue;
+        if (!near) {
+            n = viewNormal(uv, p);
+            near = true;
+        }
+        vec3 colour = abs(woundDebug - 1.0) < 0.5 ? vec3(1.0, 0.3, 0.0) * 2.0 : bloodFilm(0.3 + 0.5 * sheet, 0.0);
+        tint *= mix(vec3(1.0), colour, sheet);
+        wet += sheet;
+    }
+}
+
+)glsl" R"glsl(vec3 woundMarks(vec3 color) {
     if (uv.x < woundRect.x || uv.y < woundRect.y || uv.x > woundRect.z || uv.y > woundRect.w) return color;
     float raw = texture2D(depthTex, uv).r;
     if (capCount > 0.0) {
@@ -1715,6 +1835,7 @@ vec3 woundMarks(vec3 color) {
             }
         }
     }
+    if (capCount > 0.0) capSheets(p, tint, wet, near, n);
     if (woundDebug > 1.5) {
         // Diagnostics: the box in faint blue; the layer's verdict here: yellow outside the window, magenta
         // the surface is not within the height band below the source, cyan a floor test failed, green blood.
@@ -4069,10 +4190,10 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 const float reach = c[3] + wounds.c[k][3] + 6.f;
                 if (!growScreenBox(projection, c, reach, box)) break;
             }
-            // Each cap's disc.
+            // Each cap's disc, and the blood sheeting from it down the limb (capSheets: six radii back).
             for (unsigned k = 0; k < wounds.caps && box[2] - box[0] < 1.f; ++k) {
                 const float* c = wounds.capA[k];
-                const float reach = c[3] * 1.5f;
+                const float reach = c[3] * 6.3f;
                 if (!growScreenBox(projection, c, reach, box)) break;
             }
             // Each drop's reach, about a point 110 cm below where it fell: the shader paints floors 15 to 220 cm
