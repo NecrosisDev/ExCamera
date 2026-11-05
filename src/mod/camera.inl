@@ -110,8 +110,8 @@ inline bool cameraEntryYaw(uintptr_t root, uintptr_t sector, float& yaw) noexcep
         float selfWorld[3];
         addSectorOrigin((const float*)(root + field::character::position), sector, selfWorld);
         const uintptr_t opponent = *(uintptr_t*)(root + field::character::aimOpponent);
-        if (opponent && opponent != root && readable(opponent, field::character::lifeFlags + 4) &&
-            !(*(unsigned*)(opponent + field::character::lifeFlags) & 0x100)) {
+        if (opponent && opponent != root && readable(opponent, field::character::stateFlags + 4) &&
+            !fp::deadState(*(unsigned*)(opponent + field::character::stateFlags))) {
             const uintptr_t otherSector = characterSector(opponent);
             if (readable(otherSector, field::sector::origin + 12)) {
                 float otherWorld[3];
@@ -403,11 +403,10 @@ inline uintptr_t navLocked(void* self, float offset) {
             knockdownScene = worldScene;
         }
         const int shown = viewMode.load();
-        if (shown < 2 && readable(root + field::character::stateFlags, 4) && readable(root + field::character::lifeFlags, 4)) {
-            const auto step = fp::knockdownViewStep(knockdownView, fpKnockdown.load() == 1, shown,
-                                                    *(unsigned*)(root + field::character::stateFlags),
-                                                    *(unsigned*)(root + field::character::lifeFlags), f6Presses.load(),
-                                                    GetTickCount64());
+        if (shown < 2 && readable(root + field::character::stateFlags, 4)) {
+            const unsigned characterState = *(unsigned*)(root + field::character::stateFlags);
+            const auto step = fp::knockdownViewStep(knockdownView, fpKnockdown.load() == 1, shown, fp::downState(characterState),
+                                                    fp::deadState(characterState), f6Presses.load(), GetTickCount64());
             if (step != fp::KnockdownViewStep::none)
                 knockdownViewRequest = step == fp::KnockdownViewStep::toThird ? 1 : 2;
         }
@@ -661,8 +660,7 @@ inline uintptr_t navLocked(void* self, float offset) {
             {
                 const bool downNow =
                     passKey.down &&
-                    fp::knockdownStep(state.third.knock, *(unsigned*)(root + field::character::stateFlags),
-                                      *(unsigned*)(root + field::character::lifeFlags), cameraFrame.tick);
+                    fp::knockdownStep(state.third.knock, *(unsigned*)(root + field::character::stateFlags), cameraFrame.tick);
                 if (!passKey.down) state.third.knock = fp::KnockdownFollow{};
                 if (downNow)
                     for (int i = 0; i < 3; ++i)

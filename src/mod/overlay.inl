@@ -886,8 +886,7 @@ static bool crouchAllowedReadable(uintptr_t root, bool rootReadable) {
         return false;
     const unsigned state = *reinterpret_cast<unsigned*>(root + field::character::stateFlags);
     return !*reinterpret_cast<unsigned char*>(root + field::character::combatStance) &&
-           !(state & (0xac0 | 0x40204 | 0xa00)) &&
-           !(*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100) && !dialogueOpen();
+           !fp::reactionState(state) && !dialogueOpen(); // down, dead or staggered (169BE6)
 }
 static bool crouchAllowed(uintptr_t root) {
     return crouchAllowedReadable(root, root && readable(root, 0x1300));

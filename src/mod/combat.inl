@@ -9,7 +9,7 @@ static bool ordinaryCombat(uintptr_t root, uintptr_t bh) {
     if (root != *(uintptr_t*)gameAt(fp::sig::playerRoot) ||
         *(uintptr_t*)(bh + field::behaviour::character) != root ||
         *(unsigned char*)(bh + field::behaviour::inactive) ||
-        (*(unsigned*)(root + field::character::lifeFlags) & 0x100u) ||
+        fp::deadState(*(unsigned*)(root + field::character::stateFlags)) ||
         !*(unsigned char*)(root + field::character::combatStance) ||
         *(unsigned*)(root + field::character::stateFlags) == 0x20 ||
         *(uintptr_t*)(root + field::character::actionCallback) ||
@@ -138,9 +138,9 @@ static DefensePermission defensePermission(uintptr_t root, bool* known = nullptr
 // Callers validate ownership and contain optional reads with SEH. Active native
 // defense does not use this gate: its tracking and transitions stay native.
 static bool guardReadiness(uintptr_t root) {
-    const float readiness = *(float*)(root + field::character::postureReadiness);
-    const float balance = *(float*)(root + field::character::stamina);
-    const float maximum = *(float*)(root + field::character::staminaMax);
+    const float readiness = *(float*)(root + field::character::health);
+    const float balance = *(float*)(root + field::character::balance);
+    const float maximum = *(float*)(root + field::character::balanceMax);
     return std::isfinite(readiness) && std::isfinite(balance) && std::isfinite(maximum) &&
            static_cast<double>(readiness) >= .01 && static_cast<double>(balance) >= static_cast<double>(maximum) - .05;
 }

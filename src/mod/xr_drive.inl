@@ -523,7 +523,7 @@ static void trackedWristPresent() {
 // game's own character move 170810(character, transform48, 1) (the low-level placement its arrival, knock-out
 // and device paths use), keeping the character's own basis and height. Every arc segment is checked against
 // the level with the game's level ray, so it never passes a wall; at most 6 m; on the game thread; not while
-// dragging, attacking, down or dead. The move resets the character's stamina, which is put back. Row VR: teleport.
+// dragging, attacking, down or dead. The move resets the character's balance (+10B8), which is put back. Row VR: teleport.
 static std::atomic<unsigned> trackedTeleports{0};
 static std::atomic<bool> trackedTeleportFault{false};
 static bool trackedTeleportAiming = false, trackedTeleportValid = false;
@@ -542,7 +542,7 @@ static bool trackedTeleportAllowed(uintptr_t root) {
     const int motion = *reinterpret_cast<int*>(root + field::character::motion);
     const unsigned state = *reinterpret_cast<unsigned*>(root + field::character::stateFlags);
     if ((motion >= attackFamilyFirst && motion <= attackFamilyLast) || motion == kickMotion || motion == jumpMotion) return false;
-    if ((state != 0 && state != 8) || (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100)) return false;
+    if (state != 0) return false; // the game's base state only (GAME-FIELDS-AUDIT.md)
     const uintptr_t drag = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::dragManager));
     if (readable(drag, 0x20) && (*reinterpret_cast<const unsigned*>(drag + field::drag::flags) & (0x2000u | 0x4000u | 0x8000u | 0x10000u | 0x80000u))) return false; // holding something through the drag manager
     return true;
@@ -623,10 +623,10 @@ static void trackedTeleportTick(uintptr_t root, const xd::TrackingFrame& tracked
     transform[11] = trackedTeleportNative.z - origin[2];
     for (float f : transform)
         if (!std::isfinite(f)) return;
-    const float stamina = *reinterpret_cast<float*>(root + field::character::stamina); // the move refills it; teleporting is not a rest
+    const float balance = *reinterpret_cast<float*>(root + field::character::balance); // the move refills it; teleporting does not steady you
     trackedTeleportLast = now;
     if (trackedTeleportCall(root, transform)) {
-        if (std::isfinite(stamina)) *reinterpret_cast<float*>(root + field::character::stamina) = stamina;
+        if (std::isfinite(balance)) *reinterpret_cast<float*>(root + field::character::balance) = balance;
         trackedTeleports.fetch_add(1, std::memory_order_relaxed);
     }
 }
