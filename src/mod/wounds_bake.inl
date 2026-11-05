@@ -7,8 +7,10 @@
 // .data 0x2E9F30: vPos 0, vTex 1, vNrm 2, vCol 3, vTx2 4, vTng 6, vDlt 7, at 0x1FA164-0x1FA232); the game's
 // shading_v.glsl reads vTex as its texcoord. Texture units: the shared stoneSkinOriginals check (map flags at
 // renderer +8, binder 0x2010C0) is what the bake's draw uses. Still not shown by game code: what selects body
-// skin among a face's +2F8 bits (a packed word: 0x577CA tests 0x1F0000, 0x1C7BF8 repacks 0xFF, 0x70000, 0x180000
-// and 0xE00000; the bake takes the whole word == 0), and,
+// skin among a face's +2F8 bits (a packed word; 0x577CA tests 0x1F0000; the 0xFF/0x70000/0x180000/0xE00000 repack
+// at 0x1C7BF8 belongs to a grid object, +2E8 its dimensions, not a mesh node; no game code found buckets mesh faces
+// by any of these fields, the faces of a material being its own vertex range; all unproven flags, and the bake
+// takes the whole word == 0), and,
 // formerly, which texture unit the skin program samples for each map at draw time (the binder 0x20112B-0x2012AB hands
 // out units in the order DifTex, OpcTex, EmiTex, SpcTex, NrmTex, GlsTex, DspTex, EnvMap to the maps present;
 // names at .rdata 0x335218/0x335238/0x335258, table .data 0x2E9F70), and the Injuries addon's severed bits.
