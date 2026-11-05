@@ -296,7 +296,17 @@ procedural ID. That is the next step to bring the four detail rows back with the
 - Indirect light: `ambient` builds `amb` from `texture(VoxelGI, ...)` (`xyz` light, `w` occlusion), scaled by
   `VXGIScl.w` and `Ambient`, and adds it to `diffuse` before the material colour multiplies in. That is the
   game's own GI term, where screen-space AO belongs by construction.
-- Plan: (1) reflections take the game's own specular reflectance per pixel (`MatSpc.xyz * SpcTex`, and
+- **The game already has both effects ours add (PROVEN from its shaders):**
+  - Reflections: `speculargi` samples `EnvMap` at a mip chosen by `Gloss`, and with `Shd.LocalRef` mixes in
+    `{$reflection}`, a screen-space lookup into `FrmBuf` along the reflected normal. That is weighted by
+    roughness and Fresnel and multiplied by `MatSpc` × `SpcTex`, so it is reflection driven by each surface's
+    own specular data. Our Reflections pass adds a second, separate reflection on top.
+  - Occlusion: `ambient` accumulates `occ` from `VoxelGI.w` over hemisphere samples (`SdwSmps`) and
+    multiplies the indirect light by it (`amb *= Ambient.xyz * b * occ`). Our Contact shadows add a
+    screen-space darkening on top, at a finer scale than the voxels.
+  - The game renders forward in one pass, so a screen-space term computed after it (needing depth) cannot be
+    fed into the same frame's `amb` without a depth pre-pass or last frame's result.
+- Earlier plan, kept for reference: (1) reflections take the game's own specular reflectance per pixel (`MatSpc.xyz * SpcTex`, and
   roughness from `Gloss`), written into the opaque pass's alpha by a rewrite of the expanded `shading_f`, with
   exact-text guards. (2) AO multiplies `amb` inside the same shader instead of the finished image. Both need
   the expanded text the game hands to glShaderSource (the dev shader dump) to anchor the rewrite exactly,
