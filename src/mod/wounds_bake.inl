@@ -1073,6 +1073,54 @@ static bool woundSkinSubmission(uintptr_t node) {
 }
 
 struct WoundSkinSwap { unsigned slot; GLuint textures[3]; bool ready; };
+// The spec copy's channels are those the game's skin shading reads (shading.flb shadesss_f with a spec map:
+// specular x R, Gloss = 1 - MatSpc.a x G, B the metal blend), checked on the program itself: at a bound skin
+// draw (the material's program current) the fragment shader's source must read SpcRGM.r, MatSpc.a x SpcRGM.g and
+// SpcRGM.b. The copy (wet blood glossy, drying dull over woundDrySeconds) is drawn only once a skin program has
+// been seen to read it so and none has been seen not to; until then the skin keeps its own spec map.
+using GetShaderSourceFn = void(APIENTRY*)(GLuint, GLsizei, GLsizei*, char*);
+using GetShaderivFn = void(APIENTRY*)(GLuint, GLenum, GLint*);
+static std::atomic<unsigned> woundSkinSpecReads{0}, woundSkinSpecOther{0};
+static GLuint woundSkinSpecChecked[8]{};
+static unsigned woundSkinSpecCheckedNext = 0;
+static bool woundSkinSpecShown() {
+    return woundSkinSpecReads.load(std::memory_order_relaxed) > 0 && woundSkinSpecOther.load(std::memory_order_relaxed) == 0;
+}
+static void woundSkinSpecWitness() {
+    static GetShaderSourceFn getShaderSource = nullptr;
+    static GetShaderivFn getShaderiv = nullptr;
+    static bool tried = false;
+    if (!tried) { tried = true; loadGl(getShaderSource, "glGetShaderSource"); loadGl(getShaderiv, "glGetShaderiv"); }
+    if (!getShaderSource || !getShaderiv || !matid::loadExtra()) return;
+    GLint program = 0;
+    glGetIntegerv(glc::currentProgram, &program);
+    if (program <= 0) return;
+    for (GLuint p : woundSkinSpecChecked) if (p == GLuint(program)) return;
+    woundSkinSpecChecked[woundSkinSpecCheckedNext] = GLuint(program);
+    woundSkinSpecCheckedNext = (woundSkinSpecCheckedNext + 1) % 8;
+    GLuint shaders[8]{};
+    GLsizei attached = 0;
+    matid::extra.getAttachedShaders(GLuint(program), 8, &attached, shaders);
+    static std::vector<char> text;
+    for (GLsizei i = 0; i < attached; ++i) {
+        GLint type = 0, length = 0;
+        getShaderiv(shaders[i], 0x8B4F /*SHADER_TYPE*/, &type);
+        if (type != 0x8B30 /*FRAGMENT_SHADER*/) continue;
+        getShaderiv(shaders[i], 0x8B88 /*SHADER_SOURCE_LENGTH*/, &length);
+        if (length <= 0 || length > (1 << 20)) continue;
+        text.assign(size_t(length) + 1, 0);
+        getShaderSource(shaders[i], length, nullptr, text.data());
+        const bool reads = strstr(text.data(), "SpcRGM.r") && strstr(text.data(), "MatSpc.a * SpcRGM.g") &&
+                           strstr(text.data(), "SpcRGM.b");
+        (reads ? woundSkinSpecReads : woundSkinSpecOther).fetch_add(1, std::memory_order_relaxed);
+#if FP_DEV_TOOLS
+        if (renderAuditOn())
+            renderAuditLog("skin spec witness: program %d fragment %u reads the spec map as R strength, G gloss, B metal: %s",
+                           program, shaders[i], reads ? "yes" : "NO (the copy stays off)");
+#endif
+    }
+}
+
 static const GLuint* woundSkinReplacement(fp::CueResources& r, const StoneGl&, const void* context) {
     auto* swap = (WoundSkinSwap*)const_cast<void*>(context);
     const unsigned k = swap->slot;
@@ -1080,7 +1128,7 @@ static const GLuint* woundSkinReplacement(fp::CueResources& r, const StoneGl&, c
     if (!r.woundSkinTex[k]) return nullptr;
     swap->textures[0] = r.woundSkinTex[k];
     if (woundSkinSlots[k].normalReady && r.woundSkinNrm[k]) swap->textures[2] = r.woundSkinNrm[k];
-    if (woundSkinSlots[k].specReady && r.woundSkinSpc[k]) swap->textures[1] = r.woundSkinSpc[k];
+    if (woundSkinSlots[k].specReady && r.woundSkinSpc[k] && woundSkinSpecShown()) swap->textures[1] = r.woundSkinSpc[k];
     return swap->textures;
 }
 
@@ -1335,6 +1383,9 @@ static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind) {
     __try { woundSkinDiagnose(node, material, bind); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 #endif
     if (woundSkinBroken || !wearScope.colourPass) return false;
+    if (!bind && woundSkinProven() && woundSkinMaterial(material)) {
+        __try { woundSkinSpecWitness(); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
     bool drawn = false;
     __try {
         drawn = woundSkinDrawGuarded(node, material, bind);
@@ -1362,8 +1413,8 @@ static bool woundSkinWearBegin(uintptr_t node, uintptr_t material, StoneSwap& sw
         auto* owner = prepareCue();
         if (!owner || !owner->resources.woundSkinTex[found]) return false;
         swap.stone[0] = owner->resources.woundSkinTex[found];
-        swap.stone[1] = slot.specReady && owner->resources.woundSkinSpc[found] ? owner->resources.woundSkinSpc[found]
-                                                                                 : swap.originals[1];
+        swap.stone[1] = slot.specReady && owner->resources.woundSkinSpc[found] && woundSkinSpecShown()
+                            ? owner->resources.woundSkinSpc[found] : swap.originals[1];
         swap.stone[2] = slot.normalReady && owner->resources.woundSkinNrm[found] ? owner->resources.woundSkinNrm[found]
                                                                                    : swap.originals[2];
         swap.bind = s.bind;
