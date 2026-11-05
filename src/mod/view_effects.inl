@@ -4308,9 +4308,12 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                                    r.bloodBox[1], r.bloodBox[4], r.bloodBox[2], r.bloodBox[5], r.bloodMapCentre[0],
                                    r.bloodMapCentre[1], r.bloodMapCamera[0], r.bloodMapCamera[1], r.bloodMapCamera[2], upX, upY, upZ);
 #endif
-                {   // Wet blood's highlights come from the game's own lights.
+                {   // Wet blood's highlights: no lamps. The kind-5 scene nodes read as lamps (colour +210,
+                    // intensity +21C, range +224) are made only by the constructor that stores kind 5 at
+                    // 0x518D0 and sets +210 and +21C there, but nothing proves they are the lights the game
+                    // draws with or what +224 holds, so the wound pass takes its fixed light from above
+                    // and the viewer's side (the shaders' fallback, weight 0 here) until that is shown.
                     float lamps[2][4]{}, lampColours[2][4]{};
-                    lampsInView(request, projection.view, lamps, lampColours);
                     g.uniform4fv(u.at[uLevelLight], 2, lamps[0]);
                     g.uniform4fv(u.at[uLevelLightColour], 2, lampColours[0]);
                 }
@@ -6025,8 +6028,6 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
         memcpy(request.held, heldMaskPoses, sizeof request.held);
     }
     levelDetailFor(request);
-    // Wet blood lights from the same game lights; level detail may be off, or have given way.
-    if (woundMarks.load(std::memory_order_relaxed) > 0.f && !(request.lamps[0][3] > 0.f)) levelLightsFor(request);
     // Wounds: desktop and VR eyes alike, in the space of the matrices this view was drawn with.
     if (woundMarks.load(std::memory_order_relaxed) <= 0.f && heldDetail.load(std::memory_order_relaxed) > 0.f &&
         TryAcquireSRWLockExclusive(&woundLock)) {
