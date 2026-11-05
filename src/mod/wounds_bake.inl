@@ -241,6 +241,27 @@ static void woundSkinMapBody(Wound& w, unsigned& reason, int& skinNodes, int& bo
             const int first = *(const int*)(material + 0xb0), lastOne = *(const int*)(material + 0xb4);
             for (int f = (std::max)(first, 0); f <= lastOne && f <= m.lastFace; ++f) skinFace[size_t(f)] = 1;
         }
+#if FP_DEV_TOOLS
+        {   // No skin face at all: the node's material sets beside the sets the skinShare hook recorded.
+            bool any = false;
+            for (unsigned char f : skinFace) any = any || f;
+            if (!any && renderAuditOn()) {
+                char line[512];
+                int used = snprintf(line, sizeof line, "skin map: node %p has no skin-material faces; its sets:", (void*)node);
+                for (int i = 0; i <= lastMaterial && i < 8 && used > 0 && used < int(sizeof line) - 24; ++i) {
+                    const uintptr_t material = *(const uintptr_t*)(materials + size_t(i) * 8);
+                    const uintptr_t set = material && readable(material, 0x108) ? *(const uintptr_t*)(material + 0x100) : 0;
+                    used += snprintf(line + used, sizeof line - size_t(used), " %p", (void*)set);
+                }
+                AcquireSRWLockShared(&woundSkinSetLock);
+                used += snprintf(line + used, sizeof line - size_t(used), "; recorded (%u seen):", woundSkinSetsSeen.load());
+                for (uintptr_t r : woundSkinSets)
+                    if (r && used > 0 && used < int(sizeof line) - 20) used += snprintf(line + used, sizeof line - size_t(used), " %p", (void*)r);
+                ReleaseSRWLockShared(&woundSkinSetLock);
+                renderAuditLog("%s", line);
+            }
+        }
+#endif
         float best = woundMapReachCm * woundMapReachCm, bestW[3]{}, bestP[3][3]{}, closest = -1.f;
         unsigned bestTri[3]{};
         for (int f = 0; f <= m.lastFace; ++f) {
@@ -335,6 +356,127 @@ static void woundSkinMap(Wound& w) {
     } __finally {
         woundSkinMapReport(w, reason, skinNodes, bones, nearest);
     }
+}
+
+// The game's own blood on a character's skin (docs/game-blood-systems.md): 0x62DA0 lowers each vertex colour's
+// alpha by a falloff from the hit and only ever lowers it (0x630B2-0x630CC). The colours are attribute 0x100's
+// data when the mesh has one (0x62E38-0x62E82: the attribute list at +0x280, last index +0x278, format & 0xFFFF,
+// data +0x10), else the node's own +0x378, attribute 0's count of 4 bytes (made at 0x62EC8, filled with 0xFF), one
+// per vertex of attribute 0 (0x62F60-0x62F98). shadesss_f's DirtMode 4 draws it. Read here, read-only, on the
+// render thread (CPU memory only, no GL), for the character's _SKIN mesh when its attribute 0 is the positions
+// (format & 0xFFFF == 1), so a colour's index is a position's: up to gameSkinBloodLimit of the bloodiest vertices
+// (alpha below 200), posed as the skin draws them (each weight's bone transform x its inverse bind x the source
+// position), refreshed every half second per character.
+constexpr unsigned gameSkinBloodLimit = 8;
+struct GameSkinBlood { uintptr_t owner = 0; ULONGLONG tick = 0; unsigned count = 0; float at[gameSkinBloodLimit][4]{}; };
+static GameSkinBlood gameSkinBloods[16];
+static unsigned gameSkinBloodNext = 0;
+static std::atomic<unsigned> gameSkinBloodReads{0}, gameSkinBloodPoints{0};
+
+static unsigned gameSkinBloodRead(uintptr_t owner, float (*out)[4]) {
+    if (!headwearRenderReady.load(std::memory_order_relaxed) || !readable(owner, field::character::sceneNode + 8)) return 0;
+    const uintptr_t actor = *(const uintptr_t*)(owner + field::character::sceneNode);
+    if (!readable(actor, 0x2a0)) return 0;
+    const int last = *(int*)(actor + field::sceneNode::lastChild);
+    const uintptr_t list = *(uintptr_t*)(actor + field::sceneNode::children);
+    if (last < 0 || last >= 6000 || !readable(list, (size_t(last) + 1) * 8)) return 0;
+    for (int child = 0; child <= last; ++child) {
+        const uintptr_t node = *(uintptr_t*)(list + size_t(child) * 8);
+        if (!readable(node, 0x380) || strncmp((const char*)(node + field::sceneNode::name), "_SKIN", 5) ||
+            *(uintptr_t*)(node + field::sceneNode::parent) != actor)
+            continue;
+        WoundSkinMesh m;
+        if (!woundSkinMesh(node, m)) continue;
+        const int lastAttribute = *(const int*)(node + 0x278);
+        const uintptr_t attributes = *(const uintptr_t*)(node + 0x280);
+        if (lastAttribute < 0 || lastAttribute >= 64 || !readable(attributes, size_t(lastAttribute + 1) * sizeof(WearAttribute))) continue;
+        const WearAttribute& first = ((const WearAttribute*)attributes)[0];
+        if ((first.format & 0xffff) != 1 || first.count != m.positions.count) continue; // attribute 0 is the positions
+        WearAttribute colours{};
+        uintptr_t data = 0;
+        if (wearAttribute(node, 0x100, colours)) {
+            if (colours.count != first.count) continue;
+            data = colours.data;
+        } else {
+            data = *(const uintptr_t*)(node + 0x378);
+        }
+        if (!data || !readable(data, size_t(first.count) * 4)) continue;
+        // The bloodiest vertices: alpha below 200, lowest first.
+        unsigned picked[gameSkinBloodLimit]{}, count = 0;
+        unsigned char alpha[gameSkinBloodLimit]{};
+        for (unsigned v = 0; v < first.count; ++v) {
+            const unsigned char a = *(const unsigned char*)(data + size_t(v) * 4 + 3);
+            if (a >= 200) continue;
+            unsigned slot = count;
+            if (count == gameSkinBloodLimit) {
+                slot = 0;
+                for (unsigned k = 1; k < count; ++k) if (alpha[k] > alpha[slot]) slot = k;
+                if (alpha[slot] <= a) continue;
+            } else {
+                ++count;
+            }
+            picked[slot] = v;
+            alpha[slot] = a;
+        }
+        const auto* weights = (const fp::wear::Weights*)m.weights.data;
+        unsigned placed = 0;
+        for (unsigned k = 0; k < count; ++k) {
+            const unsigned v = picked[k];
+            float source[3], world[3]{}, total = 0.f;
+            memcpy(source, (const float*)(m.source + size_t(v) * 12), sizeof source);
+            for (int b = 0; b < 4; ++b) {
+                const int bone = weights[v].bone[b];
+                const float weight = weights[v].weight[b];
+                if (bone < 1 || bone > m.bones || !(weight > 0.f)) continue;
+                const uintptr_t transform = *(const uintptr_t*)(m.boneNodes + size_t(bone - 1) * 8);
+                float now[16], bind[16], posed[3], local[3];
+                if (!readable(transform, 64) || !fp::wear::affine((const float*)transform, now) ||
+                    !fp::wear::affine((const float*)(m.inverseBind + size_t(bone - 1) * 48), bind) ||
+                    !fp::wear::point(bind, source, local) || !fp::wear::point(now, local, posed))
+                    continue;
+                for (int i = 0; i < 3; ++i) world[i] += weight * posed[i];
+                total += weight;
+            }
+            if (!(total > 0.5f)) continue;
+            for (int i = 0; i < 3; ++i) out[placed][i] = world[i] / total;
+            out[placed][3] = 1.f - float(alpha[k]) / 255.f;
+            ++placed;
+        }
+        return placed;
+    }
+    return 0;
+}
+
+// A point under where the game has bloodied this character, chosen by `pick` weighted by how bloody each is;
+// false (at unchanged) when it has none.
+static bool gameSkinBloodAt(uintptr_t owner, float pick, float* at) {
+    const ULONGLONG now = GetTickCount64();
+    GameSkinBlood* entry = nullptr;
+    for (GameSkinBlood& g : gameSkinBloods) if (g.owner == owner) entry = &g;
+    if (!entry) {
+        entry = &gameSkinBloods[gameSkinBloodNext];
+        gameSkinBloodNext = (gameSkinBloodNext + 1) % 16;
+        *entry = {};
+        entry->owner = owner;
+    }
+    if (!entry->tick || now - entry->tick > 500) {
+        entry->tick = now;
+        entry->count = gameSkinBloodRead(owner, entry->at);
+        gameSkinBloodReads.fetch_add(1, std::memory_order_relaxed);
+        if (entry->count) gameSkinBloodPoints.fetch_add(entry->count, std::memory_order_relaxed);
+    }
+    if (!entry->count) return false;
+    float total = 0.f;
+    for (unsigned k = 0; k < entry->count; ++k) total += entry->at[k][3];
+    float target = (pick - std::floor(pick)) * total;
+    for (unsigned k = 0; k < entry->count; ++k) {
+        target -= entry->at[k][3];
+        if (target <= 0.f || k + 1 == entry->count) {
+            memcpy(at, entry->at[k], 12);
+            return true;
+        }
+    }
+    return false;
 }
 
 // ---- 2. bake ----------------------------------------------------------------------------------

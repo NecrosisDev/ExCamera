@@ -51,6 +51,18 @@ duplicates what this handler already does.
     gravity; otherwise the blade's origin.
   - **Replaced:** our earlier mass budget is gone.
 
+- **Body blood, for pools (in use).** The game's own skin blood is read from the character's _SKIN mesh, every
+  half second per character, read-only (CPU memory, no GL), on the render thread
+  (wounds_bake.inl gameSkinBloodRead).
+  - **Colour data:** attribute 0x100's data, or the node's +0x378. It is read only when attribute 0 is the
+    positions (format & 0xFFFF == 1) with the same count, so a colour's index is a position's, as 0x62DA0 pairs
+    them.
+  - **Which vertices:** up to 8 of the bloodiest (alpha below 200), posed as the skin draws them: each weight's
+    bone transform × its inverse bind × the source position.
+  - **Where pools go:** a bleeding wound's pool marks are laid under one of those points, chosen by bloodiness;
+    otherwise under the wound. Of the raw and sector readings, the one nearest the wound within 3 m is used.
+  - **Counts:** game_skin_blood_reads and game_skin_blood_points.
+
 ## The weapon stain pass: when it runs, and why it flickered under our camera
 
 - **When it runs** (traced by the render thread). 0x1005B6 registers the stain callback 0x100820 into the
