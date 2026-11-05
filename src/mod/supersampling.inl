@@ -30,14 +30,40 @@ static thread_local SupersampleRenderScope supersampleRenderScope;
 static thread_local SupersampleTerrainScope supersampleTerrainScope;
 static std::atomic<unsigned> supersampleScopes{0}, supersampleCorrections{0},
     supersampleTerrainCorrections{0}, supersampleFaults{0};
+// Why a main-viewport frame was not admitted (the whole frame then draws without the mod's view effects: no wound
+// pass, floor blood, finishing, occlusion or depth of field): cameraLock held elsewhere, or which test failed.
+enum SupersampleReject : unsigned {
+    rejectLockBusy, rejectNotOurs, rejectParked, rejectRestoreUnknown, rejectOwner, rejectIdentity, rejectNotFinite,
+    rejectCount
+};
+static const char* const supersampleRejectNames[rejectCount] = {
+    "camera lock busy", "camera not ours (pending restore unset)", "parked", "restoration unknown",
+    "camera owner changed", "player or scene changed", "stock near or pose not finite"};
+static std::atomic<unsigned> supersampleRejects[rejectCount]{};
 
 inline bool admitSupersampleRender(uintptr_t viewport, SupersampleRenderScope& scope) {
-    if (!viewport || !TryAcquireSRWLockShared(&cameraLock)) return false;
+    if (!viewport) return false;
+    const bool main = viewport == *(uintptr_t*)gameAt(fp::sig::mainViewport);
+    // cameraLock is held exclusively by the camera update (navProfileBody) and the swap; in the playtest both ran on
+    // the render thread (nav_thread == swap_thread), so a busy lock here is not expected. Counted if it happens.
+    const bool locked = TryAcquireSRWLockShared(&cameraLock);
+    if (!locked) {
+        if (main) supersampleRejects[rejectLockBusy].fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     bool admitted = false;
     __try {
         uintptr_t view = 0, camera = 0;
         currentCamera(view, camera);
-        if (viewport == *(uintptr_t*)gameAt(fp::sig::mainViewport) &&
+        if (main) {
+            const unsigned reject = !InterlockedCompareExchange(&pendingRestore, 0, 0) ? rejectNotOurs
+                                  : park.active ? rejectParked
+                                  : InterlockedCompareExchange(&restorationUnknown, 0, 0) ? rejectRestoreUnknown
+                                  : !sameOwner(view, camera) ? rejectOwner
+                                  : !savedRoot || !savedScene || identityChanged() ? rejectIdentity : rejectCount;
+            if (reject != rejectCount) supersampleRejects[reject].fetch_add(1, std::memory_order_relaxed);
+        }
+        if (main &&
             InterlockedCompareExchange(&pendingRestore, 0, 0) && !park.active &&
             !InterlockedCompareExchange(&restorationUnknown, 0, 0) && sameOwner(view, camera) &&
             savedRoot && savedScene && !identityChanged()) {
@@ -58,6 +84,8 @@ inline bool admitSupersampleRender(uintptr_t viewport, SupersampleRenderScope& s
                 scope.owned = true;
                 InterlockedIncrement(&renderScopesInFlight);
                 admitted = true;
+            } else {
+                supersampleRejects[rejectNotFinite].fetch_add(1, std::memory_order_relaxed);
             }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {

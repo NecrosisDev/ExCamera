@@ -937,6 +937,18 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.fixed("fire_quality", fireQuality.load(std::memory_order_relaxed), 2);
     j.fixed("fire_faults", float(fireFaults.load(std::memory_order_relaxed)), 0);
     j.unum("view_effects_draws", viewEffectsDraws.load());
+    j.unum("view_effects_missed_swaps", viewEffectsMissedSwaps.load());
+    {   // Skip reasons, every time one was given, and the reasons standing at presented frames that had no pass.
+        auto list = [](const ViewSkipCount* table) {
+            std::string text;
+            for (unsigned k = 0; k < 16; ++k)
+                if (const char* why = table[k].why.load())
+                    text += std::string(text.empty() ? "" : "; ") + why + ": " + std::to_string(table[k].count.load());
+            return text;
+        };
+        j.str("view_effects_skip_counts", list(viewSkipCounts).c_str());
+        j.str("view_effects_missed_reasons", list(viewMissedReasons).c_str());
+    }
     // Render audit (--dev, [Dev] RenderAudit=1): all zero when off or clean; see render-audit.log.
     j.boolean("render_audit", renderAuditActive.load(std::memory_order_relaxed));
     j.unum("render_audit_passes", renderAuditPasses.load());
@@ -1037,6 +1049,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("terrain_matrices", supersampleTerrainCorrections.load())
         .unum("faults", supersampleFaults.load())
         .end();
+    {   // Main-viewport frames not admitted, by reason (supersampling.inl SupersampleReject).
+        std::string text;
+        for (unsigned k = 0; k < rejectCount; ++k)
+            if (const unsigned n = supersampleRejects[k].load())
+                text += std::string(text.empty() ? "" : "; ") + supersampleRejectNames[k] + ": " + std::to_string(n);
+        j.str("frame_scope_rejects", text.c_str());
+    }
     j.unum("body_wear", bodyWearNodes.load());
     j.unum("hidden_body", hiddenBodyNodes.load());
     j.str("view", viewMode.load() == 1 ? "third" : viewMode.load() == 2 ? "to-overhead" : "first");
