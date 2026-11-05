@@ -50,8 +50,8 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 | Armour and clothing detail (`View/ArmourDetail`) | Same as held items, for worn pieces | as above | as above | as above (same gates) |
 | World object detail (`View/ObjectDetail`) | Same, for nearby placed objects | as above | as above | as above (same gates) |
 | Level detail (`View/LevelDetail`) | People within 4 m (`worldObject::characters`); the two nearest lamps (light-node fields) | Roster WITNESSED; lamps UNPROVEN | audit clean | Surface detail PROVEN (image only, OURS). **Lamps gated off** |
-| Draw distance (`View/DrawDistance`) | Writes cull marks on sector meshes (`sector::meshes`), camera pose, sector origin | WITNESSED (`camera::pose`, `sector::meshes`, `sector::origin`) | no GL | WITNESSED; meaning not re-derived. Audit thread |
-| Lights per object (`View/LightsPerObject`) | Writes `lightEntry::active` on per-node light lists (`sceneNode::lights`) and restores at the swap | WITNESSED (lights group) | no GL | WITNESSED; meaning not re-derived. Audit thread |
+| Draw distance (`View/DrawDistance`) | Clears the frustum bits on sector meshes | PROVEN (0x58EFB; see "Witnessed fields re-checked") | no GL | PROVEN |
+| Lights per object (`View/LightsPerObject`) | Writes `lightEntry::active` on per-node light lists and restores at the swap | PROVEN (0x26F420; see "Witnessed fields re-checked") | no GL | PROVEN |
 | Finger poses (`View/FingerPoses`, `FingerPosesOthers`) | Bone register 0xD39B0 and skin arrays | `skin+0x10/+0x18/+0x20`, `node+0x17C` PROVEN in 0xD39B0 | no GL | Data PROVEN; pose choice OURS; animation side for the audit thread |
 | Hurt and eye adjustment (`View/ConditionEffects`, was "Hurt and winded") | Player health `character+0xD58` over `+0x103C` | PROVEN: the HUD's left bar fills to `+0xD70` (0x13E327), which 0x17A100 writes from `+0xD6C` and `+0xD58` (0x17A1DA-0x17A1F7), over `+0x103C`; `+0xD5C` is the bar's pale second layer (0x13E35E). This branch now reads `+0xD58` (named `postureReadiness` here; `health` in the playtest after 8389d19) | n/a | Hurt PROVEN. **Winded WRONG, removed** (see below). Eye adjustment reads the image only (OURS) |
 | Smooth lighting (`View/SmoothLighting`) | glShaderSource hook: rewrites a game shader only if its text declares `uniform sampler3D VoxelGI` and calls `texture(VoxelGI,` | The match is on the game's own shader text; the rewrite must compile or the original is kept (`rewriteCompiles`) | n/a | PROVEN (by text match) |
@@ -59,7 +59,7 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 | Wound skins (part of Wounds) | Skin mesh (above); texture set `material+0x100`, `set+0x10/+0x18/+0x20` on units 0/1/2; GL size and format queried on the copy | Set and units PROVEN (0x200770); unit roles (diffuse/spec/normal) from the shading review, not re-derived | bake restores its own snapshot; not per-pass audited | PROVEN for the data; unit roles UNPROVEN in this audit |
 | Stone skin | Same texture set and units | as above | as above | as wound skins |
 | Wound debug highlight (`View/WoundDebug`) | none (shader colour) | OURS | n/a | n/a |
-| Draw far rooms (`View/FarRooms`) | level, room and sector fields (farRooms group) | WITNESSED (2026-11-04 hardening), hash-gated | no GL | WITNESSED; audit thread |
+| Draw far rooms (`View/FarRooms`) | level, room and sector fields (farRooms group) | PROVEN (0x143C20, 0x5B170; see "Witnessed fields re-checked") | no GL | PROVEN |
 | VR effects (`VR/Effects`) | Runs AO and SSR per eye in the eye framebuffers | Same as AO/SSR; VR contracts whole-function | eye path not audited in game | PROVEN data; eye path not run in this audit |
 | Mod messages (no row) | Engine log above | PROVEN | n/a | PROVEN |
 
@@ -186,9 +186,17 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
     accepts the mesh's sphere at `mesh+0x20` (0x58EEE-0x58EFB). Draw distance clears exactly those bits on the
     sector's meshes (`sector+0x1D0` list, last index `+0x1C8`; both witnessed in pickRay), as if outside the
     view. `sceneNode::bodyPart +0x160` and `bodyPart::character +0x580` are witnessed by their writers.
-  - **Far rooms: WITNESSED and hash-gated**; meaning not re-derived in this audit.
+  - **Far rooms: PROVEN.**
+    - The room sort 0x143C20 walks `level+0x1C` rooms (0x144205) in entries of 0x54 bytes at `level+0x20`. When
+      an entry's state `+0x30` differs from its cached `+0x2C`, it sets the room's sector (`entry+0x34`) `+0x318`
+      to 2 for state 1, 1 for state 2 and 0 otherwise (0x14423A-0x14427A).
+    - Its neighbour walk reads `entry+0x18` (edge count) and `entry+0x1C` (8-byte pairs, edge index at `+4`),
+      and maps an edge to a room through `level+0x28`, numbered from 1 (0x143DD8-0x143E9C).
+    - The render walk in 0x5B170 reads `+0x318`: 0 clears the sector's mesh masks (not drawn, 0x5B439-0x5B470);
+      2 walks the sector's portals (`+0x268`, 0x58 bytes, neighbour sector at `+0x40`) and draws through those
+      into sectors with 1 (0x5B49B-0x5B56E).
+    - That is exactly the layout view.inl reads and the meaning it relies on.
 
 ## Not yet proven, not gated (for the audit thread)
 
 - Unit roles of the skin texture set (0 diffuse, 1 specular, 2 normal): from the shader review, not re-derived.
-- Far rooms: offsets witnessed and hash-gated; meaning not re-derived in this audit.
