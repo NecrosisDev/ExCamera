@@ -887,7 +887,7 @@ static bool crouchAllowedReadable(uintptr_t root, bool rootReadable) {
     const unsigned state = *reinterpret_cast<unsigned*>(root + field::character::stateFlags);
     return !*reinterpret_cast<unsigned char*>(root + field::character::combatStance) &&
            !(state & (0xac0 | 0x40204 | 0xa00)) &&
-           !(*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100) && !dialogueOpen();
+           state != fp::deadState && !dialogueOpen(); // the mask above: NOT PROVEN (GAME-FIELDS-AUDIT.md)
 }
 static bool crouchAllowed(uintptr_t root) {
     return crouchAllowedReadable(root, root && readable(root, 0x1300));

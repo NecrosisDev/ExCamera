@@ -989,22 +989,25 @@ inline bool gameUsesKey(unsigned key, const unsigned (&bindings)[N]) {
 }
 // Why a kick or jump key press played nothing (motions.inl): counted in the status file, and for the reasons a
 // player can act on, said in a short notice. The checks are motionPlayable's, in its order, then the kick's stance.
-enum class MotionRefusal { unavailable, fault, tooSoon, notPlayer, cursorFree, busy, notUpright, dead, gameKey, count };
+enum class MotionRefusal { unavailable, fault, tooSoon, notPlayer, cursorFree, busy, dead, otherState, balance, gameKey, count };
 inline constexpr const char* motionRefusalNames[] = {"unavailable", "fault", "too_soon", "not_player", "cursor_free",
-                                                     "busy",        "moving", "dead",     "game_key"};
+                                                     "busy",        "dead",  "state",    "balance",    "game_key"};
 static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(MotionRefusal::count));
-// The refusal for a player already found eligible as a character (root readable, the controlled one); `none`
-// (count) when the clip may play. state: the character's state flags, 0 or 8 is upright and free.
-// planted: both feet on the ground (state 0 only; 8 is upright but not both feet), for the kick: kicking from one
-// foot leaves nothing to stand on.
-// The game plays neither clip itself, so these gates are ours and only physical: no stamina, balance or stance
-// requirement (an earlier gate read balance +10B8 as if it were stamina). busy: an attack, kick or jump already owns
-// the motion; state: the knock-down/fall/get-up bits (0x200/0x800... in +DF4) make the game drive the body itself.
-inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, bool dead, bool planted = false) {
+// The refusal for a player already found eligible as a character (the root readable, the controlled one); none
+// (count) when the clip may play.
+// The gates (decoded in docs/GAME-FIELDS-AUDIT.md). busyMotion: character+9B8 is an attack the game's own starts
+// play (5 + n at 157240, 8 + n at 157700, 0xB at 157DC0, 0xC at 157BF0), the kick (0xD) or the jump (0x12).
+// state: character+DF4, a value: 0x800 is dead (156480 at 1564D6); anything but the base 0 is one of the game's
+// own reactions (8 while defending or in motion 4, 16B168/16B1B1; 0x8000 while motion 0xD plays, 16B09C).
+// balance: below balanceMax - 0.05 the game itself starts its recover motion (169B99 -> 179810), so a kick or jump
+// would be cut at once. No health, magic or stance requirement.
+inline constexpr unsigned deadStateValue = 0x800;
+inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, float balance, float balanceMax) {
     if (cursorFree) return MotionRefusal::cursorFree;
     if (busyMotion) return MotionRefusal::busy;
-    if (state != 0 && (state != 8 || planted)) return MotionRefusal::notUpright;
-    if (dead) return MotionRefusal::dead;
+    if (state == deadStateValue) return MotionRefusal::dead;
+    if (state != 0) return MotionRefusal::otherState;
+    if (!(std::isfinite(balance) && std::isfinite(balanceMax) && balance >= balanceMax - 0.05f)) return MotionRefusal::balance;
     return MotionRefusal::count;
 }
 // The notice for a refused key press, or nullptr where there is nothing to tell (too soon after the last one,
@@ -1014,9 +1017,11 @@ inline const wchar_t* motionRefusalNotice(bool jump, MotionRefusal r) {
     case MotionRefusal::busy:
         return jump ? L"Jump: not while you are attacking, kicking or already jumping."
                     : L"Kick: not while you are attacking, jumping or already kicking.";
-    case MotionRefusal::notUpright:
-        return jump ? L"Jump: not while you are down, falling or getting up."
-                    : L"Kick: stand on both feet first (not while down, falling or getting up).";
+    case MotionRefusal::otherState:
+        return jump ? L"Jump: not while the game has you recovering, defending or in another reaction."
+                    : L"Kick: not while the game has you recovering, defending or in another reaction.";
+    case MotionRefusal::balance:
+        return jump ? L"Jump: wait until you've got your balance back." : L"Kick: wait until you've got your balance back.";
     case MotionRefusal::cursorFree:
         return jump ? L"Jump: not while the pointer is free (a menu, the inventory or Cursor Look)."
                     : L"Kick: not while the pointer is free (a menu, the inventory or Cursor Look).";

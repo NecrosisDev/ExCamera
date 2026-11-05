@@ -34,15 +34,17 @@ inline constexpr size_t facing = 0xCFC;         // float[3]
 inline constexpr size_t behaviour = 0xD40;      // its behaviour object (namespace behaviour)
 // Vitals, as the HUD (13E0F0) draws them. Left bar (13C880): health +D58 (drawn through its frame-interpolated
 // copy +D70 = lerp(+D6C, +D58), 17A100) in yellow, up to healthRestorable +D5C in pale, the rest of healthMax
-// +103C dark (lost). Right, blue bar (13C470): stamina +D74 up to staminaCeiling +D78, both 0..1.
+// +103C dark (lost). Right, blue bar (13C470): magic +D74 up to magicCeiling +D78, both 0..1.
 inline constexpr size_t health = 0xD58;          // float: current health; B7560 gates posture on > 0.01
 inline constexpr size_t healthRestorable = 0xD5C; // float: how far health can still recover; healing (1A0C50) raises it
-inline constexpr size_t stamina = 0xD74, staminaCeiling = 0xD78; // floats 0..1: the blue bar; spent through 17A640
+// Magic: spent through 17A640 by the power code ("PowerUsed", "Error charging blast effect." in 232060, 236620,
+// 23CC30), refilled toward magicCeiling by 17A6B0. The game keeps no separate stamina or exertion value.
+inline constexpr size_t magic = 0xD74, magicCeiling = 0xD78; // floats 0..1: the blue bar
 inline constexpr size_t healthMax = 0x103C;      // float: the whole health bar
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
 inline constexpr size_t stateFlags =
     0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
-inline constexpr size_t lifeFlags = 0xDF8; // 0x100: dead
+inline constexpr size_t lifeFlags = 0xDF8; // 0x100: a spell-hit stun (17B100 sets, 169B8A clears); NOT death
 inline constexpr size_t aimOpponent = 0xE38; // native selected combat opponent
 inline constexpr size_t contextualTarget = 0xE50;
 inline constexpr size_t handParts = 0xE78;   // [2] body parts

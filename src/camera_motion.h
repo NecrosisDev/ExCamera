@@ -468,18 +468,19 @@ inline void headingToward(const float* body, const float* point, float yaw, floa
         d[2] = std::cos(yaw);
     }
 }
-// Down, for the third-person follow: the game's own state bits say so (knocked down, falling, getting up;
-// dead), held 0.3 s after they clear so getting up does not flicker. It was a height gap between the eye and
-// the character's reference position, which that position's place on the body made true while standing.
-inline constexpr unsigned knockdownStateBits = 0xac0 | 0x40204 | 0xa00, deadLifeBit = 0x100;
+// Dead: character+DF4 is a state value, and the death routine 156480 writes 0x800 (1564D6; also 167EDF). Proven
+// (docs/GAME-FIELDS-AUDIT.md). character+DF8 bit 0x100 is not death: 17B100 sets it for a spell-hit stun.
+inline constexpr unsigned deadState = 0x800;
+// Down, for the third-person follow: held 0.3 s after it clears so getting up does not flicker. NOT PROVEN: the mask
+// below treats the state value as bits; only 0x800 (dead) is decoded. Listed in docs/GAME-FIELDS-AUDIT.md.
+inline constexpr unsigned knockdownStateBits = 0xac0 | 0x40204 | 0xa00;
 inline constexpr unsigned long long knockdownReleaseMs = 300;
 struct KnockdownFollow {
     bool down = false;
     unsigned long long clearSince = 0;
 };
-inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned lifeFlags,
-                          unsigned long long ms) {
-    if ((stateFlags & knockdownStateBits) || (lifeFlags & deadLifeBit)) {
+inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned long long ms) {
+    if ((stateFlags & knockdownStateBits) || stateFlags == deadState) {
         k.down = true;
         k.clearSince = 0;
         return true;
@@ -497,7 +498,9 @@ inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned life
 // back to first once the character has been up for knockdownViewSettleMs. Never for a death, and a death that
 // follows such a switch goes back to first person at once, so the next life does not start in third. Never
 // against the player: an F6 during the knockdown keeps the view it chose.
-// f6Presses is a counter of F6 view changes; the caller applies the returned step.
+// f6Presses is a counter of F6 view changes; the caller applies the returned step. down and dead come from the
+// caller: dead is stateFlags == deadState; no knocked-down state value is proven yet, so the mod passes down = false
+// and the switch stays inert (docs/GAME-FIELDS-AUDIT.md).
 inline constexpr unsigned long long knockdownViewSettleMs = 400;
 struct KnockdownView {
     bool down = false, switched = false, manual = false;
@@ -505,17 +508,17 @@ struct KnockdownView {
     unsigned presses = 0;
 };
 enum class KnockdownViewStep { none, toThird, toFirst };
-inline KnockdownViewStep knockdownViewStep(KnockdownView& k, bool enabled, int mode, unsigned stateFlags,
-                                           unsigned lifeFlags, unsigned f6Presses, unsigned long long ms) {
+inline KnockdownViewStep knockdownViewStep(KnockdownView& k, bool enabled, int mode, bool down, bool dead,
+                                           unsigned f6Presses, unsigned long long ms) {
     const bool pressed = f6Presses != k.presses;
     k.presses = f6Presses;
-    if (lifeFlags & deadLifeBit) {
+    if (dead) {
         const bool back = k.switched && !pressed && mode == 1;
         k = KnockdownView{};
         k.presses = f6Presses;
         return back ? KnockdownViewStep::toFirst : KnockdownViewStep::none;
     }
-    if (stateFlags & knockdownStateBits) {
+    if (down) {
         k.upSince = 0;
         if (!k.down) {
             k.down = true;

@@ -1,5 +1,5 @@
 // The Animated kick (docs/MIXAMO-KICK-DESIGN.md), every build. The kick key still plays the game's own kick
-// (motions.inl), so its gates, stamina, damage and reactions stay native; while that clip runs, every physics
+// (motions.inl), so its gates, damage and reactions stay native; while that clip runs, every physics
 // step's motor targets are blended toward a baked motion-captured kick (kick_clip.h): the whole body, or the hips
 // and legs only, by what the player holds (fp::kick::classRules). The targets go in where the VR body driver puts
 // its own: the pose builder's affine composition (xrCompose) at its three reviewed call sites, for one planned part
@@ -13,7 +13,7 @@ using KickCompose = void (*)(float*, float*, const float*);
 static KickCompose kickComposeOriginal = nullptr;
 static bool kickComposeChained = false; // the VR drive owns the xrCompose detour and hands its fall-through here
 static std::atomic<bool> kickDriveReady{false}, kickDriveFault{false};
-static std::atomic<unsigned> kickAnimated{0}, kickBlendedIn{0}, kickBlendedOut{0}, kickCutShort{0}, kickFell{0}, kickSteps{0},
+static std::atomic<unsigned> kickAnimated{0}, kickBlendedIn{0}, kickBlendedOut{0}, kickCutShort{0}, kickStaggered{0}, kickSteps{0},
     kickRows{0}, kickRefusedGraph{0}, kickRefusedHeading{0}, kickNativeLegAgree{0}, kickNativeLegDisagree{0}, kickHeldArms{0};
 static std::atomic<int> kickLastClip{-1}, kickLastClass{-1}, kickLastMirror{-1}, kickLastMode{-1}, kickNativePeakMilli{-1};
 static constexpr float kickUnitsPerMetre = 100.f; // game units per metre, as the VR pose maths assumes
@@ -147,14 +147,15 @@ static void kickRunEnd(KickRun& run) {
     run.fell = fell;
     run.endedAt = GetTickCount64();
 }
-// A fall during an animated kick, or within 1.5 s after it: the state flags leave upright (0 or 8).
+// A stagger during an animated kick, or within 1.5 s after it: the game plays its recover motion 3, as it does when
+// balance runs low (169C5C) or at death (17B26A). (The state word is 0x8000 throughout motion 0xD, 16B09C, so it
+// cannot tell a fall.)
 static void kickWatchFall(uintptr_t root, KickRun& run) {
     if (!run.driving || run.fell) return;
     if (!run.active && GetTickCount64() - run.endedAt > 1500) { run.driving = false; return; }
-    const unsigned state = *reinterpret_cast<unsigned*>(root + field::character::stateFlags);
-    if (state != 0 && state != 8) {
+    if (*reinterpret_cast<int*>(root + field::character::motion) == 3) {
         run.fell = true;
-        kickFell.fetch_add(1, std::memory_order_relaxed);
+        kickStaggered.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

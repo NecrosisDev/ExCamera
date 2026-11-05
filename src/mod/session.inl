@@ -1077,7 +1077,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
             .unum("blended_in", kickBlendedIn.load())
             .unum("blended_out", kickBlendedOut.load())
             .unum("cut_short", kickCutShort.load())
-            .unum("fell", kickFell.load())
+            .unum("staggered", kickStaggered.load())
             .unum("steps", kickSteps.load())
             .unum("rows", kickRows.load())
             .unum("held_arm_steps", kickHeldArms.load())

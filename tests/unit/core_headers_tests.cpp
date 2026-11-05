@@ -157,19 +157,19 @@ bool input_game_binding_keys() {
 bool input_motion_refusals() {
     using R = fp::MotionRefusal;
     constexpr R play = R::count;
-    // Standing and free plays, whatever the stamina, balance or stance (the game asks none of them).
-    CHECK(fp::motionGate(false, false, 0, false) == play);
-    CHECK(fp::motionGate(false, false, 8, false) == play);
+    // The base state with balance plays, whatever the health, magic or stance (the game asks none of them).
+    CHECK(fp::motionGate(false, false, 0, 1.f, 1.f) == play);
+    CHECK(fp::motionGate(false, false, 0, .96f, 1.f) == play);
     // Each reason, in the checks' order.
-    CHECK(fp::motionGate(true, true, 4, true) == R::cursorFree);
-    CHECK(fp::motionGate(false, true, 4, true) == R::busy);
-    CHECK(fp::motionGate(false, false, 4, true) == R::notUpright);
-    CHECK(fp::motionGate(false, false, 0, true) == R::dead);
-    // The kick wants both feet planted: state 8 (upright, one foot) refuses it, 0 plays.
-    CHECK(fp::motionGate(false, false, 8, false, true) == R::notUpright);
-    CHECK(fp::motionGate(false, false, 0, false, true) == play);
+    CHECK(fp::motionGate(true, true, 0x800, 0.f, 1.f) == R::cursorFree);
+    CHECK(fp::motionGate(false, true, 0x800, 0.f, 1.f) == R::busy);
+    CHECK(fp::motionGate(false, false, 0x800, 0.f, 1.f) == R::dead);
+    CHECK(fp::motionGate(false, false, 8, 0.f, 1.f) == R::otherState);
+    CHECK(fp::motionGate(false, false, 0x8000, 1.f, 1.f) == R::otherState);
+    CHECK(fp::motionGate(false, false, 0, .9f, 1.f) == R::balance); // below max - 0.05 the game starts its recover
+    CHECK(fp::motionGate(false, false, 0, NAN, 1.f) == R::balance);
     // Notices: something to do for the player's reasons, silence for the others; kick and jump each name theirs.
-    for (R r : {R::busy, R::notUpright, R::cursorFree, R::gameKey, R::unavailable, R::fault}) {
+    for (R r : {R::busy, R::otherState, R::balance, R::cursorFree, R::gameKey, R::unavailable, R::fault}) {
         CHECK(fp::motionRefusalNotice(false, r) != nullptr);
         CHECK(std::wcsncmp(fp::motionRefusalNotice(false, r), L"Kick", 4) == 0);
         CHECK(std::wcsncmp(fp::motionRefusalNotice(true, r), L"Jump", 4) == 0);
@@ -177,7 +177,7 @@ bool input_motion_refusals() {
     for (R r : {R::tooSoon, R::dead, R::notPlayer, R::count})
         CHECK(fp::motionRefusalNotice(false, r) == nullptr && fp::motionRefusalNotice(true, r) == nullptr);
     CHECK(std::wcsstr(fp::motionRefusalNotice(false, R::gameKey), L"Alt") != nullptr);
-    CHECK(std::strcmp(fp::motionRefusalNames[size_t(R::notUpright)], "moving") == 0);
+    CHECK(std::strcmp(fp::motionRefusalNames[size_t(R::otherState)], "state") == 0 && std::strcmp(fp::motionRefusalNames[size_t(R::balance)], "balance") == 0);
     return true;
 }
 
@@ -396,35 +396,35 @@ bool camera_motion_look_follow_framing() {
 
 bool camera_motion_knockdown_view() {
     using Step = fp::KnockdownViewStep;
-    const unsigned knocked = 0x40, dead = fp::deadLifeBit;
+    const bool knocked = true, dead = true;
     // Down in first person: third person at once, first person again after the settle, not before.
     fp::KnockdownView k;
-    CHECK(fp::knockdownViewStep(k, true, 0, 0, 0, 0, 1000) == Step::none);
-    CHECK(fp::knockdownViewStep(k, true, 0, knocked, 0, 0, 1100) == Step::toThird);
-    CHECK(fp::knockdownViewStep(k, true, 1, knocked, 0, 0, 1200) == Step::none);
-    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2000) == Step::none);
-    CHECK(fp::knockdownViewStep(k, true, 1, knocked, 0, 0, 2100) == Step::none); // down again: no flicker
-    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2200) == Step::none);
-    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2200 + fp::knockdownViewSettleMs - 1) == Step::none);
-    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2200 + fp::knockdownViewSettleMs) == Step::toFirst);
-    CHECK(fp::knockdownViewStep(k, true, 0, 0, 0, 0, 5000) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 0, false, false, 0, 1000) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 0, knocked, false, 0, 1100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(k, true, 1, knocked, false, 0, 1200) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, false, false, 0, 2000) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, knocked, false, 0, 2100) == Step::none); // down again: no flicker
+    CHECK(fp::knockdownViewStep(k, true, 1, false, false, 0, 2200) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, false, false, 0, 2200 + fp::knockdownViewSettleMs - 1) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, false, false, 0, 2200 + fp::knockdownViewSettleMs) == Step::toFirst);
+    CHECK(fp::knockdownViewStep(k, true, 0, false, false, 0, 5000) == Step::none);
 
     // Off, or already in third person: nothing.
     fp::KnockdownView off;
-    CHECK(fp::knockdownViewStep(off, false, 0, knocked, 0, 0, 100) == Step::none);
+    CHECK(fp::knockdownViewStep(off, false, 0, knocked, false, 0, 100) == Step::none);
     fp::KnockdownView third;
-    CHECK(fp::knockdownViewStep(third, true, 1, knocked, 0, 0, 100) == Step::none);
-    CHECK(fp::knockdownViewStep(third, true, 1, 0, 0, 0, 1000) == Step::none);
-    CHECK(fp::knockdownViewStep(third, true, 1, 0, 0, 0, 2000) == Step::none);
+    CHECK(fp::knockdownViewStep(third, true, 1, knocked, false, 0, 100) == Step::none);
+    CHECK(fp::knockdownViewStep(third, true, 1, false, false, 0, 1000) == Step::none);
+    CHECK(fp::knockdownViewStep(third, true, 1, false, false, 0, 2000) == Step::none);
 
     // F6 during the knockdown is the player's choice: no switch back, and no switch again.
     fp::KnockdownView manual;
-    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 4, 100) == Step::toThird);
-    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 200) == Step::none); // F6 back to first
-    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 300) == Step::none);
-    CHECK(fp::knockdownViewStep(manual, true, 0, 0, 0, 5, 400) == Step::none);
-    CHECK(fp::knockdownViewStep(manual, true, 0, 0, 0, 5, 2000) == Step::none);
-    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 3000) == Step::toThird); // a new knockdown
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, false, 4, 100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, false, 5, 200) == Step::none); // F6 back to first
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, false, 5, 300) == Step::none);
+    CHECK(fp::knockdownViewStep(manual, true, 0, false, false, 5, 400) == Step::none);
+    CHECK(fp::knockdownViewStep(manual, true, 0, false, false, 5, 2000) == Step::none);
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, false, 5, 3000) == Step::toThird); // a new knockdown
 
     // Death never switches to third person.
     fp::KnockdownView death;
@@ -433,15 +433,15 @@ bool camera_motion_knockdown_view() {
     // A death after the switch goes back to first person at once (the next life must not start in third),
     // and only once.
     fp::KnockdownView fell;
-    CHECK(fp::knockdownViewStep(fell, true, 0, knocked, 0, 0, 100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(fell, true, 0, knocked, false, 0, 100) == Step::toThird);
     CHECK(fp::knockdownViewStep(fell, true, 1, knocked, dead, 0, 200) == Step::toFirst);
     CHECK(fp::knockdownViewStep(fell, true, 0, knocked, dead, 0, 300) == Step::none);
-    CHECK(fp::knockdownViewStep(fell, true, 0, 0, 0, 0, 2000) == Step::none);
+    CHECK(fp::knockdownViewStep(fell, true, 0, false, false, 0, 2000) == Step::none);
     // ...but not when the player chose third person with F6 during the knockdown.
     fp::KnockdownView chose;
-    CHECK(fp::knockdownViewStep(chose, true, 0, knocked, 0, 0, 100) == Step::toThird);
-    CHECK(fp::knockdownViewStep(chose, true, 0, knocked, 0, 1, 150) == Step::none); // F6 to first
-    CHECK(fp::knockdownViewStep(chose, true, 1, knocked, 0, 2, 180) == Step::none); // F6 to third
+    CHECK(fp::knockdownViewStep(chose, true, 0, knocked, false, 0, 100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(chose, true, 0, knocked, false, 1, 150) == Step::none); // F6 to first
+    CHECK(fp::knockdownViewStep(chose, true, 1, knocked, false, 2, 180) == Step::none); // F6 to third
     CHECK(fp::knockdownViewStep(chose, true, 1, knocked, dead, 2, 200) == Step::none);
     return true;
 }
