@@ -1095,8 +1095,8 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
             float dn = NH * NH * (alpha2 - 1.0) + 1.0;
             float D = min(alpha2 / (3.14159 * dn * dn), 60.0);
             float incident = clamp(max(level, luma) / 0.2, 0.0, 2.5) * mix(0.7, 1.3, lightInfo.w);
-            vec3 gloss = lightColour * D * NL / (4.0 * NV * max(NL, 0.05) + 1e-3) * NL * fresnel * incident;
-            gloss += vec3(level) * min(fresnel - 0.02, 0.25) * 0.5;
+            vec3 gloss = lightColour * D * NL / max(4.0 * NV * max(NL, 0.05), 1.0) * NL * fresnel * incident;
+            gloss = min(gloss, vec3(1.5)) + vec3(level) * min(fresnel - 0.02, 0.25) * 0.12;
             result += gloss * wet;
         }
     }
@@ -1547,7 +1547,7 @@ vec4 capAt(vec3 p) {
         float dn = NH * NH * (a2 - 1.0) + 1.0;
         float D = min(a2 / (3.14159 * dn * dn), 60.0);
         float fresnel = 0.02 + 0.98 * pow(1.0 - NV, 5.0);
-        lit += lightColour * D * NL / (4.0 * NV * max(NL, 0.05) + 1e-3) * NL * fresnel * level * 1.5;
+        lit += min(lightColour * D * NL / max(4.0 * NV * max(NL, 0.05), 1.0) * NL * fresnel * level * 1.5, vec3(1.5));
         if (abs(woundDebug - 1.0) < 0.5) lit = mix(lit, vec3(1.0, 0.3, 0.0) * 2.0, 0.6);
         return vec4(toStored(clamp(lit, 0.0, 1.0)), 1.0);
     }
@@ -1880,12 +1880,16 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
             float NH = max(dot(N, H), 0.0), NL = max(dot(N, L), 0.0);
             float dn = NH * NH * (alpha2 - 1.0) + 1.0;
             float D = alpha2 / (3.14159 * dn * dn);
-            spec += colour * w * min(D, 60.0) * NL / (4.0 * NV * max(NL, 0.05) + 1e-3) * NL;
+            // The geometry term's 1 / (4 NV NL) is held to at most 1: at grazing angles (NV near 0) it grew
+            // without bound and turned whole pools white.
+            spec += colour * w * min(D, 60.0) * NL / max(4.0 * NV * max(NL, 0.05), 1.0) * NL;
         }
-        lit += spec * fresnel * incident * wet;
-        // And the room it lies in: at grazing angles a wet surface mirrors the light around it. Kept faint, so
-        // the blood's colour stays solid from every angle (only the sharp highlights come and go).
-        lit += vec3(level) * min(fresnel - 0.02, 0.25) * 0.4 * wet;
+        // A highlight is at most 1.5 times the light's colour, and only where there is wet blood.
+        lit += min(spec * fresnel * incident, vec3(1.5)) * wet;
+        // And the room it lies in: at grazing angles a wet surface mirrors the light around it. Kept faint
+        // (at most 3% of the surface's light, below what thick blood itself returns), so the blood's colour
+        // stays solid from every angle and only the sharp highlights come and go.
+        lit += vec3(level) * min(fresnel - 0.02, 0.25) * 0.12 * wet;
     }
     return toStored(clamp(lit, 0.0, 1.0));
 }
