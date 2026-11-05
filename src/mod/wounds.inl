@@ -573,26 +573,6 @@ static void addWeaponBlood(const CharacterHitRecord& h) {
     weaponBloodTaken.fetch_add(1, std::memory_order_relaxed);
 }
 
-// A held mesh's blood for the held-item pass: item-space centre, and in w the amount (the fraction)
-// plus how wet it still is, drying over two minutes, as hundredths in the whole part (0 for none).
-static void weaponBloodFor(uintptr_t node, float (*out)[4]) {
-    for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) out[k][0] = out[k][1] = out[k][2] = out[k][3] = 0.f;
-    AcquireSRWLockShared(&woundLock);
-    const ULONGLONG now = GetTickCount64();
-    for (const WeaponBlood& w : weaponBlood) {
-        if (w.node != node) continue;
-        for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) {
-            if (!(w.amount[k] > 0.f)) continue;
-            const float wet = 1.f - (std::min)(float(now - w.born[k]) / 120000.f, 1.f);
-            out[k][0] = w.local[k][0];
-            out[k][1] = w.local[k][1];
-            out[k][2] = w.local[k][2];
-            out[k][3] = std::clamp(w.amount[k], 0.01f, 0.99f) + std::round(wet * 100.f);
-        }
-    }
-    ReleaseSRWLockShared(&woundLock);
-}
-
 static void takeHits() {
     if (originalBodyDamage) return;
     const CharacterHits fn = characterHitsExport();

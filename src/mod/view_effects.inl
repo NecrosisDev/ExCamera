@@ -907,7 +907,8 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
         float grind = 0.5 + 0.5 * sin(q.z * 55.0 + q.x * 18.0 + shared.a * 4.0);
         tint = mix(tint, tint * (1.2 + 0.15 * mix(1.0, grind, resolved(0.12, footprint))), honed);
     }
-)glsl" R"glsl(    // Blood from its hits, laid where a blade carries it: a thin film along the cutting edge that drew it,
+)glsl" R"glsl(    // (Off: no spots are uploaded, the game draws its own weapon blood; see heldMaskPoses' blood rows.)
+    // Blood from its hits, laid where a blade carries it: a thin film along the cutting edge that drew it,
     // dragged across the flat in streaks by the cut, beaded on the edge itself while wet, and run along the
     // steel towards the grip. All of it in the blade's own frame, so none of it moves with the view. It is a liquid layer over the metal (see the end of this
     // function), so it is shaped here and coloured, lit and made glossy there.
@@ -2820,7 +2821,7 @@ constexpr float playerRadiusCm = 25.f, playerTopBelowEyeCm = 13.f, playerBottomB
 constexpr unsigned heldSlotLimit = 40, heldItemLimit = 8;
 // light: world direction from the item to the game lights near it (unit) and how sure
 // that is (w, 0 = none found); lightColour: their weighted colour, brightest channel 1.
-// blood: the spots the wounds intake put on this mesh (weaponBloodFor), item space; w 0 for none.
+// blood: the spots the wounds intake put on this mesh (none uploaded now: the game draws its own weapon blood), item space; w 0 for none.
 // apparel: a body part's armour or clothing (the Armour row's strength), not a held item.
 // condition: wear, dirt and quality (0..1) from the item's record, and 1 when they were read.
 // object: a loose item or placed object (the World object row's strength).
@@ -5489,8 +5490,10 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                 memcpy(h.lightColour, cached.lightColour, sizeof h.lightColour);
                 memcpy(h.condition, cached.condition, sizeof h.condition);
             }
-            if (h.apparel) memset(h.blood, 0, sizeof h.blood);
-            else weaponBloodFor(node, h.blood);
+            // No blood of ours on a held item's surface: the game draws its own weapon blood stains (a second
+            // pass of the weapon, 0x1009C0-0x100CE3, "Error rendering weapon blood stains."), and ours fought it.
+            // Our drips and cast-off stay (wounds.inl WeaponBlood). The surface term below is unused while so.
+            memset(h.blood, 0, sizeof h.blood);
         }
     } __finally {
         for (int u = 0; u < 8; ++u) {
