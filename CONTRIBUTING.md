@@ -51,6 +51,8 @@ python build.py --dev --wx
 python build.py --openxr-sdk C:\path\to\openxr-sdk --package --wx
 ```
 
+Private VR tester ZIP: after the OpenXR package, `python tools/vr_tester.py --commit <sha>` writes `build/ExCamera-<FP_BUILD>-vr-tester.zip` (the same files plus `VR-TESTER-README.txt` from `docs/`). On GitHub, run the **VR tester build** workflow by hand; it builds `openxr_loader.dll` from the pinned OpenXR-SDK source and uploads the ZIP as a workflow artifact. It never runs on push and never creates a release.
+
 ### Staging, Locking, and Recovery
 
 - `build.py` coordinates concurrent invocations using `build/.build.lock`. If another build holds the lock, `build.py` exits immediately with a clear error rather than corrupting intermediate files.
