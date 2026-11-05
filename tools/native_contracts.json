@@ -1620,8 +1620,8 @@
     {
       "owner": "playerBehavior",
       "width": 4,
-      "provenance": "RDX is the character from behaviour local_10[5]. CVTSS2SD reads float character+10B8; the next scalar read takes character+10BC, which is multiplied by a threshold and compared with this current balance.",
-      "name": "character::stamina",
+      "provenance": "RDX is the character from behaviour local_10[5]. CVTSS2SD reads float character+10B8; the next scalar read takes character+10BC, which is multiplied by a threshold and compared with this current balance. Balance, not stamina: the HUD never draws it; the character update regenerates it to +10BC (169A4C) and plays recover motion 3 below it (169B99).",
+      "name": "character::balance",
       "instruction": "0xc286e",
       "value": "0x10b8",
       "window_offset": 2931,
@@ -1634,7 +1634,7 @@
       "owner": "playerBehavior",
       "width": 4,
       "provenance": "RDX remains the character from behaviour local_10[5]. CVTSS2SD reads float character+10BC directly after current balance +10B8, then native code scales it for the balance threshold comparison.",
-      "name": "character::staminaMax",
+      "name": "character::balanceMax",
       "instruction": "0xc2876",
       "value": "0x10bc",
       "window_offset": 2935,
@@ -2839,9 +2839,9 @@
     {
       "owner": "combatPosture",
       "width": 4,
-      "provenance": "R8 is the character loaded from behaviour+28 at B7560. CVTSS2SD reads float character+D58 before comparison with double 0.01. This is the native posture readiness gate; no more specific physiological interpretation is assumed.",
+      "provenance": "R8 is the character loaded from behaviour+28 at B7560. CVTSS2SD reads float character+D58 and compares it with 0.01. +D58 is the current health: 17A100 interpolates +D70 = lerp(+D6C, +D58) and the HUD (13E0F0 -> 13C880) draws +D70 / +103C as the yellow part of the health bar.",
       "optional_group": "manualDefense",
-      "name": "character::postureReadiness",
+      "name": "character::health",
       "instruction": "0xb7576",
       "value": "0xd58",
       "window_offset": 14,
@@ -4476,7 +4476,7 @@
       "provenance": "Second copy in the same reviewed window: view+E0 receives the 4x4 drawing projection."
     },
     {
-      "name": "character::health",
+      "name": "character::healthRestorable",
       "value": "0xd5c",
       "owner": "healthFraction",
       "instruction": "0x185a17",
@@ -4487,7 +4487,7 @@
       "displacement_offset": 4,
       "displacement_bytes": 4,
       "optional_group": "viewEffects",
-      "provenance": "FUN_100185A00 (RBX = character) divides float health +D5C by its maximum +103C and compares the fraction with a low-health threshold; FUN_10014F180 computes the same fraction. KB: health +D5C, maximum +103C; witnesses identical in the Hellmode build."
+      "provenance": "FUN_100185A00 (RBX = character) divides float +D5C by +103C. The HUD (13E0F0 -> 13C880) draws this fraction as the end of the pale (restorable) part of the health bar; healing (1A0C50) raises it up to +103C. The current health is +D58 (character::health)."
     },
     {
       "name": "character::healthMax",
@@ -4495,7 +4495,7 @@
       "owner": "healthFraction",
       "instruction": "0x185a1f",
       "width": 4,
-      "witness": "character::health",
+      "witness": "character::healthRestorable",
       "native_instruction": "divss xmm0, dword ptr [rbx + 0x103c]",
       "provenance": "The divisor in the same reviewed window: the character's maximum health."
     },

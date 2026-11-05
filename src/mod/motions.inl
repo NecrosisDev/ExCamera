@@ -16,7 +16,7 @@ static bool motionPlayable(uintptr_t root, float staminaShare) {
     if (!root || !readable(root, 0x1300) || root != *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) || uiOpen() || cursorFreeNow()) return false;
     const int motion = *reinterpret_cast<int*>(root + field::character::motion);
     const unsigned state = *reinterpret_cast<unsigned*>(root + field::character::stateFlags);
-    const float stamina = *reinterpret_cast<float*>(root + field::character::stamina), staminaMax = *reinterpret_cast<float*>(root + field::character::staminaMax);
+    const float stamina = *reinterpret_cast<float*>(root + field::character::balance), staminaMax = *reinterpret_cast<float*>(root + field::character::balanceMax);
     if (motion == kickMotion || motion == jumpMotion || (motion >= attackFamilyFirst && motion <= attackFamilyLast)) return false;
     if (state != 0 && state != 8) return false;                                                   // upright and free
     if (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100) return false;  // dead

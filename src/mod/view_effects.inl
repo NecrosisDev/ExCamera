@@ -4695,8 +4695,7 @@ static bool playerCapsule(ViewRequest& request) {
 
 // Hurt ramps from half health to a tenth. Health is what the HUD's left bar fills to: +D58 (the HUD draws its
 // interpolated copy +D70, written from +D58 at 0x17A1F7) over the bar's whole length +103C (0x13E327-0x13E32F).
-// On this branch +D58 is still named postureReadiness and `health` names +D5C, the bar's pale "restorable" layer
-// (0x13E35E); the playtest branch renames them (8389d19). There is no winded part: the blue bar +D74/+D78 the
+// +D5C is the bar's pale "restorable" layer (healthRestorable, 0x13E35E). There is no winded part: the blue bar +D74/+D78 the
 // HUD draws is magic, spent only by spell and power effects through 0x17A640 (docs/render-assumptions.md),
 // and no game code reads a "low-stamina idle"; the shader's winded input stays 0.
 constexpr float hurtStart = 0.5f, hurtSpan = 0.4f;
@@ -4705,7 +4704,7 @@ static void readCondition(ViewRequest& request) {
     __try {
         const uintptr_t root = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
         if (!root) return;
-        health = *(const float*)(root + field::character::postureReadiness); // +D58: current health (see above)
+        health = *(const float*)(root + field::character::health); // +D58: current health (see above)
         healthMax = *(const float*)(root + field::character::healthMax);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return;

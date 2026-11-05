@@ -32,14 +32,14 @@ namespace character {
     inline size_t swingBits = fp::game::character::swingBits;
     inline size_t gripFlags = fp::game::character::gripFlags;
     inline size_t gripEntry = fp::game::character::gripEntry;
-    inline size_t stamina = fp::game::character::stamina;
-    inline size_t staminaMax = fp::game::character::staminaMax;
+    inline size_t balance = fp::game::character::balance;
+    inline size_t balanceMax = fp::game::character::balanceMax;
     inline size_t gaitFlags = fp::game::character::gaitFlags;
     inline size_t headPart = fp::game::character::headPart;
     inline size_t walking = fp::game::character::walking;
     inline size_t actionCallback = fp::game::character::actionCallback;
     inline size_t combatStance = fp::game::character::combatStance;
-    inline size_t postureReadiness = fp::game::character::postureReadiness;
+    inline size_t health = fp::game::character::health;
     inline size_t aimOpponent = fp::game::character::aimOpponent;
     inline size_t metadata = fp::game::character::metadata;
     inline size_t partCount = fp::game::character::partCount;
@@ -57,7 +57,7 @@ namespace character {
     inline size_t impactTarget = fp::game::character::impactTarget;
     inline size_t impactPoint = fp::game::character::impactPoint;
     inline size_t impactWeapon = fp::game::character::impactWeapon;
-    inline size_t health = fp::game::character::health;
+    inline size_t healthRestorable = fp::game::character::healthRestorable;
     inline size_t healthMax = fp::game::character::healthMax;
     inline size_t transform = fp::game::character::transform;
 }
@@ -389,8 +389,8 @@ inline void resetLiveOffsets() noexcept {
     character::swingBits = fp::game::character::swingBits;
     character::gripFlags = fp::game::character::gripFlags;
     character::gripEntry = fp::game::character::gripEntry;
-    character::stamina = fp::game::character::stamina;
-    character::staminaMax = fp::game::character::staminaMax;
+    character::balance = fp::game::character::balance;
+    character::balanceMax = fp::game::character::balanceMax;
     character::gaitFlags = fp::game::character::gaitFlags;
     character::headPart = fp::game::character::headPart;
     character::walking = fp::game::character::walking;
@@ -479,7 +479,7 @@ inline void resetLiveOffsets() noexcept {
     drag::hingePlane = fp::game::drag::hingePlane;
     drag::alternatePlane = fp::game::drag::alternatePlane;
     sceneNode::queryFlags = fp::game::sceneNode::queryFlags;
-    character::postureReadiness = fp::game::character::postureReadiness;
+    character::health = fp::game::character::health;
     character::aimOpponent = fp::game::character::aimOpponent;
     aimFrame::planeBack = fp::game::aimFrame::planeBack;
     aimFrame::unassistedBack = fp::game::aimFrame::unassistedBack;
@@ -586,7 +586,7 @@ inline void resetLiveOffsets() noexcept {
     bodyPart::velocityTetra = fp::game::bodyPart::velocityTetra;
     view::renderView = fp::game::view::renderView;
     view::renderProjection = fp::game::view::renderProjection;
-    character::health = fp::game::character::health;
+    character::healthRestorable = fp::game::character::healthRestorable;
     character::healthMax = fp::game::character::healthMax;
     view::viewTexture = fp::game::view::viewTexture;
     texture::glName = fp::game::texture::glName;
@@ -814,8 +814,8 @@ inline constexpr FieldContract fields[] = {
     {"character::swingBits", 28, 0x184, "83 BB F4 0D 00 00 02 0F 85 ?? ?? ?? ?? 8B 83 18 10 00 00 25 00 00 30 00", nullptr},
     {"character::gripFlags", 28, 0x7C9, "E8 ?? ?? ?? ?? F3 0F 11 45 C8 83 BB 68 10 00 00 00 75 20 F3 0F 10 0D ?? ?? ?? ??", nullptr},
     {"character::gripEntry", 19, 0xAA, "31 D2 E8 ?? ?? ?? ?? 48 89 83 70 10 00 00 81 BB 68 10 00 00 21 05 00 00", nullptr},
-    {"character::stamina", 28, 0xB73, "48 8B 4D F8 83 A1 9C 00 00 00 EF F3 0F 5A 8A B8 10 00 00 F3 0F 5A 82 BC 10 00 00", nullptr},
-    {"character::staminaMax", 28, 0xB77, "83 A1 9C 00 00 00 EF F3 0F 5A 8A B8 10 00 00 F3 0F 5A 82 BC 10 00 00 F2 0F 59 05 ?? ?? ?? ??", nullptr},
+    {"character::balance", 28, 0xB73, "48 8B 4D F8 83 A1 9C 00 00 00 EF F3 0F 5A 8A B8 10 00 00 F3 0F 5A 82 BC 10 00 00", nullptr},
+    {"character::balanceMax", 28, 0xB77, "83 A1 9C 00 00 00 EF F3 0F 5A 8A B8 10 00 00 F3 0F 5A 82 BC 10 00 00 F2 0F 59 05 ?? ?? ?? ??", nullptr},
     {"character::gaitFlags", 28, 0x2BA, "83 E0 20 76 09 83 8A F4 10 00 00 08 EB 07 83 A2 F4 10 00 00 F7 8B 82 F8 0D 00 00", nullptr},
     {"character::headPart", 0, 0x13D, "E8 ?? ?? ?? ?? 48 8B 83 38 0E 00 00 48 8B 80 E0 11 00 00 F3 0F 10 98 94 02 00 00", nullptr},
     {"character::walking", 28, 0x438, "48 8B 45 F8 48 8B 40 28 80 B8 EA 12 00 00 00 74 19 F3 0F 10 05 ?? ?? ?? ??", nullptr},
@@ -904,7 +904,7 @@ inline constexpr FieldContract fields[] = {
     {"drag::hingePlane", 22, 0x112, "48 8D 54 24 28 E8 ?? ?? ?? ?? 48 8D 83 E8 00 00 00 48 89 44 24 20 48 8B 53 18", nullptr},
     {"drag::alternatePlane", 22, 0x14E, "89 44 24 38 F3 0F 10 35 ?? ?? ?? ?? 48 8D 83 F8 00 00 00 48 89 44 24 20", nullptr},
     {"sceneNode::queryFlags", 36, 0x43B, "0F 84 ?? ?? ?? ?? 0F 1F 00 8B 46 0C 25 00 00 20 00 0F 84 ?? ?? ?? ?? 66 90", nullptr},
-    {"character::postureReadiness", 38, 0xE, "41 8B 80 B0 0E 00 00 C3 F3 41 0F 5A 80 58 0D 00 00 66 0F 2F 05 ?? ?? 25 00", "manualDefense"},
+    {"character::health", 38, 0xE, "41 8B 80 B0 0E 00 00 C3 F3 41 0F 5A 80 58 0D 00 00 66 0F 2F 05 ?? ?? 25 00", "manualDefense"},
     {"character::aimOpponent", 0, 0x84, "48 8B 45 F8 48 8B 40 28 48 8B 90 38 0E 00 00 48 8B 82 80 02 00 00 48 89 85 74 FF FF FF", nullptr},
     {"aimFrame::planeBack", 0, 0x42B, "89 45 8C 66 90 48 8D 45 80 48 89 44 24 20 48 8B 45 F8 48 8B 90 98 08 00 00", nullptr},
     {"aimFrame::unassistedBack", 0, 0x3A7, "48 8D 8D 74 FF FF FF E8 ?? ?? ?? ?? C6 85 40 FF FF FF 00 F3 0F 10 85 4C FF FF FF", nullptr},
@@ -1027,7 +1027,7 @@ inline constexpr FieldContract fields[] = {
     {"character::impactWeapon", 139, 0x1D8, "8B 45 D8 89 87 30 0C 00 00 48 89 9F 38 0C 00 00 48 8B 5D A8 48 8B 7D B0", nullptr},
     {"bodyPart::velocityTetra", 141, 0x23B, "0F 8E ?? ?? ?? ?? 83 AB 50 04 00 00 01 48 8D BB 80 01 00 00 48 8D B4 24 80 00 00 00", nullptr},
     {"view::renderView", 130, 0x637, "49 8D 7E 60 48 8D 35 ?? ?? ?? ?? B9 08 00 00 00 F3 48 A5 49 8D BE E0 00 00 00 48 8D 35 ?? ?? ?? ??", "viewEffects"},
-    {"character::health", 143, 0x17, "F3 0F 10 83 5C 0D 00 00 F3 0F 5E 83 3C 10 00 00", "viewEffects"},
+    {"character::healthRestorable", 143, 0x17, "F3 0F 10 83 5C 0D 00 00 F3 0F 5E 83 3C 10 00 00", "viewEffects"},
     {"view::viewTexture", 130, 0x6B9, "49 8B 46 40 44 8B 48 58 41 B8 E1 0D 00 00 BA E0 8C 00 00 B9 40 8D 00 00 FF 15 ?? ?? ?? ?? 45 8B 4E 1C 45 8B 46 18", "viewEffects"},
     {"character::transform", 151, 0x9, "41 57 48 8D 64 24 D0 48 89 CB 48 8D BB F0 09 00 00 48 89 D6 B9 06 00 00 00 F3 48 A5", nullptr},
     {"sceneNode::boundsCentre", 152, 0x210, "48 8B 90 30 02 00 00 48 63 C7 48 8B 0C C2 48 8D 56 20 E8 ?? ?? ?? ?? 84 C0 74 0D 81", nullptr},
@@ -1186,8 +1186,8 @@ inline constexpr std::array<FieldOffsetBinding, 240> fieldBindings = {{
     {25u, 13u, 4120, false, game::character::swingBits, &game::live::character::swingBits},
     {26u, 10u, 4200, false, game::character::gripFlags, &game::live::character::gripFlags},
     {27u, 7u, 4208, false, game::character::gripEntry, &game::live::character::gripEntry},
-    {28u, 11u, 4280, false, game::character::stamina, &game::live::character::stamina},
-    {29u, 15u, 4284, false, game::character::staminaMax, &game::live::character::staminaMax},
+    {28u, 11u, 4280, false, game::character::balance, &game::live::character::balance},
+    {29u, 15u, 4284, false, game::character::balanceMax, &game::live::character::balanceMax},
     {30u, 5u, 4340, false, game::character::gaitFlags, &game::live::character::gaitFlags},
     {31u, 12u, 4576, false, game::character::headPart, &game::live::character::headPart},
     {32u, 8u, 4842, false, game::character::walking, &game::live::character::walking},
@@ -1275,7 +1275,7 @@ inline constexpr std::array<FieldOffsetBinding, 240> fieldBindings = {{
     {115u, 10u, 232, false, game::drag::hingePlane, &game::live::drag::hingePlane},
     {116u, 12u, 248, false, game::drag::alternatePlane, &game::live::drag::alternatePlane},
     {117u, 9u, 12, false, game::sceneNode::queryFlags, &game::live::sceneNode::queryFlags},
-    {118u, 8u, 3416, false, game::character::postureReadiness, &game::live::character::postureReadiness},
+    {118u, 8u, 3416, false, game::character::health, &game::live::character::health},
     {119u, 8u, 3640, false, game::character::aimOpponent, &game::live::character::aimOpponent},
     {120u, 5u, -128, true, game::aimFrame::planeBack, &game::live::aimFrame::planeBack},
     {121u, 12u, -192, true, game::aimFrame::unassistedBack, &game::live::aimFrame::unassistedBack},
@@ -1377,7 +1377,7 @@ inline constexpr std::array<FieldOffsetBinding, 240> fieldBindings = {{
     {239u, 13u, 384, false, game::bodyPart::velocityTetra, &game::live::bodyPart::velocityTetra},
     {240u, 0u, 96, false, game::view::renderView, &game::live::view::renderView},
     {240u, 19u, 224, false, game::view::renderProjection, &game::live::view::renderProjection},
-    {241u, 0u, 3420, false, game::character::health, &game::live::character::health},
+    {241u, 0u, 3420, false, game::character::healthRestorable, &game::live::character::healthRestorable},
     {241u, 8u, 4156, false, game::character::healthMax, &game::live::character::healthMax},
     {242u, 0u, 64, false, game::view::viewTexture, &game::live::view::viewTexture},
     {242u, 4u, 88, false, game::texture::glName, &game::live::texture::glName},
@@ -2178,8 +2178,8 @@ static_assert(game::character::duckAmount == 0x100C, "Review native contract aft
 static_assert(game::character::swingBits == 0x1018, "Review native contract after changing character::swingBits");
 static_assert(game::character::gripFlags == 0x1068, "Review native contract after changing character::gripFlags");
 static_assert(game::character::gripEntry == 0x1070, "Review native contract after changing character::gripEntry");
-static_assert(game::character::stamina == 0x10B8, "Review native contract after changing character::stamina");
-static_assert(game::character::staminaMax == 0x10BC, "Review native contract after changing character::staminaMax");
+static_assert(game::character::balance == 0x10B8, "Review native contract after changing character::balance");
+static_assert(game::character::balanceMax == 0x10BC, "Review native contract after changing character::balanceMax");
 static_assert(game::character::gaitFlags == 0x10F4, "Review native contract after changing character::gaitFlags");
 static_assert(game::character::headPart == 0x11E0, "Review native contract after changing character::headPart");
 static_assert(game::character::walking == 0x12EA, "Review native contract after changing character::walking");
@@ -2268,7 +2268,7 @@ static_assert(game::drag::planeHeight == 0xC8, "Review native contract after cha
 static_assert(game::drag::hingePlane == 0xE8, "Review native contract after changing drag::hingePlane");
 static_assert(game::drag::alternatePlane == 0xF8, "Review native contract after changing drag::alternatePlane");
 static_assert(game::sceneNode::queryFlags == 0xC, "Review native contract after changing sceneNode::queryFlags");
-static_assert(game::character::postureReadiness == 0xD58, "Review native contract after changing character::postureReadiness");
+static_assert(game::character::health == 0xD58, "Review native contract after changing character::health");
 static_assert(game::character::aimOpponent == 0xE38, "Review native contract after changing character::aimOpponent");
 static_assert(game::aimFrame::planeBack == 0x80, "Review native contract after changing aimFrame::planeBack");
 static_assert(game::aimFrame::unassistedBack == 0xC0, "Review native contract after changing aimFrame::unassistedBack");
@@ -2399,7 +2399,7 @@ static_assert(game::character::impactWeapon == 0xC38, "Review native contract af
 static_assert(game::bodyPart::velocityTetra == 0x180, "Review native contract after changing bodyPart::velocityTetra");
 static_assert(game::view::renderView == 0x60, "Review native contract after changing view::renderView");
 static_assert(game::view::renderProjection == 0xE0, "Review native contract after changing view::renderProjection");
-static_assert(game::character::health == 0xD5C, "Review native contract after changing character::health");
+static_assert(game::character::healthRestorable == 0xD5C, "Review native contract after changing character::healthRestorable");
 static_assert(game::character::healthMax == 0x103C, "Review native contract after changing character::healthMax");
 static_assert(game::view::viewTexture == 0x40, "Review native contract after changing view::viewTexture");
 static_assert(game::texture::glName == 0x58, "Review native contract after changing texture::glName");
