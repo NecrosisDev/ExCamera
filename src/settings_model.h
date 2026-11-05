@@ -133,6 +133,9 @@ enum : int {
     count
 };
 }
+// Whether the game's own material data (steel, wood, leather...) is decoded; until it is, the held, armour,
+// object and level detail rows are inactive and their effects draw nothing (colourMaterialGuesses, wounds.inl).
+inline constexpr bool materialDataDecoded = false;
 inline bool fixedSetting(int row) {
     switch (row) {
     case setting::headSteady: case setting::headRoll: case setting::headPitch:
@@ -713,6 +716,11 @@ struct ModSettings {
         if ((row == setting::cueSize || row == setting::cueOpacity || row == setting::cueThrust) &&
             !attackCue)
             return L"Enable Attack wind-up arc to use this setting.";
+        // These four choose each surface's material from its colour, a guess, not game data; they stay off
+        // until the game's own material data is decoded (docs/render-assumptions.md, mod/wounds.inl).
+        if (!materialDataDecoded && (row == setting::heldDetail || row == setting::armourDetail ||
+                                     row == setting::objectDetail || row == setting::levelDetail))
+            return L"Off until the game's own material data is decoded.";
         return nullptr;
     }
     // Every value in its range (an ini can hold anything): numbers clamped as their - and + do, unknown choices

@@ -133,10 +133,18 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
       byte at 0x2AC0D0 (0x51F67-0x51FC5; 0x19260 multiplies a vec3).
     - It copies `+0x224` (range) to `+0x2A4`, under a threshold on `+0x21C` (0x51FCA-0x5200C).
   - So `+0x21C` and `+0x220` are both brightness factors, and the code's "+0x21C is intensity" alone is
-    incomplete. When this comes back on, it should read the game's own results, `+0x278` (linear colour ×
-    brightness) and `+0x2A4` (range), so it matches the game by construction.
-  - Still missing: that the renderer hands `+0x278`/`+0x2A4` to the lit shaders, and the falloff they apply.
-    The blood thread is tracing the upload; the shader dump will also show it.
+    incomplete.
+  - **Correction (blood thread): the lit shaders do not get `+0x278`/`+0x2A4`.** The per-mesh light walk
+    (0x1FF462-0x1FF504) packs three vec4 per light into renderer state `+0x170` (stride 0x30, 0x1FF740-0x1FF9D8).
+    A is a position from a table at `+0x40` indexed by light `+0x288`, with w = `+0x17C`. B is the raw `+0x210`
+    colour × 1/state `+0x3B8` × (1 − `[light+0x1C8]+0x234`) × state `+0x5B4`, with w = light `+0x230`. C comes from
+    `+0x238`, plus spot-cone values for type 0x200.
+  - Checked here: the upload at 0x200BA5-0x200BBD (inside the byte-verified 0x200770) calls 0x498F40 with
+    location `[[r13+0xC]+8]`, count 3 × state `+0xA8` and data state `+0x170`. The pack details are the blood
+    thread's and not re-read here.
+  - **Plan:** read the game's own packed vec4s (state `+0x170`, count `+0xA8`) after the pack runs, once the
+    shader dump shows how the lit shader uses A, B and C. Do not switch to `+0x278`/`+0x2A4`. Lighting stays
+    off until then.
 - **Item wear and dirt (item 2): mostly proven, still gated.**
   - Lookup, PROVEN. 0x103DB0 picks the table by the id's top bits (0x80000000 level `DAT_4EF930`, 0x40000000
     world `DAT_4EF940`, else `DAT_4EF920`). 0x104660 binary-searches `count +8` rows of 16 bytes at `+0x10` by
