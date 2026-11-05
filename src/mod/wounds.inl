@@ -8,6 +8,13 @@
 
 static std::atomic<float> woundMarks{1.f}; // the Wounds row: 0 off
 
+// Game reads the render code makes on layouts no game code has yet been shown to read that way
+// (docs/render-assumptions.md, "UNPROVEN"): the held items' light from the light-node fields, their wear
+// and dirt from the item database record, the level's two nearest lamps, and a weapon's two transforms for a
+// cut's direction. Off until each is proven from the game code; the effects then use their neutral
+// fallbacks (default light from above, unread condition, no lamps, a direction picked on the surface).
+constexpr bool unprovenRenderReads = false;
+
 // The runtime's record, shared with ScriptRuntime's character_hits: version 2 (0x78 bytes); a version 1
 // runtime writes the first 0x70 bytes only (no weapon, kind 0 or 3).
 struct CharacterHitRecord {
@@ -537,7 +544,9 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         uintptr_t ownerNode = 0;
         bool alive = true, ownerGone = false;
         __try {
-            alive = (*(const unsigned*)(owner + field::character::lifeFlags) & 0x100) == 0;
+            // Dead: state flags 0x800, set by 0x156480 once damage (0x159700) has emptied health. Not life flag
+            // 0x100, which only 0x17B100 sets (with a collapse motion, from spell effects such as TTendrilEmitter).
+            alive = (*(const unsigned*)(owner + field::character::stateFlags) & 0x800) == 0;
             if (mendCount || brokenCount) ownerNode = *(const uintptr_t*)(owner + field::character::sceneNode);
             (void)*(const volatile float*)(owner + woundCharacterBleed);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -782,22 +791,25 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, 
 
     uintptr_t part = 0;
     int32_t index = -1;
-    if (!readable(attacker + 0xc20, sizeof(uintptr_t))) return;
-    part = *reinterpret_cast<const uintptr_t*>(attacker + 0xc20);
+    if (!readable(attacker + field::character::impactTarget, sizeof(uintptr_t))) return;
+    part = *reinterpret_cast<const uintptr_t*>(attacker + field::character::impactTarget);
     if (!part || !readable(part + woundPartIndex, sizeof(int32_t))) return;
     index = *reinterpret_cast<const int32_t*>(part + woundPartIndex);
     if (index < 0 || index >= 18) return;
     r.part = part;
 
-    if (!readable(attacker + 0xc28, 12) || !readable(part + field::bodyPart::pose, 48)) return;
-    std::memcpy(r.point, reinterpret_cast<const void*>(attacker + 0xc28), 12);
+    if (!readable(attacker + field::character::impactPoint, 12) || !readable(part + field::bodyPart::pose, 48)) return;
+    std::memcpy(r.point, reinterpret_cast<const void*>(attacker + field::character::impactPoint), 12);
     std::memcpy(r.pose, reinterpret_cast<const void*>(part + field::bodyPart::pose), 48);
 
     uintptr_t weapon = 0;
     float now[12]{}, before[12]{};
-    if (readable(attacker + 0xc38, sizeof(uintptr_t))) {
-        weapon = *reinterpret_cast<const uintptr_t*>(attacker + 0xc38);
-        if (weapon && readable(weapon + 0xf0, 48) && readable(weapon + 0x120, 48)) {
+    if (readable(attacker + field::character::impactWeapon, sizeof(uintptr_t))) {
+        weapon = *reinterpret_cast<const uintptr_t*>(attacker + field::character::impactWeapon);
+        // +F0/+120 as the weapon's transform now and a step before: unproven (render-assumptions.md).
+        uintptr_t transforms = 0; // the weapon itself stays (r.weapon); only its transforms are gated
+        if constexpr (unprovenRenderReads) transforms = weapon;
+        if (transforms && readable(weapon + 0xf0, 48) && readable(weapon + 0x120, 48)) {
             std::memcpy(now, reinterpret_cast<const void*>(weapon + 0xf0), 48);
             std::memcpy(before, reinterpret_cast<const void*>(weapon + 0x120), 48);
             for (int axis = 0; axis < 3; ++axis) {

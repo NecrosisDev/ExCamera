@@ -434,7 +434,7 @@ const wchar_t* settingTip(int id) {
     case setting::playerGhost: return L"Shows a faint outline of you wherever walls or pillars hide you.";
     case setting::fingerPoses: return L"Fingers wrap round hilts and carried items and lie flat under shields, instead of the game's stiff hands. Experimental.";
     case setting::fingerPosesOthers: return L"The same finger poses for every other character in the level, in play.";
-    case setting::conditionEffects: return L"Colour drains and edges darken below half health; edges pulse with each breath when winded; eyes adjust between light and dark.";
+    case setting::conditionEffects: return L"Colour drains and edges darken below half health; eyes adjust between light and dark.";
     case setting::heldDetail: return L"Scratches, metal grain, pits and worn edges on what you hold. It reshapes existing light only, so an unlit blade stays dark.";
     case setting::armourDetail: return L"Plate, mail rings, leather grain and padding detail on worn gear within 6 m. Costs more than held items.";
     case setting::objectDetail: return L"The same detail on loose items, racks, chests, doors and furniture within 6 m. Off by default: it can draw thin dark lines across furniture.";
