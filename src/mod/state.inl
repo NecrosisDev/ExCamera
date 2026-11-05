@@ -721,19 +721,6 @@ static SRWLOCK modMessageLock = SRWLOCK_INIT;
 static ModMessage modMessages[modMessageQueue];
 static unsigned modMessageHead = 0;
 static std::atomic<unsigned> modMessageCount{0};
-// The text as the engine's 8-bit font shows it: ASCII, dashes and quotes simplified, anything else '?'.
-static void modMessageText(const wchar_t* text, char* out, size_t size) {
-    size_t n = 0;
-    for (const wchar_t* c = text; *c && n + 1 < size; ++c) {
-        wchar_t ch = *c;
-        if (ch == 0x2013 || ch == 0x2014) ch = L'-';
-        else if (ch == 0x2018 || ch == 0x2019) ch = L'\'';
-        else if (ch == 0x201C || ch == 0x201D) ch = L'"';
-        else if (ch == L'\n' || ch == L'\r' || ch == L'\t') ch = L' ';
-        out[n++] = ch >= 32 && ch < 127 ? char(ch) : '?';
-    }
-    out[n] = 0;
-}
 // Beside first-person.ini (Documents\ExCamera, or a portable test copy's own folder).
 static std::wstring settingsFolderFile(const wchar_t* name) {
     std::wstring folder;
@@ -774,7 +761,7 @@ static void modMessageToFile(NoticeKind kind, const char* text) {
 // Any thread. Faults also go to the file: the hooks that would deliver them may be on their way out.
 static bool modMessage(NoticeKind kind, const wchar_t* text) {
     char ascii[512];
-    modMessageText(text, ascii, sizeof ascii);
+    fp::engineAscii(text, ascii, sizeof ascii);
     ++notices;
     const bool native = engineLogAdmitted.load(std::memory_order_acquire);
     if (kind == NoticeKind::fault || !native) modMessageToFile(kind, ascii);
