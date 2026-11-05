@@ -136,11 +136,26 @@ bool falls_are_split_by_the_capture_point() {
     outside.margin = -5;
     b::Tracker a;
     run(a, up, inside, 10);
-    CHECK(a.feed(fell, inside) & b::Tracker::bit(b::Event::fallUnpredicted));
+    CHECK(a.feed(fell, inside) & b::Tracker::bit(b::Event::fallByRule));
     b::Tracker c;
     run(c, up, outside, 5);
     run(c, up, inside, 10);
-    CHECK(c.feed(fell, inside) & b::Tracker::bit(b::Event::fallPredicted));
+    CHECK(c.feed(fell, inside) & b::Tracker::bit(b::Event::fallPhysical));
+    CHECK(!(c.feed(up, inside) & b::Tracker::bit(b::Event::recovered))); // a fall ends the stumble
+    return true;
+}
+
+bool a_stumble_that_comes_back_inside_is_a_recovery() {
+    b::GameState up;
+    up.footDown = true;
+    b::Measure inside = b::measure(standing().sample()), outside = inside;
+    outside.margin = -12;
+    b::Tracker t;
+    run(t, up, outside, 30);
+    CHECK(!(run(t, up, inside, b::recoverSteps - 1) & b::Tracker::bit(b::Event::recovered)));
+    CHECK(t.feed(up, inside) & b::Tracker::bit(b::Event::recovered));
+    CHECK(t.lastStumbleSteps == 30 && near_equal(t.lastStumbleDepth, -12));
+    CHECK(!(run(t, up, inside, 100) & b::Tracker::bit(b::Event::recovered)));
     return true;
 }
 
@@ -184,6 +199,7 @@ int main() {
         {"conditions report once after their duration", conditions_report_once_after_their_duration},
         {"held up needs feet down and no step", held_up_needs_feet_down_and_no_step},
         {"falls are split by the capture point", falls_are_split_by_the_capture_point},
+        {"a stumble that comes back inside is a recovery", a_stumble_that_comes_back_inside_is_a_recovery},
         {"failed get-up and stuck down", getting_up_back_to_lying_is_a_failed_get_up_and_long_down_is_stuck},
         {"spread quantiles are bin edges", spread_quantiles_are_bin_edges},
     });

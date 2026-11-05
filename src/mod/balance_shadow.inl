@@ -44,7 +44,7 @@ static unsigned shadowEventHead = 0, shadowEventCount = 0, shadowEventsDropped =
 // Session totals (under shadowLock).
 static uint32_t shadowTotals[size_t(bs::Event::count)]{};
 static uint64_t shadowSteps = 0, shadowStandingSteps = 0, shadowPlayerSteps = 0;
-static bs::Spread shadowMargin{-60, 60}, shadowShake{0, 8000}, shadowRate{0, 166}, shadowCostUs{0, 200},
+static bs::Spread shadowRecoveryDepth{-60, 0}, shadowRecoverySeconds{0, 2}, shadowMargin{-60, 60}, shadowShake{0, 8000}, shadowRate{0, 166}, shadowCostUs{0, 200},
     shadowUpdateUs{0, 2000};
 static std::atomic<unsigned> shadowReadFaults{0};
 
@@ -183,6 +183,10 @@ static void balanceShadowObserve(uintptr_t root, double updateUs) {
         for (unsigned e = 0; e < unsigned(bs::Event::count); ++e) {
             if (!(events & (1u << e))) continue;
             ++f.events[e], ++shadowTotals[e];
+            if (bs::Event(e) == bs::Event::recovered) {
+                shadowRecoveryDepth.add(f.tracker.lastStumbleDepth);
+                shadowRecoverySeconds.add(float(f.tracker.lastStumbleSteps) / bs::stepsPerSecond);
+            }
             if (shadowEventCount == shadowEventRing) {
                 ++shadowEventsDropped;
                 continue;
@@ -226,7 +230,7 @@ static const wchar_t* shadowProblemText(bs::Event e) {
     case bs::Event::shaking: return L"is shaking while standing still";
     case bs::Event::stuckDown: return L"has been on the ground for 15 s";
     case bs::Event::failedGetUp: return L"failed to get up";
-    case bs::Event::fallUnpredicted: return L"fell while its weight was over its feet";
+    case bs::Event::fallByRule: return L"fell by a rule while its weight was over its feet";
     default: return L"";
     }
 }
@@ -292,6 +296,12 @@ static void shadowWriteSummary() {
     for (unsigned e = 0; e < unsigned(bs::Event::count); ++e)
         put("event.%s=%u\r\nrate.%s_per_fighter_minute=%.4f\r\n", bs::eventNames[e], shadowTotals[e], bs::eventNames[e],
             minutes > 0 ? double(shadowTotals[e]) / minutes : 0.0);
+    {
+        const double recovered = shadowTotals[size_t(bs::Event::recovered)],
+                     fell = shadowTotals[size_t(bs::Event::fallPhysical)];
+        // Resilience: of the stumbles that ended, the share the fighter caught. Falls by rule are counted apart.
+        put("resilience=%.4f\r\n", recovered + fell > 0 ? recovered / (recovered + fell) : 1.0);
+    }
     put("game_physics_reports=%u\r\n", shadowPhysicsReports);
     put("events_dropped=%u\r\nread_faults=%u\r\nfault=%d\r\n", shadowEventsDropped, shadowReadFaults.load(),
         balanceShadowFault.load() ? 1 : 0);
@@ -300,6 +310,8 @@ static void shadowWriteSummary() {
             (unsigned long long)s.count, name, s.mean(), name, s.quantile(.5f), name, s.quantile(.95f), name,
             s.quantile(.99f), name, s.count ? s.peak : 0.f);
     };
+    spread("recovery_depth_cm", shadowRecoveryDepth);
+    spread("recovery_seconds", shadowRecoverySeconds);
     spread("margin_cm", shadowMargin);
     spread("shake_cm_s2", shadowShake);
     spread("steps_per_second", shadowRate);

@@ -159,15 +159,17 @@ enum class Event : uint8_t {
     shaking,        // standing nearly still but the body shakes over shakeLimit for shakeSteps
     stuckDown,      // on the ground or getting up for longer than stuckSteps, alive
     failedGetUp,    // getting up (0x300) went back to lying (0x200)
-    fallPredicted,  // the game dropped the fighter (0x200) and the capture point was outside the feet
-    fallUnpredicted,// the game dropped the fighter while the capture point was inside the feet
+    fallPhysical,   // the game dropped the fighter (0x200) and the capture point had left the feet: a real fall
+    fallByRule,     // the game dropped the fighter while the capture point was inside the feet: a rule, not physics
+    recovered,      // the capture point left the feet and came back for recoverSteps without a fall: it caught itself
     count
 };
 inline constexpr const char* eventNames[size_t(Event::count)] = {
-    "non_finite", "flung", "floating", "held_up", "shaking", "stuck_down", "failed_get_up", "fall_predicted",
-    "fall_unpredicted"};
-// Problems are flagged on screen; falls are counted only.
-inline constexpr bool eventIsProblem[size_t(Event::count)] = {true, true, true, false, true, true, true, false, true};
+    "non_finite", "flung", "floating", "held_up", "shaking", "stuck_down", "failed_get_up", "fall_physical",
+    "fall_by_rule", "recovered"};
+// Problems are flagged on screen; real falls and recoveries are counted only. Resilience is recoveries against
+// real falls; a fall by rule is a fault of the balance system, whatever the fall rate (docs/BALANCE-SHADOW.md).
+inline constexpr bool eventIsProblem[size_t(Event::count)] = {true, true, true, false, true, true, true, false, true, false};
 
 // Starting limits. They are measured, not known: the logs of stock play give the real spread, and these are
 // adjusted from them (docs/BALANCE-SHADOW.md, "Tuning").
@@ -180,7 +182,8 @@ inline constexpr unsigned floatingSteps = 42;   // 0.5 s
 inline constexpr unsigned heldUpSteps = 42;     // 0.5 s
 inline constexpr unsigned shakeSteps = 21;      // 0.25 s
 inline constexpr unsigned stuckSteps = 83 * 15; // 15 s
-inline constexpr unsigned predictWindow = 25;   // 0.3 s: a fall counts as predicted if the capture point left the feet within it
+inline constexpr unsigned predictWindow = 25;   // 0.3 s: a fall is physical if the capture point left the feet within it
+inline constexpr unsigned recoverSteps = 17;    // 0.2 s back inside the feet ends a stumble as a recovery
 
 inline bool dead(unsigned state) { return (state & 0x800) != 0; }   // the game's own death test (CV section 1)
 inline bool down(unsigned state) { return (state & 0xA00) != 0; }   // on the ground, getting up, scripted down, dead
@@ -191,6 +194,10 @@ inline constexpr int jumpMotion = 18;                              // the game's
 struct Tracker {
     unsigned floating = 0, heldUp = 0, shaking = 0, downFor = 0;
     unsigned sinceOutside = ~0u; // steps since the capture point was last outside the feet
+    unsigned stumble = 0, backInside = 0; // steps of the current stumble (capture point outside), steps back inside
+    float deepest = 0;           // the stumble's most negative margin
+    unsigned lastStumbleSteps = 0;
+    float lastStumbleDepth = 0;  // of the stumble that just ended in a recovery, for the logs
     unsigned lastState = 0;
     bool seen = false, stuckReported = false;
 
@@ -221,6 +228,19 @@ struct Tracker {
             if (++shaking == shakeSteps) events |= bit(Event::shaking);
         } else shaking = 0;
 
+        // Stumbles: upright on its feet, the capture point leaves the feet; back inside for recoverSteps is a
+        // recovery. A fall ends a stumble without one.
+        if (m.valid && standing && g.footDown && std::isfinite(m.margin)) {
+            if (m.margin < 0) {
+                ++stumble, backInside = 0;
+                deepest = (std::min)(deepest, m.margin);
+            } else if (stumble && ++backInside >= recoverSteps) {
+                events |= bit(Event::recovered);
+                lastStumbleSteps = stumble, lastStumbleDepth = deepest;
+                stumble = backInside = 0, deepest = 0;
+            }
+        } else if (!standing) stumble = backInside = 0, deepest = 0;
+
         // Down too long, alive.
         if (down(g.state) && alive) {
             if (++downFor >= stuckSteps && !stuckReported) {
@@ -232,7 +252,7 @@ struct Tracker {
         if (seen) {
             if ((lastState & 0x300) == 0x300 && g.state == 0x200) events |= bit(Event::failedGetUp);
             if (!down(lastState) && (g.state & 0x200) && alive)
-                events |= bit(sinceOutside <= predictWindow ? Event::fallPredicted : Event::fallUnpredicted);
+                events |= bit(sinceOutside <= predictWindow ? Event::fallPhysical : Event::fallByRule);
         }
         lastState = g.state;
         seen = true;

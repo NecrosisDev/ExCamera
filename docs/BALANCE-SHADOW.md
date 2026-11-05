@@ -5,6 +5,10 @@ it writes no game memory, and the game's own balance drives every fighter as bef
 balance model has a measured baseline to match or beat (the reliability plan, `GAME-BALANCE-RELIABILITY.md` in the
 playtest notes).
 
+**The goal it measures is resilience, not a fall rate.** A fighter should catch itself whenever a real body could,
+and fall only when it physically can't recover. Falling because a rule fired (the game's 31-degree lean test, which
+a kick could trip on its own) is counted as a fault of the balance system. There is no target number of falls.
+
 Code: `src/balance_shadow_model.h` (the maths, unit-tested in `tests/unit/balance_shadow_tests.cpp`) and
 `src/mod/balance_shadow.inl` (reading the game, files, messages). It runs right after the game's own character
 update (`combatUpdate` 0x169200, already hooked for manual defense in `combat.inl`), once per fighter per physics
@@ -62,8 +66,9 @@ A condition is reported once when it reaches its duration, and again only after 
 | `shaking` | yes | upright and nearly still (< 0.3 m/s), shake over 4000 cm/s² for 0.25 s |
 | `stuck_down` | yes | on the ground or getting up for 15 s while alive |
 | `failed_get_up` | yes | getting up (0x300) went back to lying (0x200) |
-| `fall_unpredicted` | yes | the game dropped the fighter while the capture point was inside the feet |
-| `fall_predicted` | no, counted | the game dropped the fighter within 0.3 s of the capture point leaving the feet |
+| `fall_by_rule` | yes | the game dropped the fighter while the capture point was inside the feet: a rule fired, not physics |
+| `fall_physical` | no, counted | the game dropped the fighter within 0.3 s of the capture point leaving the feet: a real fall |
+| `recovered` | no, counted | upright on its feet, the capture point left the feet and came back inside for 0.2 s without a fall: the fighter caught a stumble. How deep and how long each caught stumble was goes into the summary. |
 | `held_up` | no, counted | upright, a foot down, capture point more than 15 cm outside the feet for 0.5 s, no step and no fall: the "string" holding a body up. Expected to be common with the game's balance and to drop with a new model. |
 
 **On screen** means the game's own message line (the engine log, level 4, through `modMessage`), for example "Balance
@@ -84,26 +89,31 @@ time):
   state, margin, height, uprightness.
 * `balance-<stamp>-seconds.csv`: one row per fighter per second: step rate, state, motion, uprightness, foot down,
   margin, height, shake.
-* `balance-<stamp>-summary.txt`: rewritten every 10 s and when the mod stops. It holds totals, rates per standing
-  fighter-minute, the spreads (mean, p50, p95, p99, peak) of margin, shake, step rate and both costs, the faults,
-  and `balance_model=game`.
+* `balance-<stamp>-summary.txt`: rewritten every 10 s and when the mod stops. It holds:
+  * totals and rates per standing fighter-minute;
+  * **resilience**: stumbles caught ÷ (caught + real falls);
+  * the spreads (mean, p50, p95, p99, peak) of how deep and how long caught stumbles were, margin, shake, step
+    rate and both costs;
+  * the faults, and `balance_model=game`.
 
 ## Comparing
 
 ```
-python tools/balance_compare.py <baseline-summary.txt> <candidate-summary.txt> --fall-band LOW HIGH
+python tools/balance_compare.py <baseline-summary.txt> <candidate-summary.txt>
 ```
 
 Every summary written today is a **baseline**: the game's own balance. A future model's sessions are candidates.
 It passes only when all of these hold:
 
 * zero faults;
-* every flagged problem's rate is no higher than the baseline's (+0.05 per fighter-minute for noise);
+* every flagged problem's rate, falls by rule included, is no higher than the baseline's (+0.05 per fighter-minute
+  for noise);
+* **resilience is no lower** (within 0.02);
 * the game's physics reports per minute are no higher;
-* the p95 costs grow by no more than 10%;
-* falls per minute land inside the chosen band.
+* the p95 costs grow by no more than 10%.
 
-`held_up` is printed for information.
+Caught stumbles, real falls, how deep a caught stumble goes, and `held_up` are printed for information. A better
+model catches deeper stumbles, has no falls by rule, and drops `held_up` because the strings are gone.
 
 ## Tuning
 

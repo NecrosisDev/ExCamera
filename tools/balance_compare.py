@@ -1,19 +1,22 @@
 """Compare two balance shadow summaries: the game's own balance (baseline) against a candidate.
 
-Run: python tools/balance_compare.py <baseline-summary.txt> <candidate-summary.txt> [--fall-band LOW HIGH]
+Run: python tools/balance_compare.py <baseline-summary.txt> <candidate-summary.txt>
 
 Each summary is a balance-<stamp>-summary.txt that the balance shadow writes beside first-person.ini
 (Documents\\ExCamera\\balance\\, or a portable copy's own balance folder). Rates are per standing
 fighter-minute, so sessions of different length compare. The rules are docs/BALANCE-SHADOW.md, "Comparing":
-every problem rate and the game's own physics reports must be no worse than the baseline, the cost must stay
-within its budget, and falls must land inside the band chosen for the new model. Exit code 1 on any FAIL.
+every problem rate (falls by rule included) and the game's own physics reports must be no worse than the
+baseline, resilience (stumbles caught against real falls) must be no lower, and the cost must stay within its
+budget. There is no target fall rate: a fighter should fall only when it physically can't recover. Exit code 1
+on any FAIL.
 Standard library only.
 """
 import argparse
 import sys
 
 # Problem rates: the candidate must not exceed the baseline by more than this (counts are small and noisy).
-PROBLEMS = ('non_finite', 'flung', 'floating', 'shaking', 'stuck_down', 'failed_get_up', 'fall_unpredicted')
+PROBLEMS = ('non_finite', 'flung', 'floating', 'shaking', 'stuck_down', 'failed_get_up', 'fall_by_rule')
+RESILIENCE_SLACK = 0.02  # the share of stumbles caught may not drop by more than this
 TOLERANCE = 0.05  # per fighter-minute
 COST_BUDGET = 1.10  # p95 cost may grow by 10%
 
@@ -33,7 +36,7 @@ def read(path):
     return values
 
 
-def compare(base, cand, band):
+def compare(base, cand):
     rows = []
 
     def row(name, b, c, ok, note=''):
@@ -53,12 +56,12 @@ def compare(base, cand, band):
     for key in ('game_update_us.p95', 'shadow_cost_us.p95'):
         b, c = base.get(key, 0.0), cand.get(key, 0.0)
         row(key, b, c, c <= max(b * COST_BUDGET, b + 1.0), '<= baseline x %.2f' % COST_BUDGET)
-    falls = cand.get('rate.fall_predicted_per_fighter_minute', 0.0) + cand.get('rate.fall_unpredicted_per_fighter_minute', 0.0)
-    base_falls = base.get('rate.fall_predicted_per_fighter_minute', 0.0) + base.get('rate.fall_unpredicted_per_fighter_minute', 0.0)
-    if band:
-        row('falls /min', base_falls, falls, band[0] <= falls <= band[1], 'inside %.2f..%.2f' % tuple(band))
-    else:
-        rows.append(('falls /min', base_falls, falls, 'SET', 'choose a band with --fall-band'))
+    b, c = base.get('resilience', 1.0), cand.get('resilience', 1.0)
+    row('resilience', b, c, c >= b - RESILIENCE_SLACK, 'stumbles caught / (caught + real falls) >= baseline')
+    for key, note in (('rate.recovered_per_fighter_minute', 'stumbles caught'),
+                      ('rate.fall_physical_per_fighter_minute', 'real falls (capture point past the feet)'),
+                      ('recovery_depth_cm.p95', 'how far past the feet a caught stumble went')):
+        rows.append((key, base.get(key, 0.0), cand.get(key, 0.0), 'INFO', note))
     b, c = base.get('rate.held_up_per_fighter_minute', 0.0), cand.get('rate.held_up_per_fighter_minute', 0.0)
     rows.append(('held up (string) /min', b, c, 'INFO', 'expected to drop once the strings go'))
     return rows
@@ -68,10 +71,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('baseline')
     parser.add_argument('candidate')
-    parser.add_argument('--fall-band', nargs=2, type=float, metavar=('LOW', 'HIGH'))
     args = parser.parse_args(argv)
     base, cand = read(args.baseline), read(args.candidate)
-    rows = compare(base, cand, args.fall_band)
+    rows = compare(base, cand)
     print('%-28s %12s %12s  %-5s %s' % ('count', 'baseline', 'candidate', '', 'rule'))
     for name, b, c, verdict, note in rows:
         print('%-28s %12.3f %12.3f  %-5s %s' % (name, float(b), float(c), verdict, note))
