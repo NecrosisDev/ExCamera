@@ -1190,6 +1190,14 @@
       "end_rva": "0x15320d",
       "entry_offset": 0,
       "pattern": "48 8B 81 E0 06 00 00 EB 1E 0F 1F 80 00 00 00 00 48 8B 89 28 04 00 00 48 3B 89 28 04 00 00 74 0C 48 8B 81 E0 06 00 00 48 85 C0 74 E4 C3"
+    },
+    {
+      "name": "skinShare",
+      "rva": "0x207240",
+      "end_rva": "0x2074b2",
+      "target": "skinShare",
+      "entry_offset": 0,
+      "pattern": "53 57 56 48 8D 64 24 D0 48 89 4C 24 20 48 89 D3 8B 43 08 83 E0 5F 83 F8 09 0F 85 15 02 00 00 8B BB C8 01 00 00 85 FF 0F 8C 07 02 00 00"
     }
   ],
   "fields": [
@@ -5869,6 +5877,22 @@
       "pattern": "48 83 BB F8 02 00 00 00 0F 84 6A 00 00 00 48 63 83 68 02 00 00 48 8D 50 01 48 C1 E2 02 48 8D 4C 24 38 E8 ?? ?? ?? ?? 44 8B 8B 68 02 00 00 45 85 C9 7C 2D BE FF FF FF FF 83 C6 01 4C 8B 44 24 38 48 8B 54 24 28 89 F0 8B 0C 82 48 8B 93 F8 02 00 00 89 F0 8B 04 82",
       "provenance": "A mesh node's +2F8: one dword per face (sized (+268 + 1) * 4, copied by face index at 0xD95FA; also 0x6A4EF). What the values mean (the bake takes 0 for body skin) is not shown here.",
       "optional_group": "headwearRender"
+    },
+    {
+      "name": "skinShare::skinTest",
+      "owner": "skinShare",
+      "window_offset": 162,
+      "pattern": "48 8B 93 D0 01 00 00 48 63 C6 48 8B 04 C2 48 8B 80 D0 00 00 00 80 B8 08 02 00 00 26 0F 85 ?? ?? ?? ??",
+      "provenance": "0x207240 (rcx: a record whose +20 is the character's shared skin entry S; rdx: a node it enters when +8 & 5F == 9) tests each material node +1D0[i]: a material without a set whose definition [mat+D0] has a 38-character name (byte +208 == 26h, name at +209) takes the shared skin (0x2072E2-0x207304).",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "skinShare::skinWrites",
+      "owner": "skinShare",
+      "window_offset": 453,
+      "pattern": "48 8B 42 20 48 89 83 E8 01 00 00 48 8B 42 28 48 89 83 F0 01 00 00 48 8B 93 D0 01 00 00 48 63 C6 48 8B 14 C2 48 8B 44 24 20 48 8B 40 20 48 8B 40 18 48 89 82 D0 00 00 00 48 8B 93 D0 01 00 00 48 63 C6 48 8B 14 C2 48 8B 44 24 20 48 8B 40 20 48 8B 40 10 48 89 82 00 01 00 00",
+      "provenance": "For that material it writes mat+D0 = [S+18] (the shared definition) and mat+100 = [S+10] (the shared skin set) (0x207405-0x20745F). ExCamera hooks 0x207240 and, after it returns, records the set of every material holding [S+18] and [S+10]: a material is skin iff its set is one the game assigned this way.",
+      "optional_group": "wounds"
     }
   ],
   "closures": {
