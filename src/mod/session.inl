@@ -1146,7 +1146,9 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("jumps", motionJumps.load())
         .boolean("jump_fault", motionJumpFault.load())
         .unum("jump_push_steps", jumpPushApplied.load())
-        .fixed("jump_last_rise_cm", double(jumpPushRiseMm.load()) / 10.0, 1);
+        .fixed("jump_last_rise_cm", double(jumpPushRiseMm.load()) / 10.0, 1) // the root's peak rise of the last jump
+        .fixed("jump_takeoff_cm_s", double(fp::jumpTakeoffSpeed()), 1)
+        .unum("refused_state_last", motionRefusedState.load()); // character+DF4 at the last "state" refusal
     for (const bool jump : {false, true}) { // refused key presses by reason (fp::MotionRefusal)
         j.object(jump ? "jump_refused" : "kick_refused");
         for (size_t r = 0; r < size_t(fp::MotionRefusal::count); ++r)

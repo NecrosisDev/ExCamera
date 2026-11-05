@@ -54,7 +54,7 @@ game has you recovering, defending or in another reaction", "…wait until you'v
 
 * Every "dead" check reads `(DF4 & 0x800) != 0` (camera opponent, knockdown camera, manual defense, crouch, wounds,
   VR hand pose, kick/jump, jump push). `lifeFlags & 0x100` is used nowhere.
-* Kick/jump: base state 0 and balance ≥ max − 0.05; no health, magic or stance gate.
+* Kick/jump: DF4 & (0xA00 | 0x10203) clear, the game's own gate for a motion asked for on demand (+DC0 at 0x16990A/0x16993D), and balance ≥ max − 0.05 (0xB75E4); no health, magic or stance gate (docs/GAME-BALANCE-PHYSICS.md).
 * The blue bar is magic; the condition effects' winded look is removed.
 * "Knocked down: Show third" and the third-person knockdown follow use the game's own down test (& 0xA00); the
   old mask (0xAC0|0x40204|0xA00) fired on the standing stagger 0xC0 and 0x10004 and named a bit (0x40000) the game

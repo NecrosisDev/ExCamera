@@ -167,8 +167,12 @@ bool input_motion_refusals() {
     CHECK(fp::motionGate(true, true, 0x800, 0.f, 1.f) == R::cursorFree);
     CHECK(fp::motionGate(false, true, 0x800, 0.f, 1.f) == R::busy);
     CHECK(fp::motionGate(false, false, 0x800, 0.f, 1.f) == R::dead);
-    CHECK(fp::motionGate(false, false, 8, 0.f, 1.f) == R::otherState);
-    CHECK(fp::motionGate(false, false, 0x8000, 1.f, 1.f) == R::otherState);
+    CHECK(fp::motionGate(false, false, 8, 1.f, 1.f) == play); // a reactive defense motion: the game plays +DC0 then
+    CHECK(fp::motionGate(false, false, 0x100, 1.f, 1.f) == play);
+    CHECK(fp::motionGate(false, false, 1, 1.f, 1.f) == R::otherState); // DF4 & 0x10203 (0x16993D)
+    CHECK(fp::motionGate(false, false, 2, 1.f, 1.f) == R::otherState);
+    CHECK(fp::motionGate(false, false, 0x10000, 1.f, 1.f) == R::otherState);
+    CHECK(fp::motionGate(false, false, 0x200, 1.f, 1.f) == R::otherState); // down (0x16990A)
     CHECK(fp::motionGate(false, false, 0, .9f, 1.f) == R::balance); // below max - 0.05 the game starts its recover
     CHECK(fp::motionGate(false, false, 0, NAN, 1.f) == R::balance);
     // Notices: something to do for the player's reasons, silence for the others; kick and jump each name theirs.
@@ -487,26 +491,36 @@ bool camera_motion_knockdown_view() {
 }
 
 bool camera_motion_jump_push() {
-    // Spread over physics steps: one step per new step, several when a poll is late, never past the budget.
+    // One takeoff speed from the game's gravity: v = sqrt(2 g h).
+    const float v = fp::jumpTakeoffSpeed(), hz = 83.f;
+    CHECK(near_equal(v, std::sqrt(2.f * 980.665f * fp::jumpPeakCm)));
+    static_assert(fp::jumpPeakCm < fp::jumpInAirMarginCm); // under the game's in-air rule
     auto p = fp::JumpPush::start(0x1000, 0x2000, 100, 50.f);
-    CHECK(p.active && p.left == fp::jumpPushSteps);
-    p.left -= 1; // the first step is pushed at the press
-    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 100, 50.f, 0, false) == 0); // no new step yet
-    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 101, 51.f, 0, false) == 1);
-    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 103, 53.f, 0x10004, false) == 2); // a standing action is no reaction
+    CHECK(p.active && p.tracking && p.left == fp::jumpPushSteps);
+    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 100, 50.f, 0, false, hz) == 0.f); // no new step yet
+    // Still at rest a step later (the motors took it): topped back up to v, never more.
+    CHECK(near_equal(fp::jumpPushStep(p, true, 0x1000, 0x2000, 101, 50.f, 0, false, hz), v));
+    // Rising at half of v: only the other half.
+    const float half = v * .5f / hz;
+    CHECK(near_equal(fp::jumpPushStep(p, true, 0x1000, 0x2000, 102, 50.f + half, 0x10004, false, hz), v * .5f, .05f));
+    // At v: nothing more, and the push is over; the peak is still followed.
+    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 103, 50.f + half + v / hz, 0, false, hz) == 0.f);
+    CHECK(!p.active && p.tracking);
+    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 110, 60.f, 0, false, hz) == 0.f); // a late poll stops it
+    CHECK(!p.tracking);
+    // The peak is kept until he is back down.
+    auto q = fp::JumpPush::start(0x1000, 0x2000, 0, 0.f);
+    float y = 0.f;
+    for (unsigned s = 1; q.tracking && s < 200; ++s) {
+        y = 14.f - (float(s) - 20.f) * (float(s) - 20.f) * .035f;
+        fp::jumpPushStep(q, true, 0x1000, 0x2000, s, y, 0, false, hz);
+    }
+    CHECK(!q.tracking && near_equal(q.peak, 14.f, .1f));
     // The game's own state tests: down (& 0xA00) and the reactions it does not interrupt (& 0xAC0).
     for (unsigned s : {0x200u, 0x300u, 0x600u, 0x800u, 0xA00u}) CHECK(fp::downState(s) && fp::reactionState(s));
     for (unsigned s : {0u, 1u, 2u, 8u, 0x20u, 0x100u, 0x8000u, 0x10000u, 0x10004u}) CHECK(!fp::downState(s) && !fp::reactionState(s));
     CHECK(!fp::downState(0xC0) && fp::reactionState(0xC0)); // the standing stagger
     CHECK(fp::deadState(0x800) && fp::deadState(0xA00) && !fp::deadState(0x200) && !fp::deadState(0x300));
-    int total = 4; // the press, then 1 and 2
-    for (unsigned s = 104; p.active; ++s) total += fp::jumpPushStep(p, true, 0x1000, 0x2000, s, 55.f, 0, false);
-    CHECK(total == fp::jumpPushSteps);
-    // The rise cap ends it early.
-    auto high = fp::JumpPush::start(0x1000, 0x2000, 0, 0.f);
-    CHECK(fp::jumpPushStep(high, true, 0x1000, 0x2000, 1, 5.f, 0, false) == 1);
-    CHECK(fp::jumpPushStep(high, true, 0x1000, 0x2000, 2, fp::jumpRiseCapCm, 0, false) == 0 && !high.active);
-    CHECK(near_equal(high.risen, fp::jumpRiseCapCm));
     // Each cancel: not owned, another character or scene, death, a knockdown, a long gap, a bad height.
     struct Case { bool owned; uintptr_t root, scene; unsigned step; float y; unsigned state; bool dead; };
     const Case cancels[] = {{false, 0x1000, 0x2000, 1, 0.f, 0, false}, {true, 0x1001, 0x2000, 1, 0.f, 0, false},
@@ -515,9 +529,9 @@ bool camera_motion_jump_push() {
                             {true, 0x1000, 0x2000, 1 + fp::jumpStepGap, 0.f, 0, false},
                             {true, 0x1000, 0x2000, 1, NAN, 0, false}};
     for (const Case& c : cancels) {
-        auto q = fp::JumpPush::start(0x1000, 0x2000, 0, 0.f);
-        CHECK(fp::jumpPushStep(q, c.owned, c.root, c.scene, c.step, c.y, c.state, c.dead) == 0);
-        CHECK(!q.active);
+        auto r = fp::JumpPush::start(0x1000, 0x2000, 0, 0.f);
+        CHECK(fp::jumpPushStep(r, c.owned, c.root, c.scene, c.step, c.y, c.state, c.dead, hz) == 0.f);
+        CHECK(!r.active && !r.tracking);
     }
     CHECK(!fp::JumpPush::start(0x1000, 0x2000, 0, NAN).active);
     return true;
