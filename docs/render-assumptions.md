@@ -302,6 +302,13 @@ procedural ID. That is the next step to bring the four detail rows back with the
     0x270370 and the executor's later passes), the link from `node+0x180` (item id) to the factory, and each
     pixel's texture coordinate in our replay (the game's draw does not output it; it would need our own
     shader in the replay).
+- **Item id on the node (PROVEN), and the mod's `+0x180` read was WRONG.** The item builder 0x107600(…, record,
+  id) creates the node through 0x20AC10 and stores the id at **`node+0x184`** (0x1077B8: `mov [rax+0x184],
+  r14d`, r14d = the id argument); 0x1023C0 reads it back at 0x1023D3. The gated `heldConditionOf` read
+  `node+0x180` (it stays off). The chain to the factory is then: `node+0x184` -> 0x103DB0 lookup -> record ->
+  chunk 0x100000 (the factory name; 0x10766B-0x107691) -> the factory list `DAT_5B2140` searched by name
+  (0x20AC10). The per-instance variant bytes the factory uses (`factory+0x178`) are written at build time,
+  so for a given node they must be re-derived from its own record (not yet traced).
 
 ## The game's own shading, as decoded (for the reflections and AO work)
 
