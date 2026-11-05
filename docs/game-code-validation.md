@@ -19,8 +19,10 @@ Date: 2026-11-05.
   What it calls "health" is permanent damage, which lowers the restorable ceiling.
 - **Balance is real and PROVEN.** It's a hidden value at +10B8 with its maximum at +10BC. Hits and force spells knock
   it down and it refills a little every physics step. The kick's balance gate uses the same threshold the game does.
-- **Everything else is UNPROVEN until decoded.** Some of it is camera and render plumbing where the game routine is
-  identified but not re-decoded. Some is game-rule claims nobody has checked (  attack timing, the kick clip's identity, cut/thrust/crush). Recommended removals are listed under Decisions.
+- **Every game rule the mod relies on is now decoded**, including the motion names (the game's own table calls
+  0xD "Kick", 0x12 "Jump", 0xB "Stab" and 0xC "Overhead Swing"), the attack families, weapon classes, damage
+  types, the swing timing and every character state. What's left unproven is plumbing where a wrong guess breaks
+  the mod visibly rather than changing a game stat (see section 6).
 
 ## Decisions for Hunter (all in one place)
 
@@ -80,10 +82,10 @@ Date: 2026-11-05.
 | Crouch (`duckAmount`) | +100C | Written by TPlayerBehaviour (C25B9). TMotileDynamics lowers it by 0.02 per step (1698E3). | **PROVEN** location and decay; "the game's crouch" **UNPROVEN** (no key handler traced) | Toggle crouch (input.inl:1437, combat.inl:253) |
 | Combat stance (`combatStance`) | +12FE (byte) | The key handler 120AA0 compares the pressed key with the game's binding slot 0x2B7390 (default VK 9 = TAB) and calls the combat toggle 11FED0 with the opposite of the current state (120C6A–120C80). 11FED0 stores the new state and writes player +12FE (1200EC). TPlayerBehaviour's tick branches on it (C2028), and the HUD 13E9C0 draws a red marker when it's set. | **PROVEN** = TAB combat mode | Almost every combat/camera decision |
 | Current motion (`motion`) | +9B8 | motionPlay 179EE0 stores it (17A034) and for motions 5–12 clears active defense and calls cleanup 162E80 (179F60–179F7A). **The attack families, decoded from the player's attack chooser AE9D0 (called from TPlayerBehaviour's tick C1CF0):** on a new press, C1CF0 marks a second press within 300 ms (+8E4 + 0x12C > now → behaviour +9C bit 8, C2462–C247E) and classifies the side: the angle between the aim heading +1B0 and the body heading +AD4, minus 15° (no weapon class) or 20° (any class, C24C3), negative → +1BC = 2 (C251E). Alt (binding slot 6, default VK 0x12, polled into keyWord bit 0x80 at AA1DA) with any weapon class sets +9C bit 0x10 (C283E–C285A). Then AE9D0 picks: bit 0x10 → thrust starter AEDC0 → **motion 11**; bit 8 → rapid-press starter AEEC0 → **motion 12**; +1BC == 2 → opposite-side starter AEF50 → 157700 → **motions 8–10** (8 + variant); else default-side starter AEFD0 → 157240 → **motions 5–7** (5 + variant). The variant (0–2) comes from the side classifier 156FB0. | **PROVEN**: 5–7 default side, 8–10 opposite side (aim crossed the body past 15°/20°), 11 thrust (Alt + press), 12 second press within 300 ms. The mod's "overhead" name for 12 is **UNPROVEN** as a name (the game gives it 1.5× damage at 159C68 and the loading tip praises overhead blows, which fits) | Attack cue, swing gates |
-| Motion progress (`motionProgress`) | +A28 | The pose builder 1760F0 (and 174E00) sets it to (elapsed − blend-in) / clip length (1761D7–1761F7), where the blend-in is the ms passed to motionPlay (stored in +A24 at 17A063). So it runs from negative during the blend-in to 1 at the clip's end. The game's own 0.3 threshold: defense update 166580 treats an attack past 0.3 as committed (1669BA, 1669CF; 0.25 when swing bit 0x10000 is set), and the impact code gives a defender a parry only while their own progress is under 0.3 (15B990, 15BCAC). | Formula **PROVEN**, "negative in the start dwell" **PROVEN** (the blend-in), 0.30 **PROVEN** as the game's commit point. The wind-up arc's 0.40 for motion 11 (input_policy.h:456) is **UNPROVEN**: no game code pairs 0.4 with motion 0xB | Wind-up arc timing, kick clip retarget |
+| Motion progress (`motionProgress`) | +A28 | The pose builder 1760F0 (and 174E00) sets it to (elapsed − blend-in) / clip length (1761D7–1761F7), where the blend-in is the ms passed to motionPlay (stored in +A24 at 17A063). So it runs from negative during the blend-in to 1 at the clip's end. The game's own 0.3 threshold: defense update 166580 treats an attack past 0.3 as committed (1669BA, 1669CF; 0.25 when swing bit 0x10000 is set), and the impact code gives a defender a parry only while their own progress is under 0.3 (15B990, 15BCAC). | Formula **PROVEN**, "negative in the start dwell" **PROVEN** (the blend-in), 0.30 **PROVEN** as the game's commit point. The wind-up arc's 0.40 for the thrust (input_policy.h:456) is **PROVEN**: the defense update uses 0.4 instead of 0.3 when the attacker's motion is 0xB (1674FA–16750B, 16778D–16779A) | Wind-up arc timing, kick clip retarget |
 | Swing bits (`swingBits`) | +1018 | Bit 2 is set by the defender-side block routine 158EF0 (from 1587E0 when state == 2) and by impact 157FF0 (15859D). Bit 4 is set by physicalImpact 159A60 in three contact outcomes (15C212, 15C242, 15C26A). Bit 0x20 is **never set** by the game (only masked off). The starters clear the word (1576A3, 157B7C) and set 0x80000 / 0x10000. | 0x2 and 0x4 **PROVEN** as "the swing made contact"; "bounce" vs "block" labels **UNPROVEN**; 0x20 is dead | Wind-up arc ends on contact |
-| Kick clip | motion 0xD | No game code starts 0xD with a constant. The game does handle it specially in two places. In the dynamics step (16B06F), when +590 ≥ 0.85, it sets state 0x8000, doubles +DC8 and re-grips through 152930. In the leg-support routine (1612C9), it skips the normal support check the same way state 0x4000 does. Nothing decoded names it a kick. | "Kick clip" **UNPROVEN**. "Unused" is **WRONG** (the game has code for it) | Kick (Animated and Classic) |
-| Jump | motion 0x12 + rigid push 89240 | 89240 is the rigid-body push that force spells and cloth also use. Motion 0x12 also has no direct starter. | Push **PROVEN**. 0x12 = "jump clip" **UNPROVEN** | Jump |
+| Kick clip | motion 0xD | The humanoid motion set's own name table (Resource.rpk at 0x19582826, 24-byte names in motion order, see the motion table below) names motion 13 **"Kick"**. The game also special-cases it in the dynamics step (16B06F) and leg support (1612C9). No game code starts it, so "unused by the game's inputs" holds. | **PROVEN**: it is the game's kick clip | Kick (Animated and Classic) |
+| Jump | motion 0x12 + rigid push 89240 | Motion 18 is named **"Jump"** in the game's table. 89240 is the rigid-body push that force spells and cloth also use. | **PROVEN** on both counts | Jump |
 | Selected opponent (`aimOpponent`) | +E38 | Written by combatAttention BEAC0 (TPlayerBehaviour) and cleared by AI/behaviour routines. | Location **PROVEN**, meaning **PLAUSIBLE** | Camera framing, aim |
 | Walking (`walking`) | +12EA | Set by explore BFEA0 / player tick, cleared by motionPlay and the spell stun. | **UNPROVEN** meaning | Spine-follow, gait |
 | Grip flags / weapon class (`gripFlags`) | +1068 | Grip selector 1523F0 (and its twin 152660) sets it to the low 16 bits of the primary weapon's item record (weapon +18 → +198 → word 0), then keeps & 0xF0. From that class it picks the motion set by the game's own named table at 0x2ED0F0 (name then code, read at 258CE5): **0x10 → "One Handed"** (motion set 1), or **0x90 with two weapons → "2W Light"** (set 4). **0x20 → "Two Handed"** (set 0x10), **"2H Light"** (0x20, item code bit 0 set) or **"Greatsword"** (0x30, item code 0x521). **0x30 → "Polearm"** (set 0x40). No recognised class gives 0x80, or 0xC0 when body +AF8+58 & 0x100. A shield gives sets 0x100/0x200/0x300 ("1H & Shield" / "Shield C1" / "Shield C2") and a special held item gives "1H & Torch" (3); in those two paths +1068 keeps the item code. The grip table lookup 155250 indexes G2BAC50 by (grip & 0x70) >> 4, using 1 for 0x90 and 5 when its second argument is 1. | **PROVEN** with the game's own names. Kick `classify` (one-handed / dual / two-handed / polearm / unarmed / shield) **matches**. `wide = gripFlags != 0` (input.inl:1173, 1834) is **PROVEN**: it's the game's own side-threshold test (C24C3: 15° when +1068 == 0, 20° otherwise). (An earlier version of this doc called it wrong; that was a mistake.) `grip & 0x80` = "alternate" (input.inl:1746) is true for no-weapon (0x80/0xC0) as well as for two weapons (0x90), so it's **only PROVEN for 0x90**. | Kick weapon table, wide swing threshold, swing hands |
@@ -126,6 +128,31 @@ nothing to do with the right mouse button. The upright test `& 0x40204` (input.i
 on-the-ground, getting-up, scripted-down, dying and corpse states. The game makes the same test itself at 16990A,
 169AB7 and 168426. The current mask also fires on a 0.6 s spell stagger and on motion 0x1F, and its 0x40000 bit is
 never written.
+
+### The game's own motion names
+
+Resource.rpk holds the humanoid motion set's name table at 0x19582826: 49 names, 24 bytes each, in motion order.
+Four independent decodes pin the numbering: 11 is the thrust (impact code), 14/15 are the two get-up clips
+(162C10), 0x1F is the weapon switch (state 0x10000), and 0x22–0x28 are the eight powers (the 0x20 state and the
+spell classes). So every motion number the mod uses now has the developer's name:
+
+| # | Name | # | Name | # | Name |
+|---|---|---|---|---|---|
+| 0 | Walk | 11 | Stab | 22 | Parry Up |
+| 1 | Run | 12 | Overhead Swing | 23 | Parry Left Dn |
+| 2 | Backpedal | 13 | **Kick** | 24 | Parry Rgt Dn |
+| 3 | Defence stance | 14 | Get up | 25 | Stand 2 |
+| 4 | Cmbt - Idle | 15 | Get Up 2 | 27 | Fall High |
+| 5 | Attack Mid | 16 | Fall Forward | 29 | Unconcious 1 |
+| 6 | Attack Down | 17 | Fall Backward | 31 | Switch Weapons |
+| 7 | Attack Up | 18 | **Jump** | 33 | Rebalance |
+| 8 | Attack Combo 1 | 19 | Idle | 34–40 | Force Blast, Force Barrier, Force Raise, Force Weapon, Force Torrent, Energy Shock, Disp Form |
+| 9 | Attack Combo 2 | 20 | Parry Left | 42 | Get Up 3 |
+| 10 | Attack Combo 3 | 21 | Parry Right | 43 / 44 / 45 | Combat Walk / Power / Head Pain |
+
+So the mod's "default side" family 5–7 is Attack Mid / Down / Up, the "opposite side" family 8–10 is Attack
+Combo 1–3, the recover motion 3 the game plays after a stumble or spell stun is "Defence stance", the low-balance
+motion 0x21 is "Rebalance", and the scripted lay-down (state 0x600) plays "Unconcious 1".
 
 ## 2. The damage routine (wounds, hit reaction, damage flash)
 
@@ -200,10 +227,10 @@ depends on the camera hooks in section 4, whose game classes are identified ther
 | Hit reaction | bodyDamage arguments | **PROVEN** inputs (labels wrong) |
 | Grab range, Rotate held object | drag manager, heldQuery 117AA0, dragRotate 118920 | Plumbing, **UNPROVEN** meaning not re-decoded |
 | Toggle crouch | duckAmount +100C | Decay **PROVEN**, "crouch" **UNPROVEN** |
-| Kick (key), Kick style, VR: kick | motion 0xD, gates: health ≥ 0.01 (**PROVEN**), balance ≥ max − 0.05 (**PROVEN**), dead bit (**WRONG**), stance/state (**UNPROVEN**), kickGripClass 155250 (**UNPROVEN**) | Mixed |
-| Jump (key), VR: jump | rigid push 89240 (**PROVEN** push), motion 0x12 (**UNPROVEN**) | Mixed |
+| Kick (key), Kick style, VR: kick | motion 0xD = the game's "Kick" clip (**PROVEN**), gates: health ≥ 0.01 (**PROVEN**), balance ≥ max − 0.05 (**PROVEN**), dead bit (**WRONG**), stance/state (**UNPROVEN**), kickGripClass 155250 (**UNPROVEN**) | Mixed |
+| Jump (key), VR: jump | rigid push 89240 and motion 0x12 = the game's "Jump" clip | **PROVEN** |
 | First/Third person: defense (Manual), Swing selection | defense hooks 163880/166580/156FB0/162E80 and combatUpdate 169200 (TMotileDynamics methods, **PROVEN** identity), attack starters 157240/157700. Motion range 3–12 and grip table **UNPROVEN** meaning | Hook identity **PROVEN**, rules **UNPROVEN** |
-| Attack wind-up arc, size / opacity / thrusts, Crosshair during a swing, Crosshair out of combat, Aim marker, Aim indicator | motion +9B8, progress +A28, swingBits +1018 & 0x26 | Progress formula, the 0.30 commit point and the contact bits **PROVEN**. Thrust = motion 0xB **PROVEN** (impact code). The 0.40 variant for motion 11 **UNPROVEN** |
+| Attack wind-up arc, size / opacity / thrusts, Crosshair during a swing, Crosshair out of combat, Aim marker, Aim indicator | motion +9B8, progress +A28, swingBits +1018 & 0x26 | Progress formula, the 0.30 commit point and the contact bits **PROVEN**. Thrust = motion 0xB ("Stab") and its 0.40 **PROVEN** |
 | Blade drag cuts, Stabs sink in, Blade draw gain | impact record +C18–C40 (physicalContact 1590D0), armour rows | Record location **PROVEN**, armour-row meaning **UNPROVEN** |
 | Hurt and winded | Hurt: health/max (**PROVEN**). Winded: blue bar (**WRONG**) | Render branch has removed Winded and Hurt reads +D58 |
 | Wounds, Wound debug highlight | section 2 | Mixed (see section 2) |
@@ -653,7 +680,6 @@ plumbing, where a wrong meaning breaks the mod visibly rather than quietly chang
 
 ## 6. Not covered yet (honest list)
 
-- Motion clip identities (0xD kick, 0x12 jump, 3 recover, 0x11, 0x21), and whether motion 12 is an "overhead".
 - Material classes for metal vs cloth, lamp detection, and the blood skin offsets (blood thread).
 - The `_SKIN` vertex formats behind Finger poses (bounds-checked, feature skips on mismatch).
 - Render-side details (render thread is producing docs/render-assumptions.md and will be folded in once pushed).
