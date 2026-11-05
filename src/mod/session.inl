@@ -884,6 +884,9 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("wound_skin_faults", woundSkinFaults.load());
     // Skin programs seen reading the spec map as the wet-skin copy writes it (R, G gloss, B metal), and not.
     j.unum("wound_skin_spec_reads", woundSkinSpecReads.load());
+    // The game's own skin blood (vertex colour alpha) read for pool placement: reads, and bloodied points found.
+    j.unum("game_skin_blood_reads", gameSkinBloodReads.load());
+    j.unum("game_skin_blood_points", gameSkinBloodPoints.load());
     j.unum("wound_skin_spec_other", woundSkinSpecOther.load());
     // Blood lighting (wounds.inl MeshLights): lights copied at material draws, copies refused because the state
     // was packed for another node (state +A0 != node +130), and lights in use the last frame.

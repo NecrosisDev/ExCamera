@@ -148,6 +148,8 @@ static void queueSplat(const float* at, const float* sectorOrigin, const float* 
     if (dir) memcpy(q.dir, dir, sizeof q.dir); else memset(q.dir, 0, sizeof q.dir);
     q.across = across; q.along = along; q.thickness = thickness; q.seed = seed; q.kind = kind;
 }
+static bool gameSkinBloodAt(uintptr_t owner, float pick, float* at); // wounds_bake.inl
+
 struct WoundUniforms {
     unsigned falls = 0;           // drops in the air this frame, view space
     float fA[16][4];              // position xyz; w: radius (cm)
@@ -830,7 +832,26 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
             if (w.poolTick <= 0.f) {
                 w.poolTick = 0.45f;
                 const float radius = (std::min)(4.f + 11.f * std::sqrt(w.pool), 48.f);
-                queueSplat(world, sectorOrigin, nullptr, radius, radius, 0.03f + 0.03f * flow,
+                // Under where the game itself has bloodied the body (gameSkinBloodAt: its vertex blood, posed now),
+                // the bloodier the likelier; else under the wound.
+                // The bones' space and the part pose's may differ by the sector origin (not established): the reading
+                // nearest the wound, within 3 m, is taken.
+                float at[3], posed[3];
+                memcpy(at, world, sizeof at);
+                bool found = false;
+                __try { found = gameSkinBloodAt(w.owner, w.seed + w.pool, posed); } __except (EXCEPTION_EXECUTE_HANDLER) { found = false; }
+                if (found) {
+                    float best = 300.f * 300.f;
+                    for (int reading = -1; reading <= 1; ++reading) {
+                        float c[3], d2 = 0.f;
+                        for (int k = 0; k < 3; ++k) {
+                            c[k] = posed[k] + float(reading) * sectorOrigin[k];
+                            d2 += (c[k] - world[k]) * (c[k] - world[k]);
+                        }
+                        if (std::isfinite(d2) && d2 < best) { best = d2; memcpy(at, c, sizeof at); }
+                    }
+                }
+                queueSplat(at, sectorOrigin, nullptr, radius, radius, 0.03f + 0.03f * flow,
                            w.seed + float(i) * 0.37f + w.pool, 2);
             }
         }
