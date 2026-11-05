@@ -42,8 +42,11 @@ inline constexpr size_t healthRestorable = 0xD5C; // float: how far health can s
 inline constexpr size_t magic = 0xD74, magicCeiling = 0xD78; // floats 0..1: the blue bar
 inline constexpr size_t healthMax = 0x103C;      // float: the whole health bar
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
-inline constexpr size_t stateFlags =
-    0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
+// The character's state, a value (docs/GAME-FIELDS-AUDIT.md): 0 standing; 1 settle step (16B470); 2 active defense
+// (166604); 8 reactive defense motion (16B168/16B1B1); 0x20 a power/command motion in progress (179E40; 16B2D6 for
+// motions 0x22-0x28); 0xC0 standing spell-hit stagger (17B0E1); 0x100 stumble recover (16B05C); 0x200 on the
+// ground; 0x300 getting up; 0x600 scripted lay-down; 0x800/0xA00 dead; 0x8000 motion 0xD; 0x10000/0x10004 motion 0x1F.
+inline constexpr size_t stateFlags = 0xDF4;
 inline constexpr size_t lifeFlags = 0xDF8; // 0x100: a spell-hit stun (17B100 sets, 169B8A clears); NOT death
 inline constexpr size_t aimOpponent = 0xE38; // native selected combat opponent
 inline constexpr size_t contextualTarget = 0xE50;
@@ -52,7 +55,7 @@ inline constexpr size_t heldItems = 0xE88;   // [2] what each hand holds
 inline constexpr size_t defenseIncomingMotion = 0xF5C; // int: native interception request, -1 absent
 inline constexpr size_t defenseActive = 0x12F3;        // u8: reactive defense owns constraints/posture
 inline constexpr size_t duckAmount = 0x100C; // float 0..1: the game's crouch, decays 0.02 a physics step
-inline constexpr size_t swingBits = 0x1018;  // bounce/block bits (& 0x26)
+inline constexpr size_t swingBits = 0x1018;  // contact bits 0x2 (158EF0, 15859D) and 0x4 (159A60 15C212..); 0x20 never set
 inline constexpr size_t gripFlags =
     0x1068; // 0x80: the opposite family uses slot 1; nonzero: the wide threshold
 inline constexpr size_t gripEntry = 0x1070;    // slot 0's entry in the grip table (gripTable)
