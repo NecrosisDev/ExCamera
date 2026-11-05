@@ -83,7 +83,7 @@ Date: 2026-11-05.
 | Jump | motion 0x12 + rigid push 89240 | 89240 is the rigid-body push that force spells and cloth also use. Motion 0x12 also has no direct starter. | Push **PROVEN**. 0x12 = "jump clip" **UNPROVEN** | Jump |
 | Selected opponent (`aimOpponent`) | +E38 | Written by combatAttention BEAC0 (TPlayerBehaviour) and cleared by AI/behaviour routines. | Location **PROVEN**, meaning **PLAUSIBLE** | Camera framing, aim |
 | Walking (`walking`) | +12EA | Set by explore BFEA0 / player tick, cleared by motionPlay and the spell stun. | **UNPROVEN** meaning | Spine-follow, gait |
-| Grip flags / weapon class (`gripFlags`) | +1068 | Written by grip selectors 1523F0 and 152660 (0, 0x80, 0x90, 0xC0) and 155030 (0x10). | **UNPROVEN** meaning of each value | Wide swing threshold, kick weapon gate |
+| Grip flags / weapon class (`gripFlags`) | +1068 | Grip selector 1523F0 (and its twin 152660) sets it to the low 16 bits of the primary weapon's item record (weapon +18 → +198 → word 0), then keeps & 0xF0. From that class it picks the motion set by the game's own named table at 0x2ED0F0 (name then code, read at 258CE5): **0x10 → "One Handed"** (motion set 1), or **0x90 with two weapons → "2W Light"** (set 4). **0x20 → "Two Handed"** (set 0x10), **"2H Light"** (0x20, item code bit 0 set) or **"Greatsword"** (0x30, item code 0x521). **0x30 → "Polearm"** (set 0x40). No recognised class gives 0x80, or 0xC0 when body +AF8+58 & 0x100. A shield gives sets 0x100/0x200/0x300 ("1H & Shield" / "Shield C1" / "Shield C2") and a special held item gives "1H & Torch" (3); in those two paths +1068 keeps the item code. The grip table lookup 155250 indexes G2BAC50 by (grip & 0x70) >> 4, using 1 for 0x90 and 5 when its second argument is 1. | **PROVEN** with the game's own names. Kick `classify` (one-handed / dual / two-handed / polearm / unarmed / shield) **matches**. `wide = gripFlags != 0` (input.inl:1173, 1834) is **WRONG** as a class test: it's non-zero for every class, including no weapon. `grip & 0x80` = "alternate" (input.inl:1746) is true for no-weapon (0x80/0xC0) as well as for two weapons (0x90), so it's **only PROVEN for 0x90**. | Kick weapon table, wide swing threshold, swing hands |
 | Impact record | +C18 / +C20 / +C28 / +C38 | Written in physicalContact 1590D0 (a TMotileDynamics/TMotilePart method). Read by impact 159A60. | Location **PROVEN**, field meanings **PLAUSIBLE** | Blade drag, VR contacts, wound weapon lookup |
 
 ### Knocked-down verdict (every value the mod's mask matches)
@@ -625,7 +625,6 @@ plumbing, where a wrong meaning breaks the mod visibly rather than quietly chang
 - Meaning of the remaining states 0x600 / 0x20 / 0xC0 / 1 / 2 / 8 / 0x8000 / 0x10000 / 0x10004.
 - Motion clip identities (0xD kick, 0x12 jump, 3 recover, 0x11, 0x21), the attack-family range and the swing timing
   thresholds.
-- Grip-table and weapon-class values in +1068, and kickGripClass 155250.
 - The game's damage-type split (slash / pierce / crush / impact) inside impact 159A60, which would replace the
   wounds' guessed cut/crush rule.
 - Material classes for metal vs cloth, lamp detection, and the blood skin offsets (blood thread).
