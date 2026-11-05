@@ -321,6 +321,38 @@ procedural ID. That is the next step to bring the four detail rows back with the
     `payload[0x50+ch]`. The condition bytes the gated read uses are the same chunk's `+0x14..+0x16`
     (`payload+0xC..+0xE`), which feed the factory.
 
+## Plan: rebuilding the four detail rows from game material data (2026-11-05)
+
+Goal: Held item, Armour and clothing, World object and Level detail pick each pixel's material from the
+game's own data, never from colour. Each row stays off (`materialDataDecoded`, split per row) until its step
+is PROVEN. Status labels below are as of this plan.
+
+1. **Decode the composer (static, from the binary).** The game builds each item texture in the factory
+   executor 0x1EBC60: per channel rectangle (factory +0x60, 0xB5-byte records, variant from chunk 0x4000) it
+   draws layer quads through 0x1EB910 (entry+0 origin, entry+8 x entry+0x10 size), masked by layer masks
+   (+0x48, 0x1EB2F0) and blended by 0x1E6F00/0x1E7160. To prove: which layer field holds the procedural
+   material id 1-25 (0x1EAEE0's argument; the +0x8C 9-byte ids are the lead), the target texture of each
+   draw, and the blend rule (which layer owns a texel). UNPROVEN today.
+2. **Parallel material-id texture (best method).** Hook 0x1EBC60 (byte-exact signature + contract, like the
+   view hooks). When the game composes an item texture, replay the same quads with the same masks into an
+   R8 texture of the same size, writing the owning layer's id instead of colour. Keyed by the game's
+   output texture, freed when the game frees it. Per texel, from the game's own composition: no guess.
+3. **Own redraw shader with texcoords.** The held/worn/object mask replay (0x73F20 bind, 0x201630 submit,
+   0x6B8B0 draw) swaps in our program, which reads the game's texcoord attribute (layout from the game's
+   decoded vertex shader) and writes the id from step 2 into the mask. No id texture: that pixel gets no
+   detail.
+4. **Looks per class.** The 25 classes above map to our looks (steel sheen, mail, wood grain, leather,
+   cloth, copper, gem, resin, painted). The look is OURS; the choice of material is the game's.
+5. **World object and Level.** World objects that are items (node+0x184 set) use steps 2-3 unchanged. Level
+   surfaces do not go through the item composer: decode the level's own per-material surface type (the
+   data its footstep and impact sounds read is the lead). UNPROVEN; Level detail stays off until it is.
+6. **Proof and tests.** Every read gets a target/contract; the render audit reports id-texture coverage per
+   draw; a dev dump writes the id texture next to the shader dump; unit tests cover the id-to-class table;
+   check_shaders builds the new programs.
+
+Order: held item (proves the chain), armour and clothing (same chain on worn nodes), world object, level.
+Each ships on its own once proven; the rest stay off.
+
 ## The game's own shading, as decoded
 
 - `shading_f`: `layout(std140) uniform Material { MatDif, MatSpc, MatEmi, MatDrt, ... }`. Specular: per light
