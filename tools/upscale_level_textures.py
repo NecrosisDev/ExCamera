@@ -331,9 +331,12 @@ def main(argv: list[str]) -> int:
             oy, ox = height // 3, width // 3
             crop_o = original[oy:oy + 64, ox:ox + 64, :1 if block == 4 else 3]
             crop_u = preview[oy * scale:(oy + 64) * scale, ox * scale:(ox + 64) * scale]
+            if crop_u.ndim == 3 and crop_u.shape[2] == 4:  # alpha shown on its own, not as transparency
+                Image.fromarray(crop_u[:, :, 3]).resize((256, 256), Image.LANCZOS).save(out / 'crops' / f'{name}_alpha.png')
+                crop_u = crop_u[:, :, :3]
             Image.fromarray(np.squeeze(crop_o)).resize((256, 256), Image.NEAREST).save(out / 'crops' / f'{name}_before.png')
             Image.fromarray(np.squeeze(crop_u)).resize((256, 256), Image.LANCZOS).save(out / 'crops' / f'{name}_after.png')
-            tile = np.tile(preview if preview.ndim == 3 else preview[:, :, None], (2, 2, 1))
+            tile = np.tile(preview[:, :, :3] if preview.ndim == 3 else preview[:, :, None], (2, 2, 1))
             th = Image.fromarray(np.squeeze(tile)).resize((512, 512 * tile.shape[0] // tile.shape[1]), Image.LANCZOS)
             th.save(out / 'crops' / f'{name}_tiled.png')
             before_seam = seam_score(original[:, :, :3] if original.shape[2] >= 3 else original)
