@@ -413,6 +413,7 @@ struct WeaponBlood {
     float lastAt[3]{};        // the mesh origin at the last reading, for the swing's speed (cast-off)
     ULONGLONG lastTick = 0;
     float castCooldown = 0.f;
+    uintptr_t holder = 0;     // the character whose attack put the blood there (physicalImpact's attacker)
 };
 static WeaponBlood weaponBlood[bloodWeaponLimit];
 static unsigned weaponBloodNext = 0;
@@ -514,6 +515,7 @@ static void addWeaponBlood(const CharacterHitRecord& h) {
         weaponBloodNext = (weaponBloodNext + 1) % bloodWeaponLimit;
         *entry = {};
         entry->node = node;
+        entry->holder = currentImpactAttacker;
     }
     const ULONGLONG now = GetTickCount64();
     // A new spot near an old one adds to it; else it takes the weakest slot.
@@ -892,7 +894,17 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                 for (float& c : v) c /= dt;
                 const float speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
                 const float flat = std::sqrt(v[0] * v[0] + v[2] * v[2]);
-                if (std::isfinite(speed) && speed > 380.f && flat > 150.f && wb.castCooldown <= 0.f) {
+                // Only in the holder's own attack, past the point where the game lets the blow land: motions 5-12
+                // (the attack chooser 0xAE9D0's swings, 11 the stab), progress (+A28) at least 0.3, 0.4 for the stab,
+                // where 0x1674FA stops ramping a stab's impact. Waving a bloody blade about flings nothing.
+                bool attacking = false;
+                if (wb.holder && readable(wb.holder, field::character::motionProgress + 4) &&
+                    readable(wb.holder, field::character::motion + 4)) {
+                    const uint32_t motion = *(const uint32_t*)(wb.holder + field::character::motion);
+                    const float progress = *(const float*)(wb.holder + field::character::motionProgress);
+                    attacking = motion >= 5 && motion <= 12 && progress >= (motion == woundThrustMotion ? 0.4f : 0.3f);
+                }
+                if (attacking && std::isfinite(speed) && speed > 380.f && flat > 150.f && wb.castCooldown <= 0.f) {
                     for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) {
                         if (wb.amount[k] <= 0.45f) continue;
                         const float age = float(now - wb.born[k]) / 1000.f;
