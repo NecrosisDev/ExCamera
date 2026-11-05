@@ -68,6 +68,8 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.fpKnockdown = fpKnockdown.load();
     s.kickStyle = kickStyle.load();
     s.parryDirection = parryDirectionMode.load();
+    s.threatMarkers = threatMode.load();
+    s.threatOpacity = threatOpacity.load();
     s.hitReaction = hitReactionPercent.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
@@ -207,6 +209,8 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     fpKnockdown = s.fpKnockdown;
     kickStyle = s.kickStyle;
     parryDirectionMode = s.parryDirection;
+    threatMode = s.threatMarkers;
+    threatOpacity = s.threatOpacity;
     hitReactionPercent = s.hitReaction;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;

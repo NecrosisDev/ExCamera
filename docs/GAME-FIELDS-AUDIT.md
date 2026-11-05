@@ -32,6 +32,7 @@ attack or movement code. Low health alone does not knock the character down (aud
 | motion 18 / 0x12 | no starter found | | our jump plays no clip; 0x12 is only "our jump is busy" | **PROVEN "Jump"** (name table); not played |
 | rigid push 0x89240 | | force spells, cloth | the jump's push | **PROVEN** (audit thread) |
 | `combatStance` +0x12FE | the TAB combat toggle (key slot 0x2B7390) writes it (audit thread); 0xF0274, 0x1200EC; cleared 0x156900 in state 0xA00 | `playerBehavior` 0xC2028 (explore vs combat step); HUD 0x13E9C0 marker | not by the kick or jump any more | **PROVEN** (audit thread) |
+| `aimOpponent` +0xE38 | others: TMotileAI tick 0xB4570 (VMT 0x309960 +F0) runs behaviour +8E8 (0xB4BFE); the combat state 0xB8440 (installed by 0xB8190, 0xBE0E0) calls 0xB8210: sets +E38 = record +10 (0xB8288), clears it (0xB8227, 0xB8345). Player: combatAttention 0xBEAC0 (0xBED90), only from TPlayerBehaviour 0xC1CF0 | defenseReactive 0x163880 (0x163AA7) to 0x1636E0, which reads its +9B8, +D30, +1018: a character | threat markers: "aiming at you" when it equals playerRoot | **PROVEN** (threat-markers thread) |
 
 The kick and jump read: the pointer state (ours), `motion` (busy), `stateFlags` (dead; base 0), `balance`. Never
 health, magic or stance. Refusal texts: "…not while you are attacking, jumping or already kicking", "…not while the

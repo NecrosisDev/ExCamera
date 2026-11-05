@@ -55,6 +55,10 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return std::to_wstring(settings.cueSize)+L"%";
     case setting::cueOpacity:
         return std::to_wstring(settings.cueOpacity)+L"%";
+    case setting::threatMarkers:
+        return settings.threatMarkers == 0 ? L"Off" : settings.threatMarkers == 2 ? L"Always" : L"Combat only";
+    case setting::threatOpacity:
+        return std::to_wstring(settings.threatOpacity)+L"%";
     case setting::cueThrust:
         return settings.cueThrust ? L"below the crosshair" : L"off";
     case setting::bladeDrag:
@@ -295,6 +299,8 @@ const wchar_t* settingLabel(int id) {
     case setting::fpKnockdown: return L"Knocked down";
     case setting::kickStyle: return L"Kick style";
     case setting::parryDirection: return L"Parry direction";
+    case setting::threatMarkers: return L"Threat markers";
+    case setting::threatOpacity: return L"Marker opacity";
     case setting::leanKey: return L"Lean";
     case setting::holdHeading: return L"Heading correction";
     case setting::autoRecenter: return L"Auto-center";
@@ -384,6 +390,8 @@ const wchar_t* settingTip(int id) {
     case setting::attackCue: return L"An arc round the crosshair fills as your swing winds up, so you can time the release.";
     case setting::cueSize: return L"Arc size.";
     case setting::cueOpacity: return L"Arc opacity.";
+    case setting::threatMarkers: return L"Soft arcs round the screen centre point toward attackers off screen or near its edge; brighter while their swing winds up. Combat only: while you are in combat stance.";
+    case setting::threatOpacity: return L"Threat marker opacity.";
     case setting::cueThrust: return L"Shows a matching cue under the crosshair for thrusts.";
     case setting::bladeDrag: return L"Dragging an edge across a body cuts it, not only the swing's hit. The game's own edge, speed and armour rules apply. Works for everyone.";
     case setting::stabSink: return L"Experimental. A point-first thrust into unarmoured flesh pushes in a hand's depth instead of stopping at the skin. Armour and skulls still stop it.";

@@ -1104,6 +1104,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("glove_bends", trackedGloveBends.load())
         .end();
 #endif
+    j.object("threat_markers") // every build: threats.inl, read-only
+        .str("mode", threatMode.load() == fp::threat::off ? "off" : threatMode.load() == fp::threat::always ? "always" : "combat")
+        .unum("reads", threatReads.load())
+        .unum("read_faults", threatReadFaults.load())
+        .unum("shown", threatsShown.load())
+        .unum("draws", threatDraws.load())
+        .end();
     { // every build: the balance shadow (balance_shadow.inl), read-only
         AcquireSRWLockShared(&shadowLock);
         j.object("balance_shadow")
