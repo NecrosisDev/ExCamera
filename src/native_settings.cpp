@@ -25,6 +25,7 @@ static const OwnSection ownSections[] = {
     {L"Graphics", L"Surface detail", {setting::heldDetail, setting::armourDetail, setting::objectDetail, setting::levelDetail}, 4},
     {L"Combat", L"Blocking and aim", {setting::fpDefense, setting::parryDirection, setting::fpSwingSelection, setting::tpCombatAim, setting::indicator}, 5},
     {L"Combat", L"Wind-up arc", {setting::attackCue, setting::cueThrust, setting::cueSize, setting::cueOpacity}, 4},
+    {L"Combat", L"Threat markers", {setting::threatMarkers, setting::threatOpacity}, 2},
     {L"Combat", L"Blades", {setting::bladeDrag, setting::stabSink, setting::bladeGain}, 3},
     {L"Controls", L"Keys", {setting::rotateHeldKey, setting::kickKey, setting::kickStyle, setting::jumpKey, setting::swapShoulderKey}, 5},
     {L"Controls", L"Mouse and movement", {mouse, setting::sensitivity, setting::invertY, setting::rawMouse, movement,

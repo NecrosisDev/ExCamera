@@ -130,6 +130,8 @@ enum : int {
     fpKnockdown,
     kickStyle,
     parryDirection,
+    threatMarkers,
+    threatOpacity,
     count
 };
 }
@@ -181,6 +183,8 @@ inline unsigned rowCapability(int row) {
     case setting::kickStyle: return capAnimatedKick;
     case setting::jumpKey: return capJump;
     case setting::fpDefense: case setting::tpDefense: case setting::parryDirection: return capManualDefense;
+    // The threat markers read each character after the game's combat update, hooked with manual defense.
+    case setting::threatMarkers: case setting::threatOpacity: return capManualDefense;
     default: return 0;
     }
 }
@@ -234,6 +238,7 @@ struct ModSettings {
     int cueSize = 100, cueOpacity = 100;            // the attack wind-up arc
     int fpDefense = 0, tpDefense = 0;               // automatic default, manual holds RMB
     int fpSwingSelection = 1, tpSwingSelection = 1; // mouse direction, or native facing
+    int threatMarkers = 1, threatOpacity = 35; // 0 off, 1 in combat stance only, 2 always; the markers' opacity
     int parryDirection = 0; // fp::ParryDirection: the game's parry, a right-mouse drag's, or the drag's only when it matches
     bool manualDefenseAvailable = false;            // runtime capability, not a saved row
     unsigned unavailable = 0, faulted = 0; // runtime: cap* features missing on this game build, or off after a fault
@@ -330,6 +335,7 @@ struct ModSettings {
         case setting::fpKnockdown: fpKnockdown = fpKnockdown ? 0 : 1; break;
         case setting::kickStyle: kickStyle = kickStyle ? 0 : 1; break;
         case setting::parryDirection: parryDirection = (parryDirection + (delta < 0 ? 2 : 1)) % 3; break;
+        case setting::threatMarkers: threatMarkers = (threatMarkers + (delta < 0 ? 2 : 1)) % 3; break;
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -617,6 +623,10 @@ struct ModSettings {
         }
         case setting::fpSwingSelection:
             return fpSwingSelection ? L"Mouse direction" : L"Native facing";
+        case setting::threatMarkers:
+            return threatMarkers == 0 ? L"Off" : threatMarkers == 2 ? L"Always" : L"Combat only";
+        case setting::threatOpacity:
+            return std::to_wstring(threatOpacity) + L"%";
         case setting::parryDirection:
             return parryDirection == fp::parryAssisted ? L"Drag: assisted"
                    : parryDirection == fp::parryStrict ? L"Drag: strict"
@@ -795,6 +805,12 @@ inline int iniKnockdownView(const wchar_t* text) {
 }
 inline const wchar_t* iniKnockdownViewText(int mode) {
     return mode ? L"third" : L"first";
+}
+inline int iniThreatMarkers(const wchar_t* text) {
+    return iniIs(text, L"off") ? 0 : iniIs(text, L"combat") ? 1 : iniIs(text, L"always") ? 2 : badText;
+}
+inline const wchar_t* iniThreatMarkersText(int mode) {
+    return mode == 0 ? L"off" : mode == 2 ? L"always" : L"combat";
 }
 inline int iniKickStyle(const wchar_t* text) {
     return iniIs(text, L"animated") ? 1 : iniIs(text, L"classic") ? 0 : badText;
@@ -1306,6 +1322,14 @@ inline const RowInfo& rowInfo(int row) {
          L"Classic plays the game's own kick. Animated plays the same kick (same gates and hit) but moves the "
          L"body like a motion-captured kick, chosen by what you hold: unarmed or one-handed kicks, or two-handed ones. "
          L"Experimental; when this game build cannot be checked for it, the kick stays Classic."},
+        {setting::threatMarkers, L"Threat markers", RowInfo::choice, &ModSettings::threatMarkers, nullptr,
+         L"View", L"ThreatMarkers", iniThreatMarkers, iniThreatMarkersText,
+         L"Small soft arcs round the screen centre point toward anyone fighting you who is off screen or near its "
+         L"edge: alive, within ten metres, with you as their target, and on guard or attacking. A marker brightens "
+         L"while that attacker's swing winds up. Combat only: while you are in combat stance. Needs this game build's "
+         L"combat update, as manual defense does."},
+        {setting::threatOpacity, L"Threat markers: opacity", RowInfo::number, &ModSettings::threatOpacity, nullptr,
+         L"View", L"ThreatOpacity", nullptr, nullptr, nullptr, {10,100,5,18}},
         {setting::parryDirection, L"Parry direction", RowInfo::choice, &ModSettings::parryDirection, nullptr,
          L"FirstPerson", L"ParryDirection", fp::parryDirectionFromText, fp::parryDirectionText,
          L"Needs Defense set to Manual; both views. While you hold right mouse the view stays still and a drag "
