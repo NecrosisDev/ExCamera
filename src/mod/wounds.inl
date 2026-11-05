@@ -10,9 +10,9 @@ static std::atomic<float> woundMarks{1.f}; // the Wounds row: 0 off
 
 // Game reads the render code makes on layouts no game code has yet been shown to read that way
 // (docs/render-assumptions.md, "UNPROVEN"): the held items' light from the light-node fields, their wear
-// and dirt from the item database record, the level's two nearest lamps, and a weapon's two transforms for a
-// cut's direction. Off until each is proven from the game code; the effects then use their neutral
-// fallbacks (default light from above, unread condition, no lamps, a direction picked on the surface).
+// and dirt from the item database record, and the level's two nearest lamps. Off until each is proven from
+// the game code; the effects then use their neutral fallbacks (default light from above, unread condition,
+// no lamps).
 constexpr bool unprovenRenderReads = false;
 
 // The runtime's record, shared with ScriptRuntime's character_hits: version 2 (0x78 bytes); a version 1
@@ -808,10 +808,10 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, 
     float now[12]{}, before[12]{};
     if (readable(attacker + field::character::impactWeapon, sizeof(uintptr_t))) {
         weapon = *reinterpret_cast<const uintptr_t*>(attacker + field::character::impactWeapon);
-        // +F0/+120 as the weapon's transform now and a step before: unproven (render-assumptions.md).
-        uintptr_t transforms = 0; // the weapon itself stays (r.weapon); only its transforms are gated
-        if constexpr (unprovenRenderReads) transforms = weapon;
-        if (transforms && readable(weapon + 0xf0, 48) && readable(weapon + 0x120, 48)) {
+        // The struck-with part (0x1590D0 stores its first argument here) steps its four points at +F0 and keeps the
+        // step before at +120: 0x89330 copies +120 -> +150 and +F0 -> +120 (0x8956A-0x89597) after building its
+        // pose +2A0 from +F0 (0x7ECD0, as the witnessed partSettle). render-assumptions.md
+        if (weapon && readable(weapon + 0xf0, 48) && readable(weapon + 0x120, 48)) {
             std::memcpy(now, reinterpret_cast<const void*>(weapon + 0xf0), 48);
             std::memcpy(before, reinterpret_cast<const void*>(weapon + 0x120), 48);
             for (int axis = 0; axis < 3; ++axis) {

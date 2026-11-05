@@ -5160,7 +5160,40 @@ static bool rewriteCompiles(GLuint shader, const char* text) {
     return ok != 0;
 }
 
+#if FP_DEV_TOOLS
+// Dev builds, [Dev] ShaderDump=1: every shader source the game hands the driver from here on, as it is,
+// appended to shader-dump.glsl beside first-person.ini. The game ships them packed in Resource.rpk
+// (shading.flb); this is how the render assumptions read what its shaders do with each texture unit.
+static void dumpGameShader(GLuint shader, GLsizei count, const char* const* strings, const GLint* lengths) {
+    static int enabled = -1;
+    static unsigned dumped = 0;
+    if (enabled < 0) enabled = settingsPath[0] && GetPrivateProfileIntW(L"Dev", L"ShaderDump", 0, settingsPath) ? 1 : 0;
+    if (!enabled || !strings || count <= 0 || count >= 256 || dumped >= 2000) return;
+    static std::wstring path;
+    if (path.empty()) path = settingsFolderFile(L"shader-dump.glsl");
+    const HANDLE file = path.empty() ? INVALID_HANDLE_VALUE
+                                     : CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                                                   FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    char head[96];
+    const int n = snprintf(head, sizeof head, "\r\n// ==== shader %u (GL name %u, %d parts) ====\r\n", dumped++, shader, count);
+    DWORD written = 0;
+    WriteFile(file, head, DWORD(n), &written, nullptr);
+    for (GLsizei k = 0; k < count; ++k) {
+        if (!strings[k]) continue;
+        const size_t length = lengths && lengths[k] >= 0 ? size_t(lengths[k]) : strlen(strings[k]);
+        WriteFile(file, strings[k], DWORD(length), &written, nullptr);
+    }
+    CloseHandle(file);
+}
+static void dumpGameShaderGuarded(GLuint shader, GLsizei count, const char* const* strings, const GLint* lengths) {
+    __try { dumpGameShader(shader, count, strings, lengths); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+#endif
 static void APIENTRY smoothShaderSource(GLuint shader, GLsizei count, const char* const* strings, const GLint* lengths) {
+#if FP_DEV_TOOLS
+    dumpGameShaderGuarded(shader, count, strings, lengths);
+#endif
     if (lightSmoothing.load(std::memory_order_relaxed) && strings && count > 0 && count < 256) {
         try {
             std::string text;

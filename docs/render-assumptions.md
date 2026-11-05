@@ -107,10 +107,33 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 1. Held, armour and object light direction and colour from light nodes (`heldLightFor`, view_effects.inl). They now use the default light from above.
 2. Held and worn item wear and dirt from the item database record (`heldConditionOf`). They now read as unknown, which the shader already handles.
 3. Level detail's two nearest lamps (`levelLightsFor`). Now no lamps.
-4. A weapon's `+0xF0`/`+0x120` transforms for a cut's direction (wounds.inl). The direction is now picked on the surface. The weapon's identity (`impactWeapon`) is still used.
+4. ~~A weapon's `+0xF0`/`+0x120` transforms for a cut's direction~~: **PROVEN and back on** (8d7e359+). The
+   value at `character+0xC38` is the first argument of 0x1590D0 (the collision consumer that stores it), a
+   physics part with its pose at `+0x2A0`. The part step 0x89330 builds that pose from the four points at
+   `+0xF0` (call 0x7ECD0, as in the witnessed partSettle at 0x89800), then copies `+0x120 → +0x150` and
+   `+0xF0 → +0x120` (0x8956A-0x89597). So `+0xF0` is the four current points and `+0x120` the four of the step
+   before; their centroid difference is the part's motion over one step.
 
 Each comes back on when its fields are proven (a contract witness plus a decoded reader) and the flag is
 flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on the same light-node fields.
+
+## Progress on the gated items
+
+- **Light-node fields (items 1 and 3), still UNPROVEN.**
+  - TLightSource is the class named by the ShortString at 0x2FD048, VMT at 0x2FCF40. Its instance size is 744
+    (0x2E8), which matches the `lightSize` the code checks: PROVEN.
+  - Its copy method 0x51B10 copies `+0x210` as 12 bytes (three floats), `+0x218`, `+0x21C`, `+0x220`,
+    `+0x224` and `+0x22C`, then computes `sqrt(+0x220) * +0x21C` (0x51D09-0x51D15) and `sqrt(+0x220 * +0x21C)`.
+  - That fits a colour at `+0x210`, but it does not show which of `+0x21C`/`+0x220`/`+0x224` is intensity and
+    which is range; the code assumes `+0x21C` intensity and `+0x224` range. Needed next: the routine that hands
+    lights to the shaders (or the uniforms in the shader dump below).
+- **Item wear and dirt (item 2), still UNPROVEN.** Not examined yet.
+- **Skin texture unit roles (units 0/1/2 = diffuse/specular/normal), still UNPROVEN.**
+  - The game's shader sources are in Resource.rpk as `shading.flb`; its table lists `shading_f`/`_v`,
+    `shadesss_f`, `shadehar_f`, `shadetrn_f` and others. The bodies are packed or encoded, not plain GLSL.
+  - Dev builds now have `[Dev] ShaderDump=1`, which appends every source the game hands glShaderSource to
+    `shader-dump.glsl` beside first-person.ini. One short session with it shows which sampler each unit feeds,
+    and likely the light uniforms too.
 
 ## Not yet proven, not gated (for the audit thread)
 
