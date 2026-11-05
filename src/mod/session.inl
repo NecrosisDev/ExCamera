@@ -861,6 +861,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("wound_faults", woundFaults.load());
     j.unum("wound_skin_mapped", woundSkinMapped.load());
     j.unum("wound_skin_unmapped", woundSkinUnmapped.load());
+    {   // Why wounds did not map onto skin (wounds_bake.inl WoundUnmapped), "reason: count; ..."
+        std::string reasons;
+        for (unsigned k = 0; k < unmappedReasonCount; ++k)
+            if (const unsigned n = woundUnmappedReasons[k].load())
+                reasons += std::string(reasons.empty() ? "" : "; ") + woundUnmappedNames[k] + ": " + std::to_string(n);
+        j.str("wound_skin_unmapped_reasons", reasons.c_str());
+    }
     j.unum("wound_skin_bakes", woundSkinBakes.load());
     j.unum("wound_skin_draws", woundSkinDraws.load());
     j.unum("wound_skin_faults", woundSkinFaults.load());
