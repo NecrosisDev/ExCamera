@@ -103,6 +103,25 @@ The mod's mask 0xAC0 | 0x40204 | 0xA00 matches seven values the game stores in +
 | 0xC0 | **Standing spell-hit stagger.** 17B050 stops walking and sets a 600 ms timer (+EA4). The dynamics step resets it to 0 when the timer runs out (16A581–16A5A6). | 17B0E1 (17B050, from spell-hit routine 17B100) | **No, PROVEN.** The mask wrongly treats it as down. |
 | 0x10004 | **Standing action.** Set while motion 0x1F is past 60 % (16B4C3). Bit 4 marks a one-shot callback (136BF0) as already queued, and before 60 % the value is 0x10000. | 16B504 (169200) | **No, PROVEN.** Matched only through bit 0x4 of 0x40204. |
 
+
+The other values the game stores in +DF4 (all **standing**, none caught by the game's own 0xA00 / 0x800 tests):
+
+| DF4 value | What it is (decoded) | Writers |
+|---|---|---|
+| 0 | Normal: nothing special running. Many resets, including low balance (169C06) and the stagger timer (16A5A6). | 169200 and others |
+| 1 | A finishing/settle step after a balance-dependent blend (16B3D8 branch on +1198 == 3, then 15F000 with 0x300 if the state was above 0xFF). | 16B470 (169200) |
+| 2 | **Active defense** (parry/block posture). Written by the defense attack update when it takes over. | 166604 (166580, TMotileDynamics) |
+| 8 | **Reactive defense motion** running: set while +12F3 is set, or motion 4 (the defense motion 163880 picks at 163B58) is playing. | 16B168, 16B1B1 (169200) |
+| 0x20 | **Performing a power / command motion.** 179E40 plays the requested motion and sets 0x20; it's called by TForceBlastEffect, TForceWaveEffect, 2360E0 and 23CB20. 169200 also sets it for motions 0x22–0x28 (16B2D6). | 179EC0 (179E40), 16B2D6 (169200) |
+| 0x100 | **Stumble recover**: when the stance value +590 drops under 0.85 the game plays recover motion 3 and sets 0x100. | 16B05C (169200) |
+| 0x8000 | Motion 0xD special case (see the kick row). | 16B09C (169200) |
+| 0x10000 / 0x10004 | Motion 0x1F running / past 60 % (see the knocked-down table). | 16B514 / 16B504 (169200) |
+
+So the mod's `stateFlags == 0x20` refusal (combat.inl:14, game_structs.h "right mouse is the game's") is a **real
+state** (a power motion is in progress) and refusing a kick during it is right, but the label is **WRONG**: it has
+nothing to do with the right mouse button. The upright test `& 0x40204` (input.inl:1829) matches 0x200 (down), 0x4
+(a bit of 0x10004, a standing action) and 0x40000 (never written); it should be `& 0xA00` like the knockdown test.
+
 **Verdict:** the knocked-down camera is safe to turn back on if it tests `(DF4 & 0xA00) != 0`. That's exactly the
 on-the-ground, getting-up, scripted-down, dying and corpse states. The game makes the same test itself at 16990A,
 169AB7 and 168426. The current mask also fires on a 0.6 s spell stagger and on motion 0x1F, and its 0x40000 bit is
@@ -192,7 +211,7 @@ depends on the camera hooks in section 4, whose game classes are identified ther
 | See yourself through walls | silhouettePass 4F1D0 (TRenderer / T3DViewport) | Render plumbing |
 | Ambient occlusion, Depth of field, Screen-space reflections, Edge smoothing, Smooth lighting | sampled views 4BAB0 (a T3DViewport/TCharacterView method), view matrices | Mod-drawn effects on the game's image, no game-rule claims. Render thread is auditing |
 | Held item / Armour and clothing / World object / Level detail, Lights per object, Draw distance, Draw far rooms | mesh queue 26F230, shadow schedule 4F4A0, light lists, roomClassify 143C20 (hash-gated) | Render plumbing; render thread is auditing |
-| Finger poses, Finger poses: others | boneRegister D39B0 | Plumbing, **UNPROVEN** bone identities |
+| Finger poses, Finger poses: others | The mod makes its own bone nodes (`_VRBONE` names) with the game's node constructor 4FD20, hangs them on the hand node with 50170, registers them with the skin bone register D39B0, and rewrites the `_SKIN` aggregate's vertex weights. Finger joints come from the mod's own hand model fitted to the mesh, not from game bone names. | Skin layout **PROVEN** by D39B0 itself: skin +8 back-pointer, +10 bone count, +18 node array, +20 inverse binds, +28 per-bone floats, and the 1-based id at node +17C (D39C0–D3AEF). Skin build D9940 is reached from TCharacterView's equipment refresh. The vertex formats 0xF30001 / 0xA41000 and the `_SKIN` name are **UNPROVEN** (no field contract; every read is bounds-checked and a mismatch skips the feature). No game-rule claim. |
 | Head / eye tracking, Recenter tracking | none (UDP input) | Mod-only |
 | Lean, Lean controls, Lean left/right key | none: hidden legacy rows, ARCHITECTURE.md says lean has no runtime input or pose path | No game claim; nothing to prove |
 | All 25 VR rows | xr_* whole-function byte contracts | Not playable in this build without the OpenXR build. Not audited in this pass |
@@ -634,9 +653,9 @@ plumbing, where a wrong meaning breaks the mod visibly rather than quietly chang
 
 ## 6. Not covered yet (honest list)
 
-- Meaning of the remaining states 0x600 / 0x20 / 0xC0 / 1 / 2 / 8 / 0x8000 / 0x10000 / 0x10004.
 - Motion clip identities (0xD kick, 0x12 jump, 3 recover, 0x11, 0x21) and which of motions 5–12 is which attack family.
 - Material classes for metal vs cloth, lamp detection, and the blood skin offsets (blood thread).
+- The `_SKIN` vertex formats behind Finger poses (bounds-checked, feature skips on mismatch).
 - Render-side details (render thread is producing docs/render-assumptions.md and will be folded in once pushed).
 - VR (xr_*), which isn't in the flat-screen test build.
 
