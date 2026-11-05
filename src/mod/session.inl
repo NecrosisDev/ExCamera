@@ -886,6 +886,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     }
     j.unum("wound_skin_bakes", woundSkinBakes.load());
     j.unum("wound_skin_draws", woundSkinDraws.load());
+    j.unum("wound_skin_own_handed", woundSkinOwnHanded.load()); // own first-person mesh: headwear path
     j.unum("wound_skin_faults", woundSkinFaults.load());
     // Skin programs seen reading the spec map as the wet-skin copy writes it (R, G gloss, B metal), and not.
     j.unum("wound_skin_spec_reads", woundSkinSpecReads.load());
