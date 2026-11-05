@@ -320,7 +320,8 @@ static void addWound(const CharacterHitRecord& h, const float* types = nullptr) 
         dirWorld[1] *= invLen;
         dirWorld[2] *= invLen;
 
-        const float impulse = std::clamp(permanent * 0.20f + recoverable * 0.10f, 0.02f, 0.08f);
+        const float reaction = stereoLive.load() ? 0.f : float(std::clamp(hitReactionPercent.load(), 0, 100)) / 100.f;
+        const float impulse = std::clamp(permanent * 0.20f + recoverable * 0.10f, 0.02f, 0.08f) * reaction;
         const float kickPitch = (-dirWorld[1] * 0.6f + dirWorld[2] * 0.4f) * impulse;
         const float kickYaw = dirWorld[0] * impulse * 0.8f;
         const float kickRoll = -dirWorld[0] * impulse * 0.35f;
@@ -656,7 +657,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         uintptr_t ownerNode = 0;
         bool alive = true, ownerGone = false;
         __try {
-            alive = (*(const unsigned*)(owner + field::character::stateFlags) & woundDeadState) == 0;
+            alive = !fp::deadState(*(const unsigned*)(owner + field::character::stateFlags));
             if (mendCount || brokenCount) ownerNode = *(const uintptr_t*)(owner + field::character::sceneNode);
             (void)*(const volatile float*)(owner + field::character::bleed);
         } __except (EXCEPTION_EXECUTE_HANDLER) {

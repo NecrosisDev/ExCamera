@@ -2,6 +2,7 @@
 // Part of first_person.cpp (one translation unit): included there, in order.
 #include "held_throw_admission.inl"
 static void loadSettings(const wchar_t* path); // mod/settings.inl: every F8 setting from first-person.ini
+static void applySafeReset(const wchar_t* path); // mod/settings.inl: the launcher's safe start, worker only
 #include "../raw_registration.h"
 static void rawReconcile();
 // Stage a predecessor before the switch: a callback may arrive immediately.
@@ -355,7 +356,8 @@ static bool otherHooksCheckView(const fp::ImageView& file) {
         !admitHeldThrowEntries(file) ||
         !admitHeadwearRenderEntries(file) ||
         !admitViewEffectsEntries(file) ||
-        !admitSilhouetteEntries(file)) {
+        !admitSilhouetteEntries(file) ||
+        !admitMaterialIdsEntries(file)) {
         otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
         return false;
     }
@@ -460,6 +462,7 @@ static void hookHealthTick() {
 static bool rearm(const wchar_t* executable) {
     setActivationPhase(fp::ActivationPhase::starting);
     viewMode = 0;                 // a fresh session starts in first person
+    knockdownOwnsView = false;
     rearmedAt = GetTickCount64(); // before the window procedure returns (a queued F6 must not toggle)
     if (!otherHooksCheck(executable)) {
         reportFault("rearm_native_conflict", "removed", "not_required",
@@ -757,6 +760,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.boolean("held_throw_ready", heldThrowReady.load());
     j.unum("guard_denied", guardDenied.load());
     j.unum("guard_withdrawals", guardWithdrawals.load());
+    {
+        const int parry = parryDirectionMode.load();
+        j.str("parry_direction", parry == fp::parryStrict ? "strict" : parry == fp::parryAssisted ? "assisted" : "automatic");
+    }
+    j.unum("parry_assisted", parryAssisted.load());
+    j.unum("parry_strict_matches", parryStrictMatches.load());
+    j.unum("parry_strict_refusals", parryStrictRefusals.load());
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
     j.num("fov", selectedFov.load());
     j.boolean("settings_saved", !settingsSavePending() && pendingModsByModSave.load(std::memory_order_acquire) < 0);
@@ -855,7 +865,19 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("wound_skin_draws", woundSkinDraws.load());
     j.unum("wound_skin_faults", woundSkinFaults.load());
     j.boolean("wound_hits_linked", characterHits.load() != nullptr);
-    j.unum("held_texture_reads", heldTextureReads.load());
+    // The game's material ids (material_ids.inl): textures composed and replayed, parts drawn with ids.
+    j.boolean("material_ids_hooked", matid::hooked.load());
+    j.unum("material_id_builds", matid::builds.load());
+    j.unum("material_id_layers", matid::layersReplayed.load());
+    j.unum("material_id_skips", matid::skipped.load());
+    j.str("material_id_last_skip", matid::lastSkip.load());
+    j.unum("material_id_faults", matid::faults.load());
+    j.unum("material_id_dropped", matid::dropped.load());
+    j.unum("material_id_other_context", matid::otherContext.load());
+    j.unum("material_id_programs", matid::idProgramsBuilt.load());
+    j.unum("material_id_program_failures", matid::idProgramsFailed.load());
+    j.unum("material_id_parts", materialIdParts.load());
+    j.unum("material_id_misses", materialIdMisses.load());
     j.unum("held_lights_seen", heldLightsSeen.load());
     j.unum("held_others", heldOthers.load());
     j.unum("weapon_blood_taken", weaponBloodTaken.load());
@@ -885,8 +907,6 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.num("view_effects_input_height", viewEffectsInputHeight.load(std::memory_order_relaxed));
     j.num("view_effects_ao_width", viewEffectsAoWidth.load(std::memory_order_relaxed));
     j.num("view_effects_ao_height", viewEffectsAoHeight.load(std::memory_order_relaxed));
-    j.num("view_effects_ssr_width", viewEffectsSsrWidth.load(std::memory_order_relaxed));
-    j.num("view_effects_ssr_height", viewEffectsSsrHeight.load(std::memory_order_relaxed));
     j.num("view_effects_dof_width", viewEffectsDofWidth.load(std::memory_order_relaxed));
     j.num("view_effects_dof_height", viewEffectsDofHeight.load(std::memory_order_relaxed));
     j.boolean("view_effects_low_tier", viewEffectsLowTier.load(std::memory_order_relaxed));
@@ -894,7 +914,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.str("view_effects_skip", viewEffectsSkip.load(std::memory_order_relaxed)); // "" while they draw
     {
         // GPU milliseconds per view-effect stage, eased; their sum is the whole stack's cost.
-        static const char* const timerNames[viewTimerCount] = {"gpu_ms_copies", "gpu_ms_occlusion_reflections",
+        static const char* const timerNames[viewTimerCount] = {"gpu_ms_copies", "gpu_ms_occlusion",
                                                           "gpu_ms_composite", "gpu_ms_depth_of_field", "gpu_ms_finish"};
         double total = 0.0;
         for (unsigned k = 0; k < viewTimerCount; ++k) {
@@ -906,7 +926,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         }
         j.fixed("gpu_ms_view_effects", total, 3);
         // The same stages' CPU time, and the whole frame; viewGpuLagMs says how to read them.
-        static const char* const cpuNames[viewTimerCount] = {"cpu_ms_copies", "cpu_ms_occlusion_reflections",
+        static const char* const cpuNames[viewTimerCount] = {"cpu_ms_copies", "cpu_ms_occlusion",
                                                              "cpu_ms_composite", "cpu_ms_depth_of_field", "cpu_ms_finish"};
         for (unsigned k = 0; k < viewTimerCount; ++k)
             j.fixed(cpuNames[k], viewEffectsCpuMs[k].load(std::memory_order_relaxed), 3);
@@ -1081,7 +1101,52 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .boolean("kick_fault", motionKickFault.load())
         .unum("jumps", motionJumps.load())
         .boolean("jump_fault", motionJumpFault.load())
-        .end();
+        .unum("jump_push_steps", jumpPushApplied.load())
+        .fixed("jump_last_rise_cm", double(jumpPushRiseMm.load()) / 10.0, 1);
+    for (const bool jump : {false, true}) { // refused key presses by reason (fp::MotionRefusal)
+        j.object(jump ? "jump_refused" : "kick_refused");
+        for (size_t r = 0; r < size_t(fp::MotionRefusal::count); ++r)
+            j.unum(fp::motionRefusalNames[r], (jump ? jumpRefusals : kickRefusals)[r].load());
+        j.end();
+    }
+    j.end();
+    { // every build: the Animated kick (pose_drive.inl)
+        const int clip = kickLastClip.load(), cls = kickLastClass.load(), peak = kickNativePeakMilli.load();
+        j.object("kick_animated")
+            .str("style", kickStyle.load() ? "animated" : "classic")
+            .boolean("ready", kickDriveReady.load())
+            .boolean("fault", kickDriveFault.load())
+            .unum("kicks", kickAnimated.load())
+            .unum("blended_in", kickBlendedIn.load())
+            .unum("blended_out", kickBlendedOut.load())
+            .unum("cut_short", kickCutShort.load())
+            .unum("staggered", kickStaggered.load())
+            .unum("steps", kickSteps.load())
+            .unum("rows", kickRows.load())
+            .unum("held_arm_steps", kickHeldArms.load())
+            .unum("refused_body", kickRefusedGraph.load())
+            .unum("refused_heading", kickRefusedHeading.load())
+            .unum("native_leg_agree", kickNativeLegAgree.load())
+            .unum("native_leg_disagree", kickNativeLegDisagree.load())
+            .str("last_clip", clip >= 0 && clip < fp::kick::clipCount ? fp::kick::clips[clip].name : "none")
+            .str("last_class", cls >= 0 && cls < int(fp::kick::WeaponClass::count) ? fp::kick::classNames[cls] : "none")
+            .str("last_mode", kickLastMode.load() == 1 ? "lower_body" : kickLastMode.load() == 0 ? "full_body" : "none")
+            .boolean("last_mirrored", kickLastMirror.load() == 1)
+            .fixed("native_peak_progress", peak >= 0 ? peak / 1000.0 : -1.0, 3);
+        j.object("stance_by_class"); // the game's stance at each class's last kick start: hands (cm), lead foot, twist
+        for (size_t c = 0; c < size_t(fp::kick::WeaponClass::count); ++c) {
+            const auto& s = kickStances[c];
+            if (!s.seen.load()) continue;
+            j.object(fp::kick::classNames[c]);
+            for (unsigned side = 0; side < 2; ++side) {
+                const std::string text = std::to_string(s.v[side * 3].load()) + "," + std::to_string(s.v[side * 3 + 1].load()) + "," +
+                                         std::to_string(s.v[side * 3 + 2].load());
+                j.str(side ? "right_hand_cm" : "left_hand_cm", text.c_str());
+            }
+            j.str("lead_foot", s.v[6].load() ? "right" : "left").num("shoulder_twist_deg", s.v[7].load()).end();
+        }
+        j.end().end();
+    }
     j.object("blade") // every build: the drawn edge and the sinking thrust on the game's impact path
         .boolean("ready", bladeReady.load())
         .unum("drags", bladeDrags.load())
@@ -1171,8 +1236,11 @@ static DWORD runSession() {
             if (user.size() < MAX_PATH) wcscpy_s(settingsPath, user.c_str());
         }
         loadSettings(settingsPath);
+        if (GetPrivateProfileIntW(L"Safe", L"Reset", 0, settingsPath)) applySafeReset(settingsPath);
         persistedFov = selectedFov.load();
         attackSideKey = GetPrivateProfileIntW(L"Input", L"AttackSideKey", 0, settingsPath);
+        parryDragDeadZone = std::clamp(int(GetPrivateProfileIntW(L"Input", L"ParryDragDeadZone", 40, settingsPath)), 5, 400);
+        parryDragMirror = GetPrivateProfileIntW(L"Input", L"ParryDragMirror", 0, settingsPath) != 0;
         {
             wchar_t oh[16];
             GetPrivateProfileStringW(L"Compat", L"OtherHooks", L"ask", oh, 16, settingsPath);
@@ -1345,7 +1413,13 @@ static DWORD runSession() {
         reportFault("stereo_hook_creation_failed", "not_installed", "not_required");
         return 3;
     }
+    if (!createKickDriveHook()) { // after the stereo hooks: the VR drive may own the composition detour already
+        uninitializeNativeHooks();
+        reportFault("kick_hook_creation_failed", "not_installed", "not_required");
+        return 3;
+    }
     createViewEffectsHook();
+    createMaterialIdsHook(); // after it: needs the silhouette hook
     createNodeMoveHook();
     createRoomViewHook();
     createManualPageHook();
@@ -1387,6 +1461,32 @@ static DWORD runSession() {
                     FP_SHOWN_NAME L": view feature error. Helmet handling stopped; first person continues.");
             }
             stopKeyTick();
+            { // a refused kick or jump key press: say why, at most once every 3 s
+                static ULONGLONG lastMotionNotice = 0;
+                int pending = motionNoticePending.load();
+                if (pending && GetTickCount64() - lastMotionNotice >= 3000 && motionNoticePending.compare_exchange_strong(pending, 0)) {
+                    const bool jump = (pending & motionNoticeJump) != 0;
+                    const auto reason = fp::MotionRefusal((pending & 0xFF) - 1);
+                    if (const wchar_t* text = fp::motionRefusalNotice(jump, reason)) {
+                        modMessage(NoticeKind::info, text); // the game's own log line, as every mod message
+                        lastMotionNotice = GetTickCount64();
+                    }
+                }
+            }
+            { // a two-way F6 still held at f6HoldMs: the game's camera, without waiting for the key-up
+                ULONGLONG start = f6HoldStart.load();
+                if (start && GetTickCount64() - start >= fp::f6HoldMs && f6HoldStart.compare_exchange_strong(start, 0))
+                    applyF6Step(fp::f6ReleaseStep(GetTickCount64() - start, viewMode.load()));
+            }
+            // The camera's knockdown switch, applied here like F6 (input released) but not counted as one.
+            if (const int want = knockdownViewRequest.exchange(0)) {
+                if (f6Running() && viewMode.load() == (want == 1 ? 0 : 1)) {
+                    viewMode = want == 1 ? 1 : 0;
+                    releaseInput();
+                    knockdownOwnsView = want == 1;
+                } else if (want == 2)
+                    knockdownOwnsView = false; // already left third person some other way
+            }
             hookHealthTick();
             if (i % 10 == 0) {
                 static unsigned stepsBefore = 0;

@@ -15,6 +15,55 @@ inline int defenseModeFromText(const wchar_t* text) {
 inline const wchar_t* defenseModeText(int mode) {
     return mode == 1 ? L"manual" : L"automatic";
 }
+// Manual parry direction. The game's parry picker 156FB0 (reached from 163880 via 1636E0) answers an
+// incoming swing with one of five clips, named in Resource.rpk: 20 Parry Left, 21 Parry Right,
+// 22 Parry Up, 23 Parry Left Dn, 24 Parry Rgt Dn. Automatic keeps its answer. Assisted plays the
+// direction the right-mouse drag points to. Strict parries only when the drag matches the game's answer.
+enum ParryDirection : int { parryAutomatic = 0, parryAssisted = 1, parryStrict = 2 };
+inline int parryDirectionFromText(const wchar_t* text) {
+    auto is = [&](const wchar_t* word) {
+        const wchar_t* t = text;
+        while (*t && *word && ((*t | 32) == *word)) {
+            ++t;
+            ++word;
+        }
+        return !*t && !*word;
+    };
+    if (!text) return parryAutomatic;
+    return is(L"assisted") ? parryAssisted : is(L"strict") ? parryStrict : parryAutomatic;
+}
+inline const wchar_t* parryDirectionText(int mode) {
+    return mode == parryAssisted ? L"assisted" : mode == parryStrict ? L"strict" : L"automatic";
+}
+inline bool parryMotion(int motion) { return motion >= 20 && motion <= 24; }
+// Accumulated drag in mouse counts, screen y down. The length is held to a few dead zones so a
+// reversal turns the choice round quickly. Inside the dead zone there is no choice (0).
+// Which screen side the game's "Left" clips face is unproven in play; `mirror` swaps the sides.
+struct ParryDrag {
+    float x = 0.f, y = 0.f;
+    void reset() { x = y = 0.f; }
+    void move(float dx, float dy, float deadZone) {
+        if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(deadZone) || !(deadZone > 0.f)) return;
+        x += dx;
+        y += dy;
+        const float length = std::sqrt(x * x + y * y), limit = deadZone * 3.f;
+        if (length > limit) {
+            x *= limit / length;
+            y *= limit / length;
+        }
+    }
+    int pose(float deadZone, bool mirror) const {
+        if (!std::isfinite(deadZone) || !(deadZone > 0.f) || !(x * x + y * y >= deadZone * deadZone)) return 0;
+        const float degrees = std::atan2(-y, mirror ? -x : x) * 57.29578f; // 0 right, 90 up, -90 down
+        if (degrees >= 45.f && degrees <= 135.f) return 22;                  // up
+        if (degrees > -30.f && degrees < 45.f) return 21;                    // right
+        if (degrees >= -90.f && degrees <= -30.f) return 24;                 // down and right
+        if (degrees > -150.f && degrees < -90.f) return 23;                  // down and left
+        return 20;                                                           // left
+    }
+};
+// Strict: the drag must be the game's own answer to this swing. No drag, no parry.
+inline bool parryStrictMatch(int chosen, int native) { return parryMotion(native) && chosen == native; }
 // Native semantic bits, not physical keys. Polling remains owned by the game.
 inline unsigned movementKey(unsigned key, const unsigned* bindings) {
     unsigned mask = 0;
@@ -248,10 +297,14 @@ template <class Query> inline int pickClear(const float* head, const float* orig
     for (float& v : d) v /= len;
     return blocked(head, d, len) ? 0 : 1;
 }
-// Attack wind-up, fed on the behaviour tick from the native swing: motion root+0x9B8 (5-12 accepted),
-// progress root+0xA28 (negative during the start dwell; the hit lands past 0.30, or 0.40 for the thrust,
-// motion 11) and the bounce/block bits root+0x1018 & 0x26. There is no hold-to-charge in the game, so the
-// wind-up is the progress up to the hit. phase: 0 idle, 1 winding, 2 fading.
+// Attack wind-up, fed on the behaviour tick from the native swing (docs/GAME-FIELDS-AUDIT.md): motion root+0x9B8,
+// 5-12 being the attacks (motionPlay clears defense and calls 162E80 only for these, 179F60-7A); progress root+0xA28
+// ((elapsed - blend-in +A24) / clip length, 1761D7-F7, 174E00), whose commit point is the game's own: 0.30 (defense
+// update 1669BA/1669CF, the parry window in 159A60 at 15B990/15BCAC), 0.4 for motion 11, the Stab (defense update
+// 1674FA-16750B, 16778D-16779A; motion names: the game's motion-set table in Resource.rpk at 0x19582826); and the
+// contact bits root+0x1018 & 0x6 (0x2 set
+// by 158EF0 and 157FF0 at 15859D, 0x4 by 159A60 at 15C212/15C242/15C26A), on which the arc ends. There is no
+// hold-to-charge in the game, so the wind-up is the progress up to the commit point. phase: 0 idle, 1 winding, 2 fading.
 struct Windup {
     int motion = 0, phase = 0;
     float p0 = 0, lastP = 0, fill = 0;
@@ -444,16 +497,16 @@ inline void windupStep(Windup& w, bool swinging, int motion, float p, unsigned b
         w.p0 = p < 0 ? p : 0;
         w.phase = 1;
         w.fill = 0;
-        w.bitsAtStart = bits & 0x26;
+        w.bitsAtStart = bits & 0x6;
     } // a new swing (or a chained one)
     w.lastP = p;
     if (w.phase != 1) return;
-    if ((bits & 0x26) & ~w.bitsAtStart) {
+    if ((bits & 0x6) & ~w.bitsAtStart) {
         w.phase = 2;
         w.fadeFrom = now;
         return;
-    } // bounced or blocked
-    const float strikeAt = motion == 11 ? 0.40f : 0.30f;
+    } // a contact bit came on: the swing met something
+    const float strikeAt = motion == 11 ? 0.40f : 0.30f; // the game's commit points (Stab 0.4, 1674FA)
     if (p >= strikeAt) {
         w.fill = 1;
         w.phase = 2;
@@ -966,6 +1019,113 @@ inline bool heldPointOnPlane(const float* origin, const float* dir, float distan
         if (!std::isfinite(out[i])) return false;
     }
     return true;
+}
+// Two virtual keys name the same key: equal, or one is a modifier's generic code (VK_MENU 0x12, VK_CONTROL 0x11,
+// VK_SHIFT 0x10) and the other its left or right code.
+inline bool sameKey(unsigned a, unsigned b) {
+    if (!a || a >= 256 || !b || b >= 256) return false;
+    if (a == b) return true;
+    constexpr unsigned modifiers[][3] = {{0x12, 0xA4, 0xA5}, {0x11, 0xA2, 0xA3}, {0x10, 0xA0, 0xA1}};
+    for (const auto& family : modifiers)
+        if ((a == family[0] && (b == family[1] || b == family[2])) || (b == family[0] && (a == family[1] || a == family[2])))
+            return true;
+    return false;
+}
+// A key the game's own Controls use (its binding table: movement, run, crouch, the alternate attack that makes a
+// thrust, Cursor Look, interact...). The mod's Kick, Jump and Swap shoulder keys take their key from the game
+// altogether, so they never take one of these: Alt as Kick swallowed Alt + left mouse, the game's stab.
+template <size_t N>
+inline bool gameUsesKey(unsigned key, const unsigned (&bindings)[N]) {
+    for (unsigned bound : bindings)
+        if (sameKey(key, bound)) return true;
+    return false;
+}
+// Why a kick or jump key press played nothing (motions.inl): counted in the status file, and for the reasons a
+// player can act on, said in a short notice. The checks are motionPlayable's, in its order, then the kick's stance.
+enum class MotionRefusal { unavailable, fault, tooSoon, notPlayer, cursorFree, busy, dead, otherState, balance, gameKey, count };
+inline constexpr const char* motionRefusalNames[] = {"unavailable", "fault", "too_soon", "not_player", "cursor_free",
+                                                     "busy",        "dead",  "state",    "balance",    "game_key"};
+static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(MotionRefusal::count));
+// The refusal for a player already found eligible as a character (the root readable, the controlled one); none
+// (count) when the clip may play.
+// The gates (decoded in docs/GAME-FIELDS-AUDIT.md). busyMotion: character+9B8 is an attack the game's own starts
+// play (5 + n at 157240, 8 + n at 157700, 0xB at 157DC0, 0xC at 157BF0), the kick (0xD) or the jump (0x12).
+// state: character+DF4, a value: & 0x800 is dead (0x800 or 0xA00, the game's own test); 0 is standing; the other
+// standing values are the game busy with something of its own: 2 active defense (166604), 8 a reactive defense
+// motion (16B168/16B1B1), 0x20 a power/command motion (179E40, 16B2D6), 1 a settle step (16B470), 0x100 a stumble
+// recover (16B05C), 0x8000 motion 0xD, 0x10000/0x10004 motion 0x1F; down and stagger values are reactions.
+// balance: below balanceMax - 0.05 the game itself starts its recover motion (169B99 -> 179810), so a kick or jump
+// would be cut at once. No health, magic or stance requirement.
+inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, float balance, float balanceMax) {
+    if (cursorFree) return MotionRefusal::cursorFree;
+    if (busyMotion) return MotionRefusal::busy;
+    if (state & 0x800) return MotionRefusal::dead;
+    if (state != 0) return MotionRefusal::otherState;
+    if (!(std::isfinite(balance) && std::isfinite(balanceMax) && balance >= balanceMax - 0.05f)) return MotionRefusal::balance;
+    return MotionRefusal::count;
+}
+// The notice for a refused key press, or nullptr where there is nothing to tell (too soon after the last one,
+// dead, not the player). Static text: the notice window keeps the pointer.
+inline const wchar_t* motionRefusalNotice(bool jump, MotionRefusal r) {
+    switch (r) {
+    case MotionRefusal::busy:
+        return jump ? L"Jump: not while you are attacking, kicking or already jumping."
+                    : L"Kick: not while you are attacking, jumping or already kicking.";
+    case MotionRefusal::otherState:
+        return jump ? L"Jump: not while you are defending, casting, recovering or down."
+                    : L"Kick: not while you are defending, casting, recovering or down.";
+    case MotionRefusal::balance:
+        return jump ? L"Jump: wait until you've got your balance back." : L"Kick: wait until you've got your balance back.";
+    case MotionRefusal::cursorFree:
+        return jump ? L"Jump: not while the pointer is free (a menu, the inventory or Cursor Look)."
+                    : L"Kick: not while the pointer is free (a menu, the inventory or Cursor Look).";
+    case MotionRefusal::gameKey:
+        return jump ? L"Jump: that key is one of the game's own Controls. Choose another in Settings > Controls > Keys."
+                    : L"Kick: that key is one of the game's own Controls (Alt makes a thrust). Choose another in "
+                      L"Settings > Controls > Keys.";
+    case MotionRefusal::unavailable:
+        return jump ? L"Jump is not available on this game version." : L"Kick is not available on this game version.";
+    case MotionRefusal::fault:
+        return jump ? L"Jump turned off after an error. Restart the game to retry."
+                    : L"Kick turned off after an error. Restart the game to retry.";
+    default: return nullptr;
+    }
+}
+// The game's own windows that free the pointer by themselves (overlay.inl windowFreeStep), by the form's kind
+// tag (+0xB8): inventory/loot/container, the arena merchant and arsenal, the arena/company screens, and an
+// item description. The arena's post-fight result form (Next Fight) is not one of them, whatever its tag: the
+// player walks over to loot and looks around, and Cursor Look (native slot 8, already admitted on that form)
+// frees the pointer to click its buttons.
+inline constexpr unsigned windowInventory = 0xCE1C2010, windowLoot = 0xCE1C2040, windowContainer = 0xCE1C2013,
+                          windowDescription = 0xCE1C2012, windowShop = 0xCE1C2023,
+                          windowArsenal = 0xCE1C2024; // the arena merchant and its arsenal
+// Native arena forms: 194CD0, 19A370, 198AF0 and 198E40 respectively.
+inline constexpr unsigned windowMatches = 0xCE10AE10, windowCompany = 0xCE10AE20,
+                          windowCompanyRecords = 0xCE10AE21, windowCompanyStatus = 0xCE10AE22;
+inline constexpr unsigned cursorPanelInventory = 1u << 0, cursorPanelCommerce = 1u << 1,
+                          cursorPanelArena = 1u << 2, cursorPanelDescription = 1u << 3;
+inline unsigned cursorPanelOf(unsigned kind, bool arenaResult) {
+    if (arenaResult) return 0;
+    if (kind == windowInventory || kind == windowLoot || kind == windowContainer) return cursorPanelInventory;
+    if (kind == windowShop || kind == windowArsenal) return cursorPanelCommerce;
+    if (kind == windowMatches || kind == windowCompany || kind == windowCompanyRecords || kind == windowCompanyStatus)
+        return cursorPanelArena;
+    return kind == windowDescription ? cursorPanelDescription : 0;
+}
+// F6. The full cycle goes first -> third -> the game's overhead camera (a blend, viewMode 2) and off; any
+// press while the mod is off or the blend has settled toggles it. "First and third only" decides on release:
+// a tap flips the two views, a hold of f6HoldMs (or longer) blends out to the game's camera instead.
+inline constexpr uint64_t f6HoldMs = 500, f6BlendSettleMs = 600;
+enum class F6Step { none, holdPending, toThird, toFirst, toOverhead, toggle };
+inline F6Step f6PressStep(bool twoWay, bool running, int mode, uint64_t blendAgeMs) {
+    if (!running) return F6Step::toggle;
+    if (mode == 0) return twoWay ? F6Step::holdPending : F6Step::toThird;
+    if (mode == 1) return twoWay ? F6Step::holdPending : F6Step::toOverhead;
+    return blendAgeMs < f6BlendSettleMs ? F6Step::none : F6Step::toggle;
+}
+inline F6Step f6ReleaseStep(uint64_t heldMs, int mode) {
+    if (mode != 0 && mode != 1) return F6Step::none;
+    return heldMs >= f6HoldMs ? F6Step::toOverhead : mode == 0 ? F6Step::toThird : F6Step::toFirst;
 }
 // the F6 press that re-armed the mod (polled) may still
 // arrive as WM_KEYDOWN after the window procedure is back; ignore F6 that soon.

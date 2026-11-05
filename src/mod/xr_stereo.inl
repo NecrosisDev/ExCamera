@@ -20,7 +20,6 @@ static std::atomic<unsigned> stereoRuntimeLosses{0};
 static bool stereoOriginSavePending = false; // a recenter happened; write the new origin once the next frame has it
 static uintptr_t stereoView = 0, stereoCamera = 0, stereoRoot = 0, stereoScene = 0, stereoController = 0, stereoVolume = 0;
 static DWORD stereoThread = 0;
-static std::atomic<bool> stereoLive{false};
 static std::unique_ptr<fp::xr::Transaction> stereoUnion;
 static std::atomic<unsigned> stereoFrames{0}, stereoEyes{0}, stereoRejected{0}, stereoFaults{0};
 static std::atomic<const char*> stereoReason{"disabled"};
@@ -59,7 +58,7 @@ static void trackedComfortEye() {
     if (trackedComfortObserver) trackedComfortObserver();
 }
 static void (*trackedEffectsObserver)(bool desktopShowsIt) = nullptr; // test seam: the image changed under the probe
-// The desktop's own AO and SSR, run on an eye image while it is still in the native target. When
+// The desktop's own AO, run on an eye image while it is still in the native target. When
 // that same image becomes the desktop frame (mirror, reconstruction), the desktop pass is told.
 static void trackedEffectsEye(bool desktopShowsIt) {
     if (!vrEffects.load(std::memory_order_relaxed) || !stereoView) return;

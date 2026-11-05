@@ -12,13 +12,16 @@ this folder and Documents\ExCamera.
 
 KEYS & CONTROLS
 F6            Switch between first person, third person and the game's camera
+              (Settings > Camera > F6 cycle "1st/3rd only": a tap flips first and
+              third person, holding F6 half a second shows the game's camera)
 F7 (hold 1s)  Stop the mod
 F8            Open Settings and free the cursor; press again to close without saving
               (first person, third person and the title screen only)
 F9 / F10      Lower / raise the field of view
 F11           Reset the field of view
 F12           Toggle Live Telemetry & Wound Debug Mode (neon highlight for wounds/blood)
-Cursor Look   The game's own binding (Space by default): free the cursor while exploring
+Cursor Look   The game's own binding (Space by default): free the cursor while exploring.
+              After an arena fight you keep looking around; press it to click Next Fight
 Hold RMB      (In combat) Engage Manual Guard to actively angle your parry against attacks
 Hold RMB      (While dragging an object with LMB) Rotate the held object in 3D pitch and yaw
 Mouse Wheel   In third person, adjust camera distance; while dragging objects, adjust reach
@@ -37,7 +40,9 @@ Open the native MANUAL tab on the main menu to read the complete First Person (E
 in-game guide page anytime.
 
 IF SOMETHING GOES WRONG
-Hold F7 to hand the camera back to the game. Close the game fully before
+Hold F7 to hand the camera back to the game. Hold Shift while starting
+ExCamera.exe to start with default settings; your current settings are
+kept as first-person.backup-<date>-<time>.ini beside them. Close the game fully before
 updating or replacing these files. When reporting a problem, include
 first-person-status.json and fault-log.txt from this folder.
 

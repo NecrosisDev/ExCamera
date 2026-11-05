@@ -16,6 +16,29 @@ static bool settingsSavePending() {
     SettingsGuard guard;
     return settingsSavePendingLocked();
 }
+// Which optional features this session lacks (the game build withheld or changed their code) or switched off
+// after a fault, for the Settings rows that depend on them (panel::rowCapability). Flags the hooks already keep.
+static void rowCapabilities(unsigned& unavailable, unsigned& faulted) {
+    unavailable = faulted = 0;
+    if (!nodeMoveHooked.load() || !layout.optionalGroupAvailable("fingerBones")) unavailable |= panel::capFingers;
+    if (trackedBoneFault.load() || skinMergeFault.load()) faulted |= panel::capFingers;
+    if (!roomViewHooked.load()) unavailable |= panel::capFarRooms;
+    const unsigned effects = viewEffectsUnavailable.load(std::memory_order_relaxed);
+    if (effects & viewHookMissing) unavailable |= panel::capViewEffects;
+    if (effects & viewFaulted) faulted |= panel::capViewEffects;
+    if (!originalBodyDamage && !originalPhysicalImpact) unavailable |= panel::capWounds;
+    if (!bladeReady.load()) unavailable |= panel::capBlades;
+    if (bladeFault.load()) faulted |= panel::capBlades;
+    if (!layout.optionalGroupAvailable("kick")) unavailable |= panel::capKick | panel::capJump;
+    if (!layout.optionalGroupAvailable("jump")) unavailable |= panel::capJump;
+    if (motionKickFault.load()) faulted |= panel::capKick;
+    if (!kickDriveReady.load()) unavailable |= panel::capAnimatedKick;
+    if (kickDriveFault.load()) faulted |= panel::capAnimatedKick;
+    if (motionJumpFault.load()) faulted |= panel::capJump;
+    const int defense = manualDefenseAvailability.load(); // 0 not decided yet, 1 ready, 5 changed after its hooks
+    if (defense == 5) faulted |= panel::capManualDefense;
+    else if (defense > 1) unavailable |= panel::capManualDefense;
+}
 static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     panel::ModSettings s;
     s.fov = selectedFov.load();
@@ -25,7 +48,6 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     // View effects keep a 0..1 strength (view_effects.inl); these rows store it as before.
     s.ambientOcclusion = int(std::lround(ambientOcclusion.load() * 100.f)); // percent, as the sliders store it
     s.depthOfField = int(std::lround(depthOfField.load() * 100.f));
-    s.screenSpaceReflections = int(std::lround(screenSpaceReflections.load() * 100.f));
     s.edgeSmoothing = edgeSmoothing.load() > 0.f;
     s.helmetVisor = helmetVisor.load() > 0.f;
     s.playerGhost = playerGhost.load() > 0.f;
@@ -42,6 +64,11 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.woundDebug = woundDebug.load(std::memory_order_relaxed);
     s.lightSmoothing = lightSmoothing.load();
     s.farRooms = farRooms.load();
+    s.f6Cycle = f6Cycle.load();
+    s.fpKnockdown = fpKnockdown.load();
+    s.kickStyle = kickStyle.load();
+    s.parryDirection = parryDirectionMode.load();
+    s.hitReaction = hitReactionPercent.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
     s.rawMouseFallback = rawMouse && !rawWanted.load();
@@ -86,6 +113,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.tpLag = tpLag.load();
     s.tpBlockers = tpBlockers.load();
     s.tpDown = tpDown.load();
+    s.tpLookFollow = tpLookFollow.load();
     s.tpCombatAimFree = tpCombatAimFree.load();
     s.attackCue = attackCue.load();
     s.bladeDrag = bladeDrag.load();
@@ -99,6 +127,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.fpSwingSelection = fpSwingSelection.load();
     s.tpSwingSelection = tpSwingSelection.load();
     s.manualDefenseAvailable = manualDefenseReady.load();
+    rowCapabilities(s.unavailable, s.faulted);
     s.scriptRuntimeAvailable = true;
     s.crouchMode = crouchMode.load();
     s.nearClip = nearClip.load();
@@ -118,6 +147,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.rotateHeldKey = rotateHeldKey.load();
     s.kickKey = kickKey.load();
     s.jumpKey = jumpKey.load();
+    s.swapShoulderKey = swapShoulderKey.load();
     s.leanKey = leanKey.load();
     s.holdHeading = holdHeadingOn.load();
     s.autoRecenter = aimAutoRecenter.load();
@@ -157,7 +187,6 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     aimIndicator = s.indicator;
     ambientOcclusion = effectStrength(s.ambientOcclusion);
     depthOfField = effectStrength(s.depthOfField);
-    screenSpaceReflections = effectStrength(s.screenSpaceReflections);
     edgeSmoothing = s.edgeSmoothing ? 0.5f : 0.f; // on/off rows: on is the old look, 0.5
     helmetVisor = s.helmetVisor ? 0.5f : 0.f;
     playerGhost = s.playerGhost ? 0.5f : 0.f;
@@ -174,6 +203,11 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     woundDebug.store(s.woundDebug, std::memory_order_relaxed);
     lightSmoothing = s.lightSmoothing;
     farRooms = s.farRooms;
+    f6Cycle = s.f6Cycle;
+    fpKnockdown = s.fpKnockdown;
+    kickStyle = s.kickStyle;
+    parryDirectionMode = s.parryDirection;
+    hitReactionPercent = s.hitReaction;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;
     rawMouse = s.rawMouse;
@@ -217,6 +251,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     vrEyeScalePercent = s.vrEyeScale;
     tpBlockers = s.tpBlockers;
     tpDown = s.tpDown;
+    tpLookFollow = s.tpLookFollow;
     tpCombatAimFree = s.tpCombatAimFree;
     attackCue = s.attackCue;
     bladeDrag = s.bladeDrag;
@@ -243,6 +278,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     rotateHeldKey = s.rotateHeldKey;
     kickKey = s.kickKey;
     jumpKey = s.jumpKey;
+    swapShoulderKey = s.swapShoulderKey;
     leanKey = s.leanKey;
     holdHeadingOn = s.holdHeading;
     aimAutoRecenter = s.autoRecenter;
@@ -331,6 +367,18 @@ static panel::ModSettings readSettings(const wchar_t* path) {
 static void loadSettings(const wchar_t* path) {
     makeLive(readSettings(path));
 }
+// Safe start: the launcher kept the player's file as a backup and left one holding only [Safe] Reset=1.
+// Every row takes its built-in default and is queued, so this worker writes the whole file out as usual;
+// the marker goes now. Should the game stop before the rows are written, the file still reads as defaults.
+static void applySafeReset(const wchar_t* path) {
+    makeLive(panel::ModSettings{});
+    {
+        SettingsGuard guard;
+        for (int r = 0; r < panel::setting::count; ++r)
+            if (panel::rowInfo(r).key) ++settingsRevision[r];
+    }
+    WritePrivateProfileStringW(L"Safe", nullptr, nullptr, path);
+}
 static bool saveSetting(const wchar_t* section, const wchar_t* key, const wchar_t* value) {
     return settingsPath[0] && WritePrivateProfileStringW(section, key, value, settingsPath);
 }
@@ -401,6 +449,15 @@ static void acceptVrQuickSaves() {
 static void flushSettings() {
     acceptVrQuickSaves();
     persistSettingsRows(panel::setting::count);
+}
+// The swap-shoulder key: Third person: shoulder negated and published like an Apply, so its revision is
+// queued and the session worker saves it. The camera slides across (fp::shoulderSlide).
+static void swapShoulder() {
+    SettingsGuard guard;
+    const auto live = readLiveSettings();
+    auto swapped = live;
+    swapped.tpShoulder = -live.tpShoulder;
+    commitSettings(swapped, live);
 }
 // Native Apply owns a draft. Merge only edited rows into the latest state so a
 // menu opened before a FOV key or raw-input fallback cannot overwrite that work.

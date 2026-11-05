@@ -46,11 +46,14 @@ public:
     bool refreshStatus(const ModSettings& live) {
         if (value.trackingStatus==live.trackingStatus && value.rawMouseFallback==live.rawMouseFallback &&
             value.manualDefenseAvailable==live.manualDefenseAvailable &&
-            value.scriptRuntimeAvailable==live.scriptRuntimeAvailable) return false;
+            value.scriptRuntimeAvailable==live.scriptRuntimeAvailable &&
+            value.unavailable==live.unavailable && value.faulted==live.faulted) return false;
         value.trackingStatus=live.trackingStatus;
         value.rawMouseFallback=live.rawMouseFallback;
         value.manualDefenseAvailable=live.manualDefenseAvailable;
         value.scriptRuntimeAvailable=live.scriptRuntimeAvailable;
+        value.unavailable=live.unavailable;
+        value.faulted=live.faulted;
         return true;
     }
     static float sliderPosition(const ModSettings& m,int id) {

@@ -47,7 +47,7 @@ The native regression suites used during development compile production owners w
 
 ## Screen-effect quality diagnostics
 
-`first-person-status.json` reports the screen-effect input and intermediate target dimensions for ambient occlusion, reflections, and depth of field, plus `view_effects_low_tier`. These targets match the full view dimensions; the low-tier flag remains false because screen effects no longer reduce resolution under load. Nonzero dimensions describe the most recently supported rendered view, and are cleared when the effects skip or target creation fails. Use these values with the per-stage CPU/GPU timings to optimize shader and memory work without reducing output resolution.
+`first-person-status.json` reports the screen-effect input and intermediate target dimensions for ambient occlusion and depth of field, plus `view_effects_low_tier`. These targets match the full view dimensions; the low-tier flag remains false because screen effects no longer reduce resolution under load. Nonzero dimensions describe the most recently supported rendered view, and are cleared when the effects skip or target creation fails. Use these values with the per-stage CPU/GPU timings to optimize shader and memory work without reducing output resolution.
 
 ## Settings boundaries and `ScriptRuntime.dll` coexistence
 

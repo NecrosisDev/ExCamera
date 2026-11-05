@@ -9,9 +9,9 @@ static bool ordinaryCombat(uintptr_t root, uintptr_t bh) {
     if (root != *(uintptr_t*)gameAt(fp::sig::playerRoot) ||
         *(uintptr_t*)(bh + field::behaviour::character) != root ||
         *(unsigned char*)(bh + field::behaviour::inactive) ||
-        (*(unsigned*)(root + field::character::lifeFlags) & 0x100u) ||
+        fp::deadState(*(unsigned*)(root + field::character::stateFlags)) ||
         !*(unsigned char*)(root + field::character::combatStance) ||
-        *(unsigned*)(root + field::character::stateFlags) == 0x20 ||
+        *(unsigned*)(root + field::character::stateFlags) == 0x20 || // a power/command motion in progress (179E40)
         *(uintptr_t*)(root + field::character::actionCallback) ||
         *(unsigned char*)(bh + field::behaviour::interactionLatch) ||
         *(unsigned char*)(bh + field::behaviour::pressBlocked))
@@ -104,6 +104,7 @@ static void combatInput(uintptr_t root, uintptr_t bh, bool owned, const InputOwn
     }
     buttons = sample.buttons;
     publishGuard(ownerSample, sample.guard);
+    parryDragHeld = sample.guard && parryDirectionMode.load() != fp::parryAutomatic;
 }
 enum class DefensePermission { native, denied, held };
 static DefensePermission defensePermission(uintptr_t root, bool* known = nullptr) {
@@ -138,9 +139,9 @@ static DefensePermission defensePermission(uintptr_t root, bool* known = nullptr
 // Callers validate ownership and contain optional reads with SEH. Active native
 // defense does not use this gate: its tracking and transitions stay native.
 static bool guardReadiness(uintptr_t root) {
-    const float readiness = *(float*)(root + field::character::postureReadiness);
-    const float balance = *(float*)(root + field::character::stamina);
-    const float maximum = *(float*)(root + field::character::staminaMax);
+    const float readiness = *(float*)(root + field::character::health);
+    const float balance = *(float*)(root + field::character::balance);
+    const float maximum = *(float*)(root + field::character::balanceMax);
     return std::isfinite(readiness) && std::isfinite(balance) && std::isfinite(maximum) &&
            static_cast<double>(readiness) >= .01 && static_cast<double>(balance) >= static_cast<double>(maximum) - .05;
 }
@@ -184,15 +185,87 @@ struct DefenseUpdate {
     bool reactiveSeen = false;
 };
 static thread_local DefenseUpdate* defenseUpdate = nullptr;
+// Parry direction. 163880 picks its parry through 1636E0 -> 156FB0 (opponent +E38) and, when the answer is
+// >= 0 and not already +EB0, stores it in +EB0 and plays it with motionPlay (163AB1-163B85). 1636E0 does not
+// pick again (answers -1) while +EB0 is a parry (20-24) and the opponent's motion (+9B8, or +D30 when its
+// +1018 has 0x10000) equals the one it stored at +F5C (163717-16372D); otherwise it stores that motion and
+// 156FB0's answer (+F60). So one pick per incoming attack motion while a parry plays. Only the
+// pick's answer changes here: the gates, the +12F3 defense flag, the motion-4 swap and the weapon
+// constraint 162F80 (which never reads the pick) stay the game's. A strict refusal withdraws through the
+// native cleanup, since an answer of -1 alone would leave +12F3 and the constraint up with no pose.
+struct ParryPick {
+    uintptr_t root;
+    ParryPick* previous;
+    int mode;
+    bool refused = false;
+};
+static thread_local ParryPick* parryPick = nullptr;
+// A strict refusal lasts for the rest of that swing: same opponent and motion, progress not reset.
+// Physics thread only.
+static uintptr_t strictRefusedOpponent = 0;
+static int strictRefusedMotion = -1;
+static float strictRefusedProgress = 0.f;
+static bool strictSwing(uintptr_t root, uintptr_t& opponent, int& motion, float& progress) {
+    __try {
+        opponent = *(uintptr_t*)(root + field::character::aimOpponent);
+        if (!opponent || !readable(opponent, field::character::swingBits + 4)) return false;
+        motion = *(int*)(opponent + field::character::motion);
+        progress = *(float*)(opponent + field::character::motionProgress);
+        return std::isfinite(progress);
+    } __except (countFaultAndHandle(&behaviorFaults)) {
+        return false;
+    }
+}
+static bool strictRefusedSwing(uintptr_t root) {
+    uintptr_t opponent = 0;
+    int motion = -1;
+    float progress = 0.f;
+    return strictRefusedOpponent && strictSwing(root, opponent, motion, progress) &&
+           opponent == strictRefusedOpponent && motion == strictRefusedMotion && progress >= strictRefusedProgress;
+}
+static void rememberStrictRefusal(uintptr_t root) {
+    uintptr_t opponent = 0;
+    int motion = -1;
+    float progress = 0.f;
+    if (!strictSwing(root, opponent, motion, progress)) opponent = 0;
+    strictRefusedOpponent = opponent;
+    strictRefusedMotion = motion;
+    strictRefusedProgress = progress;
+}
+static void pickedDefenseReactive(uintptr_t root, ParryPick& pick) {
+    pick.previous = parryPick;
+    parryPick = &pick;
+    __try {
+        originalDefenseReactive(root);
+    } __finally {
+        parryPick = pick.previous;
+    }
+}
 static void defenseReactive(uintptr_t root) {
     for (auto* update = defenseUpdate; update; update = update->previous)
         if (update->root == root) update->reactiveSeen = true;
-    if (defensePermission(root) == DefensePermission::denied) {
+    const DefensePermission permission = defensePermission(root);
+    if (permission == DefensePermission::denied) {
         withdrawDefense(root);
         ++guardDenied;
         return;
     }
-    originalDefenseReactive(root);
+    const int mode = permission == DefensePermission::held ? parryDirectionMode.load() : fp::parryAutomatic;
+    if (mode != fp::parryAssisted && mode != fp::parryStrict) {
+        originalDefenseReactive(root);
+        return;
+    }
+    if (mode == fp::parryStrict && strictRefusedSwing(root)) {
+        withdrawDefense(root);
+        return;
+    }
+    ParryPick pick{root, nullptr, mode};
+    pickedDefenseReactive(root, pick);
+    if (pick.refused) {
+        rememberStrictRefusal(root);
+        withdrawDefense(root);
+        ++parryStrictRefusals;
+    }
 }
 static void defenseAttackUpdate(uintptr_t root) {
     if (defensePermission(root) == DefensePermission::denied) {
@@ -216,7 +289,23 @@ static void defenseAttackUpdate(uintptr_t root) {
 static uint64_t defenseMotionSelect(uintptr_t root, uintptr_t incoming) {
     if (defensePermission(root) == DefensePermission::denied && !attackVariantClassifier(root))
         return 0xffffffffu;
-    return originalDefenseMotionSelect(root, incoming);
+    const uint64_t native = originalDefenseMotionSelect(root, incoming);
+    ParryPick* const pick = parryPick;
+    // Attack starters (157240/157700/157BF0/157DC0) and other actors also call 156FB0: native.
+    if (!pick || pick->root != root || attackVariantClassifier(root)) return native;
+    const int answer = int(uint32_t(native)), chosen = parryDragPose.load();
+    if (!fp::parryMotion(answer)) return native; // not a swing the game parries
+    if (pick->mode == fp::parryAssisted) {
+        if (!fp::parryMotion(chosen)) return native;
+        ++parryAssisted;
+        return uint32_t(chosen);
+    }
+    if (fp::parryStrictMatch(chosen, answer)) {
+        ++parryStrictMatches;
+        return native;
+    }
+    pick->refused = true;
+    return 0xffffffffu;
 }
 // 169200 resolves native physical state, polls the player, and runs automatic
 // defense before returning. Held Manual guard supplies an explicit interception

@@ -28,6 +28,7 @@
 #include "build_identity.h"
 #include "module_export.h"
 #include "activation_status.h"
+#include "settings_paths.h"
 static int fail(const wchar_t* message) {
     MessageBoxW(nullptr, message, L"ExCamera", MB_OK | MB_ICONERROR);
     return 1;
@@ -284,9 +285,19 @@ static int activate(HANDLE process, DWORD pid, const std::wstring& directory) {
     return fail(L"ExCamera did not finish starting within five minutes. If you stopped it with F7, press F6 "
                 L"in game to restart it. Otherwise restart Exanima and try again.");
 }
-// [Compat] OtherHooks from the player's settings (the per-user file, else the one beside the launcher).
-static fp::OtherHooks otherHooksSetting(const std::wstring& directory) {
-    std::wstring ini = directory + L"first-person.ini";
+// The settings files the DLL reads, in its order (fp::settingsCandidates): beside the launcher and DLL when
+// portable.txt is there (a test copy; session.inl decides the same), else the per-user files.
+struct UserIni {
+    fp::SettingsCandidates files;
+    std::wstring existing() const { // the first that exists, else empty
+        for (const std::wstring& user : files.paths)
+            if (!user.empty() && GetFileAttributesW(user.c_str()) != INVALID_FILE_ATTRIBUTES) return user;
+        return L"";
+    }
+    const std::wstring& target() const { return files.target(); }
+};
+static UserIni userIni(const std::wstring& directory) {
+    const bool portable = GetFileAttributesW((directory + L"portable.txt").c_str()) != INVALID_FILE_ATTRIBUTES;
     PWSTR docsFolder = nullptr;
     const HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &docsFolder);
     const std::wstring docs = SUCCEEDED(hr) && docsFolder ? docsFolder : L"";
@@ -294,21 +305,12 @@ static fp::OtherHooks otherHooksSetting(const std::wstring& directory) {
     wchar_t profile[MAX_PATH]{};
     const DWORD n = GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH);
     const std::wstring fallbackDocs = n && n < MAX_PATH ? std::wstring(profile) + L"\\Documents" : L"";
-    const std::wstring candidates[4] = {
-        docs.empty() ? L"" : docs + L"\\ExCamera\\first-person.ini",
-        fallbackDocs.empty() ? L"" : fallbackDocs + L"\\ExCamera\\first-person.ini",
-        docs.empty() ? L"" : docs + L"\\ExaniMate\\first-person.ini",
-        fallbackDocs.empty() ? L"" : fallbackDocs + L"\\ExaniMate\\first-person.ini",
-    };
-    // A test copy with portable.txt beside it keeps its settings beside it (as the DLL does, session.inl).
-    const bool portable = GetFileAttributesW((directory + L"portable.txt").c_str()) != INVALID_FILE_ATTRIBUTES;
-    for (const std::wstring& user : candidates) {
-        if (portable) break;
-        if (!user.empty() && GetFileAttributesW(user.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            ini = user;
-            break;
-        }
-    }
+    return {fp::settingsCandidates(directory, portable, docs, fallbackDocs)};
+}
+// [Compat] OtherHooks from the player's settings (the per-user file, else the one beside the launcher).
+static fp::OtherHooks otherHooksSetting(const std::wstring& directory) {
+    std::wstring ini = userIni(directory).existing();
+    if (ini.empty()) ini = directory + L"first-person.ini";
     wchar_t value[16];
     GetPrivateProfileStringW(L"Compat", L"OtherHooks", L"ask", value, 16, ini.c_str());
     return fp::otherHooksFromText(value);
@@ -373,6 +375,100 @@ static bool otherHooksOk(HANDLE process, uintptr_t base, const std::wstring& dir
     chainChosen = true;
     return true;
 }
+// Safe start. The last status file says whether that session saw an exception (faults_seen) or a refused
+// Settings form (settings_fault_at); a missing or unreadable file says nothing.
+static bool lastSessionFaulted(const std::wstring& path) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    char data[64 * 1024 + 1]{};
+    DWORD got = 0;
+    const bool read = ReadFile(file, data, sizeof data - 1, &got, nullptr) != FALSE;
+    CloseHandle(file);
+    if (!read) return false;
+    data[got] = 0;
+    auto value = [&](const char* key) -> unsigned long long { // a number, or a "0x.." string; 0 when absent
+        const char* at = strstr(data, key);
+        if (!at) return 0;
+        at += strlen(key);
+        while (*at == ' ' || *at == ':' || *at == '"') ++at;
+        return strtoull(at, nullptr, 0);
+    };
+    return value("\"faults_seen\"") || value("\"settings_fault_at\"");
+}
+// The player's file is copied to first-person.backup-YYYYMMDD-HHMMSS.ini beside it, then the DLL's file is
+// replaced by one holding only [Safe] Reset=1: the DLL reads built-in defaults from it, writes every row out
+// and drops the marker (settings.inl applySafeReset). Never deleted outright: the DLL would copy a legacy or
+// release ini back in its place. The controls notice already seen stays seen.
+static bool resetUserSettings(const std::wstring& directory, std::wstring& problem) {
+    const UserIni ini = userIni(directory); // a portable copy resets and backs up its own file
+    const std::wstring source = ini.existing(), target = ini.target();
+    if (target.empty()) {
+        problem = L"Could not find your Documents folder, so nothing was changed.";
+        return false;
+    }
+    if (!source.empty()) {
+        SYSTEMTIME t{};
+        GetLocalTime(&t);
+        wchar_t name[64];
+        swprintf_s(name, L"first-person.backup-%04u%02u%02u-%02u%02u%02u.ini", t.wYear, t.wMonth, t.wDay, t.wHour,
+                   t.wMinute, t.wSecond);
+        const std::wstring backup = source.substr(0, source.find_last_of(L'\\') + 1) + name;
+        if (!CopyFileW(source.c_str(), backup.c_str(), TRUE)) {
+            problem = L"Could not save a backup of your settings to\n" + backup + L"\n\nNothing was changed.";
+            return false;
+        }
+    }
+    const std::wstring folder = target.substr(0, target.find_last_of(L'\\'));
+    SHCreateDirectoryExW(nullptr, folder.c_str(), nullptr);
+    const std::wstring staged = target + L".safe.tmp";
+    DeleteFileW(staged.c_str());
+    const bool seen = !source.empty() && GetPrivateProfileIntW(L"Launcher", L"ControlsSeen", 0, source.c_str()) != 0;
+    const bool written = WritePrivateProfileStringW(L"Safe", L"Reset", L"1", staged.c_str()) &&
+                         (!seen || WritePrivateProfileStringW(L"Launcher", L"ControlsSeen", L"1", staged.c_str())) &&
+                         MoveFileExW(staged.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    if (!written) {
+        DeleteFileW(staged.c_str());
+        problem = L"Could not write default settings to\n" + target +
+                  (source.empty() ? L"" : L"\n\nYour settings and their backup are unchanged.");
+        return false;
+    }
+    return true;
+}
+// Hold Shift while starting ExCamera.exe, or pass --safe; also offered after a session that reported faults.
+// Not while the DLL already runs in the game: it holds the settings it read and would write them back.
+static void offerSafeStart(const std::wstring& directory) {
+    bool asked = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    if (!asked) {
+        int count = 0;
+        if (LPWSTR* args = CommandLineToArgvW(GetCommandLineW(), &count)) {
+            for (int i = 1; i < count && !asked; ++i) asked = !_wcsicmp(args[i], L"--safe");
+            LocalFree(args);
+        }
+    }
+    const bool faulted = !asked && lastSessionFaulted(directory + L"first-person-status.json");
+    if (!asked && !faulted) return;
+    const DWORD pid = gamePid();
+    if (pid && pid != MAXDWORD && remoteModule(pid, L"ExanimaFirstPerson.dll")) {
+        if (asked)
+            MessageBoxW(nullptr,
+                        L"ExCamera is already running in Exanima, so it can't start with default settings now. "
+                        L"Close Exanima, then start ExCamera with Shift held again.",
+                        L"ExCamera", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+        return;
+    }
+    const wchar_t* question =
+        asked ? L"Start with default settings? Your current settings are kept as a backup."
+              : L"ExCamera ran into an error last time. Starting with default settings may not help, but it rules "
+                L"your settings out.\n\nStart with default settings? Your current settings are kept as a backup.";
+    if (MessageBoxW(nullptr, question, L"ExCamera",
+                    MB_YESNO | MB_ICONQUESTION | (asked ? MB_DEFBUTTON1 : MB_DEFBUTTON2) | MB_SETFOREGROUND) != IDYES)
+        return;
+    std::wstring problem;
+    if (!resetUserSettings(directory, problem))
+        MessageBoxW(nullptr, (problem + L"\n\nExCamera will start with your current settings.").c_str(), L"ExCamera",
+                    MB_OK | MB_ICONWARNING | MB_SETFOREGROUND);
+}
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     HANDLE launcherMutex = CreateMutexW(nullptr, FALSE, L"Local\\ExanimaFirstPersonLauncher");
     if (!launcherMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -392,6 +488,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     std::wstring dll = directory + L"ExanimaFirstPerson.dll";
     if (GetFileAttributesW(dll.c_str()) == INVALID_FILE_ATTRIBUTES)
         return fail(L"ExanimaFirstPerson.dll must be beside this launcher.");
+    offerSafeStart(directory);
     DWORD pid = gamePid();
     if (pid == MAXDWORD) return fail(L"More than one Exanima process is running. Close the extra instance.");
     WNDCLASSW wc{};

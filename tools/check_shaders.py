@@ -21,16 +21,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VIEW = ROOT / 'src' / 'mod' / 'view_effects.inl'
 BAKE = ROOT / 'src' / 'mod' / 'wounds_bake.inl'
+MATERIAL_IDS = ROOT / 'src' / 'mod' / 'material_ids.inl'
 HELPERS = ROOT / 'src' / 'mod' / 'wound_glsl.h'
 
 # The view programs as view_effects.inl's effect table builds them: (name, shared part, body).
 VIEW_PROGRAMS = [
     ('ambient occlusion', None, 'aoShader'),
-    ('reflections', None, 'ssrShader'),
     ('depth of field', 'dofLens', 'dofShader'),
     ('finishing pass', 'surfaceShading', 'finishShader'),
-    ('occlusion/reflection composite', 'surfaceShading', 'compositeShader'),
-    ('occlusion/reflection blending over frames', None, 'resolveShader'),
+    ('occlusion composite', 'surfaceShading', 'compositeShader'),
+    ('occlusion blending over frames', None, 'resolveShader'),
     ('depth-of-field composite', 'dofLens', 'dofCompositeShader'),
     ('eye adaptation meter', None, 'meterShader'),
     ('view-distance target', None, 'distanceShader'),
@@ -38,6 +38,18 @@ VIEW_PROGRAMS = [
     ('fire and smoke', None, 'fireShader'),
     ('blood layer', None, 'bloodSplatShader'),
 ]
+# The material-id replay's own two passes (material_ids.inl): (name, vertex, fragment).
+MATERIAL_ID_PROGRAMS = [
+    ('material ids: base fill', 'rectVertex', 'fillFragment'),
+    ('material ids: layer combine', 'rectVertex', 'combineFragment'),
+]
+# Its id fragment links against the game's own vertex shader; here against a stand-in with the same outputs.
+ID_VERTEX = {
+    'vrTex': '#version 150\nin vec3 vPos;\nin vec2 vTex;\nout vec2 vrTex;\n'
+             'void main() { vrTex = vTex; gl_Position = vec4(vPos, 1.0); }\n',
+    'vriTex': '#version 150\nin vec3 vPos;\nin vec2 vTex;\nout vec2 vriTex;\n'
+              'void main() { vriTex = vTex; gl_Position = vec4(vPos, 1.0); }\n',
+}
 BAKE_PROGRAMS = [
     ('wound skin (diffuse)', 'woundSkinFragment'),
     ('wound skin (normal)', 'woundSkinNormalFragment'),
@@ -72,7 +84,9 @@ def collect_sources() -> dict[str, str]:
     for m in re.finditer(r'#define\s+(\w+)\s+(?=R")', helpers):
         macros[m.group(1)] = _concatenation(helpers + ';', m.end(), macros)
     sources = dict(macros)
-    for path in (VIEW, BAKE):
+    for path in (VIEW, BAKE, MATERIAL_IDS):
+        if not path.exists():
+            continue
         text = path.read_text(encoding='utf-8')
         for m in re.finditer(r'static const char\* const (\w+) = (?=R")', text):
             sources[m.group(1)] = _concatenation(text, m.end(), macros)
@@ -237,6 +251,14 @@ def main(argv=None) -> int:
             for name, shared, body in VIEW_PROGRAMS if body in sources]
     jobs += [(name, [sources['woundSkinVertex']], [sources['woundSkinFragmentHead'], sources[body]])
              for name, body in BAKE_PROGRAMS]
+    jobs += [(name, [sources[vertex]], [sources[fragment]])
+             for name, vertex, fragment in MATERIAL_ID_PROGRAMS if fragment in sources]
+    if MATERIAL_IDS.exists():
+        text = MATERIAL_IDS.read_text(encoding='utf-8')
+        start = text.find('idFragment[2] = {')
+        for m in _RAW.finditer(text, start, text.find('};', start)) if start >= 0 else ():
+            varying = 'vriTex' if 'in vec2 vriTex' in m.group('body') else 'vrTex'
+            jobs.append((f'material ids: id at {varying}', [ID_VERTEX[varying]], [m.group('body')]))
     failed = 0
     for name, vertexParts, fragmentParts in jobs:
         vertex, vlog = gl.compile(GL_VERTEX_SHADER, vertexParts)

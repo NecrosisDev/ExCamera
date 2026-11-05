@@ -107,7 +107,6 @@ enum : int {
     vrFingerBones,
     ambientOcclusion,
     depthOfField,
-    screenSpaceReflections,
     edgeSmoothing,
     helmetVisor,
     playerGhost,
@@ -124,15 +123,24 @@ enum : int {
     objectLights,
     lightSmoothing,
     farRooms,
+    f6Cycle,
+    hitReaction,
+    swapShoulderKey,
+    tpLookFollow,
+    fpKnockdown,
+    kickStyle,
+    parryDirection,
     count
 };
 }
-// Whether the game's own material data (steel, wood, leather...) is decoded; until it is, the held, armour,
-// object and level detail rows are inactive and their effects draw nothing (colourMaterialGuesses, wounds.inl).
+// Held-item, armour and object detail take each pixel's material from the game's own item composer
+// (mod/material_ids.inl, docs/render-assumptions.md); an object whose textures the composer did not build gets
+// none. Level detail is not yet built on the game's data: until it is, its row is inactive and draws nothing
+// (colourMaterialGuesses, wounds.inl).
+inline constexpr bool heldMaterialDataDecoded = true;
+inline constexpr bool armourMaterialDataDecoded = true;
+inline constexpr bool objectMaterialDataDecoded = true;
 inline constexpr bool materialDataDecoded = false;
-// Whether the game's per-surface shininess (its specular data) is read; until it is, Screen-space reflections are
-// inactive and do not run (they had weighted floors by colour, a guess).
-inline constexpr bool surfaceShininessDecoded = false;
 // Whether the helmet view is shaped by the helmet's own geometry; until it is, Helmet view is inactive (it had
 // treated anything within 18 cm of the eye as helmet).
 inline constexpr bool helmetShapeDecoded = false;
@@ -151,6 +159,32 @@ inline bool fixedSetting(int row) {
     }
 }
 
+// Features this game build or a fault can take away, for rows that would otherwise look live and do nothing.
+// ModSettings::unavailable and ::faulted carry them at runtime (never saved).
+enum : unsigned {
+    capFingers = 1u << 0, capFarRooms = 1u << 1, capViewEffects = 1u << 2, capWounds = 1u << 3,
+    capBlades = 1u << 4, capKick = 1u << 5, capJump = 1u << 6, capManualDefense = 1u << 7,
+    capAnimatedKick = 1u << 8,
+};
+inline unsigned rowCapability(int row) {
+    switch (row) {
+    case setting::fingerPoses: case setting::fingerPosesOthers: return capFingers;
+    case setting::farRooms: return capFarRooms;
+    case setting::ambientOcclusion: case setting::depthOfField:
+    case setting::edgeSmoothing: case setting::helmetVisor: case setting::playerGhost:
+    case setting::conditionEffects: case setting::lightSmoothing: case setting::heldDetail:
+    case setting::armourDetail: case setting::objectDetail: case setting::levelDetail:
+        return capViewEffects;
+    case setting::woundMarks: return capWounds;
+    case setting::bladeDrag: case setting::stabSink: case setting::bladeGain: return capBlades;
+    case setting::kickKey: return capKick;
+    case setting::kickStyle: return capAnimatedKick;
+    case setting::jumpKey: return capJump;
+    case setting::fpDefense: case setting::tpDefense: case setting::parryDirection: return capManualDefense;
+    default: return 0;
+    }
+}
+
 struct ModSettings;
 inline bool stepSchema(ModSettings& settings,int row,int delta);
 
@@ -159,7 +193,6 @@ struct ModSettings {
     int indicator = 1;
     int ambientOcclusion = 0; // optional screen-space contact shading
     int depthOfField = 0; // optional first-person depth-aware texture softening
-    int screenSpaceReflections = 0; // optional screen-space scene reflections
     bool edgeSmoothing = false, helmetVisor = false, playerGhost = false; // optional finishing effects
     bool fingerPoses = true; // finger bones on the skeleton posed to what each hand holds; on by default, as asked
     bool fingerPosesOthers = true; // the same for other characters in the level
@@ -175,6 +208,10 @@ struct ModSettings {
     int levelDetail = 30; // walls, floors and ceilings within about 3 m, percent; light by default, drops first when slow
     bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
     bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
+    int hitReaction = 100; // percent of the first-person view's kick when a hit lands; 100 as before
+    int f6Cycle = 0;
+    int kickStyle = 0; // 0: the game's own kick; 1: its leg moved as the baked Mixamo kick (pose_drive.inl)
+    int fpKnockdown = 1; // 1: knocked down in first person shows third person until you are up; 0 stays first // 0: F6 steps first, third, the game's camera; 1: first and third, the game's camera held
     bool woundMarks = true; // cuts, bruises and running blood where weapons got through; on by default (owner's request)
     bool woundDebug = false; // neon debug highlight for wounds, blade blood and spatters
     bool tracking = false;
@@ -197,7 +234,9 @@ struct ModSettings {
     int cueSize = 100, cueOpacity = 100;            // the attack wind-up arc
     int fpDefense = 0, tpDefense = 0;               // automatic default, manual holds RMB
     int fpSwingSelection = 1, tpSwingSelection = 1; // mouse direction, or native facing
+    int parryDirection = 0; // fp::ParryDirection: the game's parry, a right-mouse drag's, or the drag's only when it matches
     bool manualDefenseAvailable = false;            // runtime capability, not a saved row
+    unsigned unavailable = 0, faulted = 0; // runtime: cap* features missing on this game build, or off after a fault
     bool scriptRuntimeAvailable = false;            // runtime capability: ScriptRuntime.dll is loaded
     bool idleCrosshairAlways = false; // normal exploration crosshair; the aim marker is separate
     int spineFollow = 60; // how far the spine bends with the look (forward looking down, back looking up)
@@ -209,7 +248,7 @@ struct ModSettings {
     int vrPosture = 0;    // 0 standing (room walking and tracked legs); 1 seated (the game's own legs, stick only)
     int vrHeadset = 0;    // 1 starts the real OpenXR runtime at the next game start; 0 leaves VR off
     int vrTurning = 1;    // 0 off, 1 snap 30, 2 snap 45, 3 smooth: the right stick turns the body as the mouse does
-    int vrEffects = 0;    // 1 runs the View page's ambient occlusion and reflections on each headset eye; never depth of field
+    int vrEffects = 0;    // 1 runs the View page's ambient occlusion on each headset eye; never depth of field
     int vrGripAngle = 0;  // degrees of pitch added to a controller grip, -45..45
     int vrHaptics = 100;  // pulse strength in percent, 0..200
     int vrPanelWidth = 120, vrPanelDistance = 150; // the head-locked UI quad, centimetres
@@ -237,6 +276,7 @@ struct ModSettings {
         50; // the crosshair while the head catches up; how much a flick's lead is eased // how much head wobble on each axis stiffens the neck (0 = not at all)
     int tpLag = 40;
     bool tpDown = true;
+    bool tpLookFollow = true; // third person: the camera rises and backs off looking down, comes in looking up
     int tpBlockers =
         fp::blockersSmart; // what is in the way: hide / push in / smart (characters and placed objects pull in)
     bool tpCombatAimFree = true;
@@ -247,7 +287,8 @@ struct ModSettings {
     bool holdHeading = true, autoRecenter = true;
     int edgeSoftness = fp::defaultAimEdgeSoftness; // percent of oval radius used to feather camera turning
     int leanKey = 0x12; // held, the mouse leans the upper body (virtual-key code; 0 unbound)
-    int kickKey = 0, jumpKey = 0; // the game's unused kick and jump clips (virtual-key codes; 0 unbound, the default)
+    int kickKey = 0, jumpKey = 0; // the kick (motion 0xD) and the jump push (virtual-key codes; 0 unbound, the default)
+    int swapShoulderKey = 0; // third person: puts the camera over the other shoulder (virtual-key code; 0 unbound)
     int rotateHeldKey =
         0x02; // the key that turns a held object (virtual-key code; 0 unbound) // in combat the crosshair moves inside a box; the view turns at its edge // camera lag, hide what is in the way, knockdown follow // closer and centred in combat; third person's own field of view (0 = as first person)
     bool operator==(const ModSettings& o) const; // every row's value
@@ -278,8 +319,6 @@ struct ModSettings {
         case setting::indicator: indicator = (indicator + (delta < 0 ? 2 : 1)) % 3; break;
         case setting::ambientOcclusion: ambientOcclusion = std::clamp(ambientOcclusion + delta * 10, 0, 100); break;
         case setting::depthOfField: depthOfField = std::clamp(depthOfField + delta * 10, 0, 100); break;
-        case setting::screenSpaceReflections:
-            screenSpaceReflections = std::clamp(screenSpaceReflections + delta * 10, 0, 100); break;
         case setting::heldDetail: heldDetail = std::clamp(heldDetail + delta * 10, 0, 100); break;
         case setting::armourDetail: armourDetail = std::clamp(armourDetail + delta * 10, 0, 100); break;
         case setting::objectDetail: objectDetail = std::clamp(objectDetail + delta * 10, 0, 100); break;
@@ -287,6 +326,10 @@ struct ModSettings {
         case setting::woundDebug: woundDebug = !woundDebug; break;
         case setting::drawDistance: drawDistance = std::clamp(drawDistance + delta * 10, 0, 200); break;
         case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
+        case setting::f6Cycle: f6Cycle = f6Cycle ? 0 : 1; break;
+        case setting::fpKnockdown: fpKnockdown = fpKnockdown ? 0 : 1; break;
+        case setting::kickStyle: kickStyle = kickStyle ? 0 : 1; break;
+        case setting::parryDirection: parryDirection = (parryDirection + (delta < 0 ? 2 : 1)) % 3; break;
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -328,6 +371,9 @@ struct ModSettings {
             break;
         case setting::jumpKey:
             jumpKey = nextKey(jumpKey, delta);
+            break;
+        case setting::swapShoulderKey:
+            swapShoulderKey = nextKey(swapShoulderKey, delta);
             break;
         case setting::leanKey:
             leanKey = nextKey(leanKey, delta);
@@ -456,14 +502,16 @@ struct ModSettings {
         case setting::indicator: return indicator == 0 ? L"Off" : indicator == 1 ? L"Combat" : L"Always";
         case setting::ambientOcclusion: return ambientOcclusion ? std::to_wstring(ambientOcclusion) + L"%" : L"Off";
         case setting::depthOfField: return depthOfField ? std::to_wstring(depthOfField) + L"%" : L"Off";
-        case setting::screenSpaceReflections:
-            return screenSpaceReflections ? std::to_wstring(screenSpaceReflections) + L"%" : L"Off";
         case setting::heldDetail: return heldDetail ? std::to_wstring(heldDetail) + L"%" : L"Off";
         case setting::armourDetail: return armourDetail ? std::to_wstring(armourDetail) + L"%" : L"Off";
         case setting::objectDetail: return objectDetail ? std::to_wstring(objectDetail) + L"%" : L"Off";
         case setting::levelDetail: return levelDetail ? std::to_wstring(levelDetail) + L"%" : L"Off";
         case setting::drawDistance: return drawDistance ? std::to_wstring(drawDistance) + L" m" : L"Off";
         case setting::objectLights: return objectLights >= 6 ? std::wstring(L"6 (game)") : std::to_wstring(objectLights);
+        case setting::hitReaction:
+            return hitReaction ? std::to_wstring(hitReaction) + L"%" : std::wstring(L"off");
+        case setting::f6Cycle:
+            return f6Cycle ? L"first and third; hold F6 for the game's camera" : L"first, third and the game's camera";
         case setting::tracking:
             return !tracking ? L"Off" : trackingStatus == 3 ? L"Unavailable (UDP port in use?)"
                                     : trackingStatus == 2 ? L"OpenTrack UDP - receiving"
@@ -531,6 +579,8 @@ struct ModSettings {
             return fp::heldKeyName(kickKey);
         case setting::jumpKey:
             return fp::heldKeyName(jumpKey);
+        case setting::swapShoulderKey:
+            return fp::heldKeyName(swapShoulderKey);
         case setting::leanKey:
             return fp::heldKeyName(leanKey);
         case setting::holdHeading:
@@ -542,6 +592,12 @@ struct ModSettings {
                                      : std::to_wstring(edgeSoftness) + L"% of oval radius";
         case setting::tpDown:
             return tpDown ? L"follow the body" : L"follow the head";
+        case setting::tpLookFollow:
+            return tpLookFollow ? L"on" : L"off";
+        case setting::fpKnockdown:
+            return fpKnockdown ? L"Show third person" : L"Stay in first person";
+        case setting::kickStyle:
+            return kickStyle ? L"Animated" : L"Classic";
         case setting::attackCue:
             return attackCue ? L"shown while a swing winds up" : L"off";
         case setting::cueSize:
@@ -561,6 +617,10 @@ struct ModSettings {
         }
         case setting::fpSwingSelection:
             return fpSwingSelection ? L"Mouse direction" : L"Native facing";
+        case setting::parryDirection:
+            return parryDirection == fp::parryAssisted ? L"Drag: assisted"
+                   : parryDirection == fp::parryStrict ? L"Drag: strict"
+                                                       : L"Automatic (the game's)";
         case setting::tpSwingSelection:
             return tpSwingSelection ? L"Mouse direction" : L"Native facing";
         case setting::idleCrosshair:
@@ -599,7 +659,7 @@ struct ModSettings {
         case setting::vrTurning:
             return vrTurning == 1 ? L"snap 30 degrees" : vrTurning == 2 ? L"snap 45 degrees" : vrTurning == 3 ? L"smooth" : L"off";
         case setting::vrEffects:
-            return vrEffects ? L"occlusion and reflections per eye" : L"off";
+            return vrEffects ? L"occlusion per eye" : L"off";
         case setting::vrGripAngle:
             return std::to_wstring(vrGripAngle) + L" degrees";
         case setting::vrHaptics:
@@ -650,6 +710,10 @@ struct ModSettings {
     // Dependency hints are shown beside disabled controls; settings for the other
     // perspective remain configurable so players can prepare either control set.
     const wchar_t* inactiveReason(int row) const {
+        if (const unsigned cap = rowCapability(row)) {
+            if (faulted & cap) return L"Turned off after an error. Restart the game to retry.";
+            if (unavailable & cap) return L"Not available on this game version.";
+        }
         if ((row == setting::tpDeadzoneX || row == setting::tpDeadzoneY) && !tpCombatAimFree)
             return L"Choose Aim oval above to use this setting.";
         if ((row == setting::headRoll || row == setting::headPitch || row == setting::headYaw ||
@@ -661,13 +725,16 @@ struct ModSettings {
         if ((row == setting::cueSize || row == setting::cueOpacity || row == setting::cueThrust) &&
             !attackCue)
             return L"Enable Attack wind-up arc to use this setting.";
-        // These four choose each surface's material from its colour, a guess, not game data; they stay off
-        // until the game's own material data is decoded (docs/render-assumptions.md, mod/wounds.inl).
-        if (!materialDataDecoded && (row == setting::heldDetail || row == setting::armourDetail ||
-                                     row == setting::objectDetail || row == setting::levelDetail))
+        // These read each surface's material from the game's own data; until a row's is decoded it stays off
+        // (docs/render-assumptions.md, mod/material_ids.inl).
+        if constexpr (!heldMaterialDataDecoded)
+            if (row == setting::heldDetail) return L"Off until the game's own material data is decoded.";
+        if constexpr (!armourMaterialDataDecoded)
+            if (row == setting::armourDetail) return L"Off until the game's own material data is decoded.";
+        if constexpr (!objectMaterialDataDecoded)
+            if (row == setting::objectDetail) return L"Off until the game's own material data is decoded.";
+        if (!materialDataDecoded && row == setting::levelDetail)
             return L"Off until the game's own material data is decoded.";
-        if (!surfaceShininessDecoded && row == setting::screenSpaceReflections)
-            return L"Off until the game's own surface shininess is read.";
         if (!helmetShapeDecoded && row == setting::helmetVisor)
             return L"Off until the helmet's own shape is used.";
         return nullptr;
@@ -716,6 +783,24 @@ inline int iniFree(const wchar_t* t) {
 }
 inline const wchar_t* iniFreeText(int v) {
     return v ? L"free" : L"centre";
+}
+inline int iniF6Cycle(const wchar_t* text) {
+    return iniIs(text, L"two") ? 1 : iniIs(text, L"three") ? 0 : badText;
+}
+inline const wchar_t* iniF6CycleText(int mode) {
+    return mode ? L"two" : L"three";
+}
+inline int iniKnockdownView(const wchar_t* text) {
+    return iniIs(text, L"third") ? 1 : iniIs(text, L"first") ? 0 : badText;
+}
+inline const wchar_t* iniKnockdownViewText(int mode) {
+    return mode ? L"third" : L"first";
+}
+inline int iniKickStyle(const wchar_t* text) {
+    return iniIs(text, L"animated") ? 1 : iniIs(text, L"classic") ? 0 : badText;
+}
+inline const wchar_t* iniKickStyleText(int mode) {
+    return mode ? L"animated" : L"classic";
 }
 inline int iniSwingSelection(const wchar_t* text) {
     return iniIs(text, L"mouse") ? 1 : iniIs(text, L"native") ? 0 : badText;
@@ -904,10 +989,11 @@ inline const RowInfo& rowInfo(int row) {
          L"distance use the same shifted eye position. Headwear that blocks the first-person view is hidden; "
          L"its shadow remains."},
         {setting::kickKey, L"Kick", RowInfo::keyList, &ModSettings::kickKey, nullptr, L"Input", L"KickKey", fp::heldKeyFromText, nullptr,
-         L"Plays the game's own kick, which it never uses itself: in the fighting stance, upright, not mid-swing and with "
-         L"most of your stamina. Unbound until you pick a key; the game does not see that key while it is bound here."},
+         L"Plays the kick motion through the game's own motion player: not mid-swing or reacting to a hit, in or out of the "
+         L"fighting stance. Unbound until you pick a key; the game does not see that key while it is bound here, "
+         L"so a key the game's Controls use (Alt makes a thrust) is refused and does not kick."},
         {setting::jumpKey, L"Jump", RowInfo::keyList, &ModSettings::jumpKey, nullptr, L"Input", L"JumpKey", fp::heldKeyFromText, nullptr,
-         L"Plays the game's own jump and pushes your body up: upright, not mid-swing and with half your stamina. "
+         L"Plays the game's own jump and pushes your body up: upright and not mid-swing. "
          L"Unbound until you pick a key; the game does not see that key while it is bound here."},
         {setting::rotateHeldKey, L"Rotate held object", RowInfo::keyList, &ModSettings::rotateHeldKey,
          nullptr, L"Input", L"RotateHeldKey", fp::heldKeyFromText, nullptr,
@@ -1042,8 +1128,8 @@ inline const RowInfo& rowInfo(int row) {
          L"turns a fixed angle per flick; smooth turns while held. Off leaves turning to the head and mouse."},
         {setting::vrEffects, L"VR: effects", RowInfo::choice, &ModSettings::vrEffects, nullptr, L"VR",
          L"Effects", fp::vrEffectsFromText, fp::vrEffectsText,
-         L"On runs the View page's ambient occlusion and screen-space reflections on each headset eye, at their "
-         L"View strengths. Depth of field never runs in the headset: a fixed focus fights your own eyes."},
+         L"On runs the View page's ambient occlusion on each headset eye, at its "
+         L"View strength. Depth of field never runs in the headset: a fixed focus fights your own eyes."},
         {setting::vrGripAngle, L"VR: grip angle", RowInfo::number, &ModSettings::vrGripAngle, nullptr, L"VR",
          L"GripAngleDegrees", nullptr, nullptr,
          L"Tilts the controller's grip so a held hilt sits the way you hold it. Tracked hands are not tilted.", {-45,45,5,18}},
@@ -1081,12 +1167,12 @@ inline const RowInfo& rowInfo(int row) {
          L"Slides the hand along a held weapon's hilt: positive towards the blade, negative towards the pommel.", {-10,10,1,20}},
         {setting::vrKick, L"VR: kick", RowInfo::choice, &ModSettings::vrKick, nullptr, L"VR",
          L"Kick", fp::vrKickFromText, fp::vrKickText,
-         L"Experimental. On: pressing a stick in plays the game's own kick, only in the fighting stance, upright, not mid-swing "
-         L"and with most of your stamina. The game never plays this clip itself, so a hit lands by foot contact only."},
+         L"Experimental. On: pressing a stick in plays the game's own kick, when not mid-swing or reacting to a hit. "
+         L"A hit lands by foot contact only."},
         {setting::vrJump, L"VR: jump", RowInfo::choice, &ModSettings::vrJump, nullptr, L"VR",
          L"Jump", fp::vrKickFromText, fp::vrKickText,
-         L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright, "
-         L"not mid-swing and with half your stamina. The game never jumps by itself, so landing is its ordinary physics."},
+         L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright and "
+         L"not mid-swing. Landing is the game's ordinary physics."},
         {setting::vrWeaponWeight, L"VR: weapon weight", RowInfo::choice, &ModSettings::vrWeaponWeight, nullptr, L"VR",
          L"WeaponWeight", fp::vrKickFromText, fp::vrKickText,
          L"On: a held weapon follows your hands with a lag set by its own heft, so a heavy axe trails a fast swing and a "
@@ -1119,12 +1205,6 @@ inline const RowInfo& rowInfo(int row) {
          L"Softens near and far textures while keeping the center of the first-person view in focus. "
          L"This is a restrained screen-space blur, not a physical lens simulation. It is skipped in third person, "
          L"menus and unsupported or multisampled frames. Subtle is recommended for play.", {0,100,5,20}},
-        {setting::screenSpaceReflections, L"Screen-space reflections", RowInfo::choice,
-         &ModSettings::screenSpaceReflections, nullptr, L"View", L"ScreenSpaceReflections", nullptr, nullptr,
-         L"Adds faint screen-space reflections on camera-up-facing surfaces. This is a camera-relative surface proxy, "
-         L"not a material reflectivity mask; it complements native material reflections and is limited by what is on screen. "
-         L"It is skipped on unsupported or multisampled frames. "
-         L"Off is recommended where screen-space artifacts are visible.", {0,100,5,20}},
         {setting::edgeSmoothing, L"Edge smoothing", RowInfo::toggle, nullptr, &ModSettings::edgeSmoothing,
          L"View", L"EdgeSmoothing", nullptr, nullptr,
          L"Smooths jagged edges in one cheap pass. Fine shimmer on distant patterned walls remains. With "
@@ -1196,6 +1276,42 @@ inline const RowInfo& rowInfo(int row) {
          L"The game only draws rooms next to the one you're in, built for its overhead camera. This draws one "
          L"more room through doorways, so a far doorway doesn't show solid black. Turn off if it costs too much "
          L"frame rate."},
+        {setting::f6Cycle, L"F6 cycle", RowInfo::choice, &ModSettings::f6Cycle, nullptr, L"Camera", L"F6Cycle",
+         iniF6Cycle, iniF6CycleText,
+         L"What F6 switches between. First, third, game camera: each press moves on to the next view. First and "
+         L"third only: a press flips between first and third person, and holding F6 for half a second hands the "
+         L"view to the game's own camera. Hold F7 still stops the mod."},
+        {setting::hitReaction, L"Hit reaction", RowInfo::number, &ModSettings::hitReaction, nullptr, L"Camera",
+         L"HitReaction", nullptr, nullptr,
+         L"First person only. How hard the view jolts and tilts when a blow lands on you. Zero keeps the view "
+         L"still; the damage flash stays. Never in a VR headset.", {0,100,10,10}},
+        {setting::swapShoulderKey, L"Swap shoulder", RowInfo::keyList, &ModSettings::swapShoulderKey, nullptr, L"Input",
+         L"SwapShoulderKey", fp::heldKeyFromText, nullptr,
+         L"In third person, moves the camera over your other shoulder with a short slide, and keeps it there "
+         L"(Third person: shoulder changes side). Does nothing with the camera centred. Unbound until you pick a "
+         L"key; the game does not see that key in third person while it is bound here."},
+        {setting::tpLookFollow, L"Third person: follow look angle", RowInfo::toggle, nullptr, &ModSettings::tpLookFollow,
+         L"ThirdPerson", L"FollowLookAngle", nullptr, nullptr,
+         L"Out of combat, looking down raises the camera and moves it back a little (up to a quarter farther and "
+         L"30 cm higher) so the ground ahead shows; looking up brings it closer and lower. It eases in and out, "
+         L"and walls still pull the camera in. The field of view does not change."},
+        {setting::fpKnockdown, L"First person: knocked down", RowInfo::choice, &ModSettings::fpKnockdown, nullptr,
+         L"FirstPerson", L"Knockdown", iniKnockdownView, iniKnockdownViewText,
+         L"Show third person: when you are knocked down in first person, the view goes to third person so you see "
+         L"where you fell, and back to first person a moment after you are up. Pressing F6 meanwhile keeps your "
+         L"choice; death never switches. Stay in first person keeps the view in your eyes."},
+        {setting::kickStyle, L"Kick style", RowInfo::choice, &ModSettings::kickStyle, nullptr,
+         L"Input", L"KickStyle", iniKickStyle, iniKickStyleText,
+         L"Classic plays the game's own kick. Animated plays the same kick (same gates and hit) but moves the "
+         L"body like a motion-captured kick, chosen by what you hold: unarmed or one-handed kicks, or two-handed ones. "
+         L"Experimental; when this game build cannot be checked for it, the kick stays Classic."},
+        {setting::parryDirection, L"Parry direction", RowInfo::choice, &ModSettings::parryDirection, nullptr,
+         L"FirstPerson", L"ParryDirection", fp::parryDirectionFromText, fp::parryDirectionText,
+         L"Needs Defense set to Manual; both views. While you hold right mouse the view stays still and a drag "
+         L"picks the parry: up, left, right, down-left or down-right. Automatic: the game picks it from the "
+         L"attacker's swing. Drag: assisted plays the parry you drag to; a small drag leaves it to the game. "
+         L"Drag: strict parries only when your drag matches the game's answer to that swing. The pose is "
+         L"chosen when the parry starts. Reach, timing and gear still decide if it works."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
@@ -1244,13 +1360,23 @@ inline void ModSettings::normalize() {
     if (!validSettingBinding(setting::rotateHeldKey, rotateHeldKey)) rotateHeldKey = 0;
     if (!validSettingBinding(setting::kickKey, kickKey)) kickKey = 0;
     if (!validSettingBinding(setting::jumpKey, jumpKey)) jumpKey = 0;
+    if (!validSettingBinding(setting::swapShoulderKey, swapShoulderKey)) swapShoulderKey = 0;
     if (!validSettingBinding(setting::leanKey, leanKey)) leanKey = 0;
     if (!validSettingBinding(setting::leanLeftKey, leanLeftKey)) leanLeftKey = 0;
     if (!validSettingBinding(setting::leanRightKey, leanRightKey)) leanRightKey = 0;
+    // One key, one of the mod's actions (Settings refuses a taken key; an ini can hold anything): a later
+    // duplicate in this order is unbound.
+    int* const keys[] = {&rotateHeldKey, &kickKey, &jumpKey, &swapShoulderKey, &trackingKey, &leanLeftKey, &leanRightKey};
+    for (size_t i = 1; i < std::size(keys); ++i)
+        for (size_t j = 0; j < i; ++j)
+            if (*keys[i] && *keys[i] == *keys[j]) *keys[i] = 0;
     if (fpDefense != 1) fpDefense = 0;
     if (tpDefense != 1) tpDefense = 0;
     if (fpSwingSelection != 0) fpSwingSelection = 1;
     if (tpSwingSelection != 0) tpSwingSelection = 1;
+    if (f6Cycle != 1) f6Cycle = 0;
+    if (fpKnockdown != 0) fpKnockdown = 1;
+    if (kickStyle != 1) kickStyle = 0;
     const ModSettings defaults;
     for (int r = 0; r < setting::count; ++r) {
         const RowInfo& i = rowInfo(r);

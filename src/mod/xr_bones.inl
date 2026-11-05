@@ -762,7 +762,7 @@ static bool heldItemAxis(uintptr_t root, unsigned side, XrVector3f& axis) {
 static xd::HandPose heldDrivenPose(uintptr_t root, unsigned side) {
     const xd::HandPose held = heldHandPose(root, side);
     if (held == xd::HandPose::open) {
-        if (readable(root, field::character::lifeFlags + 4) && (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100)) return xd::HandPose::limp;
+        if (readable(root, field::character::stateFlags + 4) && fp::deadState(*reinterpret_cast<unsigned*>(root + field::character::stateFlags))) return xd::HandPose::limp;
         return xd::HandPose::open;
     }
     return held;

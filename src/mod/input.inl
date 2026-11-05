@@ -2,6 +2,9 @@
 // Part of first_person.cpp (one translation unit): included there, in order.
 static void fingerPosesTick(uintptr_t root); // xr_bones.inl: the held-item finger poses, after the drive
 static void motionKeysTick(uintptr_t root);  // motions.inl: the kick and jump keys
+static void motionJumpTick(uintptr_t root, bool owned); // motions.inl: the jump's push over physics steps
+static bool kickPoseBegin(uintptr_t root); // pose_drive.inl: the Animated kick's targets for this step
+static void kickPoseEnd();
 
 static std::atomic<unsigned> dropSpots{0}; // accepted close-view query outputs
 
@@ -114,17 +117,14 @@ static void syncPointerCapture(HWND w, const RECT& screenClip, const POINT& cent
 }
 
 static inline bool alternateBindingKey(unsigned key) {
-    const unsigned alternate = nativeBinding(6);
-    if (!key || key >= 256 || !alternate || alternate >= 256) return false;
-    if (key == alternate) return true;
-    constexpr unsigned modifiers[][3] = {{VK_MENU, VK_LMENU, VK_RMENU},
-                                         {VK_CONTROL, VK_LCONTROL, VK_RCONTROL},
-                                         {VK_SHIFT, VK_LSHIFT, VK_RSHIFT}};
-    for (const auto& family : modifiers)
-        if ((key == family[0] && (alternate == family[1] || alternate == family[2])) ||
-            (alternate == family[0] && (key == family[1] || key == family[2])))
-            return true;
-    return false;
+    return fp::sameKey(key, nativeBinding(6));
+}
+// Any of the game's own Controls bindings (fp::gameUsesKey): the mod's whole-key actions leave these to the game.
+static bool gameBindingKey(unsigned key) {
+    if (!base) return false;
+    unsigned bindings[field::bindings::count];
+    for (size_t i = 0; i < field::bindings::count; ++i) bindings[i] = nativeBinding(i);
+    return fp::gameUsesKey(key, bindings);
 }
 
 static bool holdingItem() {
@@ -258,6 +258,36 @@ static void retireWindowInstallation(const WindowInstallation& owner) {
     ReleaseSRWLockExclusive(&windowInstallationLock);
 }
 
+// F6's view changes (fp::f6PressStep): from the window procedure, and from the worker for a two-way hold.
+static bool f6Running() {
+    return InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0);
+}
+static void applyF6Step(fp::F6Step step) {
+    if (step != fp::F6Step::none && step != fp::F6Step::holdPending) {
+        ++f6Presses;
+        knockdownOwnsView = false; // the player chose the view from here on
+    }
+    switch (step) {
+    case fp::F6Step::toThird:
+    case fp::F6Step::toFirst:
+    case fp::F6Step::toOverhead:
+        if (!f6Running()) return; // stopped while a two-way press was held
+        if (step == fp::F6Step::toOverhead) tpBlendStart = GetTickCount64();
+        viewMode = step == fp::F6Step::toThird ? 1 : step == fp::F6Step::toFirst ? 0 : 2;
+        releaseInput();
+        return;
+    case fp::F6Step::toggle:
+        viewMode = 0;
+        InterlockedExchange(&active, !InterlockedCompareExchange(&active, 0, 0));
+        releaseInput();
+        AcquireSRWLockExclusive(&aimLock);
+        aim.valid = false;
+        ReleaseSRWLockExclusive(&aimLock);
+        return;
+    default: return; // none, or a two-way press waiting for its release
+    }
+}
+
 static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     __try {
     const WindowInstallation owner = windowInstallationSnapshot();
@@ -335,10 +365,30 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 inputOwner.windowClaim(bindingKey);
                 return xbutton ? TRUE : 0;
             }
-            if (canTake && bindingKey && (bindingKey == kickKey.load() || bindingKey == jumpKey.load())) { // the kick and jump keys: the game never sees them
+            // The kick and jump keys: the game never sees them, so a key the game itself uses stays the game's
+            // (counted, and said once a session: the press also does the game's own action).
+            if (canTake && bindingKey && (bindingKey == kickKey.load() || bindingKey == jumpKey.load()) &&
+                gameBindingKey(unsigned(bindingKey))) {
+                static bool told[2] = {};
+                for (const bool jump : {false, true}) {
+                    if (bindingKey != (jump ? jumpKey : kickKey).load()) continue;
+                    if (told[jump]) (jump ? jumpRefusals : kickRefusals)[size_t(fp::MotionRefusal::gameKey)].fetch_add(1);
+                    else {
+                        told[jump] = true;
+                        motionRefused(jump, fp::MotionRefusal::gameKey);
+                    }
+                }
+            } else if (canTake && bindingKey && (bindingKey == kickKey.load() || bindingKey == jumpKey.load())) {
                 inputOwner.windowClaim(bindingKey);
                 if (bindingKey == kickKey.load()) motionKickRequested = true;
                 if (bindingKey == jumpKey.load()) motionJumpRequested = true;
+                return xbutton ? TRUE : 0;
+            }
+            // Third person, a side chosen, Settings (F8) closed: the other shoulder. Anywhere else the game keeps it.
+            if (canTake && bindingKey == swapShoulderKey.load() && viewMode.load() == 1 && tpShoulder.load() != 0 &&
+                !cursorFreeBitSet(cursorFreeBit) && !gameBindingKey(unsigned(bindingKey))) {
+                inputOwner.windowClaim(bindingKey);
+                swapShoulder();
                 return xbutton ? TRUE : 0;
             }
             if (canTake && trackingEnabled.load() && bindingKey == trackingRecenterKey.load()) {
@@ -460,33 +510,24 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
 
     if (message == WM_KEYDOWN && !(lp & (1LL << 30)) && (wp == VK_F6 || wp == VK_F8 || wp == VK_F12 || wp == VK_ESCAPE))
         rmbEvent(fp::RmbEvent::lost, false);
+    if (message == WM_KEYUP && wp == VK_F6) { // a two-way press decides here unless the worker saw the hold first
+        ULONGLONG start = f6HoldStart.load();
+        if (start && f6HoldStart.compare_exchange_strong(start, 0)) {
+            applyF6Step(fp::f6ReleaseStep(GetTickCount64() - start, viewMode.load()));
+            return 0;
+        }
+    }
 
     if (message == WM_KEYDOWN && !(lp & (1LL << 30))) {
         if (wp == VK_F6 && !fp::rearmF6Accepted(GetTickCount64(), rearmedAt.load()))
             return 0;
         if (wp == VK_F6) { ++inventoryOwnerEpoch; releaseHeldDoor(); }
         if (wp == VK_F6) {
-            if (InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
-                viewMode.load() == 0) {
-                viewMode = 1;
-                releaseInput();
-                return 0;
-            }
-            if (InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
-                viewMode.load() == 1) {
-                tpBlendStart = GetTickCount64();
-                viewMode = 2;
-                releaseInput();
-                return 0;
-            }
-            if (viewMode.load() == 2 && GetTickCount64() - tpBlendStart.load() < 600)
-                return 0;
-            viewMode = 0;
-            InterlockedExchange(&active, !InterlockedCompareExchange(&active, 0, 0));
-            releaseInput();
-            AcquireSRWLockExclusive(&aimLock);
-            aim.valid = false;
-            ReleaseSRWLockExclusive(&aimLock);
+            const ULONGLONG now = GetTickCount64();
+            const fp::F6Step step = fp::f6PressStep(f6Cycle.load() == 1, f6Running(), viewMode.load(),
+                                                    now - tpBlendStart.load());
+            f6HoldStart = step == fp::F6Step::holdPending ? (std::max)(now, 1ull) : 0;
+            applyF6Step(step);
             return 0;
         }
         if (wp == VK_F8) {
@@ -529,6 +570,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     }
 
     if (message == WM_KILLFOCUS || message == WM_CANCELMODE || (message == WM_ACTIVATEAPP && !wp)) {
+        f6HoldStart = 0; // its key-up may never come: no overhead from a press made before focus left
         ++inventoryOwnerEpoch;
         rmbEvent(fp::RmbEvent::focusLost, false);
         clearPointerClipCache(false);
@@ -650,7 +692,7 @@ static bool playerContext(uintptr_t behavior) {
         return false;
     const uintptr_t root = *reinterpret_cast<const uintptr_t*>(behavior + field::behaviour::character);
     if (!root || root != *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot))) return false;
-    if (*reinterpret_cast<const unsigned*>(root + field::character::lifeFlags) & 0x100 ||
+    if (fp::deadState(*reinterpret_cast<const unsigned*>(root + field::character::stateFlags)) ||
         *reinterpret_cast<const unsigned char*>(behavior + field::behaviour::inactive))
         return false;
     const uintptr_t view = *reinterpret_cast<const uintptr_t*>(behavior + field::behaviour::view),
@@ -901,6 +943,22 @@ static void updateAim(uintptr_t behavior) {
             addTo(heldTurnY, float(dy));
             dx = dy = 0;
         }
+        // A Manual guard with a parry direction lends the mouse to the parry drag: the view and aim stay
+        // still (turning would also move the defender's front-half test, own +A08, in 163880).
+        static fp::ParryDrag parryDrag;
+        static bool parryDragging = false;
+        const bool dragging = combat && parryDragHeld.load() && (keyState(VK_RBUTTON) & 0x8000);
+        if (dragging != parryDragging) {
+            parryDrag.reset();
+            parryDragPose = 0;
+            parryDragging = dragging;
+        }
+        if (dragging) {
+            const int deadZone = parryDragDeadZone.load();
+            parryDrag.move(dx, dy, float(deadZone));
+            parryDragPose = parryDrag.pose(float(deadZone), parryDragMirror.load());
+            dx = dy = 0;
+        }
         worldPointerMotion(dx, dy);
         if (combat) aim.swing.move(dx, dy, float(rect.right));
         dx *= manipulationGain;
@@ -1128,7 +1186,7 @@ static void prepareAttackHeading(uintptr_t bh) {
         !(*reinterpret_cast<const unsigned*>(bh + field::behaviour::pressFlags) & 1u)) {
         const float body = *reinterpret_cast<const float*>(a.root + field::character::bodyHeading);
         if (std::isfinite(body)) {
-            const bool wide = *reinterpret_cast<const int*>(a.root + field::character::gripFlags) != 0;
+            const bool wide = *reinterpret_cast<const int*>(a.root + field::character::gripFlags) != 0; // the game's own test (C24C3)
             presented = requestedAttackHeading(a, heading, body, wide);
             if (attackSideKey && (keyState(attackSideKey) & 0x8000)) {
                 presented = fp::flippedSideHeading(presented, body, wide);
@@ -1194,6 +1252,7 @@ static void inputProfileBody() {
     sampleHeldBindings(owned, sample);
     trackedControllerInput(root, bh, owned);
     fingerPosesTick(root);
+    motionJumpTick(root, owned);
     if (owned) motionKeysTick(root);
     combatInput(root, bh, owned, sample);
     if (owned) prepareAttackHeading(bh);
@@ -1383,6 +1442,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
     uintptr_t* contextual = nullptr;
     uintptr_t savedContext = 0;
     const bool trackedMotor = trackedMotorBegin(root);
+    const bool kickMotor = !trackedMotor && kickPoseBegin(root); // the VR drive's scope comes first
     __try {
         if (root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot))) {
             ++playerSteps;
@@ -1396,7 +1456,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
             }
             // A tracked body owns the spine instead of the look-driven bend.
             __try {
-                if (!trackedMotor) spineBendStep(root, borrowed);
+                if (!trackedMotor && !kickMotor) spineBendStep(root, borrowed);
             } __except (countFaultAndHandle(&poseFaults)) {}
         }
         const uintptr_t bh = *reinterpret_cast<const uintptr_t*>(root + field::character::behaviour);
@@ -1422,7 +1482,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
                 restoreSpinePart(borrowed[1]);
             } __finally {
                 __try { restoreSpinePart(borrowed[0]); }
-                __finally { trackedMotorEnd(); }
+                __finally { kickPoseEnd(); trackedMotorEnd(); }
             }
         }
     }
@@ -1466,10 +1526,10 @@ static bool bodyCalm(uintptr_t root, uintptr_t head) {
         !*reinterpret_cast<const unsigned char*>(root + field::character::physicsLive))
         return false;
     const unsigned state = *reinterpret_cast<const unsigned*>(root + field::character::stateFlags);
-    if ((state & (0xac0 | 0x40204 | 0xa00)) || (*reinterpret_cast<const unsigned*>(root + field::character::lifeFlags) & 0x100))
+    if (fp::reactionState(state)) // down, dead or staggered: the game's own don't-interrupt test (169BE6)
         return false;
-    const float balance = *reinterpret_cast<const float*>(root + field::character::stamina),
-                most = *reinterpret_cast<const float*>(root + field::character::staminaMax);
+    const float balance = *reinterpret_cast<const float*>(root + field::character::balance),
+                most = *reinterpret_cast<const float*>(root + field::character::balanceMax);
     if (!(balance >= most - 0.05f)) return false;
     const uintptr_t drag = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::dragManager));
     if (readable(drag, 0x20) && (*reinterpret_cast<const unsigned*>(drag + 8) & (0x4000 | 0x10000 | 0x80000)))
@@ -1699,7 +1759,7 @@ static fp::SwingHands swingHands(uintptr_t root, fp::OriginCue cue, int motion) 
     handCount = count;
     handGrip = int(grip);
     if (count < 1 || count > 2) return s;
-    s.alternate = (grip & 0x80) != 0;
+    s.alternate = (grip & 0x80) != 0; // the game's own test for the opposite family's slot (157AB3)
     const uintptr_t weapons[2] = {*reinterpret_cast<const uintptr_t*>(root + field::character::weapons),
                                   count > 1 ? *reinterpret_cast<const uintptr_t*>(root + field::character::weapons + 8) : 0};
     const uintptr_t held[2] = {*reinterpret_cast<const uintptr_t*>(root + field::character::heldItems),
@@ -1782,12 +1842,12 @@ static void publishCue(uintptr_t self) {
     if (attackCue && getAim(self, a)) {
         in.owned = true;
         in.combat = *reinterpret_cast<const unsigned char*>(root + field::character::combatStance) != 0;
-        in.upright = (*reinterpret_cast<const unsigned*>(root + field::character::stateFlags) & 0x40204) == 0;
+        in.upright = !fp::downState(*reinterpret_cast<const unsigned*>(root + field::character::stateFlags)); // not down or dead (& 0xA00)
         in.attackHeld = (*reinterpret_cast<const unsigned*>(gameAt(fp::sig::buttonWord)) & 1) != 0;
         in.alternateHeld = (*reinterpret_cast<const unsigned*>(gameAt(fp::sig::keyWord)) & 0x80) != 0;
         in.pressBlocked = *reinterpret_cast<const unsigned char*>(self + field::behaviour::pressBlocked) != 0;
         in.modifierHeld = attackSideKey && (GetAsyncKeyState(attackSideKey) & 0x8000);
-        in.wideThreshold = *reinterpret_cast<const int*>(root + field::character::gripFlags) != 0;
+        in.wideThreshold = *reinterpret_cast<const int*>(root + field::character::gripFlags) != 0; // the game's own test (C24C3)
         in.motion = *reinterpret_cast<const int*>(root + field::character::motion);
         in.clock = *reinterpret_cast<const unsigned*>(gameAt(fp::sig::gameClock));
         in.lastPress = *reinterpret_cast<const unsigned*>(self + field::behaviour::lastPressTime);

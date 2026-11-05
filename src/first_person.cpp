@@ -110,6 +110,7 @@ static MH_STATUS disableStereoHooks() { return MH_OK; }
 #include "mod/wounds.inl"
 #include "mod/fire.inl"
 #include "mod/view_effects.inl"
+#include "mod/material_ids.inl"
 #include "mod/frame.inl"
 #include "mod/headwear_render.inl"
 #include "mod/stone_skin.inl"
@@ -117,6 +118,7 @@ static MH_STATUS disableStereoHooks() { return MH_OK; }
 #include "mod/xr_bones.inl"
 #include "mod/blade.inl"
 #include "mod/motions.inl"
+#include "mod/pose_drive.inl"
 #include "mod/camera.inl"
 #include "mod/dev.inl"
 #ifdef FP_OPENXR_EMULATION

@@ -32,14 +32,23 @@ inline constexpr size_t gazeDistance = 0xCBC;   // float
 inline constexpr size_t aimDirection = 0xCC0;   // float[3]: the cursor aim's heading
 inline constexpr size_t facing = 0xCFC;         // float[3]
 inline constexpr size_t behaviour = 0xD40;      // its behaviour object (namespace behaviour)
-inline constexpr size_t postureReadiness = 0xD58; // float: native B7560 readiness gate (>= .01)
-inline constexpr size_t health = 0xD5C;          // float: current health
-inline constexpr size_t healthMax = 0x103C;      // float: its maximum
+// Vitals, as the HUD (13E0F0) draws them. Left bar (13C880): health +D58 (drawn through its frame-interpolated
+// copy +D70 = lerp(+D6C, +D58), 17A100) in yellow, up to healthRestorable +D5C in pale, the rest of healthMax
+// +103C dark (lost). Right, blue bar (13C470): magic +D74 up to magicCeiling +D78, both 0..1.
+inline constexpr size_t health = 0xD58;          // float: current health; B7560 gates posture on > 0.01
+inline constexpr size_t healthRestorable = 0xD5C; // float: how far health can still recover; healing (1A0C50) raises it
+// Magic: spent through 17A640 by the power code ("PowerUsed", "Error charging blast effect." in 232060, 236620,
+// 23CC30), refilled toward magicCeiling by 17A6B0. The game keeps no separate stamina or exertion value.
+inline constexpr size_t magic = 0xD74, magicCeiling = 0xD78; // floats 0..1: the blue bar
+inline constexpr size_t healthMax = 0x103C;      // float: the whole health bar
 inline constexpr size_t bleed = 0x10DC;          // float 0..20: bleed rate (0x168410 raises it from the wound inflow)
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
-inline constexpr size_t stateFlags =
-    0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
-inline constexpr size_t lifeFlags = 0xDF8; // 0x100: set by 0x17B100 (at 0x17B248), not by the death routine; death is stateFlags 0x800
+// The character's state, a value (docs/GAME-FIELDS-AUDIT.md): 0 standing; 1 settle step (16B470); 2 active defense
+// (166604); 8 reactive defense motion (16B168/16B1B1); 0x20 a power/command motion in progress (179E40; 16B2D6 for
+// motions 0x22-0x28); 0xC0 standing spell-hit stagger (17B0E1); 0x100 stumble recover (16B05C); 0x200 on the
+// ground; 0x300 getting up; 0x600 scripted lay-down; 0x800/0xA00 dead; 0x8000 motion 0xD; 0x10000/0x10004 motion 0x1F.
+inline constexpr size_t stateFlags = 0xDF4;
+inline constexpr size_t lifeFlags = 0xDF8; // 0x100: a spell-hit stun (17B100 sets, 169B8A clears); NOT death
 inline constexpr size_t aimOpponent = 0xE38; // native selected combat opponent
 inline constexpr size_t contextualTarget = 0xE50;
 inline constexpr size_t handParts = 0xE78;   // [2] body parts
@@ -47,12 +56,14 @@ inline constexpr size_t heldItems = 0xE88;   // [2] what each hand holds
 inline constexpr size_t defenseIncomingMotion = 0xF5C; // int: native interception request, -1 absent
 inline constexpr size_t defenseActive = 0x12F3;        // u8: reactive defense owns constraints/posture
 inline constexpr size_t duckAmount = 0x100C; // float 0..1: the game's crouch, decays 0.02 a physics step
-inline constexpr size_t swingBits = 0x1018;  // bounce/block bits (& 0x26)
+inline constexpr size_t swingBits = 0x1018;  // contact bits 0x2 (158EF0, 15859D) and 0x4 (159A60 15C212..); 0x20 never set
 inline constexpr size_t gripFlags =
     0x1068; // 0x80: the opposite family uses slot 1; nonzero: the wide threshold
 inline constexpr size_t gripEntry = 0x1070;    // slot 0's entry in the grip table (gripTable)
-inline constexpr size_t stamina = 0x10B8;      // float
-inline constexpr size_t staminaMax = 0x10BC;   // float
+// Balance (poise), not on the HUD: regenerates to balanceMax every step (169A4C); below it by a margin the game
+// plays its recover motion 3 (169B99). Not stamina.
+inline constexpr size_t balance = 0x10B8;      // float
+inline constexpr size_t balanceMax = 0x10BC;   // float
 inline constexpr size_t gaitFlags = 0x10F4;    // bit 1: backward gait
 inline constexpr size_t headPart = 0x11E0;     // the head's body part
 inline constexpr size_t walking = 0x12EA;      // u8: exploration travel under way

@@ -99,6 +99,8 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return keyName(settings.kickKey);
     case setting::jumpKey:
         return keyName(settings.jumpKey);
+    case setting::swapShoulderKey:
+        return keyName(settings.swapShoulderKey);
     case setting::leanKey:
         return keyName(settings.leanKey);
     case setting::holdHeading:
@@ -198,7 +200,6 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return settings.vrFingerBones ? L"On" : L"Off";
     case setting::ambientOcclusion:
     case setting::depthOfField:
-    case setting::screenSpaceReflections:
         return settings.value(id); // "Off" or a percent
     case setting::edgeSmoothing:
         return L"";
@@ -231,6 +232,20 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return L"";
     case setting::farRooms:
         return L"";
+    case setting::hitReaction:
+        return settings.hitReaction ? std::to_wstring(settings.hitReaction) + L"%" : L"Off";
+    case setting::tpLookFollow:
+        return L"";
+    case setting::fpKnockdown:
+        return settings.fpKnockdown ? L"Show third" : L"Stay first";
+    case setting::kickStyle:
+        return settings.kickStyle ? L"Animated" : L"Classic";
+    case setting::parryDirection:
+        return settings.parryDirection == fp::parryAssisted ? L"Drag: assisted"
+               : settings.parryDirection == fp::parryStrict ? L"Drag: strict"
+                                                            : L"Automatic";
+    case setting::f6Cycle:
+        return settings.f6Cycle ? L"1st/3rd only" : L"1st/3rd/game";
     default: return L"";
     }
 }
@@ -275,6 +290,11 @@ const wchar_t* settingLabel(int id) {
     case setting::rotateHeldKey: return L"Turn item";
     case setting::kickKey: return L"Kick";
     case setting::jumpKey: return L"Jump";
+    case setting::swapShoulderKey: return L"Swap shoulder";
+    case setting::tpLookFollow: return L"Follow look angle";
+    case setting::fpKnockdown: return L"Knocked down";
+    case setting::kickStyle: return L"Kick style";
+    case setting::parryDirection: return L"Parry direction";
     case setting::leanKey: return L"Lean";
     case setting::holdHeading: return L"Heading correction";
     case setting::autoRecenter: return L"Auto-center";
@@ -321,7 +341,6 @@ const wchar_t* settingLabel(int id) {
     case setting::vrFingerBones: return L"VR finger bones";
     case setting::ambientOcclusion: return L"Contact shadows";
     case setting::depthOfField: return L"Focus blur";
-    case setting::screenSpaceReflections: return L"Reflections";
     case setting::edgeSmoothing: return L"Anti-aliasing";
     case setting::helmetVisor: return L"Helmet edges";
     case setting::playerGhost: return L"See-through";
@@ -338,6 +357,8 @@ const wchar_t* settingLabel(int id) {
     case setting::objectLights: return L"Object lights";
     case setting::lightSmoothing: return L"Smooth light";
     case setting::farRooms: return L"Far rooms";
+    case setting::f6Cycle: return L"F6 cycle";
+    case setting::hitReaction: return L"Hit reaction";
     default: return L"";
     }
 }
@@ -380,8 +401,13 @@ const wchar_t* settingTip(int id) {
     case setting::tpCombatAim: return L"Third person. Oval: the cursor moves freely and the view turns at its edge. Centre: the view turns directly.";
     case setting::eyeSetback: return L"Moves the first-person view back toward the middle of the head. Third-person framing and interaction distance use the same shifted eye position. Headwear that blocks the first-person view is hidden; its shadow remains.";
     case setting::rotateHeldKey: return L"Hold and move the mouse to turn what you're holding. The view stays still meanwhile. Delete clears the key.";
-    case setting::kickKey: return L"Plays the game's unused kick. Fighting stance, upright, needs most of your stamina. Delete clears the key.";
-    case setting::jumpKey: return L"Plays the game's unused jump. Upright, needs half your stamina. Delete clears the key.";
+    case setting::kickKey: return L"Plays the game's own kick when you are not mid-swing or reacting to a hit. Not a key the game uses (Alt is its thrust). Delete clears the key.";
+    case setting::jumpKey: return L"Plays the game's own jump when you are not mid-swing or reacting to a hit. Not a key the game uses. Delete clears the key.";
+    case setting::kickStyle: return L"Classic: the game's own kick. Animated: the same kick, gates and hit, with your body moved like a motion-captured kick that suits what you hold. Experimental.";
+    case setting::parryDirection: return L"Needs Block on Hold RMB. Holding RMB keeps the view still and a drag picks the parry: up, left, right, down-left, down-right. Automatic: the game picks. Assisted: your drag picks; a small drag leaves it to the game. Strict: you parry only if your drag matches the incoming swing.";
+    case setting::fpKnockdown: return L"Show third: knocked down in first person, the view goes to third person and back a moment after you are up. F6 meanwhile keeps your choice; death never switches.";
+    case setting::tpLookFollow: return L"Out of combat, looking down lifts the camera and moves it back so the ground ahead shows; looking up brings it closer and lower. Walls still pull it in.";
+    case setting::swapShoulderKey: return L"Third person: slides the camera over your other shoulder and keeps it there. Does nothing with the camera centred. Delete clears the key.";
     case setting::leanKey: return L"Hold it and move the mouse to lean your upper body: left and right, forward and back. The view stays where it points and goes with your head. Let go to straighten up. In combat, the game's alternate-attack binding takes priority over lean. Any key can be set in first-person.ini ([Input] LeanKey).";
     case setting::holdHeading: return L"Looking up or down, the game's head turns a few degrees off where you aim, so the view slid sideways. This corrects the physics head heading, and the view follows it. A bigger difference, the head still catching up with a fast turn, is left as it is.";
     case setting::autoRecenter: return L"Optional: steadily turn the view toward the cursor inside the aim oval without moving the world-space aim target. Middle-click immediately requests the same recenter, even when off. Only active while gameplay owns look input; suspended for menus, leaning and held-object rotation. First person follows the physical head, so the head may take time to achieve the new aim.";
@@ -408,7 +434,7 @@ const wchar_t* settingTip(int id) {
     case setting::vrPosture: return L"Standing drives the legs from trackers and walks the room. Seated keeps the game's own legs and ignores room walking and crouching, so a chair never reads as a crouch. Recenter after changing it.";
     case setting::vrHeadset: return L"On starts the OpenXR runtime of the headset the next time the game starts with the mod, using the loader shipped beside the mod. The view is the tracked head; nothing else changes until then.";
     case setting::vrTurning: return L"The right stick turns the body the way the mouse does, so the view and the body never part. Snap turns a fixed angle per flick; smooth turns while held. Off leaves turning to the head and mouse.";
-    case setting::vrEffects: return L"On runs the View page's ambient occlusion and screen-space reflections on each headset eye, at their View strengths. Depth of field never runs in the headset: a fixed focus fights your own eyes.";
+    case setting::vrEffects: return L"On runs the View page's ambient occlusion on each headset eye, at their View strengths. Depth of field never runs in the headset: a fixed focus fights your own eyes.";
     case setting::vrGripAngle: return L"Tilts the controller's grip so a held hilt sits the way you hold it. Tracked hands are not tilted.";
     case setting::vrHaptics: return L"Strength of the controller pulses on grab, on your weapon landing and on being hit. Zero turns them off.";
     case setting::vrPanelWidth: return L"Width of the floating panel that shows the game's menus and the F8 panel in the headset.";
@@ -419,8 +445,8 @@ const wchar_t* settingTip(int id) {
     case setting::vrGrabTurn: return L"On: squeeze an empty hand and sweep it sideways to drag the world round, through the same body turn as the stick. A hand holding something, or any drawn weapon, never turns. Off leaves turning to the stick.";
     case setting::vrEyeScale: return L"How large each eye is drawn, as a share of the window size: lower is cheaper and softer. Applies to the per-eye draws only; mirror and reconstruction modes and the desktop stay at full size.";
     case setting::vrGripSlide: return L"Slides the hand along a held weapon's hilt: positive towards the blade, negative towards the pommel.";
-    case setting::vrKick: return L"Experimental. On: pressing a stick in plays the game's own kick, only in the fighting stance, upright, not mid-swing and with most of your stamina. The game never plays this clip itself, so a hit lands by foot contact only.";
-    case setting::vrJump: return L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright, not mid-swing and with half your stamina. The game never jumps by itself, so landing is its ordinary physics.";
+    case setting::vrKick: return L"Experimental. On: pressing a stick in plays the game's own kick when not mid-swing or reacting to a hit. A hit lands by foot contact only.";
+    case setting::vrJump: return L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright and not mid-swing. Landing is the game's ordinary physics.";
     case setting::vrWeaponWeight: return L"On: a held weapon follows your hands with a lag set by its own heft, so a heavy axe trails a fast swing and a dagger does not; a two-handed grip carries it better.";
     case setting::vrTeleport: return L"On: push the right stick forward to aim an arc from your right hand, let go to move there. Walls stop the arc; not while dragging something, attacking, down or out of reach. Walking on the left stick stays as it is.";
     case setting::vrHandPanel: return L"On: the inventory and every open menu sit on a panel held in your left hand, turned towards you; point at it with the right hand, the trigger clicks and the grip is the right button. Hold the trigger on an item and point out into the world to carry it out; let go to set it down there and pick it up. Off: the menu floats in front of you.";
@@ -428,7 +454,6 @@ const wchar_t* settingTip(int id) {
     case setting::vrFingerBones: return L"Experimental. On: finger bones are added to your body's own skeleton and the skinned body mesh bends its fingers to the tracked joints. Shows on the full body; the hands-only body hides that mesh.";
     case setting::ambientOcclusion: return L"Soft shadow in corners, under objects and where things touch. High values can darken narrow gaps.";
     case setting::depthOfField: return L"Softens very near and very far things while the middle stays sharp. First person only.";
-    case setting::screenSpaceReflections: return L"Faint reflections on floors and other upward-facing surfaces, from what's on screen. Turn off if you see smearing.";
     case setting::edgeSmoothing: return L"Smooths jagged edges in one cheap pass. With Supersample on, it lightly sharpens instead.";
     case setting::helmetVisor: return L"Darkens the edges of the view in the shape of the helmet you wear: a great helm's slit, a nasal guard, an open face.";
     case setting::playerGhost: return L"Shows a faint outline of you wherever walls or pillars hide you.";
@@ -445,6 +470,8 @@ const wchar_t* settingTip(int id) {
     case setting::objectLights: return L"Lights each object takes. The game uses six; fewer runs faster and keeps the strongest.";
     case setting::lightSmoothing: return L"Strong lights fall off in round gradients instead of squares. From the next level load.";
     case setting::farRooms: return L"Draws one more room through doorways, so far doorways don't show solid black. Off if it costs too much frame rate.";
+    case setting::hitReaction: return L"First person. How hard the view jolts and tilts when a blow lands on you. 0 keeps it still; the damage flash stays. Never in VR.";
+    case setting::f6Cycle: return L"What F6 switches between. 1st/3rd/game: each press moves on. 1st/3rd only: a press flips first and third person; hold F6 half a second for the game's camera.";
     default: return L"";
     }
 }

@@ -38,15 +38,15 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 
 | Setting (ini key) | Game code or data it reads or patches | Proof | GL state | Verdict |
 |---|---|---|---|---|
-| Ambient occlusion / Contact shadows (`View/AmbientOcclusion`) | Hooks 0xA0CE0/0x4B6D0 return; window colour and depth copied by GL blit; view matrices `view+0x60`/`+0xE0` | Hooks BYTE-EXACT (viewEffects); matrices WITNESSED (`view::renderView/renderProjection`); frame order PROVEN | Audit: inputs bound and checked (fixed 7abc04a); held pixels kept out (85ec084) | PROVEN for game data; look is OURS |
+| Ambient occlusion / Contact shadows (`View/AmbientOcclusion`) | Hooks 0xA0CE0/0x4B6D0 return; window colour and depth copied by GL blit; view matrices `view+0x60`/`+0xE0` | Hooks BYTE-EXACT (viewEffects); matrices WITNESSED (`view::renderView/renderProjection`); frame order PROVEN | Audit: inputs bound and checked (fixed 7abc04a); held pixels kept out (85ec084) | PROVEN for game data; look is OURS: a visual addition on top of the game's own voxel-GI occlusion, darkening every pixel evenly (no claim about which light is direct) |
 | Depth of field (`View/DepthOfField`) | Same; centre depth read back | as above | audit clean | PROVEN; look OURS |
-| Screen-space reflections (`View/ScreenSpaceReflections`) | Same; world up from view matrix elements 4..6 | WITNESSED matrices | audit clean | PROVEN for data. Floor weighting by colour (478b214) is OURS, not the game's specular data (that needs the material set, see above) |
+| Screen-space reflections (was `View/ScreenSpaceReflections`) | — | — | — | **Removed** (Hunter, 2026-11-05): the game already draws its own reflections from each surface's specular data (below). Shader, passes, targets, row and status fields are gone; an old ini value is never read |
 | Edge smoothing (`View/EdgeSmoothing`) | Image only; "supersampled" from which hook ran | Hooks BYTE-EXACT | audit clean | PROVEN; look OURS |
 | Supersampling adaptation (no row; the game's own Supersample) | 0x4B6D0; `DAT_49CA10` sample index, `DAT_2AFC60` sample count, `DAT_49ACD0` per-sample viewports, `DAT_49A4F0` bound framebuffer; matrix hook | Globals by Relative signatures with reviewed notes (writers 0x4B857, 0x4B783, 0x4BA01) | n/a | WITNESSED; not re-derived in this audit |
 | Hide helmet and hair (`View/Helmet`) — see also "Headwear reads" below | Skinned mesh layout and tags (above); material face ranges; descriptor `material+0x68` (+0x14 indices); `renderer+0x80` configuration (+0xC uniforms, +0x14 sample location) | Mesh offsets PROVEN (0xD9350/0x69520/0x5E340); headwear functions BYTE-EXACT (headwearRender); descriptor `+0x14` and renderer `+0x80/+0xC/+0x14` UNPROVEN in this audit | replay under cueLock, restored raw (not audited per pass) | Mostly PROVEN; the descriptor and renderer-uniform reads are UNPROVEN. Not gated: they are read only inside byte-exact owners whose code is unchanged, and a wrong value fails the draw closed (the native draw runs). Flagged for the audit thread |
 | Helmet view (`View/HelmetView`) | Whether headwear was seen (the headwear path) | as Hide helmet | audit clean | as above |
 | See yourself through walls (`View/PlayerGhost`) | Highlight pass 0x4F1D0 hook; replays native bind 0x73F20, per-node submit `material+0x80`, part draw `part+0x90(part+0x98)` | Pass, camera pass, bind and framebuffer bind BYTE-EXACT (silhouette); `+0x80`/`+0x90` checked at runtime to equal contracted 0x201630/0x6B8B0; cache restore PROVEN (6FC30) | Audit found the blend leak (fixed 478b214); cache restored (7abc04a) | PROVEN |
-| Held item detail (`View/HeldItemDetail`) — **off: colour material guess** | Same replay mask; held node `renderTransform`, `sector+0x64` origin; material kind from a readback of unit-0 texture | Replay PROVEN; `sceneNode::renderTransform`, `sector::origin` WITNESSED; material kind is OURS | as above | Core PROVEN. **Light** (light-node `+0x210/+0x21C/+0x224`, sector list `+0x130`, origin `+0x64`): UNPROVEN, **gated off**. **Wear and dirt** (item record: `node+0x180` id, database rows `+0x10/+0x18`, row `+0x8/+0xC`): UNPROVEN, **gated off**. Weapon blood spot source: see Wounds |
+| Held item detail (`View/HeldItemDetail`) — **material from game data (2026-11-05), not yet seen in game** | Same replay mask; held node `renderTransform`, `sector+0x64` origin; per-texel material id from the game's item composer (`materialIds` group, mod/material_ids.inl), drawn into the mask's A with the game's own vertex shader | Replay PROVEN; `sceneNode::renderTransform`, `sector::origin` WITNESSED; material ids PROVEN (composer decode below, whole-body contracts); the look per material is OURS | as above | Core PROVEN. **Light** (light-node `+0x210/+0x21C/+0x224`, sector list `+0x130`, origin `+0x64`): UNPROVEN, **gated off**. **Wear and dirt** (item record: `node+0x180` id, database rows `+0x10/+0x18`, row `+0x8/+0xC`): UNPROVEN, **gated off**. Weapon blood spot source: see Wounds |
 | Armour and clothing detail (`View/ArmourDetail`) — **off: colour material guess** | Same as held items, for worn pieces | as above | as above | as above (same gates) |
 | World object detail (`View/ObjectDetail`) — **off: colour material guess** | Same, for nearby placed objects | as above | as above | as above (same gates) |
 | Level detail (`View/LevelDetail`) — **off: colour material guess** | People within 4 m (`worldObject::characters`); the two nearest lamps (light-node fields) | Roster WITNESSED; lamps UNPROVEN | audit clean | Surface detail PROVEN (image only, OURS). **Lamps gated off** |
@@ -60,7 +60,7 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 | Stone skin | Same texture set and units | as above | as above | as wound skins |
 | Wound debug highlight (`View/WoundDebug`) | none (shader colour) | OURS | n/a | n/a |
 | Draw far rooms (`View/FarRooms`) | level, room and sector fields (farRooms group) | PROVEN (0x143C20, 0x5B170; see "Witnessed fields re-checked") | no GL | PROVEN |
-| VR effects (`VR/Effects`) | Runs AO and SSR per eye in the eye framebuffers | Same as AO/SSR; VR contracts whole-function | eye path not audited in game | PROVEN data; eye path not run in this audit |
+| VR effects (`VR/Effects`) | Runs AO per eye in the eye framebuffers | Same as AO; VR contracts whole-function | eye path not audited in game | PROVEN data; eye path not run in this audit |
 | Mod messages (no row) | Engine log above | PROVEN | n/a | PROVEN |
 
 ## Corrected by this audit (from the audit thread's decoding, spot-checked here)
@@ -166,12 +166,15 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
     shading.flb share one pack format. Each body is dword-rotated by the key stream of 0x1FA4D0 (called from
     0x1FA6F0, seed 0x2BCBE389). The main lit shader `shading_f` samples `DifTex`, `SpcTex`, `NrmTex`, `GlsTex`
     and so on.
-  - Units: after linking, 0x2010C0 gives the samplers consecutive units in this order, each only if the
-    permutation flags at `renderer+8` have it: DifTex 0x20000, OpcTex 0x480000, EmiTex 0x80000, SpcTex
-    0x40000, NrmTex 0x200000, GlsTex 0x1000000, then DspTex, DrtTex, EnvMap, VoxelGI.
-  - So units 0/1/2 are diffuse/specular/normal exactly when the flags have those three and neither an opacity
-    nor an emissive map. `stoneSkinOriginals` (stone_skin.inl) now checks that on the live flags and leaves
-    any other material to the game's own draw. Wound skins and stone skin go through it.
+  - Units: when 0x200770 links a program for the renderer, 0x200C40 calls 0x2010C0(renderer, config), which
+    reads the texture flags at `renderer+8` (0x20112E) and gives the samplers consecutive units with
+    glUniform1i in this order: DifTex (0x20000), else OpcTex when `(flags & 0x480000) == 0x400000`; then EmiTex
+    0x80000, SpcTex 0x40000, NrmTex 0x200000, GlsTex 0x1000000; then DspTex, DrtTex, EnvMap, VoxelGI. (The
+    cached program is looked up by the key at `renderer+0x10`; the texture flags are the ones at `+8`.)
+  - So units 0/1/2 are diffuse/specular/normal exactly when the flags have those three and no emissive map.
+    `stoneSkinOriginals` (stone_skin.inl) checks that on the live flags at `renderer+8`, refusing the opacity
+    bits too (more than needed), and leaves any other material to the game's own draw. Wound skins and stone
+    skin go through it. (Correction from the feature thread, 0b3f255: OpcTex takes a unit only without DifTex.)
 - **Headwear reads (e).**
   - **Descriptor: PROVEN.** The native part draw 0x6B8B0 reads `+0x68` as the descriptor:
     - `[+0]` is the element buffer, bound to 0x8893 when nonzero;
@@ -223,20 +226,19 @@ under the release rule they are off unless proven (`colourMaterialGuesses = fals
 
 | Where | Guess | State |
 |---|---|---|
-| Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Off**: the held/worn/object mask replay and the texture readback do not run, so these three detail rows draw nothing |
+| Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Removed** (2026-11-05): held items take each texel's material from the game (step 2-4 below); the readback and every colour rule are deleted. Armour and object detail stay off until their step |
 | Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Off**: level detail draws nothing |
-| Reflections (`ssrShader`) | Floor reflectivity by colour class (478b214) | **Removed.** Reflections are off and greyed out until the game's own specular data feeds them (Hunter: yes; plan below) |
+| Reflections (`ssrShader`) | Floor reflectivity by colour class (478b214) | **Removed**, with the whole Reflections effect (Hunter, 2026-11-05): the game's own reflections stay |
 | Helmet view (`finishShader` visor) | "Anything within 18 cm of the eye is helmet" (a depth guess) | **Off**, greyed out, until the helmet's own geometry shapes it |
 | See yourself through walls | A capsule of 25 cm radius standing in for the body, both as the fallback ghost and to ignore the body's own limbs | **Replaced**: the ghost is drawn only from the game's body draw (mask R), and a second channel (B) marks where the body itself is the nearest surface, from the same draw. No capsule. Needs an in-game check |
 | Wound marks (`woundShader`) | A grey, unsaturated surface is metal (smears, no soak) | Blood thread's code; they turned their gear metal-vs-cloth guess off in bc00466 |
 
 Still in use, and why (each is a choice about how an effect looks, not a claim about game data, except the
 first, which is listed for a decision):
-- **Ambient occlusion's "bright pixels are direct light" rule** (`shadeSurfaces`: darkening fades out above a
-  luminance of 0.3-0.7). It stands in for knowing which light is indirect. The game's indirect light is its
-  voxel GI volume (`VoxelGI`, the sampler Smooth lighting already rewrites), so the by-construction version
-  is to apply occlusion to that term inside the game's shader. **UNPROVEN as data; decision needed:** keep,
-  or move AO into the game's shader through the existing hook.
+- **Contact shadows darken evenly** (Hunter, 2026-11-05). The old rule that faded the darkening out on bright
+  pixels (a luminance of 0.3-0.7, standing in for "direct light") is removed: `shadeSurfaces` now multiplies
+  every pixel by `1 - strength * occlusion`. Contact shadows are this mod's own visual addition on top of the
+  game's voxel-GI occlusion and make no claim about the game's data.
 - Eye adaptation: the image's own brightness (our design). Hurt: proven health. Edge smoothing, depth of
   field and the fire look: image filters, our design. Wounds and blood: the blood thread's.
 To bring the material-based ones back: decode the material type the game itself keeps per material or part,
@@ -284,6 +286,40 @@ procedural ID. That is the next step to bring the four detail rows back with the
   `[[node+0x1D0][i]+0xD0]+0x208 == 0x26` (with the name compared at `+0x209`). Worn pieces merged into the
   _SKIN mesh keep their own sets, from their own factory (item rule above), and so their own layer IDs.
   Which exact 38-character name it is was not read here (it is runtime data).
+- **How the factory lays out an item's texture (PROVEN).**
+  - 0x20FB80 walks the factory's channels (count `factory+0x58`, packed 0xB5-byte records at `+0x60`). For each
+    channel it takes the instance's variant (`[arg+4+channel] - 1`, bounded by `channel+0xA8`; 0x20FDD3-0x20FE02)
+    and fills a 0x1F0-byte job entry (job array `+0x30`). Entry `+0` and `+8` come from channel `+0x3C` and
+    `+0x44` (0x20FE30-0x20FE66). Then up to three layers: each gets its procedural material (ID through
+    channel `+0xAC` rows of 0x2C bytes -> factory 9-byte table at `+0x8C`; 0x2103A8-0x2103F0), a colour from
+    the table at `+0x90` (0x2104D1-0x2104F1) and a pattern (0x270370, 0x210529).
+  - The executor 0x1EBC60 (stored as the job's callback at 0x20FBCD) draws each entry with 0x1EB910(entry,
+    entry+8, entry+0x10), which emits a quad from `entry+0` to `entry+0 + entry+8 × entry+0x10`
+    (0x1EB910-0x1EBA2E). **So each channel is a rectangle of the item's texture, and its layers' procedural
+    materials are known.**
+  - Still missing for per-pixel material: which layer covers a texel inside a channel (its pattern/mask,
+    0x270370 and the executor's later passes), the link from `node+0x180` (item id) to the factory, and each
+    pixel's texture coordinate in our replay (the game's draw does not output it; it would need our own
+    shader in the replay).
+- **Item id on the node (PROVEN), and the mod's `+0x180` read was WRONG.** The item builder 0x107600(…, record,
+  id) creates the node through 0x20AC10 and stores the id at **`node+0x184`** (0x1077B8: `mov [rax+0x184],
+  r14d`, r14d = the id argument); 0x1023C0 reads it back at 0x1023D3. The gated `heldConditionOf` read
+  `node+0x180` (it stays off). The chain to the factory is then: `node+0x184` -> 0x103DB0 lookup -> record ->
+  chunk 0x100000 (the factory name; 0x10766B-0x107691) -> the factory list `DAT_5B2140` searched by name
+  (0x20AC10). The per-instance variant bytes the factory uses (`factory+0x178`) are written at build time,
+  so for a given node they must be re-derived from its own record:
+- **Per-item variant choice (PROVEN).**
+  - 0x20AC10 finds the record's chunk 0x4000 (0x20AE42) and passes its payload (`chunk+8`) to 0x20D470 as the
+    item's instance data: seeds at `+4/+8` (to `factory+0x160/+0x164`); condition bytes `+0xC` -> `factory+0x170`,
+    `+0xD` -> `+0x168`, `+0xE` -> `+0x16C`, each byte × a constant (0x20AE5C-0x20AEBE).
+  - When `payload[0] & 0x10000000`, 0x20D470 sets each channel's variant `factory+0x178[ch] =
+    payload[0x50 + ch]`, clamped to the channel's variant count `+0xA8` (0x20D602-0x20D64B); otherwise it draws
+    them from the seeds.
+  - The first build of an item without stored variants sets `0x30000000` and calls 0x20DBB0 (0x20AEE6-0x20AEFC),
+    which presumably stores them (its body was not read).
+  - So for a node: `node+0x184` -> record -> chunk 0x4000 -> if flagged, variant of channel `ch` =
+    `payload[0x50+ch]`. The condition bytes the gated read uses are the same chunk's `+0x14..+0x16`
+    (`payload+0xC..+0xE`), which feed the factory.
 
 ## Per-light uniform layout, decoded (blood thread, 0.9.5.2g; shader text not reproduced here)
 
@@ -313,6 +349,112 @@ state `+0x170`) at 0x1FFFD8 / 0x200BBD. Each component, shader use against packe
   nothing reads them yet.
 
 ## The game's own shading, as decoded (for the reflections and AO work)
+## Plan: rebuilding the four detail rows from game material data (2026-11-05)
+
+Goal: Held item, Armour and clothing, World object and Level detail pick each pixel's material from the
+game's own data, never from colour. Each row stays off (`materialDataDecoded`, split per row) until its step
+is PROVEN. Status labels below are as of this plan.
+
+1. **Decode the composer (static, from the binary).** The game builds each item texture in the factory
+   executor 0x1EBC60: per channel rectangle (factory +0x60, 0xB5-byte records, variant from chunk 0x4000) it
+   draws layer quads through 0x1EB910 (entry+0 origin, entry+8 x entry+0x10 size), masked by layer masks
+   (+0x48, 0x1EB2F0) and blended by 0x1E6F00/0x1E7160. To prove: which layer field holds the procedural
+   material id 1-25 (0x1EAEE0's argument; the +0x8C 9-byte ids are the lead), the target texture of each
+   draw, and the blend rule (which layer owns a texel). UNPROVEN today.
+2. **Parallel material-id texture (best method).** Hook 0x1EBC60 (byte-exact signature + contract, like the
+   view hooks). When the game composes an item texture, replay the same quads with the same masks into an
+   R8 texture of the same size, writing the owning layer's id instead of colour. Keyed by the game's
+   output texture, freed when the game frees it. Per texel, from the game's own composition: no guess.
+3. **Own redraw shader with texcoords.** The held/worn/object mask replay (0x73F20 bind, 0x201630 submit,
+   0x6B8B0 draw) swaps in our program, which reads the game's texcoord attribute (layout from the game's
+   decoded vertex shader) and writes the id from step 2 into the mask. No id texture: that pixel gets no
+   detail.
+4. **Looks per class.** The 25 classes above map to our looks (steel sheen, mail, wood grain, leather,
+   cloth, copper, gem, resin, painted). The look is OURS; the choice of material is the game's.
+5. **World object and Level.** World objects that are items (node+0x184 set) use steps 2-3 unchanged. Level
+   surfaces do not go through the item composer: decode the level's own per-material surface type (the
+   data its footstep and impact sounds read is the lead). UNPROVEN; Level detail stays off until it is.
+6. **Proof and tests.** Every read gets a target/contract; the render audit reports id-texture coverage per
+   draw; a dev dump writes the id texture next to the shader dump; unit tests cover the id-to-class table;
+   check_shaders builds the new programs.
+
+Order: held item (proves the chain), armour and clothing (same chain on worn nodes), world object, level.
+Each ships on its own once proven; the rest stay off.
+
+### Step 1 findings: the item-texture composer (PROVEN from the binary, 2026-11-05)
+
+- **Job.** The factory 0x20FB80 fills a job and queues the composer: `job+0x24 = 0x1EBC60` (0x20FBCD), size
+  `job+0/+4` (halved when `DAT_2AC040 < 3`), targets `job+0xC/+0x14/+0x1C = set+0x10/+0x18/+0x20` where
+  `set = factory+0x158` (0x20FCB4..0x20FCEC). Those are the three textures the item submit (0x200770) binds on
+  units 0-2, so `job+0xC` is the colour texture the item is drawn with. Entries: `job+0x2C` count, `job+0x30`
+  array of 0x1F0-byte entries (`+0` origin, `+8` size, `+0x10` uv scale, `+0x18` base texture, `+0x28`
+  pattern texture, `+0x3C` blade uv scale, `+0x40` layer count, layers at `+0x48 + 0x30*i`, `+0x1EC` flags).
+- **Layer material.** 0x2103D1..0x2103FC: `id = palette[row*9 + 0x8C]` (0 means 12, TSteelGen), then
+  `layer+0x50 = 0x1EAEE0(id)`: each layer holds the cached procedural material of its id. All 23 classes
+  share one colour draw (`vmt+0xD8 = 0x1E6CE0`), which uses the material's program `material+8`.
+- **Colour pass** (0x1EC038..0x1EC2B4): attaches `job+0xC` (glFramebufferTexture2D at 0x1EC063), colour mask
+  RGB only (0x1EC0AD), blend mode 0x203 = `glBlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)` (0x73E90 with the
+  factor table at 0x2AE220). Per entry: the base quad, then each layer in order with its mask
+  (`layer+0x48`) on unit 1, drawn by 0x1E6F00 when the entry has a pattern (`+0x28`), 0x1E7160 when the
+  layer has an overlay (`+0x70`, unit 8), else `vmt+0xD8`. The quad is 0x1EB910 (positions `origin ..
+  origin + size*scale`, texcoords `0 .. scale`) drawn by 0x1F9200, with `MPrj` = the matrix at 0x2ABC90
+  (maps 0..1 onto the target).
+- **What owns a texel.** Every material colour shader (Resource.rpk -> textures.flb, decoded with the same
+  key) writes `FragColor = vec4(colour, alpha)` with `alpha = texture(Tex1, vrTex).r`, the layer mask; the
+  pattern variants (`{?Mat.TexOpc?}`) multiply it by the pattern texture, and the blade (`steelbld_d`)
+  scales the mask's v by `UVScale`. So a texel's colour is a chain of alpha-over blends, and layer `l`'s
+  share is `a_l * prod(1 - a_k, k > l)`; the base keeps `prod(1 - a_k)`.
+- **Consequence for the build.** The id texture can be made exactly by replaying each layer through the
+  game's own material draw (so every variant computes its own alpha) into a target of ours, keeping per
+  texel the largest share and its layer's id: `best' = max(best*(1-a), a)`. No mask or pattern rule is
+  restated in our code.
+- **Texcoords at draw time.** Programs are linked by 0x1FA120 with fixed attribute locations: `vPos` 0,
+  `vTex` 1, `vNrm` 2, `vCol` 3, `vTx2` 4, `vTng` 6. `shading_v` passes `vrTex = vTex` (or `vriTex` with
+  `Mat.TexDsp`).
+
+### Steps 2-4 built (2026-11-05): held items
+
+- **Hook.** `materialIds` optional group (tools/targets.json, native_contracts.json): the composer 0x1EBC60 is
+  hooked; its quad, draw and stream helpers, the three layer draws, the blend-mode and program caches, the unit
+  bind and the material cache are whole-body contracted. The group needs `silhouette`; withheld, held detail draws
+  nothing.
+- **Ids.** After the composer returns, each entry's base takes its rectangle (id 0), then each layer is drawn by
+  the game's own colour draw (0x1E6CE0, or 0x1E6F00 with a pattern, 0x1E7160 with an overlay) into a target of
+  ours with blending off, and a combine pass keeps the larger of `best * (1 - a)` and `a`. The result is an R8
+  texture keyed by the game's colour texture object (job+0xC) and its GL name; 255 outside every entry. A layer
+  whose material is not in the game's cache (`DAT_10056B030`) gets id 0, one whose class does not draw through
+  0x1E6CE0 is left out. Budget 96 MB, oldest dropped.
+- **Draw.** In the held replay, after a part's G pass, unit 0's cached object (the item submit binds set+0x10
+  there) finds its ids; a second program built from the game program's own vertex shader object (attribute
+  locations as 0x1FA120 binds them, uniform values and block bindings copied from the game's program) writes the
+  id at `vrTex` (or `vriTex`) into the mask's A.
+- **Looks.** `lookOf` in the finish shader maps ids to our looks (cloth 1-6, leather and suede 7-10, chain 11,
+  steel, plate, blade, iron, copper, wired grip 12-13/15-16/19-22, paint 14/25, wood 17-18; gemstone 23, resin 24,
+  the base and none get no detail). Which material a texel is: the game's. How it looks: OURS.
+- **Armour and clothing** (own commit): worn gear is replayed by the same mask pass (slots after the held
+  ones) and goes through the same lookup, so it takes ids wherever its colour texture was composed. Item nodes
+  get their factory set from 0x20AC10, called by the item creators 0x107600 and 0x13FB60 (and 0xE66D0,
+  0x25BAB0, 0x296C40); that every worn piece is created that way is UNPROVEN, and a piece without ids simply
+  gets no detail (`material_id_misses`). Body skin is not composed there and gets none.
+- **World objects** (own commit 2e5b8b3): loose items and placed objects in reach go through the same lookup.
+  An object whose colour texture the item composer built gets ids; any other (a placed prop drawn with a level
+  material) gets none and no detail.
+- **Level detail: the game has no per-surface material type to read** (PROVEN where looked, 2026-11-05):
+  - Footsteps play the character's own step sound (`character+0xF00`, loaded at 0x172D90 from the character
+    record `+0xAF8 -> +0x144`), and add the wet step (`StpWet`, 0x172D43) only when the foot is below the
+    level's water height (`character+0x1000 -> +0x1DAC` against the foot `+0x40`, 0x161C5F..0x161C7E). Nothing
+    asks the floor what it is made of.
+  - Physics collisions sound by the moving body's own set (`WodCol` default at 0x154268; a stone block's `Stn`
+    set at 0x14A789), not by the surface hit.
+  - Level geometry draws with plain `TMaterial` (VMT 0x2FFE10): its textures (+0x48..+0x68) and shader feature
+    flags; the procedural ids above belong to the item composer only (`TProcMaterial`, VMT 0x32FE78).
+  - So Level detail cannot pick wood, stone or plaster from game data. It stays off. What the game does have
+    per pixel for level surfaces is its specular and gloss data (`MatSpc` x `SpcTex`, `GlsTex`), which says how
+    shiny a surface is, not what it is made of.
+- **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),
+  parts drawn with ids and misses. Parallax (`Mat.TexDsp`) items read ids at the unshifted texcoord.
+
+## The game's own shading, as decoded
 
 - `shading_f`: `layout(std140) uniform Material { MatDif, MatSpc, MatEmi, MatDrt, ... }`. Specular: per light
   a GGX-style term with roughness from `Gloss = 1 - MatSpc.w * texture(GlsTex).r` (or `1 - MatSpc.w`), plus
@@ -323,7 +465,17 @@ state `+0x170`) at 0x1FFFD8 / 0x200BBD. Each component, shader use against packe
 - Indirect light: `ambient` builds `amb` from `texture(VoxelGI, ...)` (`xyz` light, `w` occlusion), scaled by
   `VXGIScl.w` and `Ambient`, and adds it to `diffuse` before the material colour multiplies in. That is the
   game's own GI term, where screen-space AO belongs by construction.
-- Plan: (1) reflections take the game's own specular reflectance per pixel (`MatSpc.xyz * SpcTex`, and
+- **The game already has both effects ours add (PROVEN from its shaders):**
+  - Reflections: `speculargi` samples `EnvMap` at a mip chosen by `Gloss`, and with `Shd.LocalRef` mixes in
+    `{$reflection}`, a screen-space lookup into `FrmBuf` along the reflected normal. That is weighted by
+    roughness and Fresnel and multiplied by `MatSpc` × `SpcTex`, so it is reflection driven by each surface's
+    own specular data. Our Reflections pass added a second one on top; it has been removed.
+  - Occlusion: `ambient` accumulates `occ` from `VoxelGI.w` over hemisphere samples (`SdwSmps`) and
+    multiplies the indirect light by it (`amb *= Ambient.xyz * b * occ`). Our Contact shadows add a
+    screen-space darkening on top, at a finer scale than the voxels.
+  - The game renders forward in one pass, so a screen-space term computed after it (needing depth) cannot be
+    fed into the same frame's `amb` without a depth pre-pass or last frame's result.
+- Earlier plan, now moot (our reflections are removed; contact shadows stay a screen-space addition): (1) reflections take the game's own specular reflectance per pixel (`MatSpc.xyz * SpcTex`, and
   roughness from `Gloss`), written into the opaque pass's alpha by a rewrite of the expanded `shading_f`, with
   exact-text guards. (2) AO multiplies `amb` inside the same shader instead of the finished image. Both need
   the expanded text the game hands to glShaderSource (the dev shader dump) to anchor the rewrite exactly,

@@ -140,6 +140,7 @@ static void markRestorationUnknown() {
 // 3 restoring, 4 restored, 5 faulted.
 static std::atomic<int> cameraOwnershipState{0};
 static void releaseInput();
+static void swapShoulder(); // mod/settings.inl: the swap-shoulder key, through the settings revisions
 static bool gameplayOwnsPointer();
 static float stockNear = 100;
 static std::atomic<unsigned> samples{0};
@@ -288,6 +289,11 @@ static std::atomic<float> playerDamageFlash{0.f};
 static std::atomic<float> cameraImpactPitch{0.f};
 static std::atomic<float> cameraImpactYaw{0.f};
 static std::atomic<float> cameraImpactRoll{0.f};
+// [Camera] HitReaction: percent of those kicks a hit adds (wounds.inl), 0..100.
+static std::atomic<int> hitReactionPercent{100};
+// A headset session is live (xr_stereo.inl; never set in builds without OpenXR). Its anchor takes the camera's
+// yaw, so a hit's kick would turn the headset's view: none are added while it is.
+static std::atomic<bool> stereoLive{false};
 static float sprintFovOffset = 0.f;
 static float idleBreathePhase = 0.f;
 static float idleBreatheWeight = 0.f;
@@ -301,6 +307,19 @@ static std::atomic<int> flickCatchup{50};
 // which view F6 shows while the mod owns the camera: 0 first person, 1 third person (F6 cycles
 // first -> third -> the game's overhead). [ThirdPerson] Distance / Shoulder / Height in first-person.ini.
 static std::atomic<int> viewMode{0}, tpDistance{250}, tpShoulder{40}, tpHeight{15};
+// [Camera] F6Cycle: 0 first, third and the game's camera; 1 first and third, the game's camera on a held F6
+// (fp::f6PressStep). f6HoldStart: the tick of a two-way press not yet decided (0 none), window procedure and
+// worker.
+static std::atomic<int> f6Cycle{0};
+static std::atomic<ULONGLONG> f6HoldStart{0};
+// Every view change F6 made (fp::knockdownViewStep reads it as the player's choice), and [FirstPerson] Knockdown:
+// 1 shows third person while knocked down in first person. The camera asks, the worker switches:
+// knockdownViewRequest 1 to third person, 2 back to first, 0 nothing pending.
+static std::atomic<unsigned> f6Presses{0};
+static std::atomic<int> fpKnockdown{1}, knockdownViewRequest{0};
+// Third person is the knockdown switch's doing, not the player's: set when the worker applies it, cleared by any
+// F6 view change and by the switch back. While set, a new character or scene goes back to first person.
+static std::atomic<bool> knockdownOwnsView{false};
 // [VR] rows: eye separation in mm (0: the headset's own), game units per metre, render mode.
 static std::atomic<uintptr_t> nativeSettingsFaultAt{0};
 static std::atomic<unsigned> nativeSettingsDispatches{0}, nativeSettingsSteps{0}, nativeSettingsRefused{0},
@@ -325,6 +344,12 @@ inline bool trackedHandsWanted() { return vrHandsDrawn.load(std::memory_order_re
 // Requested modes persist independently. The complete optional hook group must
 // be admitted before either can become effective.
 static std::atomic<int> fpManualGuard{0}, tpManualGuard{0};
+// Parry direction (fp::ParryDirection). The input thread publishes the drag's pose (0 none, 20-24) while
+// right mouse is held; the physics thread reads it when the game picks a parry. [Input] ParryDragDeadZone
+// (mouse counts) and ParryDragMirror (swap left/right) are ini-only.
+static std::atomic<int> parryDirectionMode{0}, parryDragPose{0}, parryDragDeadZone{40};
+static std::atomic<bool> parryDragMirror{false}, parryDragHeld{false};
+static std::atomic<unsigned> parryAssisted{0}, parryStrictMatches{0}, parryStrictRefusals{0};
 static std::atomic<bool> manualDefenseReady{false};
 struct GuardRequest {
     fp::InputStamp stamp;
@@ -346,6 +371,8 @@ static std::atomic<int> tpFov{0};
 // camera and the player instead of pulling in (walls still pull in), and the knockdown follow.
 static std::atomic<int> tpLag{40};
 static std::atomic<bool> tpDown{true};
+// [ThirdPerson] FollowLookAngle: looking down lifts and pulls the camera back, up brings it in (camera.inl).
+static std::atomic<bool> tpLookFollow{true};
 static std::atomic<unsigned> tpHidden{0};
 static std::atomic<ULONGLONG> tpBlendStart{0};
 static float tpCombatK = 0.f; // swap shoulder / closer framing in tight spaces
@@ -1046,7 +1073,18 @@ static std::atomic<bool> hoverOutOfRange{false};
 static std::atomic<ULONGLONG> hoverRangeAt{0};
 static std::atomic<int> rotateHeldKey{0x02};
 static std::atomic<int> kickKey{0}, jumpKey{0}; // motions.inl; unbound until the player picks a key
+static std::atomic<int> kickStyle{0}; // pose_drive.inl: 0 Classic, 1 Animated (the kicking leg follows the baked clip)
+static std::atomic<int> swapShoulderKey{0}; // [Input] SwapShoulderKey: third person, the other shoulder
 static std::atomic<bool> motionKickRequested{false}, motionJumpRequested{false}; // a key press claimed by the window handler, taken on the game thread
+// Refused key presses by fp::MotionRefusal (status file), and the newest refusal for the worker's notice:
+// 1 + reason, plus motionNoticeJump for the jump (0 none).
+static std::atomic<unsigned> kickRefusals[size_t(fp::MotionRefusal::count)]{}, jumpRefusals[size_t(fp::MotionRefusal::count)]{};
+static std::atomic<int> motionNoticePending{0};
+static constexpr int motionNoticeJump = 0x100;
+static void motionRefused(bool jump, fp::MotionRefusal reason) {
+    (jump ? jumpRefusals : kickRefusals)[size_t(reason)].fetch_add(1, std::memory_order_relaxed);
+    if (fp::motionRefusalNotice(jump, reason)) motionNoticePending = (jump ? motionNoticeJump : 0) + 1 + int(reason);
+}
 // Preserve legacy INI preferences only. Explicit leaning is disabled; these
 // values never claim input or change torso pose.
 static std::atomic<int> leanKey{0x12};

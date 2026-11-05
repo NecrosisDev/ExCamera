@@ -671,6 +671,11 @@
       "optionalGroup": "xrStereo",
       "note": "Native shader matrix cache invalidation after OpenXR replay"
     },
+    "kickGripClass": {
+      "rva": "0x155250",
+      "optionalGroup": "kickClasses",
+      "note": "Grip-table entry for a weapon's flag word 155250(flags, slot): slot 1 is entry 5, (flags & 0xF0) == 0x90 entry 1, else (flags & 0x70) >> 4 (0x1x one-handed, 0x2x two-handed right lead, 0x3x polearm left lead). Read-only: pins the class bits the Animated kick reads from character::gripFlags."
+    },
     "engineLog": {
       "rva": "0x25d80",
       "note": "FUN_100025D80: the engine log procedure DAT_1002AB6B0 holds once the engine is up (level, source, text); level 4 logs and shows a timed line on screen",
@@ -682,6 +687,62 @@
       "optionalGroup": "wounds",
       "note": "Character skin setup: gives bare-skin materials (38-char definition name) the character's shared skin set; observed for wound skins",
       "hook": true
+    },
+    "itemComposer": {
+      "rva": "0x1ebc60",
+      "note": "FUN_1001EBC60(job): composes an item's colour, normal and specular textures; the factory 0x20FB80 queues it in job+0x24 (0x20FBCD). Colour pass 0x1EC038-0x1EC2B4 into job+0xC (set+0x10): per entry the base quad, then each layer alpha-blended (0x203) with its mask on unit 1. Hooked: after it returns, its layers are replayed into the mod's material-id texture",
+      "optionalGroup": "materialIds",
+      "hook": true
+    },
+    "composerQuad": {
+      "rva": "0x1eb910",
+      "note": "FUN_1001EB910(entry, &entry+8, &entry+0x10): writes the composer's client-side quad (positions at DAT_10056EBF0: origin .. origin + size * scale; texcoords at DAT_10057ABF0: 0 .. scale), as the composer does before each entry's layers",
+      "optionalGroup": "materialIds"
+    },
+    "composerQuadDraw": {
+      "rva": "0x1f9200",
+      "note": "FUN_1001F9200: draws the composer's quad (glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT) over the indices at 0x2E9EA0), after each layer",
+      "optionalGroup": "materialIds"
+    },
+    "composerStreams": {
+      "rva": "0x1f9300",
+      "note": "FUN_1001F9300(flags): the vertex-stream state cache (DAT_10049B510); the composer sets 0x11 (position and texcoord) at 0x1EBCA0",
+      "optionalGroup": "materialIds"
+    },
+    "layerColourDraw": {
+      "rva": "0x1e6ce0",
+      "note": "FUN_1001E6CE0(material, entry, &layer+0x48, job): every procedural material's colour draw (vmt+0xD8 of all 23 classes); binds its textures from unit 2, uses its program material+8 and sets its uniforms (MatCol from the layer +0x5C)",
+      "optionalGroup": "materialIds"
+    },
+    "layerPatternDraw": {
+      "rva": "0x1e6f00",
+      "note": "FUN_1001E6F00: the colour draw the composer uses when the entry has a pattern (+0x28): the material's pattern program (+0x80, {?Mat.TexOpc?}) with the pattern on the unit after its textures, else vmt+0xD8",
+      "optionalGroup": "materialIds"
+    },
+    "layerOverlayDraw": {
+      "rva": "0x1e7160",
+      "note": "FUN_1001E7160: the colour draw for a layer with an overlay (+0x70, unit 8): the material's program +0xA8, else vmt+0xD8",
+      "optionalGroup": "materialIds"
+    },
+    "blendModeSet": {
+      "rva": "0x73e90",
+      "note": "FUN_100073E90(mode): the blend-mode cache (DAT_1002AE250); 0x100 disables blending, otherwise glBlendFunc(table[mode >> 8 & 15], table[mode & 15]) from the factor table at 0x2AE220 (0x203 = SRC_ALPHA, ONE_MINUS_SRC_ALPHA)",
+      "optionalGroup": "materialIds"
+    },
+    "programUse": {
+      "rva": "0x1f8fc0",
+      "note": "FUN_1001F8FC0(program): glUseProgram through the cache DAT_10058EC30",
+      "optionalGroup": "materialIds"
+    },
+    "textureUnitBind": {
+      "rva": "0x6fc30",
+      "note": "FUN_10006FC30(unit, texture object, 0): binds through the unit cache DAT_10049B600 (16-byte entries: object, GL target)",
+      "optionalGroup": "materialIds"
+    },
+    "proceduralMaterial": {
+      "rva": "0x1eaee0",
+      "note": "FUN_1001EAEE0(id, 0, 0): creates and caches (DAT_10056B030[id]) the procedural material of id 1-25 through the jump table at 0x32FC08; the factory stores its result at layer+0x50 (0x2103F0)",
+      "optionalGroup": "materialIds"
     }
   },
   "returns": {
@@ -848,6 +909,11 @@
       "rva": "0x176cb7",
       "optionalGroup": "xrDrive",
       "note": "world-frame candidate into native pelvis target; native balance re-orthogonalization follows"
+    },
+    "kickStanceClass": {
+      "rva": "0x152531",
+      "optionalGroup": "kickClasses",
+      "note": "Inside the equip posture selector 1523F0: (gripFlags & 0xF0) 0x10 one-handed (two weapons: dual wield, 0x90), 0x20 two-handed (0x521 greatsword posture 0x30, flag bit 0 posture 0x20, else 0x10), 0x30 polearm posture 0x40, else unarmed 0x80/0xC0; after the shield (+0xBF8) and special-held (+0xC00) branches. Read-only: pins the classes the Animated kick maps to clip sets."
     }
   },
   "globals": {
@@ -1140,6 +1206,21 @@
       "rva": "0x2ab6b0",
       "note": "DAT_1002AB6B0: the engine log procedure (level, source, text: AnsiStrings); FUN_100026CB0 stores FUN_100025D80 in it at 0x26D6F and about 370 call sites log through it",
       "optionalGroup": "engineLog"
+    },
+    "proceduralMaterials": {
+      "rva": "0x56b030",
+      "note": "DAT_10056B030: FUN_1001EAEE0's cache, one material pointer per id (index = id, 1-25)",
+      "optionalGroup": "materialIds"
+    },
+    "blendModeCache": {
+      "rva": "0x2ae250",
+      "note": "DAT_1002AE250: the blend mode FUN_100073E90 set last",
+      "optionalGroup": "materialIds"
+    },
+    "programCache": {
+      "rva": "0x58ec30",
+      "note": "DAT_10058EC30: the program FUN_1001F8FC0 bound last",
+      "optionalGroup": "materialIds"
     }
   },
   "slots": {
@@ -1433,11 +1514,27 @@
     "xrStereoFogState",
     "xrStereoBatchFlag",
     "xrStereoBatchQueue",
+    "kickGripClass",
+    "kickStanceClass",
     "textureUnitActive",
     "textureUnitCache",
     "engineLogger",
     "engineLog",
-    "skinShare"
+    "skinShare",
+    "itemComposer",
+    "composerQuad",
+    "composerQuadDraw",
+    "composerStreams",
+    "layerColourDraw",
+    "layerPatternDraw",
+    "layerOverlayDraw",
+    "blendModeSet",
+    "programUse",
+    "textureUnitBind",
+    "proceduralMaterial",
+    "proceduralMaterials",
+    "blendModeCache",
+    "programCache"
   ],
   "reviewed_signatures": [
     {
@@ -10670,6 +10767,28 @@
       "pattern": "8B ?? ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 01 83 ?? ?? ?? ?? ?? 01 75 1B 89 ??"
     },
     {
+      "target": "kickGripClass",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x155250",
+      "pattern": "83 FA 01 75 07 BA 05 00 00 00 EB 1D 89 C8 25 F0 00 00 00 3D 90 00 00 00 75 07 BA 01 00 00 00 EB 08 83 E1 70 C1 E9 04 89 CA 21 D2 48 69 C2 B8 00 00 00 48 8D 15 ?? ?? ?? ?? 48 01 D0 C3"
+    },
+    {
+      "target": "kickStanceClass",
+      "kind": "Code",
+      "hook": false,
+      "entry": false,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x152531",
+      "pattern": "8B 83 68 10 00 00 25 F0 00 00 00 83 F8 10 0F 8C AB 00 00 00 83 E8 10 74 16 83 E8 10 74 4D 83 E8 10 0F 84 84 00 00 00 E9 93 00 00 00 0F 1F 00 83 BB 20 09 00 00 01 7E 1E BF 04 00 00 00 C7 83 68 10 00 00 90 00 00 00 C7 83 98 11 00 00 06 00 00 00 E9 91 00 00 00 BF 01 00 00 00 C7 83 98 11 00 00 01 00 00 00 E9 7D 00 00 00 90 81 BB 68 10 00 00 21 05 00 00 75 0E BF 30 00 00 00 C6 83 09 13 00 00 01 EB 17 8B 83 68 10 00 00 83 E0 01 7E 07 BF 20 00 00 00 EB 05 BF 10 00 00 00 C7 83 98 11 00 00 02 00 00 00 EB 3F 0F 1F 00 BF 40 00 00 00 C7 83 98 11 00 00 02 00 00 00"
+    },
+    {
       "target": "textureUnitCache",
       "kind": "Relative",
       "hook": false,
@@ -10734,6 +10853,281 @@
       "addend": 0,
       "known_rva": "0x207240",
       "pattern": "53 57 56 48 8D 64 24 D0 48 89 4C 24 20 48 89 D3 8B 43 08 83 E0 5F 83 F8 09 0F 85 ?? ?? ?? ?? 8B BB C8 01 00 00 85 FF 0F 8C ?? ?? ?? ?? BE FF FF FF FF 66 0F 1F 44 00 00 83 C6 01 48 8B 93 D0 01 00 00 48 63 C6 48 8B 04 C2 48 83 B8 00 01 00 00 00 74 4F 48 8B 93 D0 01 00 00 48 63 C6 48 8B 14 C2 48 8B 44 24 20 48 8B 48 20 48 8B 82 00 01 00 00 48 89 41 10"
+    },
+    {
+      "target": "itemComposer",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1ebc60",
+      "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 A0 49 89 CC 80 3D ?? ?? ?? ?? 00"
+    },
+    {
+      "target": "itemComposer",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1ebc60",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 56 ?? 57 ?? 8D ?? ?? A0 ?? 89 ?? 80 ?? ?? ?? ?? ?? 00"
+    },
+    {
+      "target": "composerQuad",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1eb910",
+      "pattern": "48 89 C8 48 8D 48 04 44 8B 08 44 89 0D ?? ?? ?? ?? 8B 09 89 0D ?? ?? ?? ??"
+    },
+    {
+      "target": "composerQuad",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1eb910",
+      "pattern": "?? 89 ?? ?? 8D ?? 04 ?? 8B ?? ?? 89 ?? ?? ?? ?? ?? 8B ?? 89 ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "composerQuadDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f9200",
+      "pattern": "48 8D 64 24 D8 80 3D ?? ?? ?? ?? 00 74 12 C7 05 ?? ?? ?? ?? 04 00 00 00"
+    },
+    {
+      "target": "composerQuadDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f9200",
+      "pattern": "?? 8D ?? ?? D8 80 ?? ?? ?? ?? ?? 00 74 12 C7 ?? ?? ?? ?? ?? 04 00 00 00"
+    },
+    {
+      "target": "composerStreams",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f9300",
+      "pattern": "53 48 8D 64 24 D0 89 CB 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 74 0D"
+    },
+    {
+      "target": "composerStreams",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f9300",
+      "pattern": "53 ?? 8D ?? ?? D0 89 ?? ?? 8D ?? ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 ?? 74 0D"
+    },
+    {
+      "target": "layerColourDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e6ce0",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 C0 48 89 CE 48 89 D7 4C 89 C3 49 8B 01 48 89 44 24 30 83 7E 08 00 75 0D 48 89 F1 48 8B 06 FF 90 D0 00 00 00 90 8B 86 50 01 00 00 67 44 8D 60 FF"
+    },
+    {
+      "target": "layerColourDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e6ce0",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? C0 ?? 89 ?? ?? 89 ?? ?? 89 ?? ?? 8B ?? ?? 89 ?? ?? 30 83 ?? 08 00 75 0D ?? 89 ?? ?? 8B ?? FF ?? D0 00 00 00 90 8B ?? 50 01 00 00 67 ?? 8D ?? FF"
+    },
+    {
+      "target": "layerPatternDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e6f00",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 C0 48 89 CE 48 89 D7 4C 89 C3 49 8B 01 48 89 44 24 30 83 7E 08 00 75 0D 48 89 F1 48 8B 06 FF 90 D0 00 00 00 90 83 BE 80 00 00 00 00 75 1F"
+    },
+    {
+      "target": "layerPatternDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e6f00",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? C0 ?? 89 ?? ?? 89 ?? ?? 89 ?? ?? 8B ?? ?? 89 ?? ?? 30 83 ?? 08 00 75 0D ?? 89 ?? ?? 8B ?? FF ?? D0 00 00 00 90 83 ?? 80 00 00 00 00 75 1F"
+    },
+    {
+      "target": "layerOverlayDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e7160",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 C0 48 89 CE 48 89 D7 4C 89 C3 49 8B 01 48 89 44 24 30 83 7E 08 00 75 0D 48 89 F1 48 8B 06 FF 90 D0 00 00 00 90 83 BE A8 00 00 00 00 75 1F"
+    },
+    {
+      "target": "layerOverlayDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e7160",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? C0 ?? 89 ?? ?? 89 ?? ?? 89 ?? ?? 8B ?? ?? 89 ?? ?? 30 83 ?? 08 00 75 0D ?? 89 ?? ?? 8B ?? FF ?? D0 00 00 00 90 83 ?? A8 00 00 00 00 75 1F"
+    },
+    {
+      "target": "blendModeSet",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x73e90",
+      "pattern": "48 8D 64 24 D8 89 4C 24 20 89 C8 3B 05 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 90"
+    },
+    {
+      "target": "blendModeSet",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x73e90",
+      "pattern": "?? 8D ?? ?? D8 89 ?? ?? 20 89 ?? 3B ?? ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 90"
+    },
+    {
+      "target": "programUse",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f8fc0",
+      "pattern": "53 48 8D 64 24 E0 89 C8 3B 05 ?? ?? ?? ?? 74 10 89 C3 89 D9 FF 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "programUse",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f8fc0",
+      "pattern": "53 ?? 8D ?? ?? E0 89 ?? 3B ?? ?? ?? ?? ?? 74 10 89 ?? 89 ?? FF ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "textureUnitBind",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x6fc30",
+      "pattern": "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "textureUnitBind",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x6fc30",
+      "pattern": "53 56 ?? 8D ?? ?? D8 89 ?? ?? 89 ?? 89 ?? ?? C1 ?? 04 ?? 8D ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "proceduralMaterial",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1eaee0",
+      "pattern": "53 57 56 48 8D 64 24 E0 89 CB 44 88 C6 31 C0 89 D8 48 8D 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "proceduralMaterial",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1eaee0",
+      "pattern": "53 57 56 ?? 8D ?? ?? E0 89 ?? ?? 88 ?? 31 ?? 89 ?? ?? 8D ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "proceduralMaterials",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 20,
+      "insn_end": 24,
+      "addend": 0,
+      "known_rva": "0x56b030",
+      "pattern": "53 57 56 48 8D 64 24 E0 89 CB 44 88 C6 31 C0 89 D8 48 8D 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "blendModeCache",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 13,
+      "insn_end": 17,
+      "addend": 0,
+      "known_rva": "0x2ae250",
+      "pattern": "48 8D 64 24 D8 89 4C 24 20 89 C8 3B 05 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 90"
+    },
+    {
+      "target": "programCache",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 10,
+      "insn_end": 14,
+      "addend": 0,
+      "known_rva": "0x58ec30",
+      "pattern": "53 48 8D 64 24 E0 89 C8 3B 05 ?? ?? ?? ?? 74 10 89 C3 89 D9 FF 15 ?? ?? ?? ??"
     }
   ]
 }
