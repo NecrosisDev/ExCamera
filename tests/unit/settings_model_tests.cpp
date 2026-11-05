@@ -1,6 +1,7 @@
 #include "settings_model.h"
 #include "settings_presentation.h"
 #include "settings_draft.h"
+#include "settings_paths.h"
 
 #include <algorithm>
 #include <climits>
@@ -277,6 +278,23 @@ bool knockdown_view_row_steps_and_saves() {
     return true;
 }
 
+bool settings_file_candidates_follow_portable_mode() {
+    // A portable copy: only the file beside it, which safe start then backs up and resets.
+    const auto portable = fp::settingsCandidates(L"E:\\test\\", true, L"C:\\Docs", L"C:\\Users\\p\\Documents");
+    CHECK(portable.paths[0] == L"E:\\test\\first-person.ini");
+    CHECK(portable.paths[1].empty() && portable.paths[2].empty() && portable.paths[3].empty());
+    CHECK(portable.target() == L"E:\\test\\first-person.ini");
+    // Otherwise Documents\ExCamera first, its USERPROFILE twin, then the ExaniMate files; the target is Documents.
+    const auto user = fp::settingsCandidates(L"E:\\test\\", false, L"C:\\Docs", L"C:\\Users\\p\\Documents");
+    CHECK(user.paths[0] == L"C:\\Docs\\ExCamera\\first-person.ini");
+    CHECK(user.paths[1] == L"C:\\Users\\p\\Documents\\ExCamera\\first-person.ini");
+    CHECK(user.paths[2] == L"C:\\Docs\\ExaniMate\\first-person.ini");
+    CHECK(user.target() == user.paths[0]);
+    const auto noDocs = fp::settingsCandidates(L"E:\\test\\", false, L"", L"C:\\Users\\p\\Documents");
+    CHECK(noDocs.paths[0].empty() && noDocs.target() == noDocs.paths[1]);
+    return true;
+}
+
 bool every_row_has_valid_presentation_labels_and_tips() {
     const ModSettings defaults;
     for (int row = 0; row < count; ++row) {
@@ -306,6 +324,7 @@ int main() {
         {"unavailable and faulted rows say why", unavailable_and_faulted_rows_say_why},
         {"look-follow row is a saved switch", look_follow_row_is_a_saved_switch},
         {"knockdown view row steps and saves", knockdown_view_row_steps_and_saves},
+        {"settings file candidates follow portable mode", settings_file_candidates_follow_portable_mode},
         {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });
 }

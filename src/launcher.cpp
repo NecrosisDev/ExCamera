@@ -28,6 +28,7 @@
 #include "build_identity.h"
 #include "module_export.h"
 #include "activation_status.h"
+#include "settings_paths.h"
 static int fail(const wchar_t* message) {
     MessageBoxW(nullptr, message, L"ExCamera", MB_OK | MB_ICONERROR);
     return 1;
@@ -284,19 +285,19 @@ static int activate(HANDLE process, DWORD pid, const std::wstring& directory) {
     return fail(L"ExCamera did not finish starting within five minutes. If you stopped it with F7, press F6 "
                 L"in game to restart it. Otherwise restart Exanima and try again.");
 }
-// The per-user settings files the DLL reads, in its order (state.inl userSettingsDir): Documents\ExCamera,
-// the same under USERPROFILE when Windows moved Documents, then the older ExaniMate folder. candidates[0]
-// (else [1]) is where the DLL keeps the file from now on.
+// The settings files the DLL reads, in its order (fp::settingsCandidates): beside the launcher and DLL when
+// portable.txt is there (a test copy; session.inl decides the same), else the per-user files.
 struct UserIni {
-    std::wstring candidates[4];
+    fp::SettingsCandidates files;
     std::wstring existing() const { // the first that exists, else empty
-        for (const std::wstring& user : candidates)
+        for (const std::wstring& user : files.paths)
             if (!user.empty() && GetFileAttributesW(user.c_str()) != INVALID_FILE_ATTRIBUTES) return user;
         return L"";
     }
-    const std::wstring& target() const { return candidates[0].empty() ? candidates[1] : candidates[0]; }
+    const std::wstring& target() const { return files.target(); }
 };
-static UserIni userIni() {
+static UserIni userIni(const std::wstring& directory) {
+    const bool portable = GetFileAttributesW((directory + L"portable.txt").c_str()) != INVALID_FILE_ATTRIBUTES;
     PWSTR docsFolder = nullptr;
     const HRESULT hr = SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &docsFolder);
     const std::wstring docs = SUCCEEDED(hr) && docsFolder ? docsFolder : L"";
@@ -304,16 +305,11 @@ static UserIni userIni() {
     wchar_t profile[MAX_PATH]{};
     const DWORD n = GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH);
     const std::wstring fallbackDocs = n && n < MAX_PATH ? std::wstring(profile) + L"\\Documents" : L"";
-    return {{
-        docs.empty() ? L"" : docs + L"\\ExCamera\\first-person.ini",
-        fallbackDocs.empty() ? L"" : fallbackDocs + L"\\ExCamera\\first-person.ini",
-        docs.empty() ? L"" : docs + L"\\ExaniMate\\first-person.ini",
-        fallbackDocs.empty() ? L"" : fallbackDocs + L"\\ExaniMate\\first-person.ini",
-    }};
+    return {fp::settingsCandidates(directory, portable, docs, fallbackDocs)};
 }
 // [Compat] OtherHooks from the player's settings (the per-user file, else the one beside the launcher).
 static fp::OtherHooks otherHooksSetting(const std::wstring& directory) {
-    std::wstring ini = userIni().existing();
+    std::wstring ini = userIni(directory).existing();
     if (ini.empty()) ini = directory + L"first-person.ini";
     wchar_t value[16];
     GetPrivateProfileStringW(L"Compat", L"OtherHooks", L"ask", value, 16, ini.c_str());
@@ -404,8 +400,8 @@ static bool lastSessionFaulted(const std::wstring& path) {
 // replaced by one holding only [Safe] Reset=1: the DLL reads built-in defaults from it, writes every row out
 // and drops the marker (settings.inl applySafeReset). Never deleted outright: the DLL would copy a legacy or
 // release ini back in its place. The controls notice already seen stays seen.
-static bool resetUserSettings(std::wstring& problem) {
-    const UserIni ini = userIni();
+static bool resetUserSettings(const std::wstring& directory, std::wstring& problem) {
+    const UserIni ini = userIni(directory); // a portable copy resets and backs up its own file
     const std::wstring source = ini.existing(), target = ini.target();
     if (target.empty()) {
         problem = L"Could not find your Documents folder, so nothing was changed.";
@@ -469,7 +465,7 @@ static void offerSafeStart(const std::wstring& directory) {
                     MB_YESNO | MB_ICONQUESTION | (asked ? MB_DEFBUTTON1 : MB_DEFBUTTON2) | MB_SETFOREGROUND) != IDYES)
         return;
     std::wstring problem;
-    if (!resetUserSettings(problem))
+    if (!resetUserSettings(directory, problem))
         MessageBoxW(nullptr, (problem + L"\n\nExCamera will start with your current settings.").c_str(), L"ExCamera",
                     MB_OK | MB_ICONWARNING | MB_SETFOREGROUND);
 }

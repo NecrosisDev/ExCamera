@@ -1138,9 +1138,13 @@ static DWORD runSession() {
         {
             wchar_t profile[MAX_PATH]{};
             const DWORD n = GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH);
+            // A test copy with portable.txt beside its DLL keeps its settings beside it, so it never
+            // touches the player's own Documents\ExCamera settings.
+            const std::wstring folder(settingsPath, settingsSlash + 1);
+            const bool portable = GetFileAttributesW((folder + L"portable.txt").c_str()) != INVALID_FILE_ATTRIBUTES;
             const std::wstring user =
-                userSettingsFile(settingsPath, n && n < MAX_PATH ? userSettingsDir(profile, userDocumentsDir())
-                                                               : std::wstring());
+                userSettingsFile(settingsPath, !portable && n && n < MAX_PATH ? userSettingsDir(profile, userDocumentsDir())
+                                                                              : std::wstring());
             if (user.size() < MAX_PATH) wcscpy_s(settingsPath, user.c_str());
         }
         loadSettings(settingsPath);
