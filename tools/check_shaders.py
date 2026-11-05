@@ -36,6 +36,7 @@ VIEW_PROGRAMS = [
     ('view-distance target', None, 'distanceShader'),
     ('wound marks', 'FP_WOUND_GLSL_HELPERS', 'woundShader'),
     ('fire and smoke', None, 'fireShader'),
+    ('blood layer', None, 'bloodSplatShader'),
 ]
 BAKE_PROGRAMS = [
     ('wound skin (diffuse)', 'woundSkinFragment'),

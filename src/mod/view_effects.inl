@@ -1053,7 +1053,7 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
                 // A haft, a grip, a shield: a blot soaked into the surface, ragged at the rim.
                 float spread = length(vec3(d.x, d.y, d.z * 0.35)) + (shared.b - 0.5) * 1.6;
                 float radius = 1.2 + 3.0 * amount;
-                here = smoothstep(radius, radius * 0.4, spread) * (0.55 + 0.45 * amount);
+                here = (1.0 - smoothstep(radius * 0.4, radius, spread)) * (0.55 + 0.45 * amount);
             }
             cover = max(cover, max(here, max(bead, min(run, 1.0))));
             wet = max(wet, max(here, max(bead, run)) * wetness);
@@ -1203,7 +1203,7 @@ vec3 levelSurface(vec3 color) {
         // mortar, sandy and set back.
         vec3 around = 0.5 * (toLight(texture2D(sceneTex, uv + vec2(4.0 * texel.x, 0.0)).rgb) +
                              toLight(texture2D(sceneTex, uv + vec2(0.0, 4.0 * texel.y)).rgb));
-        float joint = smoothstep(0.82, 0.6, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
+        float joint = (1.0 - smoothstep(0.6, 0.82, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4)));
         float pit = smoothstep(0.82, 0.94, grain.b) * 0.25;
         h = (grain.r - 0.5) * 0.2 - pit * 0.3 * (1.0 - joint) - 0.3 * joint;
         albedo = mix((0.96 + 0.08 * grain.g) * (1.0 - 0.12 * pit), 0.92 + 0.12 * grain.a, joint);
@@ -1792,7 +1792,7 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
         float coffeeRing = 1.0 + 0.3 * smoothstep(0.65, 0.95, rimFrac);
         // A drop is a shallow pool: flat-topped, its edge rounding down to the surface. Thickest in the
         // middle; drying, it thins and leaves its solids at the rim (the coffee ring).
-        float body = smoothstep(1.0, 0.55, rimFrac);
+        float body = 1.0 - smoothstep(0.55, 1.0, rimFrac);
         float thickness = mix(0.35 + 0.65 * body, 0.25 + 0.5 * coffeeRing * smoothstep(0.6, 0.95, rimFrac), localDry) *
                           (0.5 + 0.5 * clamp(radius / 3.0, 0.0, 1.0));
         vec3 bloodColor = bloodFilm(thickness, localDry);
