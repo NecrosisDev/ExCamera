@@ -5,6 +5,7 @@
 #include "pointer_set.h"
 #include "status_json.h"
 #include "xr/math.h"
+#include "xr/upper_body.h"
 
 #include <cmath>
 #include <cstdio>
@@ -751,6 +752,30 @@ bool real_binary_resilience_simulations() {
     return true;
 }
 
+bool xr_handedness_mirrors_one_sided_roles() {
+    constexpr auto right = fp::xr::handedness(false), left = fp::xr::handedness(true);
+    CHECK(right.main == 1u && right.off() == 0u && right.offSide() < 0);
+    CHECK(left.main == 0u && left.off() == 1u && left.offSide() > 0);
+    CHECK(fp::vrMainHandFromText(L"left") == 1 && fp::vrMainHandFromText(L"Left") == 1 && fp::vrMainHandFromText(L"1") == 1);
+    CHECK(fp::vrMainHandFromText(L"right") == 0 && fp::vrMainHandFromText(L"") == 0 && fp::vrMainHandFromText(nullptr) == 0);
+    CHECK(fp::vrMainHandFromText(fp::vrMainHandText(1)) == 1 && fp::vrMainHandFromText(fp::vrMainHandText(0)) == 0);
+    // The panel follows whichever hand is asked for, placed the same way in that hand's grip frame.
+    fp::xr::BodySample sample{};
+    sample.head = {{0, 0, 0, 1}, {0, 1.6f, 0}};
+    sample.hands[0] = {};
+    sample.hands[0].tracked = true;
+    sample.hands[0].grip = {{0, 0, 0, 1}, {-.2f, 1.2f, -.3f}};
+    sample.hands[1] = sample.hands[0];
+    sample.hands[1].grip.position.x = .2f;
+    XrPosef a{}, b{};
+    CHECK(fp::xr::handPanelPose(sample, a, 0) && fp::xr::handPanelPose(sample, b, 1));
+    CHECK(std::fabs(a.position.x + b.position.x) < 1e-5f && std::fabs(a.position.y - b.position.y) < 1e-5f && std::fabs(a.position.z - b.position.z) < 1e-5f);
+    CHECK(!fp::xr::handPanelPose(sample, a, 2));
+    sample.hands[1].tracked = false;
+    CHECK(fp::xr::handPanelPose(sample, a, 0) && !fp::xr::handPanelPose(sample, b, 1));
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -764,6 +789,7 @@ int main() {
          hook_health_menu_immunity_and_stalled_poll_input},
         {"PointerSet and JsonOut formatting", pointer_set_and_status_json_formatting},
         {"xr/math.h standalone types and transforms", xr_math_standalone_types_and_transforms},
+        {"xr handedness mirrors one-sided roles", xr_handedness_mirrors_one_sided_roles},
         {"all signatures and native contract patterns parse", all_signatures_and_native_contracts_parse},
         {"Free Pascal x64 RTTI VMT and shifted slot introspection",
          fpc_rtti_vmt_and_shifted_slot_introspection},

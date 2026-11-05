@@ -24,6 +24,10 @@ with a normal ExCamera install. To go back to a flat screen, set
 Leave the rows marked "experimental" off for round 1.
 
 CONTROLS
+Below is the right-handed default. For left-handed play, set "VR: main hand"
+to Left (Settings, VR page, Controls): every left/right role below swaps,
+the hip pouch moves to the right hip, and the menus sit in the right hand.
+The swap waits until you let go of every button and stick.
 Menu button      Tap: the game's menu. Hold 1.5 s: recenter the view.
 Right trigger    Attack; on a menu or wrist line, click.
 Left trigger     Hold to make the attack a stab.
