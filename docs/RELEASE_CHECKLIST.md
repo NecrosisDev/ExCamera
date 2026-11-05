@@ -72,4 +72,4 @@ Not tested, needs a person: everything below that takes the mouse or a fight, in
 ## Decide before publishing
 
 - **Frame rate.** See the idle numbers above. Check a busy fight with the defaults before publishing.
-- **View effects.** Ambient occlusion, reflections and depth of field are off by default and still need a look in game.
+- **View effects.** Ambient occlusion and depth of field are off by default and still need a look in game.

@@ -38,9 +38,9 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 
 | Setting (ini key) | Game code or data it reads or patches | Proof | GL state | Verdict |
 |---|---|---|---|---|
-| Ambient occlusion / Contact shadows (`View/AmbientOcclusion`) | Hooks 0xA0CE0/0x4B6D0 return; window colour and depth copied by GL blit; view matrices `view+0x60`/`+0xE0` | Hooks BYTE-EXACT (viewEffects); matrices WITNESSED (`view::renderView/renderProjection`); frame order PROVEN | Audit: inputs bound and checked (fixed 7abc04a); held pixels kept out (85ec084) | PROVEN for game data; look is OURS |
+| Ambient occlusion / Contact shadows (`View/AmbientOcclusion`) | Hooks 0xA0CE0/0x4B6D0 return; window colour and depth copied by GL blit; view matrices `view+0x60`/`+0xE0` | Hooks BYTE-EXACT (viewEffects); matrices WITNESSED (`view::renderView/renderProjection`); frame order PROVEN | Audit: inputs bound and checked (fixed 7abc04a); held pixels kept out (85ec084) | PROVEN for game data; look is OURS: a visual addition on top of the game's own voxel-GI occlusion, darkening every pixel evenly (no claim about which light is direct) |
 | Depth of field (`View/DepthOfField`) | Same; centre depth read back | as above | audit clean | PROVEN; look OURS |
-| Screen-space reflections (`View/ScreenSpaceReflections`) | Same; world up from view matrix elements 4..6 | WITNESSED matrices | audit clean | PROVEN for data. Floor weighting by colour (478b214) is OURS, not the game's specular data (that needs the material set, see above) |
+| Screen-space reflections (was `View/ScreenSpaceReflections`) | — | — | — | **Removed** (Hunter, 2026-11-05): the game already draws its own reflections from each surface's specular data (below). Shader, passes, targets, row and status fields are gone; an old ini value is never read |
 | Edge smoothing (`View/EdgeSmoothing`) | Image only; "supersampled" from which hook ran | Hooks BYTE-EXACT | audit clean | PROVEN; look OURS |
 | Supersampling adaptation (no row; the game's own Supersample) | 0x4B6D0; `DAT_49CA10` sample index, `DAT_2AFC60` sample count, `DAT_49ACD0` per-sample viewports, `DAT_49A4F0` bound framebuffer; matrix hook | Globals by Relative signatures with reviewed notes (writers 0x4B857, 0x4B783, 0x4BA01) | n/a | WITNESSED; not re-derived in this audit |
 | Hide helmet and hair (`View/Helmet`) — see also "Headwear reads" below | Skinned mesh layout and tags (above); material face ranges; descriptor `material+0x68` (+0x14 indices); `renderer+0x80` configuration (+0xC uniforms, +0x14 sample location) | Mesh offsets PROVEN (0xD9350/0x69520/0x5E340); headwear functions BYTE-EXACT (headwearRender); descriptor `+0x14` and renderer `+0x80/+0xC/+0x14` UNPROVEN in this audit | replay under cueLock, restored raw (not audited per pass) | Mostly PROVEN; the descriptor and renderer-uniform reads are UNPROVEN. Not gated: they are read only inside byte-exact owners whose code is unchanged, and a wrong value fails the draw closed (the native draw runs). Flagged for the audit thread |
@@ -60,7 +60,7 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 | Stone skin | Same texture set and units | as above | as above | as wound skins |
 | Wound debug highlight (`View/WoundDebug`) | none (shader colour) | OURS | n/a | n/a |
 | Draw far rooms (`View/FarRooms`) | level, room and sector fields (farRooms group) | PROVEN (0x143C20, 0x5B170; see "Witnessed fields re-checked") | no GL | PROVEN |
-| VR effects (`VR/Effects`) | Runs AO and SSR per eye in the eye framebuffers | Same as AO/SSR; VR contracts whole-function | eye path not audited in game | PROVEN data; eye path not run in this audit |
+| VR effects (`VR/Effects`) | Runs AO per eye in the eye framebuffers | Same as AO; VR contracts whole-function | eye path not audited in game | PROVEN data; eye path not run in this audit |
 | Mod messages (no row) | Engine log above | PROVEN | n/a | PROVEN |
 
 ## Corrected by this audit (from the audit thread's decoding, spot-checked here)
@@ -228,18 +228,17 @@ under the release rule they are off unless proven (`colourMaterialGuesses = fals
 |---|---|---|
 | Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Off**: the held/worn/object mask replay and the texture readback do not run, so these three detail rows draw nothing |
 | Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Off**: level detail draws nothing |
-| Reflections (`ssrShader`) | Floor reflectivity by colour class (478b214) | **Removed.** Reflections are off and greyed out until the game's own specular data feeds them (Hunter: yes; plan below) |
+| Reflections (`ssrShader`) | Floor reflectivity by colour class (478b214) | **Removed**, with the whole Reflections effect (Hunter, 2026-11-05): the game's own reflections stay |
 | Helmet view (`finishShader` visor) | "Anything within 18 cm of the eye is helmet" (a depth guess) | **Off**, greyed out, until the helmet's own geometry shapes it |
 | See yourself through walls | A capsule of 25 cm radius standing in for the body, both as the fallback ghost and to ignore the body's own limbs | **Replaced**: the ghost is drawn only from the game's body draw (mask R), and a second channel (B) marks where the body itself is the nearest surface, from the same draw. No capsule. Needs an in-game check |
 | Wound marks (`woundShader`) | A grey, unsaturated surface is metal (smears, no soak) | Blood thread's code; they turned their gear metal-vs-cloth guess off in bc00466 |
 
 Still in use, and why (each is a choice about how an effect looks, not a claim about game data, except the
 first, which is listed for a decision):
-- **Ambient occlusion's "bright pixels are direct light" rule** (`shadeSurfaces`: darkening fades out above a
-  luminance of 0.3-0.7). It stands in for knowing which light is indirect. The game's indirect light is its
-  voxel GI volume (`VoxelGI`, the sampler Smooth lighting already rewrites), so the by-construction version
-  is to apply occlusion to that term inside the game's shader. **UNPROVEN as data; decision needed:** keep,
-  or move AO into the game's shader through the existing hook.
+- **Contact shadows darken evenly** (Hunter, 2026-11-05). The old rule that faded the darkening out on bright
+  pixels (a luminance of 0.3-0.7, standing in for "direct light") is removed: `shadeSurfaces` now multiplies
+  every pixel by `1 - strength * occlusion`. Contact shadows are this mod's own visual addition on top of the
+  game's voxel-GI occlusion and make no claim about the game's data.
 - Eye adaptation: the image's own brightness (our design). Hurt: proven health. Edge smoothing, depth of
   field and the fire look: image filters, our design. Wounds and blood: the blood thread's.
 To bring the material-based ones back: decode the material type the game itself keeps per material or part,
@@ -322,7 +321,7 @@ procedural ID. That is the next step to bring the four detail rows back with the
     `payload[0x50+ch]`. The condition bytes the gated read uses are the same chunk's `+0x14..+0x16`
     (`payload+0xC..+0xE`), which feed the factory.
 
-## The game's own shading, as decoded (for the reflections and AO work)
+## The game's own shading, as decoded
 
 - `shading_f`: `layout(std140) uniform Material { MatDif, MatSpc, MatEmi, MatDrt, ... }`. Specular: per light
   a GGX-style term with roughness from `Gloss = 1 - MatSpc.w * texture(GlsTex).r` (or `1 - MatSpc.w`), plus
@@ -337,13 +336,13 @@ procedural ID. That is the next step to bring the four detail rows back with the
   - Reflections: `speculargi` samples `EnvMap` at a mip chosen by `Gloss`, and with `Shd.LocalRef` mixes in
     `{$reflection}`, a screen-space lookup into `FrmBuf` along the reflected normal. That is weighted by
     roughness and Fresnel and multiplied by `MatSpc` × `SpcTex`, so it is reflection driven by each surface's
-    own specular data. Our Reflections pass adds a second, separate reflection on top.
+    own specular data. Our Reflections pass added a second one on top; it has been removed.
   - Occlusion: `ambient` accumulates `occ` from `VoxelGI.w` over hemisphere samples (`SdwSmps`) and
     multiplies the indirect light by it (`amb *= Ambient.xyz * b * occ`). Our Contact shadows add a
     screen-space darkening on top, at a finer scale than the voxels.
   - The game renders forward in one pass, so a screen-space term computed after it (needing depth) cannot be
     fed into the same frame's `amb` without a depth pre-pass or last frame's result.
-- Earlier plan, kept for reference: (1) reflections take the game's own specular reflectance per pixel (`MatSpc.xyz * SpcTex`, and
+- Earlier plan, now moot (our reflections are removed; contact shadows stay a screen-space addition): (1) reflections take the game's own specular reflectance per pixel (`MatSpc.xyz * SpcTex`, and
   roughness from `Gloss`), written into the opaque pass's alpha by a rewrite of the expanded `shading_f`, with
   exact-text guards. (2) AO multiplies `amb` inside the same shader instead of the finished image. Both need
   the expanded text the game hands to glShaderSource (the dev shader dump) to anchor the rewrite exactly,

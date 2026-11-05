@@ -26,11 +26,10 @@ HELPERS = ROOT / 'src' / 'mod' / 'wound_glsl.h'
 # The view programs as view_effects.inl's effect table builds them: (name, shared part, body).
 VIEW_PROGRAMS = [
     ('ambient occlusion', None, 'aoShader'),
-    ('reflections', None, 'ssrShader'),
     ('depth of field', 'dofLens', 'dofShader'),
     ('finishing pass', 'surfaceShading', 'finishShader'),
-    ('occlusion/reflection composite', 'surfaceShading', 'compositeShader'),
-    ('occlusion/reflection blending over frames', None, 'resolveShader'),
+    ('occlusion composite', 'surfaceShading', 'compositeShader'),
+    ('occlusion blending over frames', None, 'resolveShader'),
     ('depth-of-field composite', 'dofLens', 'dofCompositeShader'),
     ('eye adaptation meter', None, 'meterShader'),
     ('view-distance target', None, 'distanceShader'),
