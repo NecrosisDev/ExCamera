@@ -5,6 +5,9 @@
 // and which texture unit the skin program samples for each map at draw time (the binder 0x20112B-0x2012AB hands
 // out units in the order DifTex, OpcTex, EmiTex, SpcTex, NrmTex, GlsTex, DspTex, EnvMap to the maps present;
 // names at .rdata 0x335218/0x335238/0x335258, table .data 0x2E9F70), and the Injuries addon's severed bits.
+// The dev build's skin witness (woundSkinDiagnose, render-audit log) records the three open facts on a real
+// draw. Severed limbs: the game has no severing of its own; which parts a cut removes comes only from the
+// Injuries addon's "injuries.severed" bits, so they cannot be proven from game code and stay off.
 // Wound skins: cuts and bruises baked into a copy of the struck character's own body texture, the way
 // the game bakes an undead character's decay into its skin (textures.flb chardecomp_*, set up by
 // 0x208140). Baked marks sit in the skin, follow every fold and are covered by clothes and armour.
