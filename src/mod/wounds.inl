@@ -63,7 +63,7 @@ inline int woundBoneBit(int part) {
     default: return -1;
     }
 }
-constexpr float woundBleedFull = 6.f, woundFreshSeconds = 10.f, woundDrySeconds = 60.f, woundBruiseSeconds = 90.f;
+constexpr float woundBleedFull = 6.f, woundDrySeconds = 60.f, woundBruiseSeconds = 90.f;
 // A struck body part's character is its body's root (bodyPart::rootPart): the game's weapon impact
 // (0x159A60) reads its victim there and hands the same pointer to the damage applier, so it equals the
 // record's victim.
@@ -596,6 +596,18 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
     out.burning = woundBurnCount > 0 || woundBurnScarCount > 0;
     const float fadeDt = woundFadeTick ? (std::min)(float(now - woundFadeTick) / 1000.f, 0.5f) : 0.f;
     woundFadeTick = now;
+    // Each bleeding character's open wounds share its output by their depth (severity): the game keeps one bleed
+    // rate per character (character::bleed), not one per wound.
+    struct BleedShare { uintptr_t owner; float total; };
+    BleedShare shares[woundLimit];
+    unsigned shareCount = 0;
+    for (const Wound& w : woundStore) {
+        if (!w.part || w.kind == woundCrush || w.scar > 0.3f) continue;
+        unsigned k = 0;
+        while (k < shareCount && shares[k].owner != w.owner) ++k;
+        if (k == shareCount) shares[shareCount++] = {w.owner, 0.f};
+        shares[k].total += w.severity;
+    }
     for (unsigned i = 0; i < woundLimit; ++i) {
         Wound& w = woundStore[i];
         if (!w.part) continue;
@@ -671,20 +683,28 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                 continue;
             }
         }
-        float flow = 0.f;
+        float flow = 0.f, share = 0.f;
         if (w.kind != woundCrush && fadeDt > 0.f) {
-            // Blood runs while the game says this character bleeds (and for the first seconds after any
-            // cut), then dries. The dead keep bleeding out of their cuts for a few minutes, slower and slower.
+            // Blood runs exactly while the game bleeds the character: the bleed tick 0x168410 raises
+            // character::bleed (+10DC) by 0.03 x the tick's wound inflow (+10D4, which TMotilePart's method
+            // 0x1683E0 adds to and 0x168716 clears each tick) up to 20, drains health with it, and lowers it by
+            // 0.1 a tick once no inflow comes. It returns at once while +DF4 & 0xA00 (down, dying or a corpse,
+            // 0x168426-0x168431): the game does not bleed anyone lying down or dead, so neither does this (the
+            // frozen value is not output). The flow is that rate over 6 (woundBleedFull), the same scale as before;
+            // each open wound gives its depth's share of what runs out.
             float bleed = 0.f;
-            __try { bleed = *(const float*)(owner + field::character::bleed); }
-            __except (EXCEPTION_EXECUTE_HANDLER) { bleed = 0.f; }
-            if (!std::isfinite(bleed)) bleed = 0.f;
-            const float age = float(now - w.born) / 1000.f;
-            flow = w.scar > 0.3f ? 0.f // a closing cut has stopped bleeding
-                 : (std::max)(std::clamp(bleed / woundBleedFull, 0.f, 1.f), age < woundFreshSeconds ? 0.6f : 0.f);
-            if (!alive && w.severity > 0.2f) flow = (std::max)(flow, (0.3f + 0.5f * w.severity) * (std::max)(1.f - age / 180.f, 0.f));
+            unsigned state = 0;
+            __try {
+                bleed = *(const float*)(owner + field::character::bleed);
+                state = *(const unsigned*)(owner + field::character::stateFlags);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) { bleed = 0.f; state = 0xA00; }
+            if (!std::isfinite(bleed) || (state & 0xA00)) bleed = 0.f;
+            flow = w.scar > 0.3f ? 0.f : std::clamp(bleed / woundBleedFull, 0.f, 1.f); // a closing cut has stopped
+            for (unsigned k = 0; k < shareCount; ++k)
+                if (shares[k].owner == w.owner && shares[k].total > 0.f) share = w.severity / shares[k].total;
             if (flow > 0.02f) w.run = (std::min)(w.run + fadeDt * (0.4f + 1.6f * flow), 4.f + 14.f * w.severity);
-            if (flow > 0.15f) w.drip += fadeDt * flow * 2.f; // up to two drops a second while it pours
+            if (flow > 0.15f) w.drip += fadeDt * flow * 2.f * share; // up to two drops a second while it pours
             w.wet = flow >= w.wet ? flow : (std::max)(w.wet - fadeDt / woundDrySeconds, flow);
         }
         float world[3], path[3];
@@ -693,7 +713,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         if (flow > 0.1f && fadeDt > 0.f) {
             // What runs out gathers below: a pool mark every so often, wider the more has run out (a lying
             // body's pool spreads; a standing one's gathers at its feet), thin so the layer builds it up.
-            w.pool += fadeDt * flow * (0.4f + 0.6f * w.severity);
+            w.pool += fadeDt * flow * share * (0.4f + 0.6f * w.severity);
             w.poolTick -= fadeDt;
             if (w.poolTick <= 0.f) {
                 w.poolTick = 0.45f;
@@ -702,7 +722,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                            w.seed + float(i) * 0.37f + w.pool, 2);
             }
         }
-        if (w.spurts && alive && fadeDt > 0.f) {
+        if (w.spurts && alive && flow > 0.02f && fadeDt > 0.f) { // only while the game bleeds the character
             // An opened artery: with each heartbeat a jet of drops lands in a line a metre or so out, the
             // same way each time (the vessel's direction), each drop a teardrop pointing the way it flew.
             w.spurt -= fadeDt;
@@ -711,7 +731,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                 --w.spurts;
                 const float turn = w.seed * 6.2831853f;
                 const float dir[3] = {std::cos(turn), 0.f, std::sin(turn)};
-                const float strength = 0.4f + 0.6f * float(w.spurts) / 8.f;
+                const float strength = (0.4f + 0.6f * float(w.spurts) / 8.f) * (0.5f + 0.5f * flow);
                 for (int k = 0; k < 6; ++k) {
                     const float hash = std::fmod(w.seed * 131.f + float(k) * 17.17f + float(w.spurts) * 3.3f, 1.f);
                     const float reach = (30.f + 130.f * strength) * (0.35f + 0.65f * float(k) / 5.f) * (0.85f + 0.3f * hash);
