@@ -523,7 +523,7 @@ With no lights captured in the last 250 ms the terms use the fixed light from ab
 
 ## Level textures (export, 2026-11-05)
 
-`tools/export_level_textures.py` writes PNGs and `index.csv`/`index.html` to `E:\ExCamera-playtest	extures\level`
+`tools/export_level_textures.py` writes PNGs and `index.csv`/`index.html` to `E:\ExCamera-playtest\textures\level`
 (never committed). What it counts and how it was established:
 - Level files: Resource.rpk `*.rfc` (actor models `*base`, `*morph`, `dummyhead`, `menuscene` excluded). Their
   material records (tag `0x0000BA01`, size, name) are what the material manager turns into TMaterials (VMT
