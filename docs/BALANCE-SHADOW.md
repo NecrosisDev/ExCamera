@@ -65,7 +65,7 @@ A condition is reported once when it reaches its duration, and again only after 
 |---|---|---|
 | `non_finite` | yes | a node position is NaN or infinite (bad maths) |
 | `flung` | yes | a node moves faster than 30 m/s |
-| `floating` | yes | upright, no foot down, not dropping faster than 0.5 m/s, for 0.5 s; jumps excluded |
+| `floating` | yes | upright, no foot down, not dropping faster than 0.5 m/s, for 0.5 s; jumps excluded (the game's Jump clip and the mod's own jump push) |
 | `shaking` | yes | upright and nearly still (< 0.3 m/s), shake over 4000 cm/s² for 0.25 s |
 | `stuck_down` | yes | on the ground or getting up for 15 s while alive |
 | `failed_get_up` | yes | getting up (0x300) went back to lying (0x200) |

@@ -126,6 +126,10 @@ bool conditions_report_once_after_their_duration() {
     CHECK(!(run(t, g, m, 200) & b::Tracker::bit(b::Event::floating)));
     g.motion = b::jumpMotion; // a jump clears it
     CHECK(!(run(t, g, m, 200) & b::Tracker::bit(b::Event::floating)));
+    b::Tracker modJump;
+    b::GameState pushed;
+    pushed.jumping = true; // and so does the mod's own jump, which plays no clip
+    CHECK(!(run(modJump, pushed, m, 200) & b::Tracker::bit(b::Event::floating)));
     return true;
 }
 

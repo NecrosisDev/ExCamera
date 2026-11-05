@@ -158,6 +158,7 @@ struct GameState {
     bool footDown = false;  // character::footDown
     float uprightness = 1;  // character::uprightness
     bool stepping = false;  // character::stepping
+    bool jumping = false;   // the mod's own jump push is under way (it plays no Jump clip)
 };
 
 // Problem kinds, in report order. Names are what the logs and messages print.
@@ -243,7 +244,7 @@ struct Tracker {
         else if (g.footDown) airborne = 0;
 
         // Floating: upright, nothing under the feet, and not falling. A jump is excluded.
-        if (m.valid && standing && !g.footDown && g.motion != jumpMotion && m.velocity.y > notDropping) {
+        if (m.valid && standing && !g.footDown && !g.jumping && g.motion != jumpMotion && m.velocity.y > notDropping) {
             if (++floating == floatingSteps) events |= bit(Event::floating);
         } else floating = 0;
 

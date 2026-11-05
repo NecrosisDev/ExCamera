@@ -110,6 +110,8 @@ static bool shadowRead(uintptr_t root, ShadowRead& r) {
         r.game.footDown = *reinterpret_cast<const float*>(root + field::character::footDown) > .5f;
         r.game.uprightness = *reinterpret_cast<const float*>(root + field::character::uprightness);
         r.game.stepping = *reinterpret_cast<const uint8_t*>(root + field::character::stepping) != 0;
+        r.game.jumping = jumpPushActive.load(std::memory_order_relaxed) && // the push is the player's only (motions.inl)
+                         *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) == root;
         r.leanCounter = *reinterpret_cast<const int*>(root + field::character::leanCounter);
         r.balance = *reinterpret_cast<const float*>(root + field::character::balance);
         r.progress = *reinterpret_cast<const float*>(root + field::character::motionProgress);
