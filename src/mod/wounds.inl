@@ -64,6 +64,38 @@ inline int woundBoneBit(int part) {
     }
 }
 constexpr float woundBleedFull = 6.f, woundDrySeconds = 60.f, woundBruiseSeconds = 90.f;
+// ExCamera's own after-bleed, by Hunter's design decision (2026-11-05), NOT game data and the one approved
+// assumption in the blood: the game stops its bleed tick for anyone down or dead (+DF4 & 0xA00), but a body on
+// the floor should go on pooling and dripping for a short while. From the moment a character is first seen down,
+// its blood runs at the last rate the game gave it while up (+10DC), falling on our own clock as
+// rate x (1 - t / woundAfterBleedSeconds)^2 (eases out to nothing at the end). Someone not bleeding when they
+// went down never starts; up again, the game's own rate takes over.
+constexpr float woundAfterBleedSeconds = 45.f;
+struct WoundAfterBleed { uintptr_t owner = 0; float rate = 0.f; ULONGLONG downSince = 0; };
+static WoundAfterBleed woundAfterBleeds[64];
+static unsigned woundAfterBleedNext = 0;
+// The bleed rate to show for a character: the game's while it bleeds them, else the after-bleed above.
+static float woundShownBleed(uintptr_t owner, float bleed, unsigned state) {
+    WoundAfterBleed* slot = nullptr;
+    for (WoundAfterBleed& a : woundAfterBleeds) if (a.owner == owner) slot = &a;
+    if (!(state & 0xA00)) {
+        if (!slot && bleed > 0.f) {
+            slot = &woundAfterBleeds[woundAfterBleedNext];
+            woundAfterBleedNext = (woundAfterBleedNext + 1) % 64;
+            *slot = {};
+            slot->owner = owner;
+        }
+        if (slot) { slot->rate = bleed; slot->downSince = 0; }
+        return bleed;
+    }
+    if (!slot || !(slot->rate > 0.f)) return 0.f;
+    const ULONGLONG now = GetTickCount64();
+    if (!slot->downSince) slot->downSince = now;
+    const float t = float(now - slot->downSince) / 1000.f;
+    if (t >= woundAfterBleedSeconds) return 0.f;
+    const float left = 1.f - t / woundAfterBleedSeconds;
+    return slot->rate * left * left;
+}
 // A struck body part's character is its body's root (bodyPart::rootPart): the game's weapon impact
 // (0x159A60) reads its victim there and hands the same pointer to the damage applier, so it equals the
 // record's victim.
@@ -709,9 +741,9 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
             // character::bleed (+10DC) by 0.03 x the tick's wound inflow (+10D4, which TMotilePart's method
             // 0x1683E0 adds to and 0x168716 clears each tick) up to 20, drains health with it, and lowers it by
             // 0.1 a tick once no inflow comes. It returns at once while +DF4 & 0xA00 (down, dying or a corpse,
-            // 0x168426-0x168431): the game does not bleed anyone lying down or dead, so neither does this (the
-            // frozen value is not output). The flow is that rate over 6 (woundBleedFull), the same scale as before;
-            // each open wound gives its depth's share of what runs out.
+            // 0x168426-0x168431), and the frozen value is not output: there ExCamera's own after-bleed
+            // (woundShownBleed, Hunter's design, not game data) runs instead. The flow is that rate over 6
+            // (woundBleedFull), the same scale as before; each open wound gives its depth's share of what runs out.
             float bleed = 0.f;
             unsigned state = 0;
             __try {
@@ -719,7 +751,8 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                 state = *(const unsigned*)(owner + field::character::stateFlags);
             }
             __except (EXCEPTION_EXECUTE_HANDLER) { bleed = 0.f; state = 0xA00; }
-            if (!std::isfinite(bleed) || (state & 0xA00)) bleed = 0.f;
+            if (!std::isfinite(bleed)) bleed = 0.f;
+            bleed = woundShownBleed(owner, bleed, state);
             flow = w.scar > 0.3f ? 0.f : std::clamp(bleed / woundBleedFull, 0.f, 1.f); // a closing cut has stopped
             for (unsigned k = 0; k < shareCount; ++k)
                 if (shares[k].owner == w.owner && shares[k].total > 0.f) share = w.severity / shares[k].total;
@@ -742,7 +775,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                            w.seed + float(i) * 0.37f + w.pool, 2);
             }
         }
-        if (w.spurts && alive && flow > 0.02f && fadeDt > 0.f) { // only while the game bleeds the character
+        if (w.spurts && alive && flow > 0.02f && fadeDt > 0.f) { // while it bleeds, down too, never once dead
             // An opened artery: with each heartbeat a jet of drops lands in a line a metre or so out, the
             // same way each time (the vessel's direction), each drop a teardrop pointing the way it flew.
             w.spurt -= fadeDt;
