@@ -453,7 +453,12 @@ bool camera_motion_jump_push() {
     p.left -= 1; // the first step is pushed at the press
     CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 100, 50.f, 0, false) == 0); // no new step yet
     CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 101, 51.f, 0, false) == 1);
-    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 103, 53.f, 0x40000, false) == 2); // falling bits are fine
+    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 103, 53.f, 0x10004, false) == 2); // a standing action is no reaction
+    // The game's own state tests: down (& 0xA00) and the reactions it does not interrupt (& 0xAC0).
+    for (unsigned s : {0x200u, 0x300u, 0x600u, 0x800u, 0xA00u}) CHECK(fp::downState(s) && fp::reactionState(s));
+    for (unsigned s : {0u, 1u, 2u, 8u, 0x20u, 0x100u, 0x8000u, 0x10000u, 0x10004u}) CHECK(!fp::downState(s) && !fp::reactionState(s));
+    CHECK(!fp::downState(0xC0) && fp::reactionState(0xC0)); // the standing stagger
+    CHECK(fp::deadState(0x800) && fp::deadState(0xA00) && !fp::deadState(0x200) && !fp::deadState(0x300));
     int total = 4; // the press, then 1 and 2
     for (unsigned s = 104; p.active; ++s) total += fp::jumpPushStep(p, true, 0x1000, 0x2000, s, 55.f, 0, false);
     CHECK(total == fp::jumpPushSteps);

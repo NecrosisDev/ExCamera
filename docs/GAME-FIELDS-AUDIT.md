@@ -25,7 +25,7 @@ attack or movement code. Low health alone does not knock the character down (aud
 
 | field + offset | WRITTEN by | READ by | ExCamera uses it for | status |
 |---|---|---|---|---|
-| `stateFlags` +0xDF4 (a value) | 0 (17 sites, e.g. 0x169C06 after recovering), 1 (0x16B470), 2 (0x166604), 8 (0x16B168 while +12F3 defense is active; 0x16B1B1 in motion 4), 0x20 (0x16B2D6, 0x179EC0), 0xC0 (0x17B0E1), 0x100 (0x16B05C after motion 3), 0x200 (0x16A6BA from 0x300, 0x16A742, 0x156AA8, 0x156D04), 0x300 (0x16A998 after motion 0xE/0xF, 0x162D69), 0x600 (0x126555), 0x800 (die 0x156480 at 0x1564D6, 0x167EDF), 0xA00 (0x156D20 at 0x156E48, called from 0x167ED0; 0xF12C4; 0x1A0A95), 0x8000 (0x16B09C while motion 0xD), 0x10000/0x10004 (0x16B514/0x16B504) | `playerBehavior` 0xC1D37; the game tests `& 0x800` (32 sites), `& 0xAC0` (0x169BE6), `& 0xA00` (0x168426) | dead = `(DF4 & 0x800) != 0` (one helper, `fp::deadState`); kick/jump only in the base value 0 | **PROVEN**: dead (either state; which of 0x800/0xA00 is "dying" or "corpse" is not named), the base value 0, 8 (defense / motion 4), 0x8000 (during motion 0xD). Knocked down / getting up: audit verdict PROVEN, values pending in the checklist (section 5). |
+| `stateFlags` +0xDF4 (a value) | 0 (17 sites, e.g. 0x169C06 after recovering), 1 (0x16B470), 2 (0x166604), 8 (0x16B168 while +12F3 defense is active; 0x16B1B1 in motion 4), 0x20 (0x16B2D6, 0x179EC0), 0xC0 (0x17B0E1), 0x100 (0x16B05C after motion 3), 0x200 (0x16A6BA from 0x300, 0x16A742, 0x156AA8, 0x156D04), 0x300 (0x16A998 after motion 0xE/0xF, 0x162D69), 0x600 (0x126555), 0x800 (die 0x156480 at 0x1564D6, 0x167EDF), 0xA00 (0x156D20 at 0x156E48, called from 0x167ED0; 0xF12C4; 0x1A0A95), 0x8000 (0x16B09C while motion 0xD), 0x10000/0x10004 (0x16B514/0x16B504) | `playerBehavior` 0xC1D37; the game tests `& 0x800` (32 sites), `& 0xAC0` (0x169BE6), `& 0xA00` (0x168426) | `fp::deadState` (& 0x800), `fp::downState` (& 0xA00: knocked-down view and third-person follow), `fp::reactionState` (& 0xAC0: crouch, steady head, jump push); kick/jump only in 0 | **PROVEN** (checklist 55d523c, "Knocked-down verdict"): dead = `& 0x800` (0x800, 0xA00); down = `& 0xA00`, the game's own test (0x16990A, 0x169AB7, 0x168426): 0x200 on the ground (0x16A6BA, 0x156AA8, 0x156D04), 0x300 getting up (0x162D69, 0x16A998; 0x162C10 picks get-up motion 0xE/0xF by facing), 0x600 scripted lay-down (0x126555), and dead; the game's don't-interrupt test `& 0xAC0` (0x169BE6) adds the standing stagger 0xC0 (0x17B0E1); 0 = standing base; 8 defense / motion 4; 0x8000 during motion 0xD; 0x10004 a standing action in motion 0x1F (0x16B504). |
 | `lifeFlags` +0xDF8 bit 0x100 | 0x17B100 only (0x17B248), reached from spell effects TTendrilEmitter 0x1A2CE0, 0x1A1550 and 0x28F4F0 | 0x169B18: plays motion 0x21, balance = max − 0.5; cleared when the +11B4 timer passes (0x169B74–0x169B8A) | nothing (every "dead" use replaced) | **PROVEN: a spell-hit stun, not death** |
 | `motion` +0x9B8 | `motionPlay` 0x179EE0; attack starts 5 + [+D2C] (`swingStart` 0x157240 at 0x15760B), 8 + n (`oppositeStart` 0x157700 at 0x157AFE), 0xB (`overheadStart` 0x157DC0), 0xC (`thrustStart` 0x157BF0); 3 on balance loss (0x169C5C) and the stun (0x17B26A) | 0x16B06F (motion 0xD → state 0x8000); `contactFrame` 0x1612C9 (0xD has its own leg-contact pass) | busy check (attacks 5–12, 0xD, 0x12); Animated kick runs while 0xD; stagger counter (motion 3) | location and attack starters **PROVEN**; the +D2C range (swing variants) not decoded |
 | motion 0xD (kick) | no game code requests it with a constant: the request field +0xEB0 is written with 3, 4, 0, 0x11, 0x13, 0x19 and registers (0xBEE27/0xBEE43 from 0xB7560, 0x163B42, 0x179D34) | 0x16B06F and 0x1612C9 handle it specially | Classic and Animated kick play it | identity **NOT PROVEN** (audit thread reading two references; see 5) |
@@ -54,14 +54,25 @@ game has you recovering, defending or in another reaction", "…wait until you'v
   VR hand pose, kick/jump, jump push). `lifeFlags & 0x100` is used nowhere.
 * Kick/jump: base state 0 and balance ≥ max − 0.05; no health, magic or stance gate.
 * The blue bar is magic; the condition effects' winded look is removed.
-* "Knocked down: Show third" is inert until the knocked-down values are cited (section 5).
+* "Knocked down: Show third" and the third-person knockdown follow use the game's own down test (& 0xA00); the
+  old mask (0xAC0|0x40204|0xA00) fired on the standing stagger 0xC0 and 0x10004 and named a bit (0x40000) the game
+  never writes. Crouch, the steady head and the jump push stop on the game's own & 0xAC0.
+* Every "unused kick clip" statement is gone (code, settings tips, changelog).
 
 ## 5. Open
 
-* **Knocked-down values**: the audit thread reports the knocked-down camera's states match the game's (on the ground,
-  getting up, dead). Waiting for the exact values and writers in the checklist before re-enabling the switch. The
-  third-person knockdown follow still uses the mask 0xAC0|0x40204|0xA00 (0x40000 is never written).
-* **Motion 0xD = kick** and the whole kick feature (Classic and Animated) rest on it: the audit thread is reading two
-  references. If it is not proven, the kick must be turned off.
+* **Motion 0xD as the kick's carrier.** Proven: the game handles 0xD itself (0x169200 at 0x16B06F: state 0x8000 and
+  +0xDC8 = 2 × +0xDCC, the same as while defending; re-grip 0x152930(+0xE2C) per the audit thread; `contactFrame`
+  0x1603F0 at 0x1612C9 skips its leg-support check, as for state 0x4000). Not proven: that 0xD is a kick, what +0xDC8
+  does, or that no game code starts it (none with a constant; the +0xEB0 request is also written from registers at
+  0xBEE27/0xBEE43, 0x163B42, 0x179D34). Options, not chosen:
+  1. Keep 0xD (the Classic kick): its gates read only proven values. Risk: the skipped leg-support check is a likely
+     cause of the toppling seen with a fast blend; +0xDC8 and the re-grip are unexplained side effects.
+  2. Animated kick on 0xD: inherits 1, and adds the body-part fields (section 3) that are not proven to this standard.
+  3. No native clip: drive the pose ourselves while the game's motion stays its own (stance), keeping the support check;
+     damage would come only from physical contact (`physicalImpact` 0x159A60 → `bodyDamage`), whose rules for a foot
+     are not decoded.
+  Until one is chosen the portable test ini sets Kick style back to Classic (the Animated kick depends on unproven
+  behaviour).
 * **Body-part fields** for the Animated kick (section 3).
 * Not audited here: camera, picking, held-item, wound, blood, render and VR fields (the master checklist).

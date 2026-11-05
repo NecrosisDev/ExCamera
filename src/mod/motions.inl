@@ -1,5 +1,6 @@
-// The kick and the jump, every build. The kick: the game's own motion player started on its unused kick clip
-// (0xD), behind the gates the attack chooser would apply and a few of our own. The jump plays no clip: every part
+// The kick and the jump, every build. The kick: the game's own motion player started on motion 0xD, which the game
+// handles itself (16B06F: state 0x8000; 1612C9: no leg-support check) but no game code is known to start, behind
+// the gates in fp::motionGate (docs/GAME-FIELDS-AUDIT.md). The jump plays no clip: every part
 // of the body gets an upward push through the game's own rigid-body push (89240, a Verlet velocity change per
 // physics step) for several steps (fp::jumpPushStep), so the game's airborne and landing handling takes over.
 // Triggered by a key (unbound until the

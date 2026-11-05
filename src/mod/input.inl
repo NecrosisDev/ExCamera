@@ -1507,7 +1507,7 @@ static bool bodyCalm(uintptr_t root, uintptr_t head) {
         !*reinterpret_cast<const unsigned char*>(root + field::character::physicsLive))
         return false;
     const unsigned state = *reinterpret_cast<const unsigned*>(root + field::character::stateFlags);
-    if ((state & (0xac0 | 0x40204 | 0xa00)) || fp::deadState(state)) // the mask: NOT PROVEN (GAME-FIELDS-AUDIT.md)
+    if (fp::reactionState(state)) // down, dead or staggered: the game's own don't-interrupt test (169BE6)
         return false;
     const float balance = *reinterpret_cast<const float*>(root + field::character::balance),
                 most = *reinterpret_cast<const float*>(root + field::character::balanceMax);

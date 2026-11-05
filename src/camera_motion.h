@@ -472,16 +472,20 @@ inline void headingToward(const float* body, const float* point, float yaw, floa
 // and 156D20, called from 167ED0, then stores 0xA00 (156E48; also F12C4, 1A0A95). The game itself tests DF4 & 0x800,
 // which only those two stored values pass. character+DF8 bit 0x100 is not death: 17B100 sets it for a spell-hit stun.
 inline constexpr bool deadState(unsigned stateFlags) { return (stateFlags & 0x800) != 0; }
-// Down, for the third-person follow: held 0.3 s after it clears so getting up does not flicker. NOT PROVEN: the mask
-// below treats the state value as bits; only 0x800 (dead) is decoded. Listed in docs/GAME-FIELDS-AUDIT.md.
-inline constexpr unsigned knockdownStateBits = 0xac0 | 0x40204 | 0xa00;
+// Down (docs/GAME-FIELDS-AUDIT.md): DF4 & 0xA00, the game's own test (16990A, 169AB7, 168426). It passes 0x200 on the
+// ground (16A6BA, 156AA8, 156D04), 0x300 getting up (162D69, 16A998), 0x600 a scripted lay-down (126555) and the two
+// dead values. Not the standing stagger 0xC0 (17B0E1) or 0x10004 (16B504), which the old mask took for a knockdown.
+inline constexpr bool downState(unsigned stateFlags) { return (stateFlags & 0xA00) != 0; }
+// One of the game's own reactions it does not interrupt (DF4 & 0xAC0, 169BE6): down, dead or the stagger 0xC0.
+inline constexpr bool reactionState(unsigned stateFlags) { return (stateFlags & 0xAC0) != 0; }
+// Down, for the third-person follow: held 0.3 s after it clears so getting up does not flicker.
 inline constexpr unsigned long long knockdownReleaseMs = 300;
 struct KnockdownFollow {
     bool down = false;
     unsigned long long clearSince = 0;
 };
 inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned long long ms) {
-    if ((stateFlags & knockdownStateBits) || deadState(stateFlags)) {
+    if (downState(stateFlags)) {
         k.down = true;
         k.clearSince = 0;
         return true;
@@ -500,8 +504,7 @@ inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned long
 // follows such a switch goes back to first person at once, so the next life does not start in third. Never
 // against the player: an F6 during the knockdown keeps the view it chose.
 // f6Presses is a counter of F6 view changes; the caller applies the returned step. down and dead come from the
-// caller: dead is deadState(stateFlags); no knocked-down state value is proven yet, so the mod passes down = false
-// and the switch stays inert (docs/GAME-FIELDS-AUDIT.md).
+// caller: down is downState(stateFlags), dead is deadState(stateFlags) (dead is checked first).
 inline constexpr unsigned long long knockdownViewSettleMs = 400;
 struct KnockdownView {
     bool down = false, switched = false, manual = false;
@@ -574,7 +577,7 @@ inline int jumpPushStep(JumpPush& p, bool owned, uintptr_t root, uintptr_t scene
                         unsigned stateFlags, bool dead) {
     if (!p.active) return 0;
     const unsigned passed = step - p.lastStep;
-    const bool stop = !owned || root != p.root || scene != p.scene || dead || (stateFlags & (0xac0u | 0xa00u)) ||
+    const bool stop = !owned || root != p.root || scene != p.scene || dead || reactionState(stateFlags) ||
                       !std::isfinite(y) || passed > jumpStepGap;
     if (!stop && std::isfinite(y)) p.risen = std::fmax(p.risen, y - p.startY);
     if (stop || p.left <= 0 || p.risen >= jumpRiseCapCm) {

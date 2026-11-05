@@ -404,10 +404,9 @@ inline uintptr_t navLocked(void* self, float offset) {
         }
         const int shown = viewMode.load();
         if (shown < 2 && readable(root + field::character::stateFlags, 4)) {
-            // No knocked-down state value is proven (docs/GAME-FIELDS-AUDIT.md): down = false keeps the switch inert.
-            const auto step = fp::knockdownViewStep(knockdownView, fpKnockdown.load() == 1, shown, false,
-                                                    fp::deadState(*(unsigned*)(root + field::character::stateFlags)),
-                                                    f6Presses.load(), GetTickCount64());
+            const unsigned characterState = *(unsigned*)(root + field::character::stateFlags);
+            const auto step = fp::knockdownViewStep(knockdownView, fpKnockdown.load() == 1, shown, fp::downState(characterState),
+                                                    fp::deadState(characterState), f6Presses.load(), GetTickCount64());
             if (step != fp::KnockdownViewStep::none)
                 knockdownViewRequest = step == fp::KnockdownViewStep::toThird ? 1 : 2;
         }
