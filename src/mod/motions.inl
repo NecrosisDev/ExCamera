@@ -97,8 +97,8 @@ static void motionJumpTick(uintptr_t root, bool owned) {
 // refused press is counted and, where the player can do something about it, told (motionRefused).
 static void motionKeysTick(uintptr_t root) {
     fp::MotionRefusal why = fp::MotionRefusal::count;
-    if (motionKickRequested.exchange(false) && kickKey.load(std::memory_order_relaxed) && !motionKick(root, &why))
-        motionRefused(false, why);
-    if (motionJumpRequested.exchange(false) && jumpKey.load(std::memory_order_relaxed) && !motionJump(root, &why))
-        motionRefused(true, why);
+    const bool kick = motionKickRequested.exchange(false) && kickKey.load(std::memory_order_relaxed);
+    if ((padKickRequested.exchange(false) || kick) && !motionKick(root, &why)) motionRefused(false, why);
+    const bool jump = motionJumpRequested.exchange(false) && jumpKey.load(std::memory_order_relaxed);
+    if ((padJumpRequested.exchange(false) || jump) && !motionJump(root, &why)) motionRefused(true, why);
 }

@@ -1,5 +1,6 @@
 #include "camera_motion.h"
 #include "engine_text.h"
+#include "gamepad.h"
 #include "hook_health.h"
 #include "input_policy.h"
 #include "native_contracts.h"
@@ -1055,8 +1056,31 @@ bool engine_text_ascii_line() {
 
 } // namespace
 
+bool controller_buttons_and_stick_parry() {
+    fp::PadState pad;
+    pad.buttons = 0x8000 | 0x0080; // Y and the right-stick click (XINPUT_GAMEPAD_Y, _RIGHT_THUMB)
+    pad.leftTrigger = 30;          // at the threshold is not pressed
+    pad.rightTrigger = 31;
+    CHECK(fp::padHeld(fp::padY, pad) && fp::padHeld(fp::padRS, pad) && !fp::padHeld(fp::padA, pad));
+    CHECK(!fp::padHeld(fp::padLT, pad) && fp::padHeld(fp::padRT, pad) && !fp::padHeld(fp::padNone, pad));
+    CHECK(!fp::padHeld(99, pad) && !fp::padHeld(-1, pad));
+    CHECK(fp::padButtonFromText(L"Back") == fp::padBack && fp::padButtonFromText(L"none") == fp::padNone);
+    CHECK(fp::padButtonFromText(L"bogus") < 0 && fp::padButtonFromText(nullptr) < 0);
+    for (int b = 0; b < fp::padButtonCount; ++b) CHECK(fp::padButtonFromText(fp::padButtonText(b)) == b);
+    // The stick picks as a drag would: up, right, down-right, down-left, left; a small push picks nothing.
+    CHECK(fp::padParryPose(0, 32767, false) == 22);
+    CHECK(fp::padParryPose(32767, 0, false) == 21);
+    CHECK(fp::padParryPose(20000, -20000, false) == 24);
+    CHECK(fp::padParryPose(-20000, -20000, false) == 23);
+    CHECK(fp::padParryPose(-32767, 0, false) == 20);
+    CHECK(fp::padParryPose(32767, 0, true) == 20);
+    CHECK(fp::padParryPose(8000, 0, false) == 0);
+    return true;
+}
+
 int main() {
     return run_tests({
+        {"controller buttons and stick parry", controller_buttons_and_stick_parry},
         {"input ButtonHandoff and RawLook", input_button_handoff_and_raw_look},
         {"input angle wrapping and vrTurningFromText", input_angle_wrapping_and_vr_turning_text},
         {"input combat cues, cursor, and ray helpers", input_combat_cues_cursor_and_ray_helpers},

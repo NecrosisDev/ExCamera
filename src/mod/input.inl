@@ -1250,6 +1250,7 @@ static void inputProfileBody() {
     } else
         inputOwner.discardButtons();
     sampleHeldBindings(owned, sample);
+    padTick(root, bh, owned);
     trackedControllerInput(root, bh, owned);
     fingerPosesTick(root);
     motionJumpTick(root, owned);

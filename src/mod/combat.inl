@@ -91,12 +91,19 @@ static void publishGuard(const InputOwner::Sample& sample, bool held) {
 // Physical release is authoritative: buffered buttons may retain a down/up pair,
 // but a released guard tap is never queued for a later native opportunity.
 static void combatInput(uintptr_t root, uintptr_t bh, bool owned, const InputOwner::Sample& ownerSample) {
-    const unsigned physical =
+    unsigned physical =
         ((keyState(VK_LBUTTON) & 0x8000) || trackedAttackHeld() ? 1u : 0u) | ((keyState(VK_RBUTTON) & 0x8000) ? 2u : 0u);
     unsigned& buttons = *(unsigned*)gameAt(fp::sig::buttonWord);
     const bool ordinary = owned && ordinaryCombat(root, bh);
     const bool manual = ordinary && manualCombat(root, bh);
-    const InputOwner::CombatSample sample = inputOwner.combatSample(buttons, physical, ordinary, manual);
+    // The controller's Guard button is a held right mouse, only for Manual defense (which takes RMB from the
+    // game anyway: combatSample strips bit 2 in ordinary combat).
+    unsigned sampled = buttons;
+    if (manual && padGuardDown.load()) {
+        physical |= 2u;
+        sampled |= 2u;
+    }
+    const InputOwner::CombatSample sample = inputOwner.combatSample(sampled, physical, ordinary, manual);
     if (ordinary) {
         // Cursor walking is a separate native command. Analog, digital steps,
         // run, duck, attack timing and accepted travel remain native.
