@@ -1349,7 +1349,7 @@ uniform vec4 woundC[12];   // severity 0..1, seed (negative: the skin part is ba
                            // length of the blood runs (cm)
 uniform float woundCount;
 uniform vec4 woundRect;    // screen box (uv min xy, max zw) that holds every wound's reach; outside it nothing to do
-uniform vec4 dripA[32];    // a drop of blood: view-space point it fell from; w: 256 x radius (tenths of a cm) + dryness (0..255)
+uniform vec4 dripA[48];    // a drop of blood: view-space point it fell from; w: 256 x radius (tenths of a cm) + dryness (0..255)
 uniform float dripCount;
 uniform vec4 capA[8];      // a flesh cap on a severed limb: view-space centre; w: radius (cm)
 uniform vec4 capB[8];      // its facing (view space); w: 0 the stump, 1 the severed end
@@ -1727,7 +1727,7 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
     vec3 uFloor = normalize(worldUp.xyz);
     vec3 tFloor1 = normalize(abs(uFloor.y) < 0.9 ? cross(uFloor, vec3(0.0, 1.0, 0.0)) : cross(uFloor, vec3(1.0, 0.0, 0.0)));
     vec3 tFloor2 = cross(uFloor, tFloor1);
-    for (int j = 0; j < 32; ++j) {
+    for (int j = 0; j < 48; ++j) {
         if (float(j) >= dripCount) break;
         vec4 D = dripA[j];
         float radius = floor(D.w / 256.0) * 0.1, dry = (D.w - 256.0 * floor(D.w / 256.0)) / 255.0;
