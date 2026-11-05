@@ -403,6 +403,11 @@ Each ships on its own once proven; the rest stay off.
 - **Looks.** `lookOf` in the finish shader maps ids to our looks (cloth 1-6, leather and suede 7-10, chain 11,
   steel, plate, blade, iron, copper, wired grip 12-13/15-16/19-22, paint 14/25, wood 17-18; gemstone 23, resin 24,
   the base and none get no detail). Which material a texel is: the game's. How it looks: OURS.
+- **Armour and clothing** (own commit): worn gear is replayed by the same mask pass (slots after the held
+  ones) and goes through the same lookup, so it takes ids wherever its colour texture was composed. Item nodes
+  get their factory set from 0x20AC10, called by the item creators 0x107600 and 0x13FB60 (and 0xE66D0,
+  0x25BAB0, 0x296C40); that every worn piece is created that way is UNPROVEN, and a piece without ids simply
+  gets no detail (`material_id_misses`). Body skin is not composed there and gets none.
 - **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),
   parts drawn with ids and misses. Parallax (`Mat.TexDsp`) items read ids at the unshifted texcoord.
 

@@ -4672,8 +4672,8 @@ static bool silhouetteWanted(uintptr_t view, bool body = true) {
     const bool consumer = body ? viewMode.load() == 1 && playerGhost.load(std::memory_order_relaxed)
                                : panel::heldMaterialDataDecoded && materialIdsReady() && viewMode.load() < 2 &&
                                      (heldDetail.load(std::memory_order_relaxed) > 0.f ||
-                                      (panel::materialDataDecoded && (armourDetail.load(std::memory_order_relaxed) > 0.f ||
-                                                                      objectDetail.load(std::memory_order_relaxed) > 0.f)));
+                                      (panel::armourMaterialDataDecoded && armourDetail.load(std::memory_order_relaxed) > 0.f) ||
+                                      (panel::materialDataDecoded && objectDetail.load(std::memory_order_relaxed) > 0.f));
     return silhouetteHooked && silhouetteSubmitHooked() && consumer && InterlockedCompareExchange(&active, 0, 0) &&
            InterlockedCompareExchange(&cameraReady, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
            !(viewEffectsUnavailable.load(std::memory_order_relaxed) & viewFaulted) &&
@@ -5077,7 +5077,7 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
     request.heldSlots = (eye != nullptr) == maskEye ? (mask >> 1) & ((uint64_t(1) << heldSlotLimit) - 1) : 0;
     if (request.heldSlots) {
         request.detail = heldDetail.load(std::memory_order_relaxed);
-        request.armour = panel::materialDataDecoded ? armourDetail.load(std::memory_order_relaxed) : 0.f;
+        request.armour = panel::armourMaterialDataDecoded ? armourDetail.load(std::memory_order_relaxed) : 0.f;
         request.objects = panel::materialDataDecoded ? objectDetail.load(std::memory_order_relaxed) : 0.f;
         memcpy(request.held, heldMaskPoses, sizeof request.held);
     }
@@ -5196,8 +5196,8 @@ static void armSilhouette(uintptr_t view, SilhouetteScope& scope) {
         scope.body = silhouetteWanted(view, true);
         const bool held = silhouetteWanted(view, false);
         if (scope.body || held) scope.root = supersampleRenderScope.root;
-        // Worn gear and objects wait for their own step of the material rebuild (docs/render-assumptions.md).
-        scope.apparel = panel::materialDataDecoded && held && armourDetail.load(std::memory_order_relaxed) > 0.f;
+        // Objects wait for their own step of the material rebuild (docs/render-assumptions.md).
+        scope.apparel = panel::armourMaterialDataDecoded && held && armourDetail.load(std::memory_order_relaxed) > 0.f;
         scope.objects = panel::materialDataDecoded && held && objectDetail.load(std::memory_order_relaxed) > 0.f;
         if (scope.root) {
             const uintptr_t mesh = readable(scope.root, field::character::sceneNode + 8)
