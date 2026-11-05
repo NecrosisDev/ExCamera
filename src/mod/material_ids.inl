@@ -624,16 +624,11 @@ static std::string linkedVertexSource(HGLRC context, GLuint program) {
 }
 
 // The driver's own words when an id program does not build: the first few go to material-id-shader.log beside
-// first-person.ini, whole.
+// first-person.ini, whole. Never on the game's console.
 static unsigned idFailuresLogged = 0;
-static void logIdFailure(const char* what, GLuint game, const char* log, bool console = true) {
+static void logIdFailure(const char* what, GLuint game, const char* log) {
     if (idFailuresLogged >= 8) return;
-    ++idFailuresLogged;
-    if (console) { // a program that should have built and did not; one with no kept source stays in the file
-        wchar_t text[200];
-        swprintf_s(text, L"Material ids: %hs for game program %u (material-id-shader.log has the details).", what, game);
-        modMessage(NoticeKind::warning, text);
-    }
+    ++idFailuresLogged; // the log file only: nothing on the game's console
     const std::wstring path = settingsFolderFile(L"material-id-shader.log");
     if (path.empty()) return;
     const HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
@@ -652,7 +647,7 @@ static void logIdFailure(const char* what, GLuint game, const char* log, bool co
 // 0x201E09); its vertex shaders stay alive in its caches (e.g. DAT_1005B1DC0 from 0x1F9F70). So the source is
 // recovered from the live vertex shaders: a candidate is accepted only when the program built from it has exactly
 // the game program's active attributes (name, type, location: attributes belong to the vertex stage alone) and
-// every uniform it reads exists in the game program with the same type and size; candidates that pass with
+// every uniform it shares with the game program has the same type and size; candidates that pass with
 // different text make it ambiguous, and nothing is used.
 static std::atomic<unsigned> sourcesRecovered{0}, sourcesAmbiguous{0};
 struct Attribute {
@@ -676,7 +671,7 @@ static std::vector<Attribute> attributesOf(gl::Api& g, GLuint program) {
     std::sort(out.begin(), out.end(), [](const Attribute& a, const Attribute& b) { return a.name < b.name; });
     return out;
 }
-// Every active uniform of `ours` other than the id sampler: present in `game` with the same type and size.
+// Every active uniform of `ours` that `game` also has: the same type and size there.
 static bool uniformsWithin(GLuint ours, GLuint game) {
     GLint total = 0, gameTotal = 0;
     using ProgramIv = void(APIENTRY*)(GLuint, GLenum, GLint*);
@@ -691,15 +686,14 @@ static bool uniformsWithin(GLuint ours, GLuint game) {
         GLenum type = 0;
         extra.getActiveUniform(ours, GLuint(i), sizeof name, &length, &size, &type, name);
         if (!strcmp(name, "materialIds")) continue;
-        bool found = false;
-        for (GLint k = 0; k < gameTotal && !found; ++k) {
+        // One the game's program also has must agree in type and size; one it lacks is unused by it (see below).
+        for (GLint k = 0; k < gameTotal; ++k) {
             char other[64];
             GLint otherSize = 0;
             GLenum otherType = 0;
             extra.getActiveUniform(game, GLuint(k), sizeof other, &length, &otherSize, &otherType, other);
-            found = !strcmp(other, name) && otherType == type && otherSize == size;
+            if (!strcmp(other, name) && (otherType != type || otherSize != size)) return false;
         }
-        if (!found) return false;
     }
     return true;
 }
@@ -834,7 +828,7 @@ static const IdProgram* idProgramFor(gl::Api& g, GLuint game) {
     if (source.empty()) source = recoverVertexSource(g, game);
     if (source.empty()) {
         logIdFailure("no vertex source (linked before the hook; none of the live vertex shaders fits it alone)", game,
-                     nullptr, false);
+                     nullptr);
         idProgramsFailed.fetch_add(1, std::memory_order_relaxed);
         return nullptr;
     }
@@ -861,9 +855,13 @@ static const IdProgram* idProgramFor(gl::Api& g, GLuint game) {
         }
         if (char* bracket = strchr(name, '[')) *bracket = 0;
         const GLint to = g.getUniformLocation(p.program, name), from = g.getUniformLocation(game, name);
-        if (to < 0 || from < 0 || p.uniformCount >= sizeof p.uniforms / sizeof p.uniforms[0]) {
-            logIdFailure(to < 0 || from < 0 ? "a vertex uniform missing from the game program" : "too many vertex uniforms",
-                         game, name);
+        // No location in ours: a uniform-block member, served by the block bindings below. No location in the game's
+        // program (Hunter's run: Ambient in programs 89, 90, 159, 160): the game's program, with the same vertex text
+        // and its own fragment, does not use it, so it cannot reach gl_Position or vrTex, which the game's program
+        // always uses; only a varying our id fragment never reads can depend on it. Left at its default.
+        if (to < 0 || from < 0) continue;
+        if (p.uniformCount >= sizeof p.uniforms / sizeof p.uniforms[0]) {
+            logIdFailure("too many vertex uniforms", game, name);
             g.deleteProgram(p.program);
             p.program = 0;
             idProgramsFailed.fetch_add(1, std::memory_order_relaxed);

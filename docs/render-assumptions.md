@@ -491,6 +491,13 @@ Each ships on its own once proven; the rest stay off.
   `_sources_ambiguous` report it; a program still without a source is skipped with one line in
   material-id-shader.log, no console message. Pixels with no id (mask alpha 255) are never resurfaced: lookOf
   gives -1 and heldSurface is not called, so they show the game's own pixels.
+- **Uniforms the game program lacks (2026-11-05, Hunter's 22:03 run).** With the early hook every source was
+  kept (`material_id_first_linked` 45, 288 kept), but programs 89, 90, 159 and 160 stopped on `Ambient`: active
+  in our relinked program, inactive in the game's. The game's program has the same vertex text and always uses
+  gl_Position and vrTex, so a uniform it does not keep cannot reach either; only a varying our id fragment never
+  reads can depend on it. Such uniforms are now left at their default, and members of uniform blocks (no
+  location) are served by the block bindings. No material-id message goes to the game's console; failures go to
+  material-id-shader.log only.
 - **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),
   parts drawn with ids and misses. Parallax (`Mat.TexDsp`) items read ids at the unshifted texcoord.
 
