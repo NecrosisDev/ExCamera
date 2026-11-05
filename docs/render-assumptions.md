@@ -221,13 +221,43 @@ under the release rule they are off unless proven (`colourMaterialGuesses = fals
 |---|---|---|
 | Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Off**: the held/worn/object mask replay and the texture readback do not run, so these three detail rows draw nothing |
 | Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Off**: level detail draws nothing |
-| Reflections (`ssrShader`, 478b214) | Floor reflectivity by colour class | **Left as is** pending Hunter's answer on using the game's specular maps (plan: shininess in the alpha channel) |
+| Reflections (`ssrShader`) | Floor reflectivity by colour class (478b214) | **Removed.** Reflections are off and greyed out until the game's own specular data feeds them (Hunter: yes; plan below) |
+| Helmet view (`finishShader` visor) | "Anything within 18 cm of the eye is helmet" (a depth guess) | **Off**, greyed out, until the helmet's own geometry shapes it |
+| See yourself through walls | A capsule of 25 cm radius standing in for the body, both as the fallback ghost and to ignore the body's own limbs | **Replaced**: the ghost is drawn only from the game's body draw (mask R), and a second channel (B) marks where the body itself is the nearest surface, from the same draw. No capsule. Needs an in-game check |
 | Wound marks (`woundShader`) | A grey, unsaturated surface is metal (smears, no soak) | Blood thread's code; they turned their gear metal-vs-cloth guess off in bc00466 |
 
-Not material guesses, and kept: eye adaptation (the image's brightness, our design), the AO "bright pixels are
-direct light" rule (shading choice), the helmet view (depth within 18 cm of the eye), hurt (proven health).
-To bring the material-based ones back: decode the material type the game itself keeps per material or part
-(it plays different hit sounds per material, so such data likely exists), then flip the flag.
+Still in use, and why (each is a choice about how an effect looks, not a claim about game data, except the
+first, which is listed for a decision):
+- **Ambient occlusion's "bright pixels are direct light" rule** (`shadeSurfaces`: darkening fades out above a
+  luminance of 0.3-0.7). It stands in for knowing which light is indirect. The game's indirect light is its
+  voxel GI volume (`VoxelGI`, the sampler Smooth lighting already rewrites), so the by-construction version
+  is to apply occlusion to that term inside the game's shader. **UNPROVEN as data; decision needed:** keep,
+  or move AO into the game's shader through the existing hook.
+- Eye adaptation: the image's own brightness (our design). Hurt: proven health. Edge smoothing, depth of
+  field and the fire look: image filters, our design. Wounds and blood: the blood thread's.
+To bring the material-based ones back: decode the material type the game itself keeps per material or part,
+then flip `panel::materialDataDecoded` (settings_model.h).
+
+**Game material data, decoded so far (PROVEN):** the game has its own procedural material system
+(`FLX_Materials_Procedural`). 0x1EAEE0(id) creates and caches (`DAT_56B030[id]`) one instance per ID 1-25 through
+the jump table at 0x32FC08, by class (VMT class names):
+
+| ID | Class | ID | Class | ID | Class |
+|---|---|---|---|---|---|
+| 1 | TClothBasic | 10 | TSuedeA01 | 19 | TIronGen |
+| 2 | TClothFine | 11 | TSteelChain | 20 | TCopperAlloy |
+| 3 | TClothSilk | 12 | TSteelGen | 21 | TCopperSatin |
+| 4 | TClothVelvet | 13 | TSteelPlate2 | 22 | TWiredGripA01 |
+| 5 | TClothPadded1 | 14 | TSteelPainted | 23 | TGemstone |
+| 6 | TClothPadded2 | 15 | TSteelPlate2 | 24 | TResin |
+| 7 | TLeatherA02 | 16 | TSteelBlade | 25 | TPlanksPainted |
+| 8 | TLeatherA01 | 17 | TWoodFineA | | |
+| 9 | TSuedeA01 | 18 | TWoodRoughA | | |
+
+The item factory 0x20FB80 gives each layer of an item part its procedural material: the ID is the byte at
+`[table + index*9 + 0x8C]`, 12 (TSteelGen) when 0 (0x2103B8-0x2103F0), and the instance is stored at the layer's
+`+0x50` (0x2103FC). **Missing:** the link from a drawn mesh material (`node+0x1D0[i]`) back to its layer and
+procedural ID. That is the next step to bring the four detail rows back with the game's own materials.
 
 ## Not yet proven, not gated (for the audit thread)
 
