@@ -124,6 +124,17 @@ spurt list (parts 1/4/11/14) and fracture bruises are **removed**. Lamp highligh
 **off** behind one unproven flag. Metal vs cloth stays on, labelled as a screen-colour heuristic (**UNPROVEN**, kept
 by choice). Still open: the slash/pierce/crush split (lead: 159A60 calls 1531E0 on the weapon).
 
+**Where the two damage amounts come from (partly decoded):** physicalImpact 159A60 calls bodyDamage once, at 15C735.
+Just before the call, with x = the hit's damage value worked out earlier in 159A60 and p = the struck part's
+multiplier +6C0:
+permanent B = 0.75 × p × x/(1+x) (saturating), and recoverable A = 0.75 × (p × (2 × (x − x/(1+x)) + earlier
+recoverable term) + 0.5 × another impact term). So heavy hits push extra damage into the recoverable channel once
+the permanent part saturates. Impact energy before that: motion 0xC multiplies it by 1.5 (159C68). Thrusts (motion
+0xB) scale by (0.5 + weapon +28 + weapon +18) × 0.3. Other attacks use pow(E, 1 − 0.5 × weapon +28) × (weapon +28 +
+0.3) × 1.1, where "weapon" is the weapon data from 1531E0 (part +6E0, walking up to the root part). If a global
+callback G4F0900 is installed, the game hands it the hit record instead of applying damage (15C679–15C6FD). The
+**slash / pierce / crush split** sits upstream of x and is still **UNPROVEN**.
+
 **Weapon +F0 / +120 (render vs blood): PROVEN.** These are the rigid body's four points and their previous-step
 copy. heldItemAttach 155C20 writes the attached item's points to +F0 and copies them into +120 and +150 (155D72–155D9F).
 TTetraRBD's own integrate method 88D30 (listed in the TTetraRBD class table) runs its Verlet step over +F0 / +120 /
