@@ -1679,6 +1679,11 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
         float layer = smoothstep(0.6, 1.6, off);
         // Metal or cloth was guessed from the pixel's colour (grey: metal), not read from the game; until the game's
         // own material is shown, gear takes a neutral stain instead (gearFromScreen false, as unprovenRenderReads).
+        // Proof state: the game's material classes exist (TClothBasic 0x32FF90 .. TSteelBlade 0x331228, base VMT
+        // 0x32FF88, 0x230 bytes), made only by the singleton factory 0x1EAEE0 (index 1..25, cache .data 0x56B030),
+        // called from the layer setup 0x207740 (layer +0x50 the class, +0x58 its index) for entries of [X+508]
+        // (callers 0xE9C84/0xEFCE2, X unidentified). Not shown: which entry is which worn piece, or any reader of the
+        // class in the draw or armour code (the armour block 0x15B2BE-0x15B7BD calls only maths helpers).
         const bool gearFromScreen = false;
         float metal = gearFromScreen ? layer * grey : 0.0, cloth = gearFromScreen ? layer * (1.0 - grey) : 0.0;
         float gear = gearFromScreen ? 0.0 : layer;
@@ -5109,6 +5114,18 @@ static float heldMaterialCodeFor(gl::Api& g, uintptr_t material, bool isApparel 
     return code;
 }
 
+// PROOF STATE of the game's lights (dev note, 0.9.5.2g; nothing here is read until proven):
+// - TLightSource: VMT 0x2FCF40, 0x2E8 bytes; the only code storing kind 5 at +8 is its constructor 0x518D0.
+//   Update 0x51EB0: +278 = sRGB-to-linear(+210 colour) (0x269D50) scaled by sqrt(+220)*+21C (0x19260);
+//   +2A4 = +224 range (or a constant when +21C is tiny); +268 |= 2 range changed, |= 4.
+// - Per-mesh list: mesh +1DC head, +1E0 0x18-byte entries (+0 weight, +8 next, +C active, +10 the light),
+//   at most min(global +1F0, 6) (0x26F420; queue 0x26F230).
+// - Upload FOUND: 0x1FF462-0x1FF9D8 packs up to six lights into renderer state +170 as three vec4 a light
+//   (0x30 stride): +170 position from the light's +288 index into a 0xC-stride table +40 (w +17C), +180 the
+//   RAW colour +210 scaled by 1/state+3B8 and (1 - [+1C8]+234) * state+5B4 (w = +230), +190 from +238, +194..+19C
+//   cone values from [+1C8]+24C/+250/+248 for type 0x200; then glUniform4fv(location [[r13+C]+8], 3 * count
+//   state+A8, state+170) at 0x1FFFD8 and 0x200BBD (headwearNative_200770). Not yet shown: that the object
+//   packed there is the TLightSource (field names past +210), the uniform's name, and what +2A4/+278 feed.
 // The game lights (TLightSource, scene kind 5) near a held item, read only, for its
 // surface's light direction. Static reading only (review:
 // work/verification/excamera-held-light-review.md): placed and dynamic lights hang
