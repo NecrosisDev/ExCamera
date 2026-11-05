@@ -857,6 +857,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.fixed("fire_faults", float(fireFaults.load(std::memory_order_relaxed)), 0);
     j.unum("level_people", levelPeopleSeen.load());
     j.unum("view_effects_draws", viewEffectsDraws.load());
+    // Render audit (--dev, [Dev] RenderAudit=1): all zero when off or clean; see render-audit.log.
+    j.boolean("render_audit", renderAuditActive.load(std::memory_order_relaxed));
+    j.unum("render_audit_passes", renderAuditPasses.load());
+    j.unum("render_audit_anomalies", renderAuditAnomalies.load());
+    j.unum("render_audit_cache_desyncs", renderAuditCacheDesyncs.load());
+    j.unum("render_audit_input_mismatches", renderAuditInputMismatches.load());
+    j.unum("render_audit_state_leaks", renderAuditStateLeaks.load());
     j.unum("view_effects_unavailable", viewEffectsUnavailable.load());
     j.str("view_effects_reason", viewEffectsReasonSet.load(std::memory_order_acquire) ? viewEffectsReason : "");
     j.num("view_effects_input_width", viewEffectsInputWidth.load(std::memory_order_relaxed));
