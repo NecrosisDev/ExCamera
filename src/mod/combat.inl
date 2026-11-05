@@ -11,7 +11,7 @@ static bool ordinaryCombat(uintptr_t root, uintptr_t bh) {
         *(unsigned char*)(bh + field::behaviour::inactive) ||
         fp::deadState(*(unsigned*)(root + field::character::stateFlags)) ||
         !*(unsigned char*)(root + field::character::combatStance) ||
-        *(unsigned*)(root + field::character::stateFlags) == 0x20 ||
+        *(unsigned*)(root + field::character::stateFlags) == 0x20 || // a power/command motion in progress (179E40)
         *(uintptr_t*)(root + field::character::actionCallback) ||
         *(unsigned char*)(bh + field::behaviour::interactionLatch) ||
         *(unsigned char*)(bh + field::behaviour::pressBlocked))

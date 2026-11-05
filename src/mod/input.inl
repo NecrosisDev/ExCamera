@@ -537,8 +537,8 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 !(gone && GetTickCount64() - gone >= 2000))
                 return 0;
             if (!layout.optionalGroupAvailable("nativeSettings")) {
-                modMessage(NoticeKind::warning, FP_SHOWN_NAME L": in-game Mod Settings is unavailable on this Exanima version; "
-                                                L"first-person.ini remains active.");
+                showNotice(FP_SHOWN_NAME L": in-game Mod Settings is unavailable on this Exanima version; "
+                                         L"first-person.ini remains active.");
                 return 0;
             }
             setCursorFreeBit(cursorFreeBit, !cursorFreeBitSet(cursorFreeBit));
@@ -546,11 +546,8 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (wp == VK_F12) {
-            // Off -> neon marks -> diagnostics (what each blood test decided, as colours) -> off.
-            const bool wasNeon = woundDebug.load(std::memory_order_relaxed), wasDiag = bloodDiagnose.load(std::memory_order_relaxed);
-            const bool next = !wasNeon && !wasDiag, diag = wasNeon && !wasDiag;
+            const bool next = !woundDebug.load(std::memory_order_relaxed);
             woundDebug.store(next, std::memory_order_relaxed);
-            bloodDiagnose.store(diag, std::memory_order_relaxed);
             const wchar_t* poseNames[] = { L"Open", L"Fist", L"Hilt", L"Hold", L"Flat", L"Limp" };
             const int pL = std::clamp(trackedPlayerPoseLeft.load(), 0, 5);
             const int pR = std::clamp(trackedPlayerPoseRight.load(), 0, 5);
@@ -558,12 +555,12 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             const unsigned dCount = activeDripsCount.load();
             const int bSat = int(activeWeaponBloodMax.load() * 100.f);
             wchar_t msg[256];
-            swprintf_s(msg, L"%s: %s | Wounds: %u | Drips: %u | Blade blood: %d%% | Hands: [L:%s R:%s]",
+            swprintf_s(msg, L"%s: %s | Wounds: %u | Drips: %u | Blood: %d%% | Hands: [L:%s R:%s]",
                        FP_SHOWN_NAME,
-                       next ? L"Debug ON (neon)" : diag ? L"Debug DIAGNOSTICS (green ok, yellow out of window, magenta height, cyan not a floor, blue box)" : L"Debug OFF (natural)",
+                       next ? L"Debug ON (neon)" : L"Debug OFF (natural)",
                        wCount, dCount, bSat,
                        poseNames[pL], poseNames[pR]);
-            modMessage(NoticeKind::info, msg);
+            showNotice(msg, 3500, NoticeKind::info);
             return 0;
         }
         if (wp == VK_ESCAPE) releaseInput();
@@ -677,7 +674,7 @@ static bool cachedWindowClient(HWND w, RECT& client, RECT* screenClip = nullptr,
 static BOOL CALLBACK findWindow(HWND w, LPARAM out) {
     DWORD pid = 0;
     GetWindowThreadProcessId(w, &pid);
-    if (pid == GetCurrentProcessId() && IsWindowVisible(w) && !GetWindow(w, GW_OWNER) &&
+    if (pid == GetCurrentProcessId() && w != noticeWindow && IsWindowVisible(w) && !GetWindow(w, GW_OWNER) &&
         !consoleWindow(w)) {
         *reinterpret_cast<HWND*>(out) = w;
         return FALSE;
@@ -1760,7 +1757,7 @@ static fp::SwingHands swingHands(uintptr_t root, fp::OriginCue cue, int motion) 
         if (!w) s.slot = -1;
     }
     const uintptr_t table = gameAt(fp::sig::gripTable);
-    const uintptr_t stride = field::grip::stride;
+    constexpr uintptr_t stride = 0xb8;
     uintptr_t entry = s.slot == 1 ? table + 5 * stride
                                   : (s.slot == 0 ? *reinterpret_cast<const uintptr_t*>(root + field::character::gripEntry) : 0);
     if (entry < table || entry >= table + 6 * stride || (entry - table) % stride) entry = 0;
@@ -1826,12 +1823,12 @@ static void publishCue(uintptr_t self) {
     if (attackCue && getAim(self, a)) {
         in.owned = true;
         in.combat = *reinterpret_cast<const unsigned char*>(root + field::character::combatStance) != 0;
-        in.upright = (*reinterpret_cast<const unsigned*>(root + field::character::stateFlags) & 0x40204) == 0; // the game's own mask (BFF96)
+        in.upright = !fp::downState(*reinterpret_cast<const unsigned*>(root + field::character::stateFlags)); // not down or dead (& 0xA00)
         in.attackHeld = (*reinterpret_cast<const unsigned*>(gameAt(fp::sig::buttonWord)) & 1) != 0;
         in.alternateHeld = (*reinterpret_cast<const unsigned*>(gameAt(fp::sig::keyWord)) & 0x80) != 0;
         in.pressBlocked = *reinterpret_cast<const unsigned char*>(self + field::behaviour::pressBlocked) != 0;
         in.modifierHeld = attackSideKey && (GetAsyncKeyState(attackSideKey) & 0x8000);
-        in.wideThreshold = *reinterpret_cast<const int*>(root + field::character::gripFlags) != 0;
+        in.wideThreshold = *reinterpret_cast<const int*>(root + field::character::gripFlags) != 0; // the game's own test (C24C3)
         in.motion = *reinterpret_cast<const int*>(root + field::character::motion);
         in.clock = *reinterpret_cast<const unsigned*>(gameAt(fp::sig::gameClock));
         in.lastPress = *reinterpret_cast<const unsigned*>(self + field::behaviour::lastPressTime);

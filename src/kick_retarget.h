@@ -69,7 +69,7 @@ inline int nextClip(const Clip* clips, int count, int set, int last) {
 }
 
 // Tuning (Phase 3 adjusts these from play checks).
-inline constexpr float hitProgress = .35f;  // native kick progress where the clip's foot peak lands (assumed; measured later)
+inline constexpr float hitProgress = .35f;  // our own clip tuning: native kick progress where the clip's foot peak lands
 inline constexpr float blendIn = .12f, blendOut = .15f; // shares of the kick's progress spent fading in and out
 inline constexpr float maxPartStep = .35f;  // radians a target may lead the achieved part in one step (safety only)
 inline constexpr float maxHipStep = .10f;   // metres the hip target may lead the achieved hips in one step

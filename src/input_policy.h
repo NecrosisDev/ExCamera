@@ -248,10 +248,14 @@ template <class Query> inline int pickClear(const float* head, const float* orig
     for (float& v : d) v /= len;
     return blocked(head, d, len) ? 0 : 1;
 }
-// Attack wind-up, fed on the behaviour tick from the native swing: motion root+0x9B8 (5-12 accepted),
-// progress root+0xA28 (negative during the start dwell; the hit lands past 0.30, or 0.40 for the thrust,
-// motion 11) and the bounce/block bits root+0x1018 & 0x26. There is no hold-to-charge in the game, so the
-// wind-up is the progress up to the hit. phase: 0 idle, 1 winding, 2 fading.
+// Attack wind-up, fed on the behaviour tick from the native swing (docs/GAME-FIELDS-AUDIT.md): motion root+0x9B8,
+// 5-12 being the attacks (motionPlay clears defense and calls 162E80 only for these, 179F60-7A); progress root+0xA28
+// ((elapsed - blend-in +A24) / clip length, 1761D7-F7, 174E00), whose commit point is the game's own: 0.30 (defense
+// update 1669BA/1669CF, the parry window in 159A60 at 15B990/15BCAC), 0.4 for motion 11, the Stab (defense update
+// 1674FA-16750B, 16778D-16779A; motion names: the game's motion-set table in Resource.rpk at 0x19582826); and the
+// contact bits root+0x1018 & 0x6 (0x2 set
+// by 158EF0 and 157FF0 at 15859D, 0x4 by 159A60 at 15C212/15C242/15C26A), on which the arc ends. There is no
+// hold-to-charge in the game, so the wind-up is the progress up to the commit point. phase: 0 idle, 1 winding, 2 fading.
 struct Windup {
     int motion = 0, phase = 0;
     float p0 = 0, lastP = 0, fill = 0;
@@ -444,16 +448,16 @@ inline void windupStep(Windup& w, bool swinging, int motion, float p, unsigned b
         w.p0 = p < 0 ? p : 0;
         w.phase = 1;
         w.fill = 0;
-        w.bitsAtStart = bits & 0x26;
+        w.bitsAtStart = bits & 0x6;
     } // a new swing (or a chained one)
     w.lastP = p;
     if (w.phase != 1) return;
-    if ((bits & 0x26) & ~w.bitsAtStart) {
+    if ((bits & 0x6) & ~w.bitsAtStart) {
         w.phase = 2;
         w.fadeFrom = now;
         return;
-    } // bounced or blocked
-    const float strikeAt = motion == 11 ? 0.40f : 0.30f;
+    } // a contact bit came on: the swing met something
+    const float strikeAt = motion == 11 ? 0.40f : 0.30f; // the game's commit points (Stab 0.4, 1674FA)
     if (p >= strikeAt) {
         w.fill = 1;
         w.phase = 2;
@@ -997,8 +1001,10 @@ static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(M
 // (count) when the clip may play.
 // The gates (decoded in docs/GAME-FIELDS-AUDIT.md). busyMotion: character+9B8 is an attack the game's own starts
 // play (5 + n at 157240, 8 + n at 157700, 0xB at 157DC0, 0xC at 157BF0), the kick (0xD) or the jump (0x12).
-// state: character+DF4, a value: & 0x800 is dead (0x800 or 0xA00, the game's own test); anything but the base 0 is one of the game's
-// own reactions (8 while defending or in motion 4, 16B168/16B1B1; 0x8000 while motion 0xD plays, 16B09C).
+// state: character+DF4, a value: & 0x800 is dead (0x800 or 0xA00, the game's own test); 0 is standing; the other
+// standing values are the game busy with something of its own: 2 active defense (166604), 8 a reactive defense
+// motion (16B168/16B1B1), 0x20 a power/command motion (179E40, 16B2D6), 1 a settle step (16B470), 0x100 a stumble
+// recover (16B05C), 0x8000 motion 0xD, 0x10000/0x10004 motion 0x1F; down and stagger values are reactions.
 // balance: below balanceMax - 0.05 the game itself starts its recover motion (169B99 -> 179810), so a kick or jump
 // would be cut at once. No health, magic or stance requirement.
 inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, float balance, float balanceMax) {
@@ -1017,8 +1023,8 @@ inline const wchar_t* motionRefusalNotice(bool jump, MotionRefusal r) {
         return jump ? L"Jump: not while you are attacking, kicking or already jumping."
                     : L"Kick: not while you are attacking, jumping or already kicking.";
     case MotionRefusal::otherState:
-        return jump ? L"Jump: not while the game has you recovering, defending or in another reaction."
-                    : L"Kick: not while the game has you recovering, defending or in another reaction.";
+        return jump ? L"Jump: not while you are defending, casting, recovering or down."
+                    : L"Kick: not while you are defending, casting, recovering or down.";
     case MotionRefusal::balance:
         return jump ? L"Jump: wait until you've got your balance back." : L"Kick: wait until you've got your balance back.";
     case MotionRefusal::cursorFree:
