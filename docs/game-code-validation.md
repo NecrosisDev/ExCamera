@@ -76,6 +76,25 @@ Date: 2026-11-05.
 | Grip flags / weapon class (`gripFlags`) | +1068 | Written by grip selectors 1523F0 and 152660 (0, 0x80, 0x90, 0xC0) and 155030 (0x10). | **UNPROVEN** meaning of each value | Wide swing threshold, kick weapon gate |
 | Impact record | +C18 / +C20 / +C28 / +C38 | Written in physicalContact 1590D0 (a TMotileDynamics/TMotilePart method). Read by impact 159A60. | Location **PROVEN**, field meanings **PLAUSIBLE** | Blade drag, VR contacts, wound weapon lookup |
 
+### Knocked-down verdict (every value the mod's mask matches)
+
+The mod's mask 0xAC0 | 0x40204 | 0xA00 matches seven values the game stores in +DF4:
+
+| DF4 value | What it is (decoded) | Writers | Down? |
+|---|---|---|---|
+| 0x200 | **On the ground** after a fall. The dynamics step sets it when uprightness +12B0 < 0.3 and +1038 < 25. 156A90 also sets it and clears the gait. | 16A6BA (169200), 156AA8 (156A90), 156D04 (156B20) | **Yes, PROVEN** |
+| 0x300 | **Getting up.** Picks get-up motion 0xE or 0xF by facing, and balance refills faster (169A20). | 162D69 (162C10), 16A998 (169200) | **Yes, PROVEN** |
+| 0x600 | **Laid on the ground by a scripted game sequence.** 126050 plays motion 0x1D on the player, lays them down through 156A90 for 3 s, then sets 0x600. The dynamics step special-cases it at 16C050. | 126555 (126050) | **Yes, PROVEN** (on the ground; which story/arena event triggers it is unproven) |
+| 0x800 | **Dying**: a ragdoll that hasn't settled yet | 1564D6 (die routine 156480), 167EDF (167ED0) | **Yes (dead), PROVEN** |
+| 0xA00 | **Corpse**: physics switched off | 156E48 (156D20), F12C4 (F1220), 1A0A95 (1A0970) | **Yes (dead), PROVEN** |
+| 0xC0 | **Standing spell-hit stagger.** 17B050 stops walking and sets a 600 ms timer (+EA4). The dynamics step resets it to 0 when the timer runs out (16A581–16A5A6). | 17B0E1 (17B050, from spell-hit routine 17B100) | **No, PROVEN.** The mask wrongly treats it as down. |
+| 0x10004 | **Standing action.** Set while motion 0x1F is past 60 % (16B4C3). Bit 4 marks a one-shot callback (136BF0) as already queued, and before 60 % the value is 0x10000. | 16B504 (169200) | **No, PROVEN.** Matched only through bit 0x4 of 0x40204. |
+
+**Verdict:** the knocked-down camera is safe to turn back on if it tests `(DF4 & 0xA00) != 0`. That's exactly the
+on-the-ground, getting-up, scripted-down, dying and corpse states. The game makes the same test itself at 16990A,
+169AB7 and 168426. The current mask also fires on a 0.6 s spell stagger and on motion 0x1F, and its 0x40000 bit is
+never written.
+
 ## 2. The damage routine (wounds, hit reaction, damage flash)
 
 bodyDamage 159700(character, A in xmm1, B in xmm2, K in r9b) returns whether the character died. **PROVEN:**
@@ -111,7 +130,7 @@ depends on the camera hooks in section 4, whose game classes are identified ther
 | Spine follows aim | pose builder 1760F0, +12EA walking | "Walking" meaning **UNPROVEN** |
 | Third person: distance / shoulder / height / tight spaces / camera lag / in the way / follow look angle / Swap shoulder | level rays 1430F0/1431C0, camera fade 90C00 | Camera-only |
 | Third person: combat framing, Third person: aiming mode | combatStance +12FE (**PROVEN**, TAB), aimOpponent +E38 | Stance **PROVEN** |
-| Third person: knocked down, First person: knocked down | stateFlags masks 0xAC0 / 0x40204 / 0xA00 and lifeFlags 0x100 | The state part **PROVEN** (it catches on-the-ground, getting-up, dying and corpse). The lifeFlags 0x100 part is **WRONG**: it's a spell stun, not death. |
+| Third person: knocked down, First person: knocked down | stateFlags mask 0xAC0 \| 0x40204 \| 0xA00 and lifeFlags 0x100 | See the knocked-down verdict table below. The mask catches every down state but also two standing states (0xC0, 0x10004). Use `(DF4 & 0xA00) != 0` instead, the game's own on-the-ground test. The lifeFlags 0x100 part is **WRONG** (spell stun). |
 | F6 cycle | camera mode switching, reads lifeFlags 0x100 as dead | **WRONG** dead check |
 | Hit reaction | bodyDamage arguments | **PROVEN** inputs (labels wrong) |
 | Grab range, Rotate held object | drag manager, heldQuery 117AA0, dragRotate 118920 | Plumbing, **UNPROVEN** meaning not re-decoded |
