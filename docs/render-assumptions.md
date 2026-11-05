@@ -353,6 +353,37 @@ is PROVEN. Status labels below are as of this plan.
 Order: held item (proves the chain), armour and clothing (same chain on worn nodes), world object, level.
 Each ships on its own once proven; the rest stay off.
 
+### Step 1 findings: the item-texture composer (PROVEN from the binary, 2026-11-05)
+
+- **Job.** The factory 0x20FB80 fills a job and queues the composer: `job+0x24 = 0x1EBC60` (0x20FBCD), size
+  `job+0/+4` (halved when `DAT_2AC040 < 3`), targets `job+0xC/+0x14/+0x1C = set+0x10/+0x18/+0x20` where
+  `set = factory+0x158` (0x20FCB4..0x20FCEC). Those are the three textures the item submit (0x200770) binds on
+  units 0-2, so `job+0xC` is the colour texture the item is drawn with. Entries: `job+0x2C` count, `job+0x30`
+  array of 0x1F0-byte entries (`+0` origin, `+8` size, `+0x10` uv scale, `+0x18` base texture, `+0x28`
+  pattern texture, `+0x3C` blade uv scale, `+0x40` layer count, layers at `+0x48 + 0x30*i`, `+0x1EC` flags).
+- **Layer material.** 0x2103D1..0x2103FC: `id = palette[row*9 + 0x8C]` (0 means 12, TSteelGen), then
+  `layer+0x50 = 0x1EAEE0(id)`: each layer holds the cached procedural material of its id. All 23 classes
+  share one colour draw (`vmt+0xD8 = 0x1E6CE0`), which uses the material's program `material+8`.
+- **Colour pass** (0x1EC038..0x1EC2B4): attaches `job+0xC` (glFramebufferTexture2D at 0x1EC063), colour mask
+  RGB only (0x1EC0AD), blend mode 0x203 = `glBlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)` (0x73E90 with the
+  factor table at 0x2AE220). Per entry: the base quad, then each layer in order with its mask
+  (`layer+0x48`) on unit 1, drawn by 0x1E6F00 when the entry has a pattern (`+0x28`), 0x1E7160 when the
+  layer has an overlay (`+0x70`, unit 8), else `vmt+0xD8`. The quad is 0x1EB910 (positions `origin ..
+  origin + size*scale`, texcoords `0 .. scale`) drawn by 0x1F9200, with `MPrj` = the matrix at 0x2ABC90
+  (maps 0..1 onto the target).
+- **What owns a texel.** Every material colour shader (Resource.rpk -> textures.flb, decoded with the same
+  key) writes `FragColor = vec4(colour, alpha)` with `alpha = texture(Tex1, vrTex).r`, the layer mask; the
+  pattern variants (`{?Mat.TexOpc?}`) multiply it by the pattern texture, and the blade (`steelbld_d`)
+  scales the mask's v by `UVScale`. So a texel's colour is a chain of alpha-over blends, and layer `l`'s
+  share is `a_l * prod(1 - a_k, k > l)`; the base keeps `prod(1 - a_k)`.
+- **Consequence for the build.** The id texture can be made exactly by replaying each layer through the
+  game's own material draw (so every variant computes its own alpha) into a target of ours, keeping per
+  texel the largest share and its layer's id: `best' = max(best*(1-a), a)`. No mask or pattern rule is
+  restated in our code.
+- **Texcoords at draw time.** Programs are linked by 0x1FA120 with fixed attribute locations: `vPos` 0,
+  `vTex` 1, `vNrm` 2, `vCol` 3, `vTx2` 4, `vTng` 6. `shading_v` passes `vrTex = vTex` (or `vriTex` with
+  `Mat.TexDsp`).
+
 ## The game's own shading, as decoded
 
 - `shading_f`: `layout(std140) uniform Material { MatDif, MatSpc, MatEmi, MatDrt, ... }`. Specular: per light
