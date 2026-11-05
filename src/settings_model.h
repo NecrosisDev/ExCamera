@@ -126,8 +126,10 @@ enum : int {
     count
 };
 }
-// Whether the game's own material data (steel, wood, leather...) is decoded; until it is, the held, armour,
-// object and level detail rows are inactive and their effects draw nothing (colourMaterialGuesses, wounds.inl).
+// Held-item detail takes each pixel's material from the game's own item composer (mod/material_ids.inl,
+// docs/render-assumptions.md). Armour, object and level detail are not yet built on the game's data: until they
+// are, their rows are inactive and their effects draw nothing (colourMaterialGuesses, wounds.inl).
+inline constexpr bool heldMaterialDataDecoded = true;
 inline constexpr bool materialDataDecoded = false;
 // Whether the helmet view is shaped by the helmet's own geometry; until it is, Helmet view is inactive (it had
 // treated anything within 18 cm of the eye as helmet).
@@ -652,10 +654,12 @@ struct ModSettings {
         if ((row == setting::cueSize || row == setting::cueOpacity || row == setting::cueThrust) &&
             !attackCue)
             return L"Enable Attack wind-up arc to use this setting.";
-        // These four choose each surface's material from its colour, a guess, not game data; they stay off
-        // until the game's own material data is decoded (docs/render-assumptions.md, mod/wounds.inl).
-        if (!materialDataDecoded && (row == setting::heldDetail || row == setting::armourDetail ||
-                                     row == setting::objectDetail || row == setting::levelDetail))
+        // These read each surface's material from the game's own data; until a row's is decoded it stays off
+        // (docs/render-assumptions.md, mod/material_ids.inl).
+        if constexpr (!heldMaterialDataDecoded)
+            if (row == setting::heldDetail) return L"Off until the game's own material data is decoded.";
+        if (!materialDataDecoded && (row == setting::armourDetail || row == setting::objectDetail ||
+                                     row == setting::levelDetail))
             return L"Off until the game's own material data is decoded.";
         if (!helmetShapeDecoded && row == setting::helmetVisor)
             return L"Off until the helmet's own shape is used.";

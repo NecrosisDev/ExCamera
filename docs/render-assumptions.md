@@ -46,7 +46,7 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 | Hide helmet and hair (`View/Helmet`) — see also "Headwear reads" below | Skinned mesh layout and tags (above); material face ranges; descriptor `material+0x68` (+0x14 indices); `renderer+0x80` configuration (+0xC uniforms, +0x14 sample location) | Mesh offsets PROVEN (0xD9350/0x69520/0x5E340); headwear functions BYTE-EXACT (headwearRender); descriptor `+0x14` and renderer `+0x80/+0xC/+0x14` UNPROVEN in this audit | replay under cueLock, restored raw (not audited per pass) | Mostly PROVEN; the descriptor and renderer-uniform reads are UNPROVEN. Not gated: they are read only inside byte-exact owners whose code is unchanged, and a wrong value fails the draw closed (the native draw runs). Flagged for the audit thread |
 | Helmet view (`View/HelmetView`) | Whether headwear was seen (the headwear path) | as Hide helmet | audit clean | as above |
 | See yourself through walls (`View/PlayerGhost`) | Highlight pass 0x4F1D0 hook; replays native bind 0x73F20, per-node submit `material+0x80`, part draw `part+0x90(part+0x98)` | Pass, camera pass, bind and framebuffer bind BYTE-EXACT (silhouette); `+0x80`/`+0x90` checked at runtime to equal contracted 0x201630/0x6B8B0; cache restore PROVEN (6FC30) | Audit found the blend leak (fixed 478b214); cache restored (7abc04a) | PROVEN |
-| Held item detail (`View/HeldItemDetail`) — **off: colour material guess** | Same replay mask; held node `renderTransform`, `sector+0x64` origin; material kind from a readback of unit-0 texture | Replay PROVEN; `sceneNode::renderTransform`, `sector::origin` WITNESSED; material kind is OURS | as above | Core PROVEN. **Light** (light-node `+0x210/+0x21C/+0x224`, sector list `+0x130`, origin `+0x64`): UNPROVEN, **gated off**. **Wear and dirt** (item record: `node+0x180` id, database rows `+0x10/+0x18`, row `+0x8/+0xC`): UNPROVEN, **gated off**. Weapon blood spot source: see Wounds |
+| Held item detail (`View/HeldItemDetail`) — **material from game data (2026-11-05), not yet seen in game** | Same replay mask; held node `renderTransform`, `sector+0x64` origin; per-texel material id from the game's item composer (`materialIds` group, mod/material_ids.inl), drawn into the mask's A with the game's own vertex shader | Replay PROVEN; `sceneNode::renderTransform`, `sector::origin` WITNESSED; material ids PROVEN (composer decode below, whole-body contracts); the look per material is OURS | as above | Core PROVEN. **Light** (light-node `+0x210/+0x21C/+0x224`, sector list `+0x130`, origin `+0x64`): UNPROVEN, **gated off**. **Wear and dirt** (item record: `node+0x180` id, database rows `+0x10/+0x18`, row `+0x8/+0xC`): UNPROVEN, **gated off**. Weapon blood spot source: see Wounds |
 | Armour and clothing detail (`View/ArmourDetail`) — **off: colour material guess** | Same as held items, for worn pieces | as above | as above | as above (same gates) |
 | World object detail (`View/ObjectDetail`) — **off: colour material guess** | Same, for nearby placed objects | as above | as above | as above (same gates) |
 | Level detail (`View/LevelDetail`) — **off: colour material guess** | People within 4 m (`worldObject::characters`); the two nearest lamps (light-node fields) | Roster WITNESSED; lamps UNPROVEN | audit clean | Surface detail PROVEN (image only, OURS). **Lamps gated off** |
@@ -226,7 +226,7 @@ under the release rule they are off unless proven (`colourMaterialGuesses = fals
 
 | Where | Guess | State |
 |---|---|---|
-| Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Off**: the held/worn/object mask replay and the texture readback do not run, so these three detail rows draw nothing |
+| Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Removed** (2026-11-05): held items take each texel's material from the game (step 2-4 below); the readback and every colour rule are deleted. Armour and object detail stay off until their step |
 | Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Off**: level detail draws nothing |
 | Reflections (`ssrShader`) | Floor reflectivity by colour class (478b214) | **Removed**, with the whole Reflections effect (Hunter, 2026-11-05): the game's own reflections stay |
 | Helmet view (`finishShader` visor) | "Anything within 18 cm of the eye is helmet" (a depth guess) | **Off**, greyed out, until the helmet's own geometry shapes it |
@@ -383,6 +383,28 @@ Each ships on its own once proven; the rest stay off.
 - **Texcoords at draw time.** Programs are linked by 0x1FA120 with fixed attribute locations: `vPos` 0,
   `vTex` 1, `vNrm` 2, `vCol` 3, `vTx2` 4, `vTng` 6. `shading_v` passes `vrTex = vTex` (or `vriTex` with
   `Mat.TexDsp`).
+
+### Steps 2-4 built (2026-11-05): held items
+
+- **Hook.** `materialIds` optional group (tools/targets.json, native_contracts.json): the composer 0x1EBC60 is
+  hooked; its quad, draw and stream helpers, the three layer draws, the blend-mode and program caches, the unit
+  bind and the material cache are whole-body contracted. The group needs `silhouette`; withheld, held detail draws
+  nothing.
+- **Ids.** After the composer returns, each entry's base takes its rectangle (id 0), then each layer is drawn by
+  the game's own colour draw (0x1E6CE0, or 0x1E6F00 with a pattern, 0x1E7160 with an overlay) into a target of
+  ours with blending off, and a combine pass keeps the larger of `best * (1 - a)` and `a`. The result is an R8
+  texture keyed by the game's colour texture object (job+0xC) and its GL name; 255 outside every entry. A layer
+  whose material is not in the game's cache (`DAT_10056B030`) gets id 0, one whose class does not draw through
+  0x1E6CE0 is left out. Budget 96 MB, oldest dropped.
+- **Draw.** In the held replay, after a part's G pass, unit 0's cached object (the item submit binds set+0x10
+  there) finds its ids; a second program built from the game program's own vertex shader object (attribute
+  locations as 0x1FA120 binds them, uniform values and block bindings copied from the game's program) writes the
+  id at `vrTex` (or `vriTex`) into the mask's A.
+- **Looks.** `lookOf` in the finish shader maps ids to our looks (cloth 1-6, leather and suede 7-10, chain 11,
+  steel, plate, blade, iron, copper, wired grip 12-13/15-16/19-22, paint 14/25, wood 17-18; gemstone 23, resin 24,
+  the base and none get no detail). Which material a texel is: the game's. How it looks: OURS.
+- **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),
+  parts drawn with ids and misses. Parallax (`Mat.TexDsp`) items read ids at the unshifted texcoord.
 
 ## The game's own shading, as decoded
 

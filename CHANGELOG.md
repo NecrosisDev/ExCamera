@@ -4,6 +4,7 @@ v0.3.0 (revision 60)
 
 - Fixed level loading hitches and stuttering: eliminated synchronous shader double-compilation in glShaderSource, gated sector traversals and roster scans during level population, precompiled wound/fire/bake shaders, paused worker disk logging while loading, and generated procedural stone textures asynchronously on a background worker thread.
 - Removed the mod's Screen-space reflections: the game already draws its own reflections from each surface's specular data, and ours added a second, guessed one on top. An old `View/ScreenSpaceReflections` value is ignored.
+- Held-item detail takes each pixel's material from the game's own item textures (the procedural material of every layer the game composes), no longer from colour. Armour, object and level detail stay off until they are rebuilt the same way.
 - Contact shadows now darken evenly instead of fading out on bright pixels; they are a visual addition on top of the game's own occlusion.
 - Fixed procedural wounds and impact feedback: hooked damage and physical impact detours to enable procedural cuts, blunt bruises, bloody weapon drips, directional camera impact kicks, and damage flash vignettes.
 - Fixed finger posing and sector transfers: activated dynamic stack node movement hook to prevent native stack overflow crashes and enable full finger bone physics drive.

@@ -676,6 +676,62 @@
       "note": "FUN_100025D80: the engine log procedure DAT_1002AB6B0 holds once the engine is up (level, source, text); level 4 logs and shows a timed line on screen",
       "hook": false,
       "optionalGroup": "engineLog"
+    },
+    "itemComposer": {
+      "rva": "0x1ebc60",
+      "note": "FUN_1001EBC60(job): composes an item's colour, normal and specular textures; the factory 0x20FB80 queues it in job+0x24 (0x20FBCD). Colour pass 0x1EC038-0x1EC2B4 into job+0xC (set+0x10): per entry the base quad, then each layer alpha-blended (0x203) with its mask on unit 1. Hooked: after it returns, its layers are replayed into the mod's material-id texture",
+      "optionalGroup": "materialIds",
+      "hook": true
+    },
+    "composerQuad": {
+      "rva": "0x1eb910",
+      "note": "FUN_1001EB910(entry, &entry+8, &entry+0x10): writes the composer's client-side quad (positions at DAT_10056EBF0: origin .. origin + size * scale; texcoords at DAT_10057ABF0: 0 .. scale), as the composer does before each entry's layers",
+      "optionalGroup": "materialIds"
+    },
+    "composerQuadDraw": {
+      "rva": "0x1f9200",
+      "note": "FUN_1001F9200: draws the composer's quad (glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT) over the indices at 0x2E9EA0), after each layer",
+      "optionalGroup": "materialIds"
+    },
+    "composerStreams": {
+      "rva": "0x1f9300",
+      "note": "FUN_1001F9300(flags): the vertex-stream state cache (DAT_10049B510); the composer sets 0x11 (position and texcoord) at 0x1EBCA0",
+      "optionalGroup": "materialIds"
+    },
+    "layerColourDraw": {
+      "rva": "0x1e6ce0",
+      "note": "FUN_1001E6CE0(material, entry, &layer+0x48, job): every procedural material's colour draw (vmt+0xD8 of all 23 classes); binds its textures from unit 2, uses its program material+8 and sets its uniforms (MatCol from the layer +0x5C)",
+      "optionalGroup": "materialIds"
+    },
+    "layerPatternDraw": {
+      "rva": "0x1e6f00",
+      "note": "FUN_1001E6F00: the colour draw the composer uses when the entry has a pattern (+0x28): the material's pattern program (+0x80, {?Mat.TexOpc?}) with the pattern on the unit after its textures, else vmt+0xD8",
+      "optionalGroup": "materialIds"
+    },
+    "layerOverlayDraw": {
+      "rva": "0x1e7160",
+      "note": "FUN_1001E7160: the colour draw for a layer with an overlay (+0x70, unit 8): the material's program +0xA8, else vmt+0xD8",
+      "optionalGroup": "materialIds"
+    },
+    "blendModeSet": {
+      "rva": "0x73e90",
+      "note": "FUN_100073E90(mode): the blend-mode cache (DAT_1002AE250); 0x100 disables blending, otherwise glBlendFunc(table[mode >> 8 & 15], table[mode & 15]) from the factor table at 0x2AE220 (0x203 = SRC_ALPHA, ONE_MINUS_SRC_ALPHA)",
+      "optionalGroup": "materialIds"
+    },
+    "programUse": {
+      "rva": "0x1f8fc0",
+      "note": "FUN_1001F8FC0(program): glUseProgram through the cache DAT_10058EC30",
+      "optionalGroup": "materialIds"
+    },
+    "textureUnitBind": {
+      "rva": "0x6fc30",
+      "note": "FUN_10006FC30(unit, texture object, 0): binds through the unit cache DAT_10049B600 (16-byte entries: object, GL target)",
+      "optionalGroup": "materialIds"
+    },
+    "proceduralMaterial": {
+      "rva": "0x1eaee0",
+      "note": "FUN_1001EAEE0(id, 0, 0): creates and caches (DAT_10056B030[id]) the procedural material of id 1-25 through the jump table at 0x32FC08; the factory stores its result at layer+0x50 (0x2103F0)",
+      "optionalGroup": "materialIds"
     }
   },
   "returns": {
@@ -1134,6 +1190,21 @@
       "rva": "0x2ab6b0",
       "note": "DAT_1002AB6B0: the engine log procedure (level, source, text: AnsiStrings); FUN_100026CB0 stores FUN_100025D80 in it at 0x26D6F and about 370 call sites log through it",
       "optionalGroup": "engineLog"
+    },
+    "proceduralMaterials": {
+      "rva": "0x56b030",
+      "note": "DAT_10056B030: FUN_1001EAEE0's cache, one material pointer per id (index = id, 1-25)",
+      "optionalGroup": "materialIds"
+    },
+    "blendModeCache": {
+      "rva": "0x2ae250",
+      "note": "DAT_1002AE250: the blend mode FUN_100073E90 set last",
+      "optionalGroup": "materialIds"
+    },
+    "programCache": {
+      "rva": "0x58ec30",
+      "note": "DAT_10058EC30: the program FUN_1001F8FC0 bound last",
+      "optionalGroup": "materialIds"
     }
   },
   "slots": {
@@ -1430,7 +1501,21 @@
     "textureUnitActive",
     "textureUnitCache",
     "engineLogger",
-    "engineLog"
+    "engineLog",
+    "itemComposer",
+    "composerQuad",
+    "composerQuadDraw",
+    "composerStreams",
+    "layerColourDraw",
+    "layerPatternDraw",
+    "layerOverlayDraw",
+    "blendModeSet",
+    "programUse",
+    "textureUnitBind",
+    "proceduralMaterial",
+    "proceduralMaterials",
+    "blendModeCache",
+    "programCache"
   ],
   "reviewed_signatures": [
     {
@@ -10705,6 +10790,281 @@
       "addend": 0,
       "known_rva": "0x25d80",
       "pattern": "55 48 89 E5 48 8D 64 24 A0 48 89 5D C8 89 CB 48 89 55 F8 4C 89 45 F0 48 8B 4D F8 E8 ?? ?? ?? ?? 48 8B 4D F0 E8 ?? ?? ?? ?? 48 C7 45 E8 00 00 00 00"
+    },
+    {
+      "target": "itemComposer",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1ebc60",
+      "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 A0 49 89 CC 80 3D ?? ?? ?? ?? 00"
+    },
+    {
+      "target": "itemComposer",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1ebc60",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 56 ?? 57 ?? 8D ?? ?? A0 ?? 89 ?? 80 ?? ?? ?? ?? ?? 00"
+    },
+    {
+      "target": "composerQuad",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1eb910",
+      "pattern": "48 89 C8 48 8D 48 04 44 8B 08 44 89 0D ?? ?? ?? ?? 8B 09 89 0D ?? ?? ?? ??"
+    },
+    {
+      "target": "composerQuad",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1eb910",
+      "pattern": "?? 89 ?? ?? 8D ?? 04 ?? 8B ?? ?? 89 ?? ?? ?? ?? ?? 8B ?? 89 ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "composerQuadDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f9200",
+      "pattern": "48 8D 64 24 D8 80 3D ?? ?? ?? ?? 00 74 12 C7 05 ?? ?? ?? ?? 04 00 00 00"
+    },
+    {
+      "target": "composerQuadDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f9200",
+      "pattern": "?? 8D ?? ?? D8 80 ?? ?? ?? ?? ?? 00 74 12 C7 ?? ?? ?? ?? ?? 04 00 00 00"
+    },
+    {
+      "target": "composerStreams",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f9300",
+      "pattern": "53 48 8D 64 24 D0 89 CB 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 74 0D"
+    },
+    {
+      "target": "composerStreams",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f9300",
+      "pattern": "53 ?? 8D ?? ?? D0 89 ?? ?? 8D ?? ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 ?? 74 0D"
+    },
+    {
+      "target": "layerColourDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e6ce0",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 C0 48 89 CE 48 89 D7 4C 89 C3 49 8B 01 48 89 44 24 30 83 7E 08 00 75 0D 48 89 F1 48 8B 06 FF 90 D0 00 00 00 90 8B 86 50 01 00 00 67 44 8D 60 FF"
+    },
+    {
+      "target": "layerColourDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e6ce0",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? C0 ?? 89 ?? ?? 89 ?? ?? 89 ?? ?? 8B ?? ?? 89 ?? ?? 30 83 ?? 08 00 75 0D ?? 89 ?? ?? 8B ?? FF ?? D0 00 00 00 90 8B ?? 50 01 00 00 67 ?? 8D ?? FF"
+    },
+    {
+      "target": "layerPatternDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e6f00",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 C0 48 89 CE 48 89 D7 4C 89 C3 49 8B 01 48 89 44 24 30 83 7E 08 00 75 0D 48 89 F1 48 8B 06 FF 90 D0 00 00 00 90 83 BE 80 00 00 00 00 75 1F"
+    },
+    {
+      "target": "layerPatternDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e6f00",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? C0 ?? 89 ?? ?? 89 ?? ?? 89 ?? ?? 8B ?? ?? 89 ?? ?? 30 83 ?? 08 00 75 0D ?? 89 ?? ?? 8B ?? FF ?? D0 00 00 00 90 83 ?? 80 00 00 00 00 75 1F"
+    },
+    {
+      "target": "layerOverlayDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e7160",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 C0 48 89 CE 48 89 D7 4C 89 C3 49 8B 01 48 89 44 24 30 83 7E 08 00 75 0D 48 89 F1 48 8B 06 FF 90 D0 00 00 00 90 83 BE A8 00 00 00 00 75 1F"
+    },
+    {
+      "target": "layerOverlayDraw",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1e7160",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? C0 ?? 89 ?? ?? 89 ?? ?? 89 ?? ?? 8B ?? ?? 89 ?? ?? 30 83 ?? 08 00 75 0D ?? 89 ?? ?? 8B ?? FF ?? D0 00 00 00 90 83 ?? A8 00 00 00 00 75 1F"
+    },
+    {
+      "target": "blendModeSet",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x73e90",
+      "pattern": "48 8D 64 24 D8 89 4C 24 20 89 C8 3B 05 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 90"
+    },
+    {
+      "target": "blendModeSet",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x73e90",
+      "pattern": "?? 8D ?? ?? D8 89 ?? ?? 20 89 ?? 3B ?? ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 90"
+    },
+    {
+      "target": "programUse",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f8fc0",
+      "pattern": "53 48 8D 64 24 E0 89 C8 3B 05 ?? ?? ?? ?? 74 10 89 C3 89 D9 FF 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "programUse",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1f8fc0",
+      "pattern": "53 ?? 8D ?? ?? E0 89 ?? 3B ?? ?? ?? ?? ?? 74 10 89 ?? 89 ?? FF ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "textureUnitBind",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x6fc30",
+      "pattern": "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "textureUnitBind",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x6fc30",
+      "pattern": "53 56 ?? 8D ?? ?? D8 89 ?? ?? 89 ?? 89 ?? ?? C1 ?? 04 ?? 8D ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "proceduralMaterial",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1eaee0",
+      "pattern": "53 57 56 48 8D 64 24 E0 89 CB 44 88 C6 31 C0 89 D8 48 8D 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "proceduralMaterial",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1eaee0",
+      "pattern": "53 57 56 ?? 8D ?? ?? E0 89 ?? ?? 88 ?? 31 ?? 89 ?? ?? 8D ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "proceduralMaterials",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 20,
+      "insn_end": 24,
+      "addend": 0,
+      "known_rva": "0x56b030",
+      "pattern": "53 57 56 48 8D 64 24 E0 89 CB 44 88 C6 31 C0 89 D8 48 8D 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "blendModeCache",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 13,
+      "insn_end": 17,
+      "addend": 0,
+      "known_rva": "0x2ae250",
+      "pattern": "48 8D 64 24 D8 89 4C 24 20 89 C8 3B 05 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 90"
+    },
+    {
+      "target": "programCache",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 10,
+      "insn_end": 14,
+      "addend": 0,
+      "known_rva": "0x58ec30",
+      "pattern": "53 48 8D 64 24 E0 89 C8 3B 05 ?? ?? ?? ?? 74 10 89 C3 89 D9 FF 15 ?? ?? ?? ??"
     }
   ]
 }
