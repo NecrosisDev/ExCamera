@@ -1579,8 +1579,8 @@ static DWORD runSession() {
                     aim.valid = false;
                     ReleaseSRWLockExclusive(&aimLock);
                 } // no nav frame ended the blend (parked, loading): end it as F6 did
-                f8WindowTick(cursorFreeNow() &&
-                                 (InterlockedCompareExchange(&active, 0, 0) || title),
+                f8WindowTick(fp::settingsWindowWanted(cursorFreeMask.load(std::memory_order_relaxed), cursorFreeBit,
+                                                      InterlockedCompareExchange(&active, 0, 0) != 0, title),
                              gameWindow() != nullptr);
             }
             rehookWindow();
