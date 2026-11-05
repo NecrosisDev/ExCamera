@@ -239,6 +239,10 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return L"";
     case setting::fpKnockdown:
         return settings.fpKnockdown ? L"Show third" : L"Stay first";
+    case setting::padKick: return fp::padButtonName(settings.padKick);
+    case setting::padJump: return fp::padButtonName(settings.padJump);
+    case setting::padGuard: return fp::padButtonName(settings.padGuard);
+    case setting::padShoulder: return fp::padButtonName(settings.padShoulder);
     case setting::parryDirection:
         return settings.parryDirection == fp::parryAssisted ? L"Drag: assisted"
                : settings.parryDirection == fp::parryStrict ? L"Drag: strict"
@@ -293,6 +297,10 @@ const wchar_t* settingLabel(int id) {
     case setting::tpLookFollow: return L"Follow look angle";
     case setting::fpKnockdown: return L"Knocked down";
     case setting::parryDirection: return L"Parry direction";
+    case setting::padKick: return L"Kick button";
+    case setting::padJump: return L"Jump button";
+    case setting::padGuard: return L"Guard button";
+    case setting::padShoulder: return L"Shoulder button";
     case setting::leanKey: return L"Lean";
     case setting::holdHeading: return L"Heading correction";
     case setting::autoRecenter: return L"Auto-center";
@@ -402,6 +410,10 @@ const wchar_t* settingTip(int id) {
     case setting::rotateHeldKey: return L"Hold and move the mouse to turn what you're holding. The view stays still meanwhile. Delete clears the key.";
     case setting::kickKey: return L"Plays the game's own kick when you are not mid-swing or reacting to a hit. Not a key the game uses (Alt is its thrust). Delete clears the key.";
     case setting::jumpKey: return L"Plays the game's own jump when you are not mid-swing or reacting to a hit. Not a key the game uses. Delete clears the key.";
+    case setting::padKick: return L"Xbox-style controller button for the game's own kick. A button your Steam layout also uses does both: Y opens the inventory outside combat.";
+    case setting::padJump: return L"Xbox-style controller button for the game's own jump. The right-stick click does nothing else in the game's Steam layout.";
+    case setting::padGuard: return L"Needs Block on Hold RMB. Held, guards like right mouse; with a Parry direction, push the right stick to pick the parry. Pick a button you do not need in combat.";
+    case setting::padShoulder: return L"Third person: an Xbox-style controller button that swaps the camera to your other shoulder.";
     case setting::parryDirection: return L"Needs Block on Hold RMB. Holding RMB keeps the view still and a drag picks the parry: up, left, right, down-left, down-right. Automatic: the game picks. Assisted: your drag picks; a small drag leaves it to the game. Strict: you parry only if your drag matches the incoming swing.";
     case setting::fpKnockdown: return L"Show third: knocked down in first person, the view goes to third person and back a moment after you are up. F6 meanwhile keeps your choice; death never switches.";
     case setting::tpLookFollow: return L"Out of combat, looking down lifts the camera and moves it back so the ground ahead shows; looking up brings it closer and lower. Walls still pull it in.";

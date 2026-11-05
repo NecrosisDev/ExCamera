@@ -1076,6 +1076,11 @@ static std::atomic<int> rotateHeldKey{0x02};
 static std::atomic<int> kickKey{0}, jumpKey{0}; // motions.inl; unbound until the player picks a key
 static std::atomic<int> swapShoulderKey{0}; // [Input] SwapShoulderKey: third person, the other shoulder
 static std::atomic<bool> motionKickRequested{false}, motionJumpRequested{false}; // a key press claimed by the window handler, taken on the game thread
+// Controller buttons (fp::PadButton, [Controller] in the ini) for the same actions; gamepad.inl reads the pad on
+// the game thread. padGuardDown: the Guard button held this poll (combat.inl treats it as right mouse).
+static std::atomic<int> padKickButton{fp::padY}, padJumpButton{fp::padRS}, padGuardButton{0}, padShoulderButton{0};
+static std::atomic<bool> padKickRequested{false}, padJumpRequested{false}, padGuardDown{false};
+static void padTick(uintptr_t root, uintptr_t bh, bool owned); // mod/gamepad.inl
 // Refused key presses by fp::MotionRefusal (status file), and the newest refusal for the worker's notice:
 // 1 + reason, plus motionNoticeJump for the jump (0 none).
 static std::atomic<unsigned> kickRefusals[size_t(fp::MotionRefusal::count)]{}, jumpRefusals[size_t(fp::MotionRefusal::count)]{};

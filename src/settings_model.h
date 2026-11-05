@@ -15,6 +15,7 @@
 #include <cwctype>
 #include "camera_motion.h"
 #include "input_policy.h"
+#include "gamepad.h"
 #include "held_object.h"
 namespace panel {
 // The first-person mod's own settings: shown on the F8 panel's Settings page, applied
@@ -130,6 +131,10 @@ enum : int {
     tpLookFollow,
     fpKnockdown,
     parryDirection,
+    padKick,
+    padJump,
+    padGuard,
+    padShoulder,
     count
 };
 }
@@ -165,9 +170,10 @@ inline unsigned rowCapability(int row) {
         return capViewEffects;
     case setting::woundMarks: return capWounds;
     case setting::bladeDrag: case setting::stabSink: case setting::bladeGain: return capBlades;
-    case setting::kickKey: return capKick;
-    case setting::jumpKey: return capJump;
-    case setting::fpDefense: case setting::tpDefense: case setting::parryDirection: return capManualDefense;
+    case setting::kickKey: case setting::padKick: return capKick;
+    case setting::jumpKey: case setting::padJump: return capJump;
+    case setting::fpDefense: case setting::tpDefense: case setting::parryDirection: case setting::padGuard:
+        return capManualDefense;
     default: return 0;
     }
 }
@@ -222,6 +228,9 @@ struct ModSettings {
     int fpDefense = 0, tpDefense = 0;               // automatic default, manual holds RMB
     int fpSwingSelection = 1, tpSwingSelection = 1; // mouse direction, or native facing
     int parryDirection = 0; // fp::ParryDirection: the game's parry, a right-mouse drag's, or the drag's only when it matches
+    // Controller buttons (fp::PadButton) for the mod's own actions. Y and the right-stick click do nothing in the
+    // Combat set of Steam's layout for Exanima; Guard (Manual defense's right mouse) and Swap shoulder start unbound.
+    int padKick = fp::padY, padJump = fp::padRS, padGuard = fp::padNone, padShoulder = fp::padNone;
     bool manualDefenseAvailable = false;            // runtime capability, not a saved row
     unsigned unavailable = 0, faulted = 0; // runtime: cap* features missing on this game build, or off after a fault
     bool scriptRuntimeAvailable = false;            // runtime capability: ScriptRuntime.dll is loaded
@@ -318,6 +327,12 @@ struct ModSettings {
         case setting::f6Cycle: f6Cycle = f6Cycle ? 0 : 1; break;
         case setting::fpKnockdown: fpKnockdown = fpKnockdown ? 0 : 1; break;
         case setting::parryDirection: parryDirection = (parryDirection + (delta < 0 ? 2 : 1)) % 3; break;
+        case setting::padKick: case setting::padJump: case setting::padGuard: case setting::padShoulder: {
+            int& button = row == setting::padKick ? padKick : row == setting::padJump ? padJump
+                          : row == setting::padGuard ? padGuard : padShoulder;
+            button = (button + (delta < 0 ? fp::padButtonCount - 1 : 1)) % fp::padButtonCount;
+            break;
+        }
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -609,6 +624,10 @@ struct ModSettings {
             return parryDirection == fp::parryAssisted ? L"Drag: assisted"
                    : parryDirection == fp::parryStrict ? L"Drag: strict"
                                                        : L"Automatic (the game's)";
+        case setting::padKick: return fp::padButtonName(padKick);
+        case setting::padJump: return fp::padButtonName(padJump);
+        case setting::padGuard: return fp::padButtonName(padGuard);
+        case setting::padShoulder: return fp::padButtonName(padShoulder);
         case setting::tpSwingSelection:
             return tpSwingSelection ? L"Mouse direction" : L"Native facing";
         case setting::idleCrosshair:
@@ -741,6 +760,10 @@ inline int iniHelmet(const wchar_t* t) {
 }
 inline const wchar_t* iniHelmetText(int v) {
     return v ? L"hide" : L"show";
+}
+inline int iniPadButton(const wchar_t* t) {
+    const int button = fp::padButtonFromText(t);
+    return button < 0 ? badText : button;
 }
 inline int iniHidden(const wchar_t* t) {
     return iniIs(t, L"hide") ? 1 : iniIs(t, L"show") ? 0 : badText;
@@ -1281,6 +1304,26 @@ inline const RowInfo& rowInfo(int row) {
          L"attacker's swing. Drag: assisted plays the parry you drag to; a small drag leaves it to the game. "
          L"Drag: strict parries only when your drag matches the game's answer to that swing. The pose is "
          L"chosen when the parry starts. Reach, timing and gear still decide if it works."},
+        {setting::padKick, L"Controller: kick", RowInfo::choice, &ModSettings::padKick, nullptr, L"Controller",
+         L"Kick", iniPadButton, fp::padButtonText,
+         L"An Xbox-style controller button that plays the game's own kick, as the Kick key does. The mod reads the "
+         L"controller itself, so a button your Steam controller layout also uses still does the game's action "
+         L"too: Y opens the inventory outside combat. Y and the right-stick click do nothing in combat in the "
+         L"game's own layout."},
+        {setting::padJump, L"Controller: jump", RowInfo::choice, &ModSettings::padJump, nullptr, L"Controller",
+         L"Jump", iniPadButton, fp::padButtonText,
+         L"An Xbox-style controller button that plays the game's own jump, as the Jump key does. The right-stick "
+         L"click does nothing anywhere in the game's own Steam controller layout."},
+        {setting::padGuard, L"Controller: guard", RowInfo::choice, &ModSettings::padGuard, nullptr, L"Controller",
+         L"Guard", iniPadButton, fp::padButtonText,
+         L"Needs Defense set to Manual. Held, it guards as holding right mouse does. With a Parry direction "
+         L"other than Automatic, push the right stick while guarding to pick the parry: up, left, right, "
+         L"down-left or down-right. Unbound by default: every button already does something in the game's "
+         L"own Steam layout, so pick one you do not need in combat."},
+        {setting::padShoulder, L"Controller: swap shoulder", RowInfo::choice, &ModSettings::padShoulder, nullptr,
+         L"Controller", L"SwapShoulder", iniPadButton, fp::padButtonText,
+         L"Third person: an Xbox-style controller button that moves the camera over your other shoulder, as the "
+         L"Swap shoulder key does. Unbound by default."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
@@ -1345,6 +1388,13 @@ inline void ModSettings::normalize() {
     if (tpSwingSelection != 0) tpSwingSelection = 1;
     if (f6Cycle != 1) f6Cycle = 0;
     if (fpKnockdown != 0) fpKnockdown = 1;
+    // One button, one of the mod's actions: a later duplicate in this order is unbound.
+    int* const pads[] = {&padKick, &padJump, &padGuard, &padShoulder};
+    for (size_t i = 0; i < std::size(pads); ++i) {
+        if (*pads[i] < fp::padNone || *pads[i] >= fp::padButtonCount) *pads[i] = fp::padNone;
+        for (size_t j = 0; j < i; ++j)
+            if (*pads[i] && *pads[i] == *pads[j]) *pads[i] = fp::padNone;
+    }
     const ModSettings defaults;
     for (int r = 0; r < setting::count; ++r) {
         const RowInfo& i = rowInfo(r);
@@ -1354,7 +1404,8 @@ inline void ModSettings::normalize() {
             // An effect strength in percent; the old Subtle and Strong (1 and 2) are 50 and 100.
             int& v = this->*i.value;
             v = v == 1 ? 50 : v == 2 ? 100 : std::clamp(v, 0, 100);
-        } else if (i.kind == RowInfo::choice && (this->*i.value < 0 || this->*i.value > (r == setting::vrTurning ? 3 : 2)))
+        } else if (i.kind == RowInfo::choice && i.fromText != iniPadButton &&
+                   (this->*i.value < 0 || this->*i.value > (r == setting::vrTurning ? 3 : 2)))
             this->*i.value = defaults.*i.value;
     }
     headSteady = headRoll = headPitch = headYaw = headBob = fp::fixedHeadStabilization;

@@ -751,6 +751,16 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("parry_assisted", parryAssisted.load());
     j.unum("parry_strict_matches", parryStrictMatches.load());
     j.unum("parry_strict_refusals", parryStrictRefusals.load());
+    // Controller: which XInput loaded, the pad in use (-1 none) and what it did. If a pad is plugged in and
+    // pad_index stays -1 or pad_buttons_seen stays 0, XInput is not seeing it (Steam Input may be holding it).
+    j.str("pad_xinput", padLibrary);
+    j.num("pad_index", padIndex.load());
+    j.unum("pad_buttons_seen", padButtonsSeen.load());
+    j.unum("pad_kicks", padKicks.load());
+    j.unum("pad_jumps", padJumps.load());
+    j.unum("pad_guard_polls", padGuardPolls.load());
+    j.unum("pad_parry_picks", padParryPicks.load());
+    j.unum("pad_shoulder_swaps", padShoulders.load());
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
     j.num("fov", selectedFov.load());
     j.boolean("settings_saved", !settingsSavePending() && pendingModsByModSave.load(std::memory_order_acquire) < 0);
