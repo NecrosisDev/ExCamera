@@ -4857,7 +4857,8 @@ static bool prepareSilhouetteTargets(gl::Api& g, fp::CueResources& r, int width,
 // as the game set it up, into our coverage texture (alpha, MAX-blended) with the scene's own depth attachment, so
 // only what the stain pass really covered is marked. Before the finish pass that coverage becomes 254 in the held
 // mask's alpha (markGameBloodKept), which the held detail and the wound pass leave exactly as the game drew it.
-static std::atomic<unsigned> gameBloodStainDraws{0}, gameBloodStainSkips{0}, gameBloodKeptFrames{0};
+static std::atomic<unsigned> gameBloodStainDraws{0}, gameBloodStainSkips{0}, gameBloodKeptFrames{0}, gameBloodOtherSamples{0},
+    gameBloodSizeMismatches{0};
 static void markGameBloodStain(gl::Api& g, fp::CueResources& r, void (*native)(uintptr_t), uintptr_t material) {
     if (!g.getAttachmentParameter || !g.genFramebuffers || !g.blendEquationSeparate || !g.blendFuncSeparate) return;
     GLint drawFbo = 0, viewport[4]{};
@@ -4868,7 +4869,13 @@ static void markGameBloodStain(gl::Api& g, fp::CueResources& r, void (*native)(u
         g.getAttachmentParameter(glc::drawFramebuffer, glc::depthAttachment, 0x8CD0 /*OBJECT_TYPE*/, &type);
         g.getAttachmentParameter(glc::drawFramebuffer, glc::depthAttachment, 0x8CD1 /*OBJECT_NAME*/, &name);
     }
-    const int width = viewport[0] + viewport[2], height = viewport[1] + viewport[3];
+    // The stain pass sets each sample's viewport before its draw (glViewport at 0x100B47 from the sample table); the
+    // held mask is drawn at sample 0's viewport, so only the draws at origin 0, 0 are taken, at that size.
+    if (viewport[0] != 0 || viewport[1] != 0) {
+        gameBloodOtherSamples.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    const int width = viewport[2], height = viewport[3];
     if (glGetError() != GL_NO_ERROR || drawFbo <= 0 || name <= 0 || (type != 0x8D41 && type != GL_TEXTURE) || width <= 0 ||
         height <= 0) {
         gameBloodStainSkips.fetch_add(1, std::memory_order_relaxed);
@@ -4935,6 +4942,18 @@ static void markGameBloodStain(gl::Api& g, fp::CueResources& r, void (*native)(u
 static void markGameBloodKept(gl::Api& g, fp::CueResources& r, const ViewProgramUniforms& u, const ViewFrame& frame) {
     const bool fits = r.gameBloodDrawn && r.gameBloodKeepProgram && r.silhouetteFbo && r.gameBloodTex &&
                       r.gameBloodWidth == r.silhouetteWidth && r.gameBloodHeight == r.silhouetteHeight;
+    if (r.gameBloodDrawn && !fits) {
+        gameBloodSizeMismatches.fetch_add(1, std::memory_order_relaxed);
+#if FP_DEV_TOOLS
+        static ULONGLONG logged = 0;
+        if (renderAuditOn() && GetTickCount64() - logged > 1000) {
+            logged = GetTickCount64();
+            renderAuditLog("game blood keep: not applied: coverage %dx%d, mask %dx%d, program %u, mask fbo %u",
+                           r.gameBloodWidth, r.gameBloodHeight, r.silhouetteWidth, r.silhouetteHeight, r.gameBloodKeepProgram,
+                           r.silhouetteFbo);
+        }
+#endif
+    }
     r.gameBloodDrawn = false;
     r.gameBloodClear = true;
     if (!fits) return;
