@@ -61,6 +61,15 @@ struct CueResources {
     unsigned woundProgram = 0, woundFbo = 0, woundQuadVao = 0, woundQuadVbo = 0;
     // Fire and smoke (fire.inl): its program; it draws through the wound pass's framebuffer and quad.
     unsigned fireProgram = 0;
+    // The floor blood layer (view_effects.inl bloodLayerUpdate): a top-down texture of blood thickness, source
+    // height and time around the player, its framebuffer, the program that lays marks into it, and the
+    // layer's bookkeeping: the window's centre texel, the height and time the texels are encoded against,
+    // the camera's last place (a jump clears the layer), and the world box of everything laid down.
+    unsigned bloodMapTex = 0, bloodMapFbo = 0, bloodSplatProgram = 0;
+    int bloodMapCentre[2]{};
+    float bloodMapBaseY = 0.f, bloodMapCamera[3]{}, bloodBox[6]{};
+    unsigned long long bloodMapEpoch = 0;
+    bool bloodAny = false, bloodMapKnown = false, bloodMapFailed = false;
     // Ambient occlusion and reflections render at half resolution: [0] occlusion, [1] reflection.
     unsigned halfFbo[2]{}, halfTex[2]{};
     // Their blend over frames, same size and lifetime: [effect][ping-pong]. historySlot
@@ -102,7 +111,7 @@ struct CueResources {
     bool viewLive() const {
         return viewVao || viewVbo || viewColor || viewDepth || viewDepthPrevious || offscreenFbo ||
                offscreenDepthFbo || timerQueries[0][0] ||
-               timerQueries[1][0] || timerQueries[2][0] || timerQueries[3][0] || aoProgram || ssrProgram || dofProgram || finishProgram || woundProgram || fireProgram || woundFbo || woundQuadVao || woundQuadVbo ||
+               timerQueries[1][0] || timerQueries[2][0] || timerQueries[3][0] || aoProgram || ssrProgram || dofProgram || finishProgram || woundProgram || fireProgram || woundFbo || woundQuadVao || woundQuadVbo || bloodMapTex || bloodMapFbo || bloodSplatProgram ||
                compositeProgram || resolveProgram || chainTex || chainFbo[0] || chainFbo[1] || dofCompositeProgram || dofFbo || dofTex || distanceProgram || distanceFbo || distanceTex || halfFbo[0] || halfFbo[1] || halfTex[0] || halfTex[1] ||
                historyFbo[0][0] || historyFbo[0][1] || historyFbo[1][0] || historyFbo[1][1] ||
                historyTex[0][0] || historyTex[0][1] || historyTex[1][0] || historyTex[1][1] ||
@@ -248,6 +257,11 @@ struct CueResources {
         retireProgram(g, distanceProgram);
         retireProgram(g, woundProgram);
         retireProgram(g, fireProgram);
+        retireProgram(g, bloodSplatProgram);
+        if (bloodMapFbo && g.deleteFramebuffers) g.deleteFramebuffers(1, &bloodMapFbo);
+        if (bloodMapTex) g.deleteTextures(1, &bloodMapTex);
+        bloodMapFbo = bloodMapTex = 0;
+        bloodAny = bloodMapKnown = bloodMapFailed = false;
         if (woundFbo && g.deleteFramebuffers) g.deleteFramebuffers(1, &woundFbo);
         if (woundQuadVao) g.deleteVertexArrays(1, &woundQuadVao);
         if (woundQuadVbo) g.deleteBuffers(1, &woundQuadVbo);

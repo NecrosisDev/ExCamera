@@ -21,6 +21,7 @@ for candidate in (str(ROOT), str(TOOLS)):
 import build  # noqa: E402
 import check_game  # noqa: E402
 import check_generated  # noqa: E402
+import check_shaders  # noqa: E402
 import native_contracts  # noqa: E402
 import release  # noqa: E402
 import run_cpp_tests  # noqa: E402
@@ -569,6 +570,30 @@ class BuildHelperTests(unittest.TestCase):
             run_cpp_tests.extra_sources_for(ROOT / 'tests/unit/core_headers_tests.cpp'),
             [],
         )
+
+
+class ShaderSourceTests(unittest.TestCase):
+    """The GLSL extraction check_shaders.py compiles from; the compile itself needs a GPU driver."""
+
+    def test_every_program_part_is_extracted(self):
+        sources = check_shaders.collect_sources()
+        names = {'viewVertexShader', 'viewPrelude', 'woundSkinVertex', 'woundSkinFragmentHead'}
+        for _, shared, body in check_shaders.VIEW_PROGRAMS:
+            names.update(n for n in (shared, body) if n)
+        names.update(body for _, body in check_shaders.BAKE_PROGRAMS)
+        for name in sorted(names):
+            self.assertIn(name, sources, name)
+            self.assertGreater(len(sources[name]), 40, name)
+        for _, _, body in check_shaders.VIEW_PROGRAMS:
+            self.assertIn('void main', sources[body], body)
+        # Split raw literals and the helper macro are joined: the wound pass reads both halves.
+        self.assertIn('woundCutShape', sources['FP_WOUND_GLSL_HELPERS'])
+        self.assertIn('bloodFilm', sources['woundShader'])
+        self.assertIn('gl_FragColor', sources['woundShader'])
+
+    def test_reversed_smoothstep_edges_are_flagged(self):
+        found = check_shaders.reversed_smoothsteps({'x': 'a = smoothstep(0.2, 0.8, t);\nb = smoothstep(1.0, 0.55, t);'})
+        self.assertEqual(found, ['x line 2: b = smoothstep(1.0, 0.55, t);'])
 
 
 if __name__ == '__main__':

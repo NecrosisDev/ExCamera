@@ -25,6 +25,14 @@ identifies the build by hash, and runs the signature, field-contract and VR chec
 Far rooms and attack variants use offsets no contract covers, so they stay off on any
 build not hashed in `src/native_build.h`.
 
+## Shaders
+
+Every GLSL program the mod builds, compiled and linked on this PC's OpenGL driver (a hidden
+window; no game, no packages). Errors come with the source line they point at; `-v` also prints
+driver warnings.
+
+    python tools/check_shaders.py
+
 ## Native validation and generation
 
 Use Python 3.10 or newer for native generation, with `pefile` and `capstone` installed. Keep the game

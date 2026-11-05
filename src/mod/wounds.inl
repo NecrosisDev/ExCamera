@@ -73,6 +73,10 @@ struct Wound {
     uintptr_t actor = 0;   // the character's scene node, once mapped (wounds_bake.inl)
     float drip = 0.f;      // counts up to the next drop of blood falling from a bleeding cut
     float scar = 0.f;      // a cut on the living closing into a scar: 0 open .. 1 a scar for good
+    float pool = 0.f;      // blood that has run out of it onto the floor (grows its pool); poolTick: time to the next pool mark
+    float poolTick = 0.f;
+    float spurt = 0.f;     // an artery's beat timer; spurts: beats left (set at the hit on a deep cut of a limb or neck)
+    uint8_t spurts = 0;
     uint8_t kind = 0;
 };
 
@@ -82,14 +86,38 @@ constexpr float woundDripSeconds = 120.f, woundDripDrySeconds = 30.f;
 // On the living: an open cut closes into a scar over this long (the Regenerate mark's own time while it
 // runs); a bruise fades away over this long.
 constexpr float woundScarSeconds = 300.f, woundBruiseHealSeconds = 900.f;
+// Marks for the floor blood layer (view_effects.inl bloodMap): laid down once where blood lands and kept.
+// A drop (kind 0): a round splash. A flung or spurted drop (kind 1): a teardrop, its tail pointing the way
+// it flew (dir). A pool mark (kind 2): a thin, wide layer under a bleeding wound, wider the more has run
+// out, which the layer's additive thickness builds into a deepening, spreading pool.
+constexpr unsigned woundSplatQueue = 96, woundSplatShown = 24;
+struct WoundSplat { float at[3], sectorOrigin[3], dir[3]; float across, along, thickness, seed; uint8_t kind; };
+static WoundSplat woundSplats[woundSplatQueue]; // woundLock: a FIFO, head..tail
+static unsigned woundSplatHead = 0, woundSplatTail = 0;
+static void queueSplat(const float* at, const float* sectorOrigin, const float* dir, float across, float along,
+                       float thickness, float seed, uint8_t kind) {
+    if (woundSplatTail - woundSplatHead >= woundSplatQueue) ++woundSplatHead; // the oldest unsent mark gives way
+    WoundSplat& q = woundSplats[woundSplatTail++ % woundSplatQueue];
+    memcpy(q.at, at, sizeof q.at);
+    memcpy(q.sectorOrigin, sectorOrigin, sizeof q.sectorOrigin);
+    if (dir) memcpy(q.dir, dir, sizeof q.dir); else memset(q.dir, 0, sizeof q.dir);
+    q.across = across; q.along = along; q.thickness = thickness; q.seed = seed; q.kind = kind;
+}
 struct WoundUniforms {
+    unsigned falls = 0;           // drops in the air this frame, view space
+    float fA[16][4];              // position xyz; w: radius (cm)
+    float fB[16][4];              // velocity xyz (cm/s), for its streak; w unused
+    unsigned splats = 0;          // floor-layer marks this frame, view space
+    float sA[woundSplatShown][4]; // centre xyz; w: half width across (cm)
+    float sB[woundSplatShown][4]; // direction xyz (unit, or 0 for a round mark); w: half length along (cm)
+    float sC[woundSplatShown][4]; // thickness 0..1, seed, kind, unused
     unsigned count = 0;
     unsigned drips = 0;      // blood drops on the floor, below
     bool burning = false;    // a character in view is burnt (the skin bake has work)
-    float d[woundDripShown][4]; // a drop: view-space point it fell from; w: radius (cm) + 10 x dryness step (0..9)
+    float d[woundDripShown][4]; // a drop: view-space point it fell from; w: 256 x radius (tenths of a cm) + dryness (0..255)
     unsigned caps = 0;          // flesh caps on severed limbs: stump and end
     float capA[8][4], capB[8][4]; // centre (view space), radius (cm); facing (view space), 0 stump / 1 the severed end
-    bool any() const { return count || drips || burning || caps; }
+    bool any() const { return count || drips || burning || caps || splats || falls; }
     float a[woundShownLimit][4]; // centre; w: half length, cm (a bruise's radius)
     float b[woundShownLimit][4]; // the blade's path, unit; w: kind
     float c[woundShownLimit][4]; // severity 0..1, seed, half width (cm), blood run length (cm)
@@ -147,7 +175,9 @@ static void woundReadLevels(int (*marks)(const char*, uintptr_t*, uint32_t*, int
 }
 // Drops of blood fallen from bleeding cuts: where they fell from (the cut, sector-local) and its sector's
 // origin; the wound pass draws each on the first upward surface 20..200 cm below. woundLock.
-struct WoundDrip { float from[3], sectorOrigin[3], radius; ULONGLONG born; };
+struct WoundDrip { float from[3], sectorOrigin[3], radius; ULONGLONG born; float start[3]; float flight; };
+// A drop in the air, for the first moments after it leaves: from start to from over flight seconds (0: straight
+// down from start, which is then from), falling under gravity the while; drawn by the wound pass as a bead.
 static WoundDrip woundDrips[woundDripLimit];
 static unsigned woundDripNext = 0;
 static bool woundSkinBaked(uintptr_t character);            // wounds_bake.inl
@@ -290,6 +320,13 @@ static void addWound(const CharacterHitRecord& h) {
     }
     w.born = GetTickCount64();
     w.seed = float((h.serial * 2654435761u) >> 8) / float(1u << 24);
+    // A deep cut or thrust into a thigh, an upper arm or the head and neck opens an artery: it spurts with
+    // the heartbeat for the first several beats (the floor layer's teardrop jets).
+    if (kind != woundCrush && w.severity > 0.6f) {
+        const int p = w.partIndex;
+        if (p == 1 || p == 4 || p == 11 || p == 14) w.spurts = 8; // the thighs and upper arms (woundBoneBit's indices)
+        if (w.spurts) w.spurt = 0.25f;
+    }
     switch (kind) {
     case woundCut: w.halfLength = 4.f + 7.f * w.severity; w.halfWidth = 0.35f + 0.5f * w.severity; break;
     case woundThrust: w.halfLength = 1.f + 0.8f * w.severity; w.halfWidth = 0.6f + 0.4f * w.severity; break;
@@ -334,6 +371,9 @@ struct WeaponBlood {
     float amount[bloodSpotsPerWeapon]{};
     ULONGLONG born[bloodSpotsPerWeapon]{};
     float drip[bloodSpotsPerWeapon]{};
+    float lastAt[3]{};        // the mesh origin at the last reading, for the swing's speed (cast-off)
+    ULONGLONG lastTick = 0;
+    float castCooldown = 0.f;
 };
 static WeaponBlood weaponBlood[bloodWeaponLimit];
 static unsigned weaponBloodNext = 0;
@@ -345,6 +385,30 @@ static bool meshPose(uintptr_t node, float* pose) {
     for (int row = 0; row < 4; ++row)
         for (int axis = 0; axis < 3; ++axis) pose[row * 3 + axis] = sampled[row * 4 + axis];
     return std::isfinite(pose[9] + pose[10] + pose[11]);
+}
+
+static bool sectorOriginOf(uintptr_t node, float* origin); // view_effects.inl
+// A hit point in a weapon mesh's own frame. The mesh's drawn pose is sector-local and whether the hit
+// point is too is not established here, so both readings are tried and the one that lands on the weapon
+// (nearest its centre line, within its length) wins; false when neither reads.
+static bool weaponLocal(uintptr_t node, const float* pose, const float* point, float* local) {
+    float origin[3]{};
+    const bool sector = sectorOriginOf(node, origin) && (origin[0] || origin[1] || origin[2]);
+    float best = 0.f;
+    bool found = false;
+    for (int candidate = 0; candidate < (sector ? 2 : 1); ++candidate) {
+        float p[3], l[3];
+        for (int i = 0; i < 3; ++i) p[i] = point[i] - (candidate ? origin[i] : 0.f);
+        if (!intoPose(pose, p, true, l)) continue;
+        const float beyond = l[2] < -30.f ? -30.f - l[2] : l[2] > 160.f ? l[2] - 160.f : 0.f;
+        const float score = l[0] * l[0] + l[1] * l[1] + beyond * beyond;
+        if (!found || score < best) {
+            best = score;
+            memcpy(local, l, sizeof l);
+            found = true;
+        }
+    }
+    return found;
 }
 
 static uintptr_t strikingWeaponNode(const CharacterHitRecord& h) {
@@ -378,7 +442,7 @@ static uintptr_t strikingWeaponNode(const CharacterHitRecord& h) {
             if (!readable(weapon, field::bodyPart::meshNode + 8)) continue;
             const uintptr_t node = *(const uintptr_t*)(weapon + field::bodyPart::meshNode);
             float pose[12], local[3];
-            if (!meshPose(node, pose) || !intoPose(pose, h.point, true, local)) continue;
+            if (!meshPose(node, pose) || !weaponLocal(node, pose, h.point, local)) continue;
             // Along its own length (z), from just behind the grip to past any blade's tip.
             if (local[2] < -30.f || local[2] > 160.f) continue;
             const float off = std::sqrt(local[0] * local[0] + local[1] * local[1]);
@@ -398,7 +462,7 @@ static void addWeaponBlood(const CharacterHitRecord& h) {
     float pose[12], local[3];
     __try {
         node = strikingWeaponNode(h);
-        if (!node || !meshPose(node, pose) || !intoPose(pose, h.point, true, local)) return;
+        if (!node || !meshPose(node, pose) || !weaponLocal(node, pose, h.point, local)) return;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         woundFaults.fetch_add(1, std::memory_order_relaxed);
         return;
@@ -430,7 +494,7 @@ static void addWeaponBlood(const CharacterHitRecord& h) {
 }
 
 // A held mesh's blood for the held-item pass: item-space centre, and in w the amount (the fraction)
-// plus how wet it still is, drying over two minutes, as tenths in the whole part (0 for none).
+// plus how wet it still is, drying over two minutes, as hundredths in the whole part (0 for none).
 static void weaponBloodFor(uintptr_t node, float (*out)[4]) {
     for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) out[k][0] = out[k][1] = out[k][2] = out[k][3] = 0.f;
     AcquireSRWLockShared(&woundLock);
@@ -443,7 +507,7 @@ static void weaponBloodFor(uintptr_t node, float (*out)[4]) {
             out[k][0] = w.local[k][0];
             out[k][1] = w.local[k][1];
             out[k][2] = w.local[k][2];
-            out[k][3] = std::clamp(w.amount[k], 0.01f, 0.99f) + std::round(wet * 10.f);
+            out[k][3] = std::clamp(w.amount[k], 0.01f, 0.99f) + std::round(wet * 100.f);
         }
     }
     ReleaseSRWLockShared(&woundLock);
@@ -581,16 +645,18 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                 continue;
             }
         }
+        float flow = 0.f;
         if (w.kind != woundCrush && fadeDt > 0.f) {
             // Blood runs while the game says this character bleeds (and for the first seconds after any
-            // cut), then dries.
+            // cut), then dries. The dead keep bleeding out of their cuts for a few minutes, slower and slower.
             float bleed = 0.f;
             __try { bleed = *(const float*)(owner + woundCharacterBleed); }
             __except (EXCEPTION_EXECUTE_HANDLER) { bleed = 0.f; }
             if (!std::isfinite(bleed)) bleed = 0.f;
             const float age = float(now - w.born) / 1000.f;
-            const float flow = w.scar > 0.3f ? 0.f // a closing cut has stopped bleeding
-                               : (std::max)(std::clamp(bleed / woundBleedFull, 0.f, 1.f), age < woundFreshSeconds ? 0.6f : 0.f);
+            flow = w.scar > 0.3f ? 0.f // a closing cut has stopped bleeding
+                 : (std::max)(std::clamp(bleed / woundBleedFull, 0.f, 1.f), age < woundFreshSeconds ? 0.6f : 0.f);
+            if (!alive && w.severity > 0.2f) flow = (std::max)(flow, (0.3f + 0.5f * w.severity) * (std::max)(1.f - age / 180.f, 0.f));
             if (flow > 0.02f) w.run = (std::min)(w.run + fadeDt * (0.4f + 1.6f * flow), 4.f + 14.f * w.severity);
             if (flow > 0.15f) w.drip += fadeDt * flow * 2.f; // up to two drops a second while it pours
             w.wet = flow >= w.wet ? flow : (std::max)(w.wet - fadeDt / woundDrySeconds, flow);
@@ -598,6 +664,46 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         float world[3], path[3];
         outOfPose(pose, w.local, true, world);
         outOfPose(pose, w.along, false, path);
+        if (flow > 0.1f && fadeDt > 0.f) {
+            // What runs out gathers below: a pool mark every so often, wider the more has run out (a lying
+            // body's pool spreads; a standing one's gathers at its feet), thin so the layer builds it up.
+            w.pool += fadeDt * flow * (0.4f + 0.6f * w.severity);
+            w.poolTick -= fadeDt;
+            if (w.poolTick <= 0.f) {
+                w.poolTick = 0.45f;
+                const float radius = (std::min)(4.f + 11.f * std::sqrt(w.pool), 48.f);
+                queueSplat(world, sectorOrigin, nullptr, radius, radius, 0.03f + 0.03f * flow,
+                           w.seed + float(i) * 0.37f + w.pool, 2);
+            }
+        }
+        if (w.spurts && alive && fadeDt > 0.f) {
+            // An opened artery: with each heartbeat a jet of drops lands in a line a metre or so out, the
+            // same way each time (the vessel's direction), each drop a teardrop pointing the way it flew.
+            w.spurt -= fadeDt;
+            if (w.spurt <= 0.f) {
+                w.spurt = 0.8f + 0.1f * float(w.spurts % 3);
+                --w.spurts;
+                const float turn = w.seed * 6.2831853f;
+                const float dir[3] = {std::cos(turn), 0.f, std::sin(turn)};
+                const float strength = 0.4f + 0.6f * float(w.spurts) / 8.f;
+                for (int k = 0; k < 6; ++k) {
+                    const float hash = std::fmod(w.seed * 131.f + float(k) * 17.17f + float(w.spurts) * 3.3f, 1.f);
+                    const float reach = (30.f + 130.f * strength) * (0.35f + 0.65f * float(k) / 5.f) * (0.85f + 0.3f * hash);
+                    const float side = (hash - 0.5f) * 14.f;
+                    const float at[3] = {world[0] + dir[0] * reach - dir[2] * side, world[1], world[2] + dir[2] * reach + dir[0] * side};
+                    queueSplat(at, sectorOrigin, dir, 0.9f + 1.6f * hash, 3.f + 7.f * strength * (0.5f + float(k) / 5.f),
+                               0.45f + 0.3f * strength, w.seed + hash, 1);
+                    WoundDrip& d = woundDrips[woundDripNext];
+                    woundDripNext = (woundDripNext + 1) % woundDripLimit;
+                    memcpy(d.from, at, sizeof d.from);
+                    memcpy(d.start, world, sizeof d.start);
+                    memcpy(d.sectorOrigin, sectorOrigin, sizeof d.sectorOrigin);
+                    d.radius = 0.9f + 1.6f * hash;
+                    d.flight = 0.25f + 0.2f * reach / 160.f;
+                    d.born = now;
+                }
+            }
+        }
         if (w.drip >= 1.f) {
             w.drip -= 1.f;
             WoundDrip& d = woundDrips[woundDripNext];
@@ -609,6 +715,9 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
             memcpy(d.sectorOrigin, sectorOrigin, sizeof d.sectorOrigin);
             d.radius = 1.2f + float((salt >> 16) % 25) / 10.f;
             d.born = now;
+            memcpy(d.start, d.from, sizeof d.start);
+            d.flight = 0.f;
+            queueSplat(d.from, sectorOrigin, nullptr, d.radius, d.radius, 0.55f, float(salt % 1000) / 1000.f, 0);
         }
         Shown s{};
         s.distanceSq = woundReachCm * woundReachCm;
@@ -699,6 +808,55 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                     memcpy(d.sectorOrigin, wSector, sizeof d.sectorOrigin);
                     d.radius = 1.0f + float((salt >> 16) % 18) / 10.f;
                     d.born = now;
+                    memcpy(d.start, d.from, sizeof d.start);
+                    d.flight = 0.f;
+                    queueSplat(d.from, wSector, nullptr, d.radius, d.radius, 0.5f, float(salt % 1000) / 1000.f, 0);
+                }
+            }
+        }
+        // Cast-off: a fast swing flings wet blood off the blade, in the swing's direction, as a line of
+        // teardrops a metre or two out. The blade's speed is its mesh origin's between two readings.
+        if (fadeDt > 0.f) {
+            float v[3] = {wpose[9] - wb.lastAt[0], wpose[10] - wb.lastAt[1], wpose[11] - wb.lastAt[2]};
+            const bool had = wb.lastTick != 0;
+            const float dt = had ? float(now - wb.lastTick) / 1000.f : 0.f;
+            memcpy(wb.lastAt, wpose + 9, sizeof wb.lastAt);
+            wb.lastTick = now;
+            wb.castCooldown = (std::max)(wb.castCooldown - fadeDt, 0.f);
+            if (had && dt > 0.004f && dt < 0.2f) {
+                for (float& c : v) c /= dt;
+                const float speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                const float flat = std::sqrt(v[0] * v[0] + v[2] * v[2]);
+                if (std::isfinite(speed) && speed > 380.f && flat > 150.f && wb.castCooldown <= 0.f) {
+                    for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) {
+                        if (wb.amount[k] <= 0.45f) continue;
+                        const float age = float(now - wb.born[k]) / 1000.f;
+                        if (age >= 40.f) continue; // only still-liquid blood flies
+                        float from[3];
+                        outOfPose(wpose, wb.local[k], true, from);
+                        const float dir[3] = {v[0] / flat, 0.f, v[2] / flat};
+                        const float flight = (std::min)(speed, 1400.f) * 0.22f; // about a fifth of a second in the air
+                        const unsigned salt = unsigned(now) * 2654435761u + k * 7919u;
+                        const int drops = 1 + int(salt % 3);
+                        for (int j = 0; j < drops; ++j) {
+                            const float h = float((salt >> (4 * j)) % 100) / 100.f;
+                            const float reach = flight * (0.5f + 0.7f * h), side = (h - 0.5f) * 30.f;
+                            const float at[3] = {from[0] + dir[0] * reach - dir[2] * side, from[1],
+                                                 from[2] + dir[2] * reach + dir[0] * side};
+                            queueSplat(at, wSector, dir, 0.7f + 1.2f * h, 3.f + 9.f * (std::min)(speed / 1000.f, 1.f),
+                                       0.4f, float(salt % 1000) / 1000.f + h, 1);
+                            WoundDrip& d = woundDrips[woundDripNext];
+                            woundDripNext = (woundDripNext + 1) % woundDripLimit;
+                            memcpy(d.from, at, sizeof d.from);
+                            memcpy(d.start, from, sizeof d.start);
+                            memcpy(d.sectorOrigin, wSector, sizeof d.sectorOrigin);
+                            d.radius = 0.7f + 1.2f * h;
+                            d.flight = 0.2f + 0.15f * h;
+                            d.born = now;
+                        }
+                        wb.amount[k] = (std::max)(wb.amount[k] - 0.12f, 0.f);
+                        wb.castCooldown = 0.15f;
+                    }
                 }
             }
         }
@@ -709,8 +867,41 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
     struct ShownDrip { float distanceSq, centre[3], w; };
     ShownDrip drops[woundDripLimit];
     unsigned dropCount = 0;
+    out.falls = 0;
     for (WoundDrip& d : woundDrips) {
         if (!d.born) continue;
+        // In the air: along its path from start to from (or straight down), falling under gravity, for its
+        // first 1.2 s (a floor 2 m down is reached in 0.65 s; what falls further is out of sight).
+        const float airAge = float(now - d.born) / 1000.f;
+        if (airAge < 1.2f && out.falls < 16) {
+            const float g981 = 981.f;
+            const float span = d.flight > 0.f ? (std::min)(airAge / d.flight, 1.f) : 0.f;
+            float at[3], vel[3];
+            for (int k = 0; k < 3; ++k) {
+                at[k] = d.start[k] + (d.from[k] - d.start[k]) * span;
+                vel[k] = d.flight > 0.f && span < 1.f ? (d.from[k] - d.start[k]) / d.flight : 0.f;
+            }
+            at[1] -= 0.5f * g981 * airAge * airAge;
+            vel[1] -= g981 * airAge;
+            float best = woundReachCm * woundReachCm, c[3]{};
+            bool found = false;
+            for (int candidate = 0; candidate < 2; ++candidate) {
+                float q[3], v[3];
+                for (int k = 0; k < 3; ++k) q[k] = at[k] + (candidate ? d.sectorOrigin[k] : 0.f);
+                for (int k = 0; k < 3; ++k) v[k] = q[0] * view[k] + q[1] * view[4 + k] + q[2] * view[8 + k] + view[12 + k];
+                const float sq = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+                if (std::isfinite(sq) && sq < best) { best = sq; memcpy(c, v, sizeof c); found = true; }
+            }
+            if (found) {
+                const unsigned k = out.falls++;
+                const float a[4] = {c[0], c[1], c[2], (std::max)(0.25f * d.radius + 0.12f, 0.28f)};
+                const float b[4] = {vel[0] * view[0] + vel[1] * view[4] + vel[2] * view[8],
+                                    vel[0] * view[1] + vel[1] * view[5] + vel[2] * view[9],
+                                    vel[0] * view[2] + vel[1] * view[6] + vel[2] * view[10], 0.f};
+                memcpy(out.fA[k], a, sizeof a);
+                memcpy(out.fB[k], b, sizeof b);
+            }
+        }
         const float age = float(now - d.born) / 1000.f;
         if (age > woundDripSeconds) { d = {}; continue; }
         ShownDrip s{woundReachCm * woundReachCm, {}, 0.f};
@@ -724,7 +915,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         }
         if (!found) continue;
         const float dry = (std::min)(age / woundDripDrySeconds, 1.f);
-        s.w = d.radius + 10.f * std::floor(dry * 9.f);
+        s.w = 256.f * std::round(d.radius * 10.f) + std::floor(dry * 255.f); // radius in tenths; dryness in 256 steps
         drops[dropCount++] = s;
     }
     activeDripsCount.store(dropCount, std::memory_order_relaxed);
@@ -736,6 +927,33 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         memcpy(out.d[k], v, sizeof v);
     }
     out.drips = dripCount;
+    // The floor layer's new marks, oldest first, in view space (the nearer reading of the sector origin, as
+    // for the wounds); what does not fit this frame waits for the next.
+    out.splats = 0;
+    while (woundSplatHead != woundSplatTail && out.splats < woundSplatShown) {
+        const WoundSplat& q = woundSplats[woundSplatHead++ % woundSplatQueue];
+        float best = woundReachCm * woundReachCm, centre[3]{};
+        bool found = false;
+        for (int candidate = 0; candidate < 2; ++candidate) {
+            float p[3], c[3];
+            for (int k = 0; k < 3; ++k) p[k] = q.at[k] + (candidate ? q.sectorOrigin[k] : 0.f);
+            for (int k = 0; k < 3; ++k) c[k] = p[0] * view[k] + p[1] * view[4 + k] + p[2] * view[8 + k] + view[12 + k];
+            const float sq = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
+            if (std::isfinite(sq) && sq < best) { best = sq; memcpy(centre, c, sizeof c); found = true; }
+        }
+        if (!found) continue;
+        float dir[3] = {q.dir[0] * view[0] + q.dir[1] * view[4] + q.dir[2] * view[8],
+                        q.dir[0] * view[1] + q.dir[1] * view[5] + q.dir[2] * view[9],
+                        q.dir[0] * view[2] + q.dir[1] * view[6] + q.dir[2] * view[10]};
+        if (!std::isfinite(dir[0] + dir[1] + dir[2])) dir[0] = dir[1] = dir[2] = 0.f;
+        const unsigned k = out.splats++;
+        const float a[4] = {centre[0], centre[1], centre[2], q.across};
+        const float b[4] = {dir[0], dir[1], dir[2], q.along};
+        const float c[4] = {q.thickness, q.seed, float(q.kind), 0.f};
+        memcpy(out.sA[k], a, sizeof a);
+        memcpy(out.sB[k], b, sizeof b);
+        memcpy(out.sC[k], c, sizeof c);
+    }
     woundSeveredCaps(view, out);
     ReleaseSRWLockExclusive(&woundLock);
 }
@@ -768,6 +986,13 @@ static void emitImpactSpatter(const CharacterHitRecord& r, const float* sectorOr
         std::memcpy(d.sectorOrigin, sectorOrigin, sizeof(d.sectorOrigin));
         d.radius = 0.9f + float((salt >> 16) % 22) / 10.f; // 0.9 to 3.1 cm
         d.born = now;
+        std::memcpy(d.start, r.point, sizeof d.start);
+        d.flight = 0.12f + 0.1f * float((salt >> 20) % 10) / 10.f;
+        // On the floor layer a drop flung by the blow lands as a teardrop pointing the way it flew.
+        const float flatLen = std::sqrt(dirNorm[0] * dirNorm[0] + dirNorm[2] * dirNorm[2]);
+        const float flat[3] = {flatLen > 1e-3f ? dirNorm[0] / flatLen : 0.f, 0.f, flatLen > 1e-3f ? dirNorm[2] / flatLen : 0.f};
+        queueSplat(d.from, sectorOrigin, flatLen > 1e-3f ? flat : nullptr, d.radius * 0.8f,
+                   d.radius * (1.5f + (std::min)(speed * 0.004f, 3.f)), 0.5f, float(salt % 1000) / 1000.f, 1);
     }
 }
 
