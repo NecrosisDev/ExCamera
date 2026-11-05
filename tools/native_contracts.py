@@ -35,6 +35,9 @@ ALLOWED_OPTIONAL_GROUPS = (
     'headwearRender',
     'silhouette',
     'engineLog',
+    'farRooms',
+    'wounds',
+    'xrPhysicalContacts',
 )
 
 # Fixed C++ struct ABIs static_asserted in native_widgets.h / game_structs.h:

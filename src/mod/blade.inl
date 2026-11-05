@@ -133,10 +133,10 @@ static bool bladeLine(uintptr_t weapon, XrVector3f& hilt, XrVector3f& tip, XrVec
 }
 // A part the blade may sink into: little pierce protection on both armour rows, and not the head.
 static bool bladeSoftPart(uintptr_t other, uintptr_t victim) {
-    if (!readable(other, 0x6A8 + 0x18) || !readable(victim, field::character::headPart + 8)) return false;
+    if (!readable(other, field::bodyPart::armourOuter + 0x18) || !readable(victim, field::character::headPart + 8)) return false;
     if (other == *reinterpret_cast<uintptr_t*>(victim + field::character::headPart)) return false;
-    const float* outer = reinterpret_cast<const float*>(other + 0x6A8);
-    const float* under = reinterpret_cast<const float*>(other + 0x690);
+    const float* outer = reinterpret_cast<const float*>(other + field::bodyPart::armourOuter);
+    const float* under = reinterpret_cast<const float*>(other + field::bodyPart::armour);
     for (unsigned i = 0; i < 6; ++i)
         if (!std::isfinite(outer[i]) || !std::isfinite(under[i])) return false;
     return outer[0] * outer[4] < blade::softPierce && under[4] < blade::softPierce;

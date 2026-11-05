@@ -40,7 +40,7 @@ Not tested, needs a person: everything below that takes the mouse or a fight, in
 - [ ] While binding a key, a left click doesn't bind it.
 - [ ] Rotate, Kick, Jump and Recenter refuse a key another of them already uses; Escape cancels.
 - [ ] With no other mods, Mod Settings shows no "By category" switch.
-- [ ] Wound marks toggle enables and disables procedural cuts, punctures, bruises, and running blood.
+- [ ] Wound marks toggle enables and disables wound marks and running blood where blows do damage.
 - [ ] Head tracking shows its live status while enabled.
 - [ ] Head tracking shows under Controls and can be switched off.
 - [ ] Settings survive a game restart.

@@ -839,7 +839,8 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     vec3 base = itemAverage(texel * clamp(0.6 * pixelsPerCm, 2.0, 10.0), slot, closeUp ? 4.0 : 3.0);
     vec3 wide = closeUp ? itemAverage(texel * clamp(2.5 * pixelsPerCm, 6.0, 40.0), slot, 3.0) : base;
     vec3 light = toLight(color);
-    // kind: 0 steel, 1 wood, 2 leather, 3 other, 4 mail. Unknown (the texture could not be read)
+    // kind: 0 steel, 1 wood, 2 leather, 3 other, 4 mail, told from the item's texture colours (a heuristic, not
+    // the game's material). Unknown (the texture could not be read)
     // falls back to this spot's own colour, which torchlight can tint.
     bool warm = base.r > base.b * 1.15 && base.g > base.r * 0.45; // brown, not a strong red
     float kind = code - 1.0;
@@ -1667,6 +1668,7 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
             n = viewNormal(uv, p);
             near = true;
             // A grey, unsaturated surface is taken for metal: it takes blood smears and runs but no tear or soak.
+            // A screen heuristic from the pixel's colour, not a game value: the game's own material is not read.
             vec3 base = toLight(color);
             float brightest = max(base.r, max(base.g, base.b)), darkest = min(base.r, min(base.g, base.b));
             grey = 1.0 - smoothstep(0.08, 0.2, (brightest - darkest) / max(brightest, 1e-4));
@@ -4316,7 +4318,10 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                                    r.bloodBox[1], r.bloodBox[4], r.bloodBox[2], r.bloodBox[5], r.bloodMapCentre[0],
                                    r.bloodMapCentre[1], r.bloodMapCamera[0], r.bloodMapCamera[1], r.bloodMapCamera[2], upX, upY, upZ);
 #endif
-                {   // Wet blood's highlights come from the game's own lights.
+                {   // Wet blood's highlights from the game's lights near the player, under the one flag that
+                    // gates every light-node read (unprovenRenderReads, off: levelLightsFor finds none and the
+                    // shaders use their fixed light from above). Kind 5 is stored only by the constructor at
+                    // 0x518D0, which also sets +210 and +21C; that they are the drawn lights is not shown yet.
                     float lamps[2][4]{}, lampColours[2][4]{};
                     lampsInView(request, projection.view, lamps, lampColours);
                     g.uniform4fv(u.at[uLevelLight], 2, lamps[0]);

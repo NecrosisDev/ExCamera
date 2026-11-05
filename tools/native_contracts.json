@@ -1161,6 +1161,28 @@
       "end_rva": "0x13e579",
       "pattern": "55 48 89 E5 48 8D 64 24 90 48 89 4D F8 C6 45 F4 01 80 3D ?? ?? ?? ?? 00 74 0E 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ??",
       "entry_offset": 0
+    },
+    {
+      "name": "roomClassify",
+      "rva": "0x143c20",
+      "end_rva": "0x1442a2",
+      "target": "roomClassify",
+      "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 90 48 89 4C 24 20 49 89 D7 C6 44 24 68 01 48 8B 44",
+      "entry_offset": 0
+    },
+    {
+      "name": "characterBleed",
+      "rva": "0x168410",
+      "end_rva": "0x168731",
+      "pattern": "53 48 8D 64 24 B0 66 0F 7F 74 24 30 66 44 0F 7F 44 24 40 48 89 CB 8B 83 F4 0D 00 00 25 00 0A 00",
+      "entry_offset": 0
+    },
+    {
+      "name": "characterDie",
+      "rva": "0x156480",
+      "end_rva": "0x1568dc",
+      "entry_offset": 0,
+      "pattern": "55 48 89 E5 48 8D 64 24 90 66 0F 7F 75 C0 48 89 4D F8 48 C7 45 E0 00 00 00 00 48 C7 45 E8 00 00 00 00 90 48 8B 45 F8 8B 80 F4 0D 00 00 25 00 08 00 00"
     }
   ],
   "fields": [
@@ -4680,6 +4702,137 @@
       "witness": "character::magic",
       "native_instruction": "mov eax, dword ptr [rax + 0xd78]",
       "provenance": "In the same reviewed window: the blue bar's second mark, how far magic refills (0..1); 17A6B0 lowers it."
+    },
+    {
+      "name": "level::roomCount",
+      "value": "0x1c",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x144205",
+      "width": 4,
+      "provenance": "mov eax, dword ptr [rax + 0x1c]: loop bound of the render-mode sync over level rooms.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "level::rooms",
+      "value": "0x20",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x144228",
+      "width": 8,
+      "provenance": "mov rcx, qword ptr [rax + 0x20]: base of the level's room entry array.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "level::roomStride",
+      "value": "0x54",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x14422f",
+      "width": 8,
+      "provenance": "imul rax, rax, 0x54: room entry stride.",
+      "optional_group": "farRooms",
+      "operand_kind": "immediate"
+    },
+    {
+      "name": "room::state",
+      "value": "0x30",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x14423a",
+      "width": 4,
+      "provenance": "mov ecx, dword ptr [rax + 0x30]: room state (2 at hand, 1 neighbour, 0 other), compared with its previous copy at +2C.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "room::sector",
+      "value": "0x34",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x14424f",
+      "width": 8,
+      "provenance": "mov rax, qword ptr [r9 + 0x34]: the room's sector, whose +318 render mode is written next.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "sector::roomRender",
+      "value": "0x318",
+      "owner": "roomClassify",
+      "witness": "level::roomRenderSync",
+      "instruction": "0x144253",
+      "width": 4,
+      "provenance": "mov dword ptr [rax + 0x318], 2: sector render mode read by the render walk 0x5B400 (0 hidden, 1 whole, 2 through portals).",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "level::roomCells",
+      "value": "0x28",
+      "owner": "roomClassify",
+      "witness": "level::roomNeighbours",
+      "instruction": "0x144105",
+      "width": 8,
+      "provenance": "mov r11, qword ptr [rax + 0x28]: grid cell table holding room index + 1.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "room::edgeCount",
+      "value": "0x18",
+      "owner": "roomClassify",
+      "witness": "level::roomNeighbours",
+      "instruction": "0x1440e2",
+      "width": 4,
+      "provenance": "mov eax, dword ptr [r9 + 0x18]: number of the room's edge records.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "room::edges",
+      "value": "0x1c",
+      "owner": "roomClassify",
+      "witness": "level::roomNeighbours",
+      "instruction": "0x144109",
+      "width": 8,
+      "provenance": "mov rbx, qword ptr [r9 + 0x1c]: the room's 8-byte edge records.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "roomEdge::cell",
+      "value": "0x4",
+      "owner": "roomClassify",
+      "witness": "level::roomNeighbours",
+      "instruction": "0x144110",
+      "width": 4,
+      "provenance": "mov eax, dword ptr [rbx + rax*8 + 4]: grid cell on the far side of an edge record.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "character::bleed",
+      "value": "0x10dc",
+      "owner": "characterBleed",
+      "witness": "character::bleedUpdate",
+      "instruction": "0x168467",
+      "width": 4,
+      "provenance": "movss xmm1, dword ptr [rbx + 0x10dc]: the character's bleed rate, raised by the wound inflow and clamped in the same window.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "bodyPart::index",
+      "value": "0x468",
+      "owner": "characterMove",
+      "witness": "bodyPart::indexFallback",
+      "instruction": "0x170d5c",
+      "width": 4,
+      "provenance": "cmp dword ptr [r13 + 0x468], 0: skeletal part index; negative parts use their parent (+428).",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "bodyPart::armour",
+      "value": "0x690",
+      "owner": "physicalImpact",
+      "witness": "bodyPart::armourRows",
+      "instruction": "0x15af07",
+      "width": 8,
+      "provenance": "lea rax, [rdx + rax + 0x690]: first protection row of the struck body part.",
+      "optional_group": "xrPhysicalContacts"
     }
   ],
   "references": [
@@ -4891,6 +5044,15 @@
       "base": "meshRayQuery::scratchBank",
       "add": 4,
       "provenance": "Buffer extent includes the last witnessed four-byte scratchBank member."
+    },
+    {
+      "name": "bodyPart::armourOuter",
+      "value": "0x6a8",
+      "base": "bodyPart::armour",
+      "add": 24,
+      "provenance": "physicalImpact 0x159A60 indexes the protection rows as armour + row*18 (imul rax, rax, 0x18 inside the bodyPart::armourRows window) for rows 0 and 1; row 1 is the outer row the blade-sink test reads.",
+      "reviewed_native_instruction": "0x15af03",
+      "extent": 24
     }
   ],
   "constants": [
@@ -5628,6 +5790,62 @@
       "pattern": "53 56 48 8D 64 24 C8 8B 35 63 4B 47 00 83 FE 0F 7C 04 31 DB EB 04 67 8D 5E 01 3B 1D 40 4B 47 00 0F 84 7A 00 00 00 48 89 4C 24 20 48 8D 05 CE 30 2D 00 48 89 44 24 28 48 89 54 24 30 48 8D 54 24 20 89 F0 48 C1 E0 04 48 8D 0D 32 4B 47 00 48 01 C1 45 31 C9 41 B8 02 00 00 00 E8 E1 2A FE FF 48 8D 05 1A 4B 47 00 89 F2 48 C1 E2 04 48 8B 0C 10 48 85 C9 74 04 48 8B 49 F8 48 6B C9 32 8B 15 AD 3D 47 00 48 81 C2 D0 07 00 00 48 01 CA 21 F6 48 C1 E6 04 89 54 30 08 89 1D D3 4A 47 00 0F 1F 00 E8 FB 06 00 00 90 48 8D 64 24 38 5E 5B C3",
       "optional_group": "engineLog",
       "provenance": "Whole FUN_1000259A0 body (RVA 0x259A0-0x25A4E), byte-exact: copies source + \" : \" + text into a 16-entry ring (DAT_10049A520, head DAT_10049A510, tail DAT_10049A500) with an expiry of now + 2000 ms + 50 ms per character; a full ring drops the line."
+    },
+    {
+      "name": "level::roomRenderSync",
+      "owner": "roomClassify",
+      "window_offset": 1504,
+      "pattern": "48 8B 44 24 20 8B 40 1C 67 44 8D 40 FF 45 85 C0 0F 8C 76 00 00 00 BA FF FF FF FF 0F 1F 44 00 00 83 C2 01 48 8B 44 24 20 48 8B 48 20 48 63 C2 48 6B C0 54 4C 8D 0C 01 4C 89 C8 8B 48 30 3B 48 2C 74 42 41 8B 41 30 41 89 41 2C 83 F8 01 75 10 49 8B 41 34 C7 80 18 03 00 00 02 00 00 00 EB 25 41 83 79 2C 02 75 10 49 8B 41 34 C7 80 18 03 00 00 01 00 00 00 EB 0E 49 8B 41 34 C7 80 18 03 00 00 00 00 00 00 41 39 D0",
+      "provenance": "Final loop of the room classifier 0x143C20: for every level room (count level+1C, 0x54-byte entries at level+20) it copies entry state +30 into +2C and writes the room sector's render mode +318 (state 1 -> 2, state 2 -> 1, else 0). The far-rooms adapter rewrites exactly these cells after this function returns.",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "level::roomNeighbours",
+      "owner": "roomClassify",
+      "window_offset": 1218,
+      "pattern": "41 8B 41 18 67 44 8D 50 FF 45 85 D2 7C 3C 41 BE FF FF FF FF 66 90 41 83 C6 01 48 8B 44 24 20 4C 8B 40 20 4C 8B 58 28 49 8B 59 1C 49 63 C6 8B 44 C3 04 49 63 04 83 48 6B C0 54 41 C7 44 00",
+      "provenance": "Neighbour walk of the room classifier 0x143C20: entry +18 edge count, entry +1C 8-byte edge records whose second dword is a grid cell, level+28 cell table holding room index + 1 (hence the -24 = +30 - 54 store into the neighbour's state).",
+      "optional_group": "farRooms"
+    },
+    {
+      "name": "character::bleedUpdate",
+      "owner": "characterBleed",
+      "window_offset": 87,
+      "pattern": "F3 0F 10 8B DC 10 00 00 F3 0F 58 C8 F3 0F 11 8B DC 10 00 00 F3 0F 10 83 DC 10 00 00 0F 2F 05 ?? ?? ?? ?? 7A 10 76 0E 8B 05 ?? ?? ?? ?? 89 83 DC 10 00 00",
+      "provenance": "Character bleed tick 0x168410 (RBX = character): adds the scaled wound inflow (+10D4) to the bleed rate +10DC, stores it, reloads it, compares with the maximum constant and clamps the stored rate. Combat wounds read +10DC to size and age blood.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "bodyPart::indexFallback",
+      "owner": "characterMove",
+      "window_offset": 1347,
+      "pattern": "8B 46 2C 89 46 44 0F 1F 00 41 83 BD 68 04 00 00 00 7D 22 49 8B 85 28 04 00 00",
+      "provenance": "characterMove 0x170810 (R13 = a character body part): a negative skeletal part index at +468 falls back to the parent part +428 (bodyPart::parentPart). Combat wounds use +468 (0..17) to choose the bone a wound belongs to.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "bodyPart::armourRows",
+      "owner": "physicalImpact",
+      "window_offset": 5276,
+      "pattern": "48 8B 53 08 8B 45 D0 48 6B C0 18 48 8D 84 02 90 06 00 00 F3 0F 10 00",
+      "provenance": "physicalImpact 0x159A60 walks the struck part's ([rbx+8]) two protection rows from row 1 down to row 0: part + 690 + row*18, six floats each, compared with the hit's scalar. Blade sinking reads the same rows (690 under, 6A8 outer).",
+      "optional_group": "xrPhysicalContacts"
+    },
+    {
+      "name": "physicalImpact::thrustMotion",
+      "owner": "physicalImpact",
+      "window_offset": 196,
+      "pattern": "48 8B 45 F8 83 B8 B8 09 00 00 0B 75 18 48 8B 80 F8 0A 00 00 8B 40 1C 83 E0 08 75 09 C6 85 EC FE FF FF 01 EB 07 C6 85 EC FE FF FF 00 80 BD EC FE FF FF 00 74 48 48 8B 45 F8 48 8B 80 38 0C 00 00 48 05 AC 02 00 00 48 8D 55 DC F3 0F 10 02 F3 0F 59 00 F3 0F 10 4A 04 F3 0F 59 48 04 F3 0F 58 C8 F3 0F 10 42 08 F3 0F 59 40 08 F3 0F 58 C1 F3 0F 59 05 ?? ?? ?? ??",
+      "provenance": "physicalImpact 0x159A60 at 0x159B28 compares the striking character's motion (+9B8) with 0xB; when it matches (and bit 8 of [+AF8]+1C is clear) the impact speed is the contact velocity dotted with the weapon's own axis (impactWeapon +C38, then +2AC), instead of the full speed taken otherwise (0x159BA1-0x159BBA), and the damage path later branches on the same flag (0x159CB8). Motion 0xB is therefore the game's point-first (thrust) attack: the wounds pass draws a puncture for it.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "characterDie::deadState",
+      "owner": "characterDie",
+      "window_offset": 35,
+      "pattern": "48 8B 45 F8 8B 80 F4 0D 00 00 25 00 08 00 00 0F 87 10 04 00 00 48 8B 55 F8 83 A2 F8 0D 00 00 DF 90 48 8B 4D F8 BA 02 00 00 00 E8 ?? ?? ?? ?? 48 8B 45 F8 C7 80 F4 0D 00 00 00 08 00 00",
+      "provenance": "The character death routine 0x156480 (called by the damage routine 0x159700 at 0x1598C3 once +D58 falls below 0.01 and the blow may kill, and by the bleed tick 0x168410): it returns at once when character::stateFlags (+DF4) already has 0x800, otherwise clears bit 0x20 of +DF8 and writes +DF4 = 0x800 (0x1564D6). A character is dead while +DF4 has 0x800, the routine's own test.",
+      "optional_group": "wounds"
     }
   ],
   "closures": {

@@ -558,7 +558,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             const unsigned dCount = activeDripsCount.load();
             const int bSat = int(activeWeaponBloodMax.load() * 100.f);
             wchar_t msg[256];
-            swprintf_s(msg, L"%s: %s | Wounds: %u | Drips: %u | Blood: %d%% | Hands: [L:%s R:%s]",
+            swprintf_s(msg, L"%s: %s | Wounds: %u | Drips: %u | Blade blood: %d%% | Hands: [L:%s R:%s]",
                        FP_SHOWN_NAME,
                        next ? L"Debug ON (neon)" : diag ? L"Debug DIAGNOSTICS (green ok, yellow out of window, magenta height, cyan not a floor, blue box)" : L"Debug OFF (natural)",
                        wCount, dCount, bSat,
@@ -1760,7 +1760,7 @@ static fp::SwingHands swingHands(uintptr_t root, fp::OriginCue cue, int motion) 
         if (!w) s.slot = -1;
     }
     const uintptr_t table = gameAt(fp::sig::gripTable);
-    constexpr uintptr_t stride = 0xb8;
+    const uintptr_t stride = field::grip::stride;
     uintptr_t entry = s.slot == 1 ? table + 5 * stride
                                   : (s.slot == 0 ? *reinterpret_cast<const uintptr_t*>(root + field::character::gripEntry) : 0);
     if (entry < table || entry >= table + 6 * stride || (entry - table) % stride) entry = 0;

@@ -981,7 +981,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.str("view", viewMode.load() == 1 ? "third" : viewMode.load() == 2 ? "to-overhead" : "first");
     j.unum("tp_prop_pulls", tpPropPulls.load());
     j.str("game_build", verifiedBuild ? "verified" : (closureVerifiedBuild ? "closure_verified" : "compatible"));
-    j.str("far_rooms", roomViewHooked.load() ? "hooked" : roomViewUnreviewedBuild ? "off_unreviewed_build" : "off");
+    j.str("far_rooms", roomViewHooked.load() ? "hooked" : layout.optionalGroupAvailable("farRooms") ? "off" : "withheld");
     j.str("hook_health", hookHealthText());
     {
         char hooks[200];

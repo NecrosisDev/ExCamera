@@ -1,3 +1,7 @@
+// OFF by default (unprovenRenderReads): which of the body material's texture slots 0/1/2 is the diffuse,
+// specular and normal map, the _SKIN layout below (+218 skin, its bone and bind arrays, +290 faces, +2F8 tags)
+// and the Injuries addon's severed-bit table are read here without game code that shows them; until they
+// are proven the marks stay with the screen pass and severed limbs are not cut.
 // Wound skins: cuts and bruises baked into a copy of the struck character's own body texture, the way
 // the game bakes an undead character's decay into its skin (textures.flb chardecomp_*, set up by
 // 0x208140). Baked marks sit in the skin, follow every fold and are covered by clothes and armour.
@@ -66,8 +70,10 @@ struct WoundSkinMesh {
     WearAttribute positions{}, weights{}, uvs{};
 };
 
+// The mesh, skin and attribute offsets below are the ones headwear_render.inl reads; they are proved only
+// by its admitted whole-function contracts, so without them there is no layout to map or draw with.
 static bool woundSkinMesh(uintptr_t node, WoundSkinMesh& m) {
-    if (!readable(node, 0x300)) return false;
+    if (!headwearRenderReady.load(std::memory_order_relaxed) || !readable(node, 0x300)) return false;
     m.node = node;
     m.lastFace = *(int*)(node + 0x268);
     m.lastVertex = *(int*)(node + 0x288);
@@ -127,6 +133,7 @@ static void woundClosest(const float* p, const float* a, const float* b, const f
 // One wound onto its character's skin. woundLock held, render thread. Leaves w.mapped false when the
 // struck part is no bone of a _SKIN mesh or no body face lies within reach (a hit on gear, say).
 static void woundSkinMap(Wound& w) {
+    if constexpr (!unprovenRenderReads) return; // skin layout unproven (see the header): no mapping, the screen pass draws the marks
     w.mapTried = true;
     const uintptr_t actor = *(const uintptr_t*)(w.owner + field::character::sceneNode);
     const uintptr_t partNode = *(const uintptr_t*)(w.part + field::bodyPart::meshNode);
@@ -657,6 +664,7 @@ static void restoreWoundBakeGlSnapshot(gl::Api& g, fp::CueResources& r, const Wo
 // Called by the view-effects pass inside its state snapshot. Early-outs before touching any OpenGL
 // state when no character skin slot needs baking this frame. cueLock held.
 static void bakeWoundSkins(gl::Api& g, fp::CueResources& r) {
+    if constexpr (!unprovenRenderReads) return; // skin map slots and layout unproven: no bake
     if (woundSkinBroken || woundMarks.load(std::memory_order_relaxed) <= 0.f) return;
     WoundBakeGlSnapshot glSnapshot{};
     WoundSkinGl s{};
@@ -820,7 +828,7 @@ static int woundBonePart(const WoundSkinMesh& m, int k) {
     const uintptr_t node = transform - field::sceneNode::transform;
     const uintptr_t part = *(const uintptr_t*)(node + field::sceneNode::bodyPart);
     if (!part) return -1;
-    const int index = *(const int*)(part + woundPartIndex);
+    const int index = *(const int*)(part + field::bodyPart::index);
     return index >= 0 && index < 18 ? index : -1;
 }
 
@@ -921,6 +929,8 @@ static const WoundSeverMesh* woundSeverOf(uintptr_t node, uintptr_t actor) {
 // The caps: each ring carried by the parent bone (the stump) and by the severed bone (the end), as a
 // disc through the ring's centre facing away from the bone's own centre. woundLock held.
 static void woundSeveredCaps(const float* view, WoundUniforms& out) {
+    out.caps = 0;
+    if constexpr (!unprovenRenderReads) return; // which parts a severed bit cuts off, and the skin layout, are unproven
     out.caps = 0;
     const ULONGLONG clock = GetTickCount64();
     for (WoundSeverMesh& s : woundSeverMeshes) {
@@ -1058,6 +1068,7 @@ static bool woundSkinCurrent(WoundSkinSlot& slot, uintptr_t material, const GLui
 }
 
 static bool woundSkinDrawBody(uintptr_t node, uintptr_t material, bool bind) {
+    if constexpr (!unprovenRenderReads) return false; // nothing baked or cut: the game draws its own
     const int found = woundSkinSlotOf(node);
     if (found < 0) return false;
     // Strictly verify that this material is material index 0 (the primary body skin) of the node.
@@ -1118,6 +1129,7 @@ static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind) {
 // The player's own skinned mesh in first person stays with the headwear path, which swaps maps for the
 // body's runs through StoneSwap (stone_skin.inl falls back to this when the player is not stone).
 static bool woundSkinWearBegin(uintptr_t node, uintptr_t material, StoneSwap& swap) {
+    if constexpr (!unprovenRenderReads) { swap = {}; return false; }
     swap = {};
     if (woundSkinBroken || !wearScope.colourPass) return false;
     __try {

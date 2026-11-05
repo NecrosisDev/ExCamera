@@ -29,7 +29,7 @@ ROOT = TOOLS_DIR.parent
 BUILD_HEADER = ROOT / 'src/native_build.h'
 HASH_RE = re.compile(r'"([0-9a-f]{64})",\s*//\s*(.+)')
 # Optional features that require a hash-listed build (src/native_build.h `verifiedBuild`).
-HASH_GATED = ['attack variants (Manual defense keeps working)', 'far rooms']
+HASH_GATED = ['attack variants (Manual defense keeps working)']
 
 
 def known_builds(text=None):

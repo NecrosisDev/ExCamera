@@ -23,7 +23,7 @@ struct CharacterHitRecord {
     float point[3];        // contact point, in the space of the part's pose
     float direction[3];    // the weapon's motion at contact, same space; zero when unknown
     float pose[12];        // the part's achieved pose at the hit: three axes then the origin
-    float health, balance; // what the damage applier received
+    float permanent, recoverable; // the damage routine's third and second arguments (bodyDamageDetour)
     uint32_t kind;         // 0 unknown, 1 cut, 2 crush, 3 thrust
     uint32_t reserved;
     uint64_t weapon;       // version 2: the delivering weapon's rigid body; 0 from version 1
@@ -38,12 +38,11 @@ constexpr unsigned woundLimit = 96, woundsPerPart = 4;
 constexpr unsigned woundShownLimit = 12; // the finishing program's arrays
 constexpr float woundReachCm = 3000.f, woundMergeCm = 2.5f;
 enum WoundKind : uint8_t { woundCut = 1, woundCrush = 2, woundThrust = 3 };
-// The character's bleeding rate (0..20): 0x168410 raises it from the wound inflow (+0x10D4) and, above
-// 1, drains health and balance with it; it falls by 0.1 a tick once the inflow stops.
-constexpr size_t woundCharacterBleed = 0x10DC;
-// Injuries' "injuries.broken" mark: one bit per limb bone, the part indices (+0x468) each covers. A fracture
-// bruise spreads this much wider.
-constexpr size_t woundPartIndex = 0x468;
+// The character's bleeding rate (character::bleed, 0..20), stepped by the bleed tick 0x168410: it rises with
+// the wound inflow (+10D4), takes a share of itself off current health (+D58) and off the restorable ceiling
+// (+D5C), falls once the inflow stops, and current health below 0 calls the death routine 0x156480.
+// Injuries' "injuries.broken" mark: one bit per limb bone, the part indices (bodyPart::index) each covers.
+// A fracture bruise spreads this much wider.
 constexpr float woundFractureScale = 1.6f;
 inline int woundBoneBit(int part) {
     switch (part) {
@@ -59,10 +58,15 @@ inline int woundBoneBit(int part) {
     }
 }
 constexpr float woundBleedFull = 6.f, woundFreshSeconds = 10.f, woundDrySeconds = 60.f, woundBruiseSeconds = 90.f;
-// A struck body part's character, where the game's weapon impact (0x159A60) reads its victim; that impact
-// hands the same pointer to the damage applier, so it equals the record's victim.
-constexpr size_t woundPartCharacter = 0x420;
+// A struck body part's character is its body's root (bodyPart::rootPart): the game's weapon impact
+// (0x159A60) reads its victim there and hands the same pointer to the damage applier, so it equals the
+// record's victim.
 
+constexpr uint32_t woundThrustMotion = 0xB; // see recordNativeHit
+// Dead: character::stateFlags (+DF4) has 0x800 set, the test the game itself makes (the death routine 0x156480
+// tests it before writing 0x800; 0x167ED0 also writes 0x800, 0xF12C4 and 0x156E48 write 0xA00; witness
+// characterDie::deadState). +DF8's 0x100, used here before, is set by 0x17B100 and not by any death path.
+constexpr unsigned woundDeadState = 0x800;
 struct Wound {
     uintptr_t part = 0, owner = 0; // the part, and the character it named at the hit; a change retires the mark
     float local[3]{}, along[3]{};  // centre and the blade's path, in the part's own frame
@@ -267,20 +271,20 @@ static void outOfPose(const float* pose, const float* local, bool origin, float*
 }
 
 static void addWound(const CharacterHitRecord& h) {
-    const float health = std::isfinite(h.health) ? h.health : 0.f;
-    const float balance = std::isfinite(h.balance) ? h.balance : 0.f;
-    // PROVISIONAL(2026-10-22, until the runtime reports the weapon's cut/crush split a cut is told
-    // from a blow by moving more health per balance, ratify-by: 2026-11-05)
-    const uint8_t kind = h.kind >= woundCut && h.kind <= woundThrust ? uint8_t(h.kind)
-                         : health > 0.4f * balance                  ? woundCut
-                                                                    : woundCrush;
-    if (kind == woundCrush ? balance < 0.05f && health < 1e-3f : health < 1e-3f) return; // nothing got through
+    const float permanent = std::isfinite(h.permanent) ? h.permanent : 0.f;
+    const float recoverable = std::isfinite(h.recoverable) ? h.recoverable : 0.f;
+    // Two kinds only, both from the game: a thrust where the striker's motion is the one the impact routine
+    // measures along the weapon (woundThrustMotion, set by recordNativeHit), an open wound otherwise. Telling a
+    // cut from a crushing blow by the ratio of the routine's two arguments was a guess (it lapsed unratified
+    // on 2026-11-05) and is gone; a blunt blow that does damage now shows as an open wound too.
+    const uint8_t kind = h.kind == woundThrust ? woundThrust : woundCut;
+    if (permanent < 1e-3f && recoverable < 1e-3f) return; // nothing got through: the routine took nothing
     Wound w;
     w.part = uintptr_t(h.part);
     float healthMax = 1.f;
     __try {
-        if (!w.part || !readable(w.part, woundPartCharacter + 8)) return;
-        w.owner = *(const uintptr_t*)(w.part + woundPartCharacter);
+        if (!w.part || !readable(w.part, field::bodyPart::rootPart + 8)) return;
+        w.owner = *(const uintptr_t*)(w.part + field::bodyPart::rootPart);
         if (h.victim && readable(uintptr_t(h.victim), field::character::healthMax + 4))
             healthMax = *(const float*)(uintptr_t(h.victim) + field::character::healthMax);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -291,7 +295,7 @@ static void addWound(const CharacterHitRecord& h) {
     if (!intoPose(h.pose, h.direction, false, w.along)) memset(w.along, 0, sizeof w.along);
     const uintptr_t player = gameAt(fp::sig::playerRoot) ? *(const uintptr_t*)gameAt(fp::sig::playerRoot) : 0;
     if (player && uintptr_t(h.victim) == player) {
-        const float flash = std::clamp(0.4f + health * 3.0f, 0.4f, 1.0f);
+        const float flash = std::clamp(0.4f + permanent * 3.0f, 0.4f, 1.0f);
         float curFlash = playerDamageFlash.load(std::memory_order_relaxed);
         while (flash > curFlash && !playerDamageFlash.compare_exchange_weak(curFlash, flash, std::memory_order_relaxed)) {}
 
@@ -308,7 +312,7 @@ static void addWound(const CharacterHitRecord& h) {
         dirWorld[2] *= invLen;
 
         const float reaction = stereoLive.load() ? 0.f : float(std::clamp(hitReactionPercent.load(), 0, 100)) / 100.f;
-        const float impulse = std::clamp(health * 0.20f + balance * 0.10f, 0.02f, 0.08f) * reaction;
+        const float impulse = std::clamp(permanent * 0.20f + recoverable * 0.10f, 0.02f, 0.08f) * reaction;
         const float kickPitch = (-dirWorld[1] * 0.6f + dirWorld[2] * 0.4f) * impulse;
         const float kickYaw = dirWorld[0] * impulse * 0.8f;
         const float kickRoll = -dirWorld[0] * impulse * 0.35f;
@@ -318,25 +322,28 @@ static void addWound(const CharacterHitRecord& h) {
         cameraImpactRoll.store(std::clamp(cameraImpactRoll.load(std::memory_order_relaxed) + kickRoll, -0.06f, 0.06f), std::memory_order_relaxed);
     }
     if (!std::isfinite(healthMax) || healthMax < 0.05f) healthMax = 1.f;
-    // PROVISIONAL(2026-10-22, size from damage: a third of full health fills the scale; tune after
-    // a first look in game, ratify-by: 2026-11-05)
-    w.severity = kind == woundCrush ? std::clamp(0.35f + 0.8f * balance, 0.35f, 1.f)
-                                    : std::clamp(0.35f + 2.f * health / healthMax, 0.35f, 1.f);
+    // Size from what the blow took, as a share of maximum health (+103C): the damage routine (0x159700)
+    // takes 0.1 times its second argument off current health (+D58; 0.05 times when +DF8 has 0x800000) and
+    // 0.2 times its third off the restorable ceiling (+D5C), current health scaling down with it. So this is
+    // 0.1 x recoverable + 0.2 x permanent over the maximum, 0 to 1: a blow that would empty full health fills
+    // the scale. (It read the raw third argument before, five times too large.)
+    const float taken = std::clamp((0.1f * recoverable + 0.2f * permanent) / healthMax, 0.f, 1.f);
+    w.severity = 0.35f + 0.65f * taken;
     w.kind = kind;
     __try {
-        const int index = *(const int*)(w.part + woundPartIndex);
+        const int index = *(const int*)(w.part + field::bodyPart::index);
         w.partIndex = int8_t(index >= 0 && index < 18 ? index : -1);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         w.partIndex = -1;
     }
     w.born = GetTickCount64();
     w.seed = float((h.serial * 2654435761u) >> 8) / float(1u << 24);
-    // A deep cut or thrust into a thigh, an upper arm or the head and neck opens an artery: it spurts with
-    // the heartbeat for the first several beats (the floor layer's teardrop jets).
-    if (kind != woundCrush && w.severity > 0.6f) {
-        const int p = w.partIndex;
-        if (p == 1 || p == 4 || p == 11 || p == 14) w.spurts = 8; // the thighs and upper arms (woundBoneBit's indices)
-        if (w.spurts) w.spurt = 0.25f;
+    // A deep wound spurts with the heartbeat for the first several beats (the floor layer's teardrop jets).
+    // Which skeletal part (bodyPart::index) is a thigh or an upper arm is not shown by any game code read so
+    // far, so it is by depth alone: a blow taking about two thirds of full health or more.
+    if (kind != woundCrush && w.severity > 0.78f) {
+        w.spurts = 8;
+        w.spurt = 0.25f;
     }
     switch (kind) {
     case woundCut: w.halfLength = 4.f + 7.f * w.severity; w.halfWidth = 0.35f + 0.5f * w.severity; break;
@@ -467,8 +474,8 @@ static uintptr_t strikingWeaponNode(const CharacterHitRecord& h) {
 }
 
 static void addWeaponBlood(const CharacterHitRecord& h) {
-    const float health = std::isfinite(h.health) ? h.health : 0.f;
-    if (h.kind == woundCrush || health < 1e-3f) return; // only what drew blood
+    const float permanent = std::isfinite(h.permanent) ? h.permanent : 0.f;
+    if (h.kind == woundCrush || permanent < 1e-3f) return; // only what drew blood
     uintptr_t node = 0;
     float pose[12], local[3];
     __try {
@@ -499,7 +506,7 @@ static void addWeaponBlood(const CharacterHitRecord& h) {
         if (entry->amount[k] < entry->amount[slot]) slot = k;
     }
     memcpy(entry->local[slot], local, sizeof local);
-    entry->amount[slot] = (std::min)(entry->amount[slot] + 0.4f + 0.6f * (std::min)(health * 4.f, 1.f), 1.f);
+    entry->amount[slot] = (std::min)(entry->amount[slot] + 0.4f + 0.6f * (std::min)(permanent * 4.f, 1.f), 1.f);
     entry->born[slot] = now;
     weaponBloodTaken.fetch_add(1, std::memory_order_relaxed);
 }
@@ -591,8 +598,8 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         uintptr_t owner = 0;
         bool read = false;
         __try {
-            if (readable(w.part, woundPartCharacter + 8)) {
-                owner = *(const uintptr_t*)(w.part + woundPartCharacter);
+            if (readable(w.part, field::bodyPart::rootPart + 8)) {
+                owner = *(const uintptr_t*)(w.part + field::bodyPart::rootPart);
                 memcpy(pose, (const void*)(w.part + field::bodyPart::pose), sizeof pose);
                 const uintptr_t node = *(const uintptr_t*)(w.part + field::bodyPart::meshNode);
                 const uintptr_t sector = node && readable(node, field::sceneNode::sector + 8)
@@ -615,7 +622,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         __try {
             alive = !fp::deadState(*(const unsigned*)(owner + field::character::stateFlags));
             if (mendCount || brokenCount) ownerNode = *(const uintptr_t*)(owner + field::character::sceneNode);
-            (void)*(const volatile float*)(owner + woundCharacterBleed);
+            (void)*(const volatile float*)(owner + field::character::bleed);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             ownerGone = true;
         }
@@ -661,7 +668,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
             // Blood runs while the game says this character bleeds (and for the first seconds after any
             // cut), then dries. The dead keep bleeding out of their cuts for a few minutes, slower and slower.
             float bleed = 0.f;
-            __try { bleed = *(const float*)(owner + woundCharacterBleed); }
+            __try { bleed = *(const float*)(owner + field::character::bleed); }
             __except (EXCEPTION_EXECUTE_HANDLER) { bleed = 0.f; }
             if (!std::isfinite(bleed)) bleed = 0.f;
             const float age = float(now - w.born) / 1000.f;
@@ -986,8 +993,8 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
 }
 
 static void emitImpactSpatter(const CharacterHitRecord& r, const float* sectorOrigin) {
-    if (r.kind == woundCrush && r.health < 0.05f) return;
-    if (r.health < 1e-3f) return;
+    if (r.kind == woundCrush && r.permanent < 0.05f) return;
+    if (r.permanent < 1e-3f) return;
     const ULONGLONG now = GetTickCount64();
     const float speed = std::sqrt(r.direction[0] * r.direction[0] +
                                   r.direction[1] * r.direction[1] +
@@ -997,7 +1004,7 @@ static void emitImpactSpatter(const CharacterHitRecord& r, const float* sectorOr
         speed > 1e-3f ? r.direction[1] / speed : -0.3f,
         speed > 1e-3f ? r.direction[2] / speed : 0.f
     };
-    const int count = std::clamp(int(r.health * 16.f + speed * 0.15f) + 1, 2, 5);
+    const int count = std::clamp(int(r.permanent * 16.f + speed * 0.15f) + 1, 2, 5);
     for (int k = 0; k < count; ++k) {
         WoundDrip& d = woundDrips[woundDripNext];
         woundDripNext = (woundDripNext + 1) % woundDripLimit;
@@ -1023,22 +1030,22 @@ static void emitImpactSpatter(const CharacterHitRecord& r, const float* sectorOr
     }
 }
 
-static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, float balance) {
+static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float permanent, float recoverable) {
     if (!attacker || !victim) return;
     if (woundMarks.load(std::memory_order_relaxed) <= 0.f) return;
 
     CharacterHitRecord r{};
     r.size = sizeof(r);
     r.victim = victim;
-    r.health = health;
-    r.balance = balance;
+    r.permanent = permanent;
+    r.recoverable = recoverable;
 
     uintptr_t part = 0;
     int32_t index = -1;
     if (!readable(attacker + field::character::impactTarget, sizeof(uintptr_t))) return;
     part = *reinterpret_cast<const uintptr_t*>(attacker + field::character::impactTarget);
-    if (!part || !readable(part + woundPartIndex, sizeof(int32_t))) return;
-    index = *reinterpret_cast<const int32_t*>(part + woundPartIndex);
+    if (!part || !readable(part + field::bodyPart::index, sizeof(int32_t))) return;
+    index = *reinterpret_cast<const int32_t*>(part + field::bodyPart::index);
     if (index < 0 || index >= 18) return;
     r.part = part;
 
@@ -1050,12 +1057,9 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, 
     float now[12]{}, before[12]{};
     if (readable(attacker + field::character::impactWeapon, sizeof(uintptr_t))) {
         weapon = *reinterpret_cast<const uintptr_t*>(attacker + field::character::impactWeapon);
-        // The struck-with part (0x1590D0 stores its first argument here) steps its four points at +F0 and keeps the
-        // step before at +120: 0x89330 copies +120 -> +150 and +F0 -> +120 (0x8956A-0x89597) after building its
-        // pose +2A0 from +F0 (0x7ECD0, as the witnessed partSettle). render-assumptions.md
-        if (weapon && readable(weapon + 0xf0, 48) && readable(weapon + 0x120, 48)) {
-            std::memcpy(now, reinterpret_cast<const void*>(weapon + 0xf0), 48);
-            std::memcpy(before, reinterpret_cast<const void*>(weapon + 0x120), 48);
+        if (weapon && readable(weapon + field::bodyPart::points, 48) && readable(weapon + field::bodyPart::history, 48)) {
+            std::memcpy(now, reinterpret_cast<const void*>(weapon + field::bodyPart::points), 48);
+            std::memcpy(before, reinterpret_cast<const void*>(weapon + field::bodyPart::history), 48);
             for (int axis = 0; axis < 3; ++axis) {
                 float a = 0.f, b = 0.f;
                 for (int k = 0; k < 4; ++k) {
@@ -1068,17 +1072,12 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, 
     }
     r.weapon = weapon;
 
-    uint32_t motion = 0;
-    if (readable(attacker + field::character::motion, sizeof(uint32_t))) {
-        motion = *reinterpret_cast<const uint32_t*>(attacker + field::character::motion);
-        if (motion == 0xb) {
-            r.kind = woundThrust;
-        } else {
-            r.kind = (health > 0.4f * balance) ? woundCut : woundCrush;
-        }
-    } else {
-        r.kind = (health > 0.4f * balance) ? woundCut : woundCrush;
-    }
+    // A thrust: the motion physicalImpact (0x159B28) measures along the weapon's own axis, a point-first
+    // attack (witness physicalImpact::thrustMotion, wounds group). Anything else is an open wound.
+    r.kind = woundCut;
+    if (readable(attacker + field::character::motion, sizeof(uint32_t)) &&
+        *reinterpret_cast<const uint32_t*>(attacker + field::character::motion) == woundThrustMotion)
+        r.kind = woundThrust;
 
     float sectorOrigin[3]{};
     if (part && readable(part + field::bodyPart::meshNode, sizeof(uintptr_t))) {
@@ -1099,10 +1098,13 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, 
     ReleaseSRWLockExclusive(&woundLock);
 }
 
-static unsigned char bodyDamageDetour(uintptr_t character, float balance, float health, char canFall) {
-    const auto result = originalBodyDamage(character, balance, health, canFall);
+// The damage routine 0x159700: it lowers +D58 by 0.1 times its second argument (0.05 times when +DF8 has
+// 0x800000) and +D5C by 0.2 times its third (0x15972E-0x1597C5). The names below are the record's; what the
+// two values mean beyond that arithmetic is not established here.
+static unsigned char bodyDamageDetour(uintptr_t character, float recoverable, float permanent, char mayKill) {
+    const auto result = originalBodyDamage(character, recoverable, permanent, mayKill);
     __try {
-        recordNativeHit(character, currentImpactAttacker, health, balance);
+        recordNativeHit(character, currentImpactAttacker, permanent, recoverable);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         woundFaults.fetch_add(1, std::memory_order_relaxed);
     }

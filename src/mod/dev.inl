@@ -178,10 +178,10 @@ static void devWriteRooms(const std::wstring& path) {
     __try {
         const uintptr_t level = levelGrid();
         if (!level || !readable(level, 0x64) || _wfopen_s(&f, path.c_str(), L"w") || !f) return;
-        const int count = *reinterpret_cast<const int*>(level + 0x1c);
-        const uintptr_t entries = *reinterpret_cast<const uintptr_t*>(level + 0x20),
-                        indices = *reinterpret_cast<const uintptr_t*>(level + 0x28);
-        if (count < 0 || count > 4096 || (count > 0 && (!entries || !readable(entries, size_t(count) * 0x54)))) {
+        const int count = *reinterpret_cast<const int*>(level + field::level::roomCount);
+        const uintptr_t entries = *reinterpret_cast<const uintptr_t*>(level + field::level::rooms),
+                        indices = *reinterpret_cast<const uintptr_t*>(level + field::level::roomCells);
+        if (count < 0 || count > 4096 || (count > 0 && (!entries || !readable(entries, size_t(count) * field::level::roomStride)))) {
             fclose(f);
             f = nullptr;
             return;
@@ -189,25 +189,25 @@ static void devWriteRooms(const std::wstring& path) {
         std::fprintf(f, "rooms=%d active=%d opened=%u\n", count, *reinterpret_cast<const int*>(level + 0x60),
                      roomViewOpened.load());
         for (int room = 0; room < count && room < 4096; ++room) {
-            const uintptr_t e = entries + size_t(room) * 0x54;
-            if (!readable(e, 0x54)) break;
-            const uintptr_t s = *reinterpret_cast<const uintptr_t*>(e + 0x34);
-            std::fprintf(f, "%d state=%d load=%d sector=%llx", room, *reinterpret_cast<const int*>(e + 0x30),
+            const uintptr_t e = entries + size_t(room) * field::level::roomStride;
+            if (!readable(e, field::level::roomStride)) break;
+            const uintptr_t s = *reinterpret_cast<const uintptr_t*>(e + field::room::sector);
+            std::fprintf(f, "%d state=%d load=%d sector=%llx", room, *reinterpret_cast<const int*>(e + field::room::state),
                          *reinterpret_cast<const int*>(e + 0x10), static_cast<unsigned long long>(s));
             if (s && readable(s, 0x31c)) {
                 const float* origin = reinterpret_cast<const float*>(s + field::sector::origin);
                 std::fprintf(f, " type=%d flags=%x meshes=%d portals=%d at=%.0f,%.0f",
-                             *reinterpret_cast<const int*>(s + 0x318), *reinterpret_cast<const unsigned*>(s + 8),
+                             *reinterpret_cast<const int*>(s + field::sector::roomRender), *reinterpret_cast<const unsigned*>(s + 8),
                              *reinterpret_cast<const int*>(s + field::sector::lastMesh) + 1,
                              *reinterpret_cast<const int*>(s + 0x260), origin[0], origin[2]);
             }
-            const int edges = *reinterpret_cast<const int*>(e + 0x18);
-            const uintptr_t pairs = *reinterpret_cast<const uintptr_t*>(e + 0x1c);
+            const int edges = *reinterpret_cast<const int*>(e + field::room::edgeCount);
+            const uintptr_t pairs = *reinterpret_cast<const uintptr_t*>(e + field::room::edges);
             std::fprintf(f, " next=");
             const int edgeCap = edges > 0 ? (edges < 32 ? edges : 32) : 0;
             if (edgeCap > 0 && pairs && indices && readable(pairs, size_t(edgeCap) * 8)) {
                 for (int k = 0; k < edgeCap; ++k) {
-                    const int edge = *reinterpret_cast<const int*>(pairs + size_t(k) * 8 + 4);
+                    const int edge = *reinterpret_cast<const int*>(pairs + size_t(k) * 8 + field::roomEdge::cell);
                     if (edge < 0 || edge > 65535) continue;
                     const uintptr_t indexAddr = indices + size_t(edge) * 4;
                     if (!readable(indexAddr, sizeof(int))) continue;

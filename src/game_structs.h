@@ -41,6 +41,7 @@ inline constexpr size_t healthRestorable = 0xD5C; // float: how far health can s
 // 23CC30), refilled toward magicCeiling by 17A6B0. The game keeps no separate stamina or exertion value.
 inline constexpr size_t magic = 0xD74, magicCeiling = 0xD78; // floats 0..1: the blue bar
 inline constexpr size_t healthMax = 0x103C;      // float: the whole health bar
+inline constexpr size_t bleed = 0x10DC;          // float 0..20: bleed rate (0x168410 raises it from the wound inflow)
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
 inline constexpr size_t stateFlags =
     0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
@@ -111,6 +112,9 @@ inline constexpr size_t poseForward = pose + 0x18;
 inline constexpr size_t poseOrigin = pose + 0x24;
 inline constexpr size_t rootPart = 0x420; // the body's root part (its own rootPart is itself)
 inline constexpr size_t parentPart = 0x428;
+inline constexpr size_t index = 0x468; // int: skeletal part index (0..17 for a character), negative for none
+inline constexpr size_t armour = 0x690;      // float[6]: under-layer protection row (row 1 follows at +0x18)
+inline constexpr size_t armourOuter = armour + 0x18; // float[6]: outer protection row; [4] pierce
 inline constexpr size_t character = 0x580;     // the owner: a freed or reused part no longer names it
 inline constexpr size_t extraRotation = 0x5EC; // float[4] quaternion (x y z w)
 inline constexpr size_t slackCap = 0x77C;      // float: how far the head target may lag (head part)
@@ -162,7 +166,27 @@ inline constexpr size_t lightCount = 0x1F0; // int: the sector's lights
 inline constexpr size_t lastMesh = 0x1C8; // int
 inline constexpr size_t meshes = 0x1D0;
 inline constexpr size_t passMask = 0xE0; // cached render-view admission, borrowed for controller picks
+inline constexpr size_t roomRender = 0x318; // int: render walk 5B400 draws 0 none, 1 whole, 2 through portals
 } // namespace sector
+
+// The level's rooms (the room classifier 143C20's first argument).
+namespace level {
+inline constexpr size_t roomCount = 0x1C; // int
+inline constexpr size_t rooms = 0x20;     // room entries (namespace room)
+inline constexpr size_t roomStride = 0x54;
+inline constexpr size_t roomCells = 0x28; // int per grid cell: room index + 1, 0 none
+} // namespace level
+
+namespace room {
+inline constexpr size_t edgeCount = 0x18; // int
+inline constexpr size_t edges = 0x1C;     // 8-byte records (namespace roomEdge)
+inline constexpr size_t state = 0x30;     // int: 2 at hand, 1 neighbour, 0 other
+inline constexpr size_t sector = 0x34;    // its sector (sector::roomRender)
+} // namespace room
+
+namespace roomEdge {
+inline constexpr size_t cell = 0x4; // int: grid cell on the far side (level::roomCells)
+} // namespace roomEdge
 
 namespace scene {
 inline constexpr size_t lifecycleFlags = 0x1C20; // optional native attack-variant ownership
