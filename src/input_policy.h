@@ -1053,14 +1053,17 @@ static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(M
 // state: character+DF4, a value: & 0x800 is dead (0x800 or 0xA00, the game's own test); 0 is standing; the other
 // standing values are the game busy with something of its own: 2 active defense (166604), 8 a reactive defense
 // motion (16B168/16B1B1), 0x20 a power/command motion (179E40, 16B2D6), 1 a settle step (16B470), 0x100 a stumble
-// recover (16B05C), 0x8000 motion 0xD, 0x10000/0x10004 motion 0x1F; down and stagger values are reactions.
+// recover (16B05C), 0x8000 motion 0xD, 0x10000/0x10004 motion 0x1F; down and stagger values are reactions. The
+// gate is the game's own for a motion asked for on demand (+DC0, written for motions 0x1F/0x2C/0x2D at 0xB88AB,
+// 0x12B30F, 0x12B4CF, 0x136E8F): combatUpdate plays it (0x169970) only when DF4 & 0xA00 is clear (0x16990A) and
+// DF4 & 0x10203 is clear (0x16993D). So 8, 0x20, 0x100 and the stagger 0xC0 play; 1, 2, 0x10000 and down do not.
 // balance: below balanceMax - 0.05 the game itself starts its recover motion (169B99 -> 179810), so a kick or jump
 // would be cut at once. No health, magic or stance requirement.
 inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, float balance, float balanceMax) {
     if (cursorFree) return MotionRefusal::cursorFree;
     if (busyMotion) return MotionRefusal::busy;
     if (state & 0x800) return MotionRefusal::dead;
-    if (state != 0) return MotionRefusal::otherState;
+    if (state & (0xA00u | 0x10203u)) return MotionRefusal::otherState; // 0x16990A, 0x16993D
     if (!(std::isfinite(balance) && std::isfinite(balanceMax) && balance >= balanceMax - 0.05f)) return MotionRefusal::balance;
     return MotionRefusal::count;
 }

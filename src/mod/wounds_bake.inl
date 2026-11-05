@@ -155,17 +155,44 @@ static bool woundSkinProven() {
            layout.optionalGroupAvailable("wounds");
 }
 
-static void woundSkinMap(Wound& w) {
-    if (!woundSkinProven()) return; // the marks stay with the screen pass
-    w.mapTried = true;
+// Why a wound did not map onto skin: the furthest step it reached (first-person-status.json
+// wound_skin_unmapped_reasons, and a dev audit line per wound).
+enum WoundUnmapped : unsigned {
+    unmappedActor, unmappedNoSkinNode, unmappedLayout, unmappedNoBone, unmappedBoneMatrix, unmappedNoSkinFaces,
+    unmappedOutOfReach, unmappedUv, unmappedReasonCount
+};
+static const char* const woundUnmappedNames[unmappedReasonCount] = {
+    "actor or part unreadable", "no _SKIN child", "mesh layout", "part not a bone of the skin", "bone matrices",
+    "no skin-material faces", "no face within reach", "UV gradient"};
+static std::atomic<unsigned> woundUnmappedReasons[unmappedReasonCount]{};
+
+static void woundSkinMapReport(const Wound& w, unsigned reason, int skinNodes, int bones, float nearest) {
+    if (w.mapped) return;
+    woundUnmappedReasons[reason].fetch_add(1, std::memory_order_relaxed);
+#if !FP_DEV_TOOLS
+    (void)skinNodes, (void)bones, (void)nearest;
+#else
+    if (renderAuditOn())
+        renderAuditLog("skin map: wound on %p part %p not mapped: %s (_SKIN nodes %d, bones %d, nearest skin face %.1f cm)",
+                       (void*)w.owner, (void*)w.part, woundUnmappedNames[reason], skinNodes, bones, nearest);
+#endif
+}
+
+static void woundSkinMapBody(Wound& w, unsigned& reason, int& skinNodes, int& bonesSeen, float& nearest) {
+    auto note = [&](unsigned r) { reason = (std::max)(reason, r); };
     const uintptr_t actor = *(const uintptr_t*)(w.owner + field::character::sceneNode);
     const uintptr_t partNode = *(const uintptr_t*)(w.part + field::bodyPart::meshNode);
     if (!readable(actor, 0x2a0) || !partNode) return;
+    note(unmappedNoSkinNode);
     float pose[12];
     memcpy(pose, (const void*)(w.part + field::bodyPart::pose), sizeof pose);
-    float world[3], path[3];
-    outOfPose(pose, w.local, true, world);
+    float worldRaw[3], path[3];
+    outOfPose(pose, w.local, true, worldRaw);
     outOfPose(pose, w.along, false, path);
+    // Whether the part's pose is sector-local like the bones' transforms or global is not established, so both
+    // readings of the hit are tried (as for weapons and held items) and the one nearer a skin face wins.
+    float sector[3]{};
+    const bool twoReadings = sectorOriginOf(actor, sector) && (sector[0] || sector[1] || sector[2]);
     const int last = *(int*)(actor + field::sceneNode::lastChild);
     const uintptr_t list = *(uintptr_t*)(actor + field::sceneNode::children);
     if (last < 0 || last >= 6000 || !readable(list, (size_t(last) + 1) * 8)) return;
@@ -174,20 +201,32 @@ static void woundSkinMap(Wound& w) {
         if (!readable(node, 0x2a0) || strncmp((const char*)(node + field::sceneNode::name), "_SKIN", 5) ||
             *(uintptr_t*)(node + field::sceneNode::parent) != actor)
             continue;
+        ++skinNodes;
+        note(unmappedLayout);
         WoundSkinMesh m;
         if (!woundSkinMesh(node, m)) continue;
+        note(unmappedNoBone);
+        bonesSeen = m.bones;
         int bone = -1;
         for (int k = 0; k < m.bones && bone < 0; ++k)
             if (*(uintptr_t*)(m.boneNodes + size_t(k) * 8) == partNode + field::sceneNode::transform) bone = k;
         if (bone < 0) continue;
+        note(unmappedBoneMatrix);
         // The hit and the blade's path in that bone's frame, and the bone's bind into the same frame.
         float boneNow[16], toBone[16], bind[16];
         if (!fp::wear::affine((const float*)(partNode + field::sceneNode::transform), boneNow) ||
             !fp::wear::inverse(boneNow, toBone) ||
             !fp::wear::affine((const float*)(m.inverseBind + size_t(bone) * 48), bind))
             continue;
-        float hit[3], dir[3];
-        if (!fp::wear::point(toBone, world, hit) || !fp::wear::point(toBone, path, dir, true)) continue;
+        float hits[2][3], dir[3];
+        int readings = 0;
+        for (int candidate = 0; candidate < (twoReadings ? 2 : 1); ++candidate) {
+            float at[3];
+            for (int i = 0; i < 3; ++i) at[i] = worldRaw[i] - (candidate ? sector[i] : 0.f);
+            if (fp::wear::point(toBone, at, hits[readings])) ++readings;
+        }
+        if (!readings || !fp::wear::point(toBone, path, dir, true)) continue;
+        note(unmappedNoSkinFaces);
         const auto* weights = (const fp::wear::Weights*)m.weights.data;
         // Only faces of the node's skin materials (the game's own assignment, woundSkinMaterial), each over the
         // face range the game draws it with (material +B0..+B4).
@@ -202,10 +241,11 @@ static void woundSkinMap(Wound& w) {
             const int first = *(const int*)(material + 0xb0), lastOne = *(const int*)(material + 0xb4);
             for (int f = (std::max)(first, 0); f <= lastOne && f <= m.lastFace; ++f) skinFace[size_t(f)] = 1;
         }
-        float best = woundMapReachCm * woundMapReachCm, bestW[3]{}, bestP[3][3]{};
+        float best = woundMapReachCm * woundMapReachCm, bestW[3]{}, bestP[3][3]{}, closest = -1.f;
         unsigned bestTri[3]{};
         for (int f = 0; f <= m.lastFace; ++f) {
             if (!skinFace[size_t(f)]) continue; // skin, as the game assigned it; worn pieces keep their own sets
+            note(unmappedOutOfReach);
             const unsigned* tri = (const unsigned*)(m.triangles + size_t(f) * 12);
             float corner[3][3];
             bool moved = false, valid = true;
@@ -218,21 +258,27 @@ static void woundSkinMap(Wound& w) {
                 valid = fp::wear::point(bind, (const float*)(m.source + size_t(p) * 12), corner[c]);
             }
             if (!valid || !moved) continue;
-            float bary[3];
-            woundClosest(hit, corner[0], corner[1], corner[2], bary);
-            float q[3], distanceSq = 0.f;
-            for (int i = 0; i < 3; ++i) {
-                q[i] = bary[0] * corner[0][i] + bary[1] * corner[1][i] + bary[2] * corner[2][i];
-                distanceSq += (q[i] - hit[i]) * (q[i] - hit[i]);
-            }
-            if (distanceSq < best) {
-                best = distanceSq;
-                memcpy(bestW, bary, sizeof bestW);
-                memcpy(bestP, corner, sizeof bestP);
-                memcpy(bestTri, tri, sizeof bestTri);
+            for (int h = 0; h < readings; ++h) {
+                const float* hit = hits[h];
+                float bary[3];
+                woundClosest(hit, corner[0], corner[1], corner[2], bary);
+                float q[3], distanceSq = 0.f;
+                for (int i = 0; i < 3; ++i) {
+                    q[i] = bary[0] * corner[0][i] + bary[1] * corner[1][i] + bary[2] * corner[2][i];
+                    distanceSq += (q[i] - hit[i]) * (q[i] - hit[i]);
+                }
+                if (closest < 0.f || distanceSq < closest) closest = distanceSq;
+                if (distanceSq < best) {
+                    best = distanceSq;
+                    memcpy(bestW, bary, sizeof bestW);
+                    memcpy(bestP, corner, sizeof bestP);
+                    memcpy(bestTri, tri, sizeof bestTri);
+                }
             }
         }
+        if (closest >= 0.f && (nearest < 0.f || std::sqrt(closest) < nearest)) nearest = std::sqrt(closest);
         if (best >= woundMapReachCm * woundMapReachCm) continue;
+        note(unmappedUv);
         float uv[3][2];
         for (int c = 0; c < 3; ++c) {
             const unsigned t = *(const unsigned*)(m.uvIndices + size_t(bestTri[c]) * 4);
@@ -275,6 +321,19 @@ static void woundSkinMap(Wound& w) {
         w.actor = actor;
         w.mapped = true;
         return;
+    }
+}
+
+static void woundSkinMap(Wound& w) {
+    if (!woundSkinProven()) return; // the marks stay with the screen pass
+    w.mapTried = true;
+    unsigned reason = unmappedActor;
+    int skinNodes = 0, bones = 0;
+    float nearest = -1.f;
+    __try {
+        woundSkinMapBody(w, reason, skinNodes, bones, nearest);
+    } __finally {
+        woundSkinMapReport(w, reason, skinNodes, bones, nearest);
     }
 }
 
@@ -1331,9 +1390,12 @@ static void woundSkinDiagnose(uintptr_t node, uintptr_t material, bool bind) {
     }
 }
 #endif
-// The lights the game drew a node with, copied at its material draw into MeshLights (wounds.inl, where the
-// state's layout is cited). The copy is used only when the state was packed for this node: the submit writes
-// [node+130] to state +A0 before packing, so a different value there means another node's lights.
+// The lights the game drew a node with, copied right after its submit into MeshLights (wounds.inl, where the
+// state's layout is cited). The hooked submit 0x201630 calls 0x200770 (at 0x201666), which writes [node+130] to
+// state +A0 and packs the node's lights, or clears the count when the node has no light list (0x2007B7-0x200834);
+// so after it returns the state holds this node's lights. The copy is used only when +A0 equals the node's +130
+// (the other branch, 0x1FFBA0, packs another renderer's state). Every skinned mesh (a skin controller at +218
+// whose +8 is the node: characters) in the colour pass, once per node per pass (its first material).
 static void captureMeshLights(uintptr_t node) {
     const uintptr_t renderer = *(const uintptr_t*)gameAt(fp::sig::headwearWorldRenderer);
     if (!node || !readable(renderer, 0x170 + 18 * 16) || !readable(node, 0x138) ||
@@ -1377,8 +1439,15 @@ static void captureMeshLights(uintptr_t node) {
 #endif
 }
 
+static void captureSubmittedLights(uintptr_t node, int) {
+    __try {
+        const uintptr_t skin = *(const uintptr_t*)(node + 0x218);
+        if (!skin || *(const uintptr_t*)(skin + 8) != node) return; // not a skinned mesh
+        captureMeshLights(node);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
 static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind) {
-    __try { captureMeshLights(node); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 #if FP_DEV_TOOLS
     __try { woundSkinDiagnose(node, material, bind); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 #endif

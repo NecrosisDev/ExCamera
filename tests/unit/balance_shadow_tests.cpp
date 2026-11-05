@@ -86,13 +86,27 @@ bool non_finite_nodes_are_reported_not_measured() {
     return true;
 }
 
-bool shaking_ignores_whole_body_motion() {
+bool shaking_counts_reversals_not_swings() {
+    // One node accelerates 2 cm/step^2 against the rest (a swing).
+    Body swing = standing();
+    swing.before[0].x += 1, swing.before2[0].x += 4;
+    std::vector<b::V3> first(swing.now.size()), second(swing.now.size());
+    b::Sample s = swing.sample();
+    s.accelerations = first.data();
+    CHECK(near_equal(b::measure(s).shake, 0)); // no previous step yet
+    s.previous = first.data(), s.accelerations = second.data();
+    CHECK(near_equal(b::measure(s).shake, 0, 1e-1f)); // the same push again: a swing, not a shake
+    // The node's acceleration reverses from one step to the next: jitter.
+    for (auto& a : first) a = {-a.x, -a.y, -a.z};
+    s.previous = first.data();
+    CHECK(b::measure(s).shake > 1000);
+    // The whole body accelerating counts for nothing.
     Body moving = standing(0, 1);
-    for (auto& v : moving.before2) v.x -= 3; // the whole body accelerates: not a shake
-    CHECK(near_equal(b::measure(moving.sample()).shake, 0, 1e-1f));
-    Body shaking = standing();
-    shaking.before[0].x += 2; // one node jitters 2 cm against the rest
-    CHECK(b::measure(shaking.sample()).shake > 1000);
+    for (auto& v : moving.before2) v.x -= 3;
+    std::vector<b::V3> body(moving.now.size(), b::V3{-5, 0, 0});
+    b::Sample whole = moving.sample();
+    whole.previous = body.data();
+    CHECK(near_equal(b::measure(whole).shake, 0, 1e-1f));
     return true;
 }
 
@@ -142,6 +156,24 @@ bool falls_are_split_by_the_capture_point() {
     run(c, up, inside, 10);
     CHECK(c.feed(fell, inside) & b::Tracker::bit(b::Event::fallPhysical));
     CHECK(!(c.feed(up, inside) & b::Tracker::bit(b::Event::recovered))); // a fall ends the stumble
+    return true;
+}
+
+bool a_fall_from_the_air_is_by_rule() {
+    b::Measure outside = b::measure(standing().sample());
+    outside.margin = -5; // even with the capture point past the feet just before
+    b::GameState up, air, fell;
+    up.footDown = true;
+    fell.state = 0x200;
+    b::Tracker t;
+    run(t, up, outside, 5);
+    run(t, air, outside, b::airborneSteps);
+    CHECK(t.feed(fell, outside) & b::Tracker::bit(b::Event::fallByRule));
+    CHECK(t.lastFallAirborne);
+    b::Tracker ground;
+    run(ground, up, outside, 5);
+    CHECK(ground.feed(fell, outside) & b::Tracker::bit(b::Event::fallPhysical));
+    CHECK(!ground.lastFallAirborne);
     return true;
 }
 
@@ -206,7 +238,8 @@ int main() {
         {"still body over its feet is inside", still_body_over_its_feet_is_inside},
         {"moving body heads past its feet", moving_body_heads_past_its_feet},
         {"non-finite nodes are reported, not measured", non_finite_nodes_are_reported_not_measured},
-        {"shaking ignores whole-body motion", shaking_ignores_whole_body_motion},
+        {"shaking counts reversals, not swings", shaking_counts_reversals_not_swings},
+        {"a fall from the air is a fall by rule", a_fall_from_the_air_is_by_rule},
         {"conditions report once after their duration", conditions_report_once_after_their_duration},
         {"held up needs feet down and no step", held_up_needs_feet_down_and_no_step},
         {"falls are split by the capture point", falls_are_split_by_the_capture_point},
