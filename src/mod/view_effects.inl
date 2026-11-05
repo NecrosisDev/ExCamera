@@ -1677,7 +1677,11 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
         // layer: cloth, padding or armour (inferred from geometry; a loose collision shape can blur it).
         float off = dot(d, n);
         float layer = smoothstep(0.6, 1.6, off);
-        float metal = layer * grey, cloth = layer * (1.0 - grey);
+        // Metal or cloth was guessed from the pixel's colour (grey: metal), not read from the game; until the game's
+        // own material is shown, gear takes a neutral stain instead (gearFromScreen false, as unprovenRenderReads).
+        const bool gearFromScreen = false;
+        float metal = gearFromScreen ? layer * grey : 0.0, cloth = gearFromScreen ? layer * (1.0 - grey) : 0.0;
+        float gear = gearFromScreen ? 0.0 : layer;
         // Only the surface at the wound: something a few cm off it (another limb, a wall behind) is left alone.
         float stick = 1.0 - smoothstep(2.0 + 2.5 * layer, 4.5 + 2.5 * layer, abs(off));
         if (stick <= 0.0) continue;
@@ -1731,6 +1735,9 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
         cut = mix(cut, fabric, cloth);
         cut = mix(cut, plate, metal);
         inside = mix(inside, slit, cloth) * (1.0 - metal);
+        // Gear, material unknown: a plain stain where the blow landed, no tear, soak rim or bead.
+        cut = mix(cut, mix(vec3(1.0), bloodFilm(0.2 + 0.3 * severity, 1.0 - aux), soak * 0.85), gear);
+        inside *= 1.0 - gear;
         float run = 0.0;
         vec3 down = n * dot(worldUp.xyz, n) - worldUp.xyz; // straight down, along the surface
         if (C.w > 0.0 && dot(down, down) > 0.04) {
