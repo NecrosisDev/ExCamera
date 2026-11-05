@@ -980,43 +980,91 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
         float grind = 0.5 + 0.5 * sin(q.z * 55.0 + q.x * 18.0 + shared.a * 4.0);
         tint = mix(tint, tint * (1.2 + 0.15 * mix(1.0, grind, resolved(0.12, footprint))), honed);
     }
-    // Blood from its hits: smeared along the length, ragged at the rim. A liquid film on the steel, not a
-    // stain in it: thick at the middle (dark, opaque), thin at the rim (the metal shows through, tinted),
-    // a slightly darker meniscus at the edge; while wet a smooth clear coat over the blade's own shape
-    // (a sharp highlight off its real normal, the steel's mirror dimmed but not gone), drying to a dull,
-    // dark brown crust.
-    float blood = 0.0, wet = 0.0;
-    for (int k = 0; k < 4; ++k) {
-        if (float(k) >= condition.z) break; // condition.z: how many spots this item carries
-        vec4 spot = heldDatum(slot, 5.0 + float(k));
-        if (spot.w <= 0.0) continue;
-        float amount = fract(spot.w), wetness = floor(spot.w) * 0.1;
-        vec3 d = q - spot.xyz;
-        float spread = length(vec3(d.x, d.y, d.z * 0.35)) + (shared.b - 0.5) * 1.6;
-        float edgeAffinity = 1.0 + 0.45 * honed + 0.3 * hollow;
-        float radius = (1.2 + 3.0 * amount) * edgeAffinity;
-        float here = smoothstep(radius, radius * 0.4, spread) * (0.55 + 0.45 * amount);
-        blood = max(blood, here);
-        wet = max(wet, here * wetness);
-    }
-    float film = 0.0; // how thick the blood lies, 0 bare .. 1 opaque
-    if (blood > 0.0) {
-        film = smoothstep(0.15, 0.75, blood);
-        float meniscus = smoothstep(0.08, 0.3, blood) * (1.0 - smoothstep(0.3, 0.6, blood)) * wet;
-        // The same absorbing film as the wound marks (woundShader bloodFilm): the steel seen through it
-        // twice, red where thin, nearly black-red where thick, browner once dry, plus what thick blood
-        // scatters back itself. Relative to the item's own brightness, as the rest.
-        float dry = 1.0 - clamp(wet / max(blood, 1e-3), 0.0, 1.0);
-        float thickness = 0.12 + 0.88 * smoothstep(0.05, 0.8, blood);
-        vec3 through = exp(-2.0 * thickness * mix(vec3(1.1, 9.0, 10.0), vec3(2.2, 4.5, 5.5), dry));
-        vec3 own = mix(vec3(0.12, 0.004, 0.003), vec3(0.07, 0.033, 0.024), dry);
-        vec3 filmed = tint * through + luma * 2.0 * (1.0 - through) * own;
-        tint = mix(tint, filmed, smoothstep(0.0, 0.15, blood)) * (1.0 - 0.3 * meniscus);
-        if (abs(woundDebug - 1.0) < 0.5) tint = mix(tint, vec3(0.0, 1.0, 0.95) * 2.5, blood * 0.95);
-        // Under a thin wet film the steel still mirrors; dried blood and thick blood do not.
-        mirror = mix(mirror, 1.0, film * (1.0 - 0.5 * wet) + (1.0 - wet) * blood * 0.5);
-        shine *= 1.0 - 0.8 * film;
-        honed *= 1.0 - blood;
+)glsl" R"glsl(    // Blood from its hits, laid where a blade carries it: a thin film along the cutting edge that drew it,
+    // dragged across the flat in streaks by the cut, beaded on the edge itself, and while wet running down
+    // the steel towards whichever end hangs lower. It is a liquid layer over the metal (see the end of this
+    // function), so it is shaped here and coloured, lit and made glossy there.
+    float cover = 0.0, wet = 0.0, thick = 0.0;
+    if (condition.z > 0.5) {
+        // The item's own frame: the surface's normal, the way across the blade on it, and which way is down.
+        vec3 nl = normalize(vec3(dot(rowX.xyz, n), dot(rowY.xyz, n), dot(rowZ.xyz, n)));
+        vec3 ul = vec3(dot(rowX.xyz, worldUp.xyz), dot(rowY.xyz, worldUp.xyz), dot(rowZ.xyz, worldUp.xyz));
+        ul /= max(length(ul), 1e-4);
+        vec3 across = cross(nl, vec3(0.0, 0.0, 1.0));
+        across = dot(across, across) > 1e-3 ? normalize(across) : vec3(1.0, 0.0, 0.0);
+        vec3 down = -ul + nl * dot(ul, nl); // down, along the surface
+        float slope = length(down);
+        down = slope > 1e-3 ? down / slope : vec3(0.0, 0.0, -1.0);
+        vec3 runSide = cross(nl, down);
+        // A blade's edge: near its outline (6 same-item taps about 1.2 cm out and 6 at 0.4 cm), up close.
+        float edgeNear = 0.0;
+        bool blade = metal > 0.5 && abs(slotKind - 1.0) > 0.5; // held or lying about, not worn plate
+        if (blade && closeUp) {
+            float outside = 0.0;
+            vec2 direction = vec2(0.0, 1.0);
+            float far = clamp(1.2 * pixelsPerCm, 2.0, 28.0), nearer = clamp(0.4 * pixelsPerCm, 1.0, 9.0);
+            for (int i = 0; i < 6; ++i) {
+                outside += 1.0 - sameItem(uv + direction * texel * far, slot);
+                outside += 1.5 * (1.0 - sameItem(uv + direction * texel * nearer, slot));
+                direction = goldenTurn * direction;
+            }
+            edgeNear = smoothstep(0.4, 3.0, outside);
+        }
+        float u = dot(q, across);
+        for (int k = 0; k < 4; ++k) {
+            if (float(k) >= condition.z) break; // condition.z: how many spots this item carries
+            vec4 spot = heldDatum(slot, 5.0 + float(k));
+            if (spot.w <= 0.0) continue;
+            float amount = fract(spot.w), wetness = floor(spot.w) * 0.1;
+            float seed = fract(dot(spot.xyz, vec3(0.131, 0.217, 0.073))) * 40.0;
+            vec3 d = q - spot.xyz;
+            float here, bead = 0.0, run = 0.0;
+            if (blade) {
+                // Along the length: a ragged span either side of where it bit, longer for a heavier wound.
+                float span = 2.5 + 8.0 * amount;
+                float ragged = (solidNoise(vec3(u * 0.7, q.z * 0.9, seed)) - 0.5) * 3.0;
+                float along = 1.0 - smoothstep(span * 0.55, span, abs(d.z) + ragged);
+                // Streaks the cut dragged from the edge across the flat, leaning along the blade.
+                float streak = solidNoise(vec3((q.z - 0.55 * u) * 2.4, (u + 0.55 * q.z) * 0.3, seed + 7.0));
+                float tail = smoothstep(0.42, 0.72, streak) * (0.4 + 0.6 * amount);
+                float band = closeUp ? edgeNear : 0.6; // further out the edge is below a pixel: a light film
+                here = along * max(band, tail) * (0.55 + 0.45 * amount);
+                // Beads strung along the edge while wet: round drops a few mm across.
+                float cell = q.z * 1.3 + seed;
+                float bf = fract(cell) - 0.5;
+                bead = (1.0 - smoothstep(0.12, 0.3, abs(bf))) * step(0.45, fract(sin(floor(cell) * 12.9898 + seed) * 43758.5453)) *
+                       smoothstep(0.7, 0.95, edgeNear) * along * wetness;
+                // Runs: two thin rivulets leaving the smear downhill while the blood is wet and the steel
+                // steep; each ends in a fatter bead.
+                if (wetness > 0.0 && slope > 0.25) {
+                    float t = dot(d, down), side = dot(d, runSide);
+                    for (int r = 0; r < 2; ++r) {
+                        float fr = float(r);
+                        float offset = (fract(sin(seed * 3.1 + fr * 7.7) * 43758.5453) - 0.5) * span * 0.5;
+                        float len = (1.5 + 7.0 * amount) * wetness * smoothstep(0.25, 0.9, slope) *
+                                    (0.6 + 0.4 * fract(sin(seed + fr * 3.3) * 9631.17));
+                        float tip = smoothstep(len * 0.75, len, t);
+                        float width = 0.12 + 0.1 * tip;
+                        float line = 1.0 - smoothstep(width * 0.5, width, abs(side - offset - 0.15 * sin(t * 0.8 + fr)));
+                        run = max(run, line * step(0.0, t) * (1.0 - smoothstep(len * 0.9, len, t)) * (1.0 + 0.6 * tip));
+                    }
+                }
+            } else {
+                // A haft, a grip, a shield: a blot soaked into the surface, ragged at the rim.
+                float spread = length(vec3(d.x, d.y, d.z * 0.35)) + (shared.b - 0.5) * 1.6;
+                float radius = 1.2 + 3.0 * amount;
+                here = smoothstep(radius, radius * 0.4, spread) * (0.55 + 0.45 * amount);
+            }
+            cover = max(cover, max(here, max(bead, min(run, 1.0))));
+            wet = max(wet, max(here, max(bead, run)) * wetness);
+            thick = max(thick, here * (0.3 + 0.5 * amount) + 0.9 * bead + 0.7 * run);
+        }
+        // Drying, the film shrinks and cracks into a flaking crust.
+        float dry = 1.0 - clamp(wet / max(cover, 1e-3), 0.0, 1.0);
+        thick *= mix(1.0, 0.55 + 0.9 * smoothstep(0.3, 0.7, shared.a), dry);
+        // Under it the steel's own fine shine and its honed strip are hidden.
+        shine *= 1.0 - 0.85 * smoothstep(0.1, 0.5, cover);
+        honed *= 1.0 - smoothstep(0.05, 0.4, cover);
     }
     if (slotKind > 1.5 && metal < 0.5) {
         // Where hands go: an object's edges and tops are worn smooth, a little lighter, softly polished.
@@ -1028,20 +1076,48 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     // Highlights take the lights' colour (a torch's warmth); bevel wear takes the surface's.
     vec3 sheen = mix(vec3(luma), base, 0.5 * metal);
     surface += sheen * mix(vec3(1.0), lightTint, lightInfo.w) * shine * spec + sheen * (metal > 0.5 ? 1.2 : 0.4) * edge;
-    // Wet blood is a smooth clear coat: it fills the grind and scratches, so its highlight follows the
-    // blade's real shape (n, not the bumped normal), sharp and bright, stronger towards grazing angles,
-    // plus a faint broad sheen; both fade as it dries.
-    if (wet > 0.0) {
-        vec3 lightColour = mix(vec3(1.0), lightTint, lightInfo.w);
-        float facing = max(dot(n, halfway), 0.0);
-        float fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(n, view), 0.0), 5.0);
-        float lit = max(dot(n, lightDir), 0.0);
-        // Scaled by how lit the item is here (its luma), so a blade in the dark does not glint.
-        surface += lightColour * wet * min(luma * 2.5, 1.0) * (lit * (1.4 * pow(facing, 90.0) + 0.12 * pow(facing, 10.0)) + 0.35 * fresnel * luma);
-    }
     // The honed strip catches the light in a thin, sharp line.
     surface += sheen * mix(vec3(1.0), lightTint, lightInfo.w) * 1.5 * honed * pow(max(dot(bumped, halfway), 0.0), 120.0);
-    return toStored(clamp(mix(light, surface, strength), 0.0, 1.0));
+)glsl" R"glsl(    vec3 result = mix(light, surface, strength);
+    // The film's slope, taken where every pixel of the quad runs (a derivative inside a branch is undefined).
+    float film = thick * 0.35;
+    vec2 filmSlope = vec2(dFdx(film), dFdy(film));
+    if (cover > 0.0) {
+        // The blood over what was drawn, at full strength whatever the detail setting: light passes through
+        // it twice (green and blue absorbed far faster than red, so a thin film is the steel through red and
+        // a thick bead nearly black-red, browner once dry), and thick blood scatters a little back itself.
+        float dry = 1.0 - clamp(wet / max(cover, 1e-3), 0.0, 1.0);
+        float through = cover * (0.12 + 0.88 * smoothstep(0.0, 0.9, thick));
+        vec3 transmit = exp(-2.0 * through * mix(vec3(1.1, 9.0, 10.0), vec3(2.2, 4.5, 5.5), dry));
+        vec3 own = mix(vec3(0.12, 0.004, 0.003), vec3(0.07, 0.033, 0.024), dry);
+        float level = dot(light, vec3(0.2126, 0.7152, 0.0722));
+        vec3 filmed = result * transmit + max(level, luma) * 2.0 * (1.0 - transmit) * own;
+        result = mix(result, filmed, smoothstep(0.0, 0.12, cover));
+        if (abs(woundDebug - 1.0) < 0.5) result = mix(result, vec3(0.0, 1.0, 0.95) * 2.5, cover * 0.95);
+        if (wet > 0.0 && abs(woundDebug - 1.0) > 0.5) {
+            // Wet, it is a smooth clear coat over the blade's real shape (it fills the grind and scratches),
+            // swelling over beads and runs: the normal tips with the film's thickness.
+            vec3 tip = sign(det) * (filmSlope.x * r1 + filmSlope.y * r2);
+            vec3 N = abs(det) > 1e-6 && maskEdge < 0.5 ? normalize(abs(det) * n - tip) : n;
+            if (dot(N, n) < 0.3) N = n;
+            // A sharp GGX highlight (roughness 0.08) from the game lights by this item, in their colour, and
+            // a mirror of the room at grazing angles; Fresnel for a ~1.35 index liquid. The light arriving is
+            // told from the lit brightness here over a dark steel albedo, so a torch makes it glint and
+            // darkness does not.
+            vec3 lightColour = mix(vec3(1.0), lightTint, lightInfo.w);
+            float NV = max(dot(N, view), 1e-3), NL = max(dot(N, lightDir), 0.0);
+            float NH = max(dot(N, halfway), 0.0);
+            float fresnel = 0.02 + 0.98 * pow(1.0 - NV, 5.0);
+            float alpha2 = 0.08 * 0.08 * 0.08 * 0.08;
+            float dn = NH * NH * (alpha2 - 1.0) + 1.0;
+            float D = min(alpha2 / (3.14159 * dn * dn), 60.0);
+            float incident = clamp(max(level, luma) / 0.2, 0.0, 2.5) * mix(0.7, 1.3, lightInfo.w);
+            vec3 gloss = lightColour * D * NL / (4.0 * NV * max(NL, 0.05) + 1e-3) * NL * fresnel * incident;
+            gloss += vec3(level) * min(fresnel - 0.02, 0.25) * 0.5;
+            result += gloss * wet;
+        }
+    }
+    return toStored(clamp(result, 0.0, 1.0));
 }
 
 // Walls, floors and ceilings, in world space (they do not move), each only reshaping the light the
