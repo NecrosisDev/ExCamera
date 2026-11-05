@@ -43,7 +43,7 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 | Screen-space reflections (`View/ScreenSpaceReflections`) | Same; world up from view matrix elements 4..6 | WITNESSED matrices | audit clean | PROVEN for data. Floor weighting by colour (478b214) is OURS, not the game's specular data (that needs the material set, see above) |
 | Edge smoothing (`View/EdgeSmoothing`) | Image only; "supersampled" from which hook ran | Hooks BYTE-EXACT | audit clean | PROVEN; look OURS |
 | Supersampling adaptation (no row; the game's own Supersample) | 0x4B6D0; `DAT_49CA10` sample index, `DAT_2AFC60` sample count, `DAT_49ACD0` per-sample viewports, `DAT_49A4F0` bound framebuffer; matrix hook | Globals by Relative signatures with reviewed notes (writers 0x4B857, 0x4B783, 0x4BA01) | n/a | WITNESSED; not re-derived in this audit |
-| Hide helmet and hair (`View/Helmet`) | Skinned mesh layout and tags (above); material face ranges; descriptor `material+0x68` (+0x14 indices); `renderer+0x80` configuration (+0xC uniforms, +0x14 sample location) | Mesh offsets PROVEN (0xD9350/0x69520/0x5E340); headwear functions BYTE-EXACT (headwearRender); descriptor `+0x14` and renderer `+0x80/+0xC/+0x14` UNPROVEN in this audit | replay under cueLock, restored raw (not audited per pass) | Mostly PROVEN; the descriptor and renderer-uniform reads are UNPROVEN. Not gated: they are read only inside byte-exact owners whose code is unchanged, and a wrong value fails the draw closed (the native draw runs). Flagged for the audit thread |
+| Hide helmet and hair (`View/Helmet`) — see also "Headwear reads" below | Skinned mesh layout and tags (above); material face ranges; descriptor `material+0x68` (+0x14 indices); `renderer+0x80` configuration (+0xC uniforms, +0x14 sample location) | Mesh offsets PROVEN (0xD9350/0x69520/0x5E340); headwear functions BYTE-EXACT (headwearRender); descriptor `+0x14` and renderer `+0x80/+0xC/+0x14` UNPROVEN in this audit | replay under cueLock, restored raw (not audited per pass) | Mostly PROVEN; the descriptor and renderer-uniform reads are UNPROVEN. Not gated: they are read only inside byte-exact owners whose code is unchanged, and a wrong value fails the draw closed (the native draw runs). Flagged for the audit thread |
 | Helmet view (`View/HelmetView`) | Whether headwear was seen (the headwear path) | as Hide helmet | audit clean | as above |
 | See yourself through walls (`View/PlayerGhost`) | Highlight pass 0x4F1D0 hook; replays native bind 0x73F20, per-node submit `material+0x80`, part draw `part+0x90(part+0x98)` | Pass, camera pass, bind and framebuffer bind BYTE-EXACT (silhouette); `+0x80`/`+0x90` checked at runtime to equal contracted 0x201630/0x6B8B0; cache restore PROVEN (6FC30) | Audit found the blend leak (fixed 478b214); cache restored (7abc04a) | PROVEN |
 | Held item detail (`View/HeldItemDetail`) | Same replay mask; held node `renderTransform`, `sector+0x64` origin; material kind from a readback of unit-0 texture | Replay PROVEN; `sceneNode::renderTransform`, `sector::origin` WITNESSED; material kind is OURS | as above | Core PROVEN. **Light** (light-node `+0x210/+0x21C/+0x224`, sector list `+0x130`, origin `+0x64`): UNPROVEN, **gated off**. **Wear and dirt** (item record: `node+0x180` id, database rows `+0x10/+0x18`, row `+0x8/+0xC`): UNPROVEN, **gated off**. Weapon blood spot source: see Wounds |
@@ -83,18 +83,18 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
     clamping health to its minimum (0x15988C-0x15989D), and by 0x167ED0. 0xA00 (= 0x800 | 0x200) is written
     by 0xF1220 (0xF12C4), 0x156D20 (0x156E48) and 0x1A0970 (0x1A0A95).
   - Among all written values, `& 0x800` holds for exactly 0x800 and 0xA00, and it is the test the game itself
-    uses 32 times. **So dead is `+0xDF4 == 0x800 || +0xDF4 == 0xA00`** (the same as `& 0x800` over the stored
-    values; written as two comparisons to match the other branches). Equality with 0x800 alone would miss
+    uses 32 times. **So dead is `(+0xDF4 & 0x800) != 0`**, the game's own test, true for exactly 0x800 and
+    0xA00 among the stored values (the form agreed across threads). Equality with 0x800 alone would miss
     0xA00. The audit thread reads 0x800 as dying (still ragdolling) and 0xA00 as a settled corpse (physics
     off); that split is UNPROVEN here. Of the 0xA00 writers I only looked at 0x156D20, which calls 0x162E80
     first (it clears `+0x12F3` and calls 0x179D50); that is not enough to name the state.
   - Life flag `+0xDF8 | 0x100` is set in one place only, 0x17B248 in 0x17B100, which also zeroes `+0xDF4` and
     plays motion 3; its callers include TTendrilEmitter (0x1A2CE0), 0x1A1550 and 0x28F4F0. It is not death.
-  - Fixed in render code: wound healing tests `+0xDF4 == 0x800 || == 0xA00` (wounds.inl).
+  - Fixed in render code: wound healing tests `+0xDF4 & 0x800` (wounds.inl).
   - overlay.inl's crouch gate masks the state with `0xAC0 | 0x40204 | 0xA00`. Those are masks the game itself
     applies to `+0xDF4` (`and 0xAC0` at 0x16388A and 6 more, `and 0x40204` at 0xBFF90, `and 0xA00` at 0xAB3E7
-    and 11 more), and the union covers both dead values. I left its extra 0x100 life-flag test in place,
-    commented.
+    and 11 more), and the union covers both dead values. Its extra life-flag 0x100 test was meant as "dead";
+    since only the spell collapse 0x17B100 sets that bit, it is removed.
   - Other uses of `lifeFlags & 0x100` as "dead", outside render, are for the audit thread: camera.inl ~113
     and ~635, camera_motion.h ~480-482 (knockdown follow), combat.inl ~12, input.inl ~650 and ~1466,
     motions.inl ~22, xr_bones.inl ~765, xr_drive.inl ~545.
@@ -113,6 +113,9 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
    `+0xF0` (call 0x7ECD0, as in the witnessed partSettle at 0x89800), then copies `+0x120 → +0x150` and
    `+0xF0 → +0x120` (0x8956A-0x89597). So `+0xF0` is the four current points and `+0x120` the four of the step
    before; their centroid difference is the part's motion over one step.
+   Independent witnesses (audit thread): heldItemAttach 0x155C20 writes the attached item's four points to
+   `+0xF0` and copies them to `+0x120` and `+0x150` (0x155D72-0x155D9F); TTetraRBD's integrate method 0x88D30
+   (in the TTetraRBD VMT) runs the Verlet step over `+0xF0`/`+0x120`/`+0x150`.
 
 Each comes back on when its fields are proven (a contract witness plus a decoded reader) and the flag is
 flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on the same light-node fields.
@@ -135,11 +138,23 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
     `shader-dump.glsl` beside first-person.ini. One short session with it shows which sampler each unit feeds,
     and likely the light uniforms too.
 
+- **Headwear reads (e).**
+  - **Descriptor: PROVEN.** The native part draw 0x6B8B0 reads `+0x68` as the descriptor:
+    - `[+0]` is the element buffer, bound to 0x8893 when nonzero;
+    - `[+4]` is the index width (1 byte 0x1401, 2 short 0x1403, otherwise int 0x1405);
+    - `[+8]` is the number of ranges, each at `+0xC` as mode, count and indices; the indices are the qword at
+      `+0x14` (an offset into the buffer) or, without a buffer, inline from `+0x14` (0x6B910-0x6B984).
+    - That is exactly what headwear_render.inl ~184-189 reads. It also checks at runtime that the mode is
+      GL_TRIANGLES and the count is faces × 3.
+  - **Renderer uniforms: PROVEN for the matrix location.** 0x200770 loads `renderer+0x80` (r13), its `+0xC`
+    table, and uploads two 4×4 matrices at the table's `[+0]` location (0x200B73-0x200B81, count 2 from
+    `+0x3C0`), as the mod does. `configuration+8` equal to the current program is the mod's runtime guard.
+  - **The sample-index location `[+0x14]` is UNPROVEN** (not found in the game's submits): with several
+    samples (the game's Supersample) the mount is now not attempted and the native draw stays (gated,
+    headwear_render.inl).
+
 ## Not yet proven, not gated (for the audit thread)
 
-- Headwear: `descriptor+0x14` index pointer and the `renderer+0x80 → +0xC → +0x14` sample-uniform chain
-  (headwear_render.inl ~189, ~568-579). Both are read inside byte-exact owners; a wrong value fails the draw
-  closed.
 - Unit roles of the skin texture set (0 diffuse, 1 specular, 2 normal): from the shader review, not re-derived.
 - Supersampling globals: meaning from the notes in targets.json, not re-derived in this audit.
 - Draw distance, Lights per object, Far rooms: offsets witnessed; meaning not re-derived in this audit.
