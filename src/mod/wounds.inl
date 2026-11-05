@@ -544,8 +544,9 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         uintptr_t ownerNode = 0;
         bool alive = true, ownerGone = false;
         __try {
-            // Dead: state flags 0x800, set by 0x156480 once damage (0x159700) has emptied health. Not life flag
-            // 0x100, which only 0x17B100 sets (with a collapse motion, from spell effects such as TTendrilEmitter).
+            // Dead: state +DF4 is 0x800 (0x156480, once damage 0x159700 empties health) or 0xA00 (0x800 | 0x200); the
+            // game itself tests `& 0x800` (32 sites). Not life flag 0x100, which only 0x17B100 sets (a collapse from
+            // spell effects such as TTendrilEmitter). docs/render-assumptions.md
             alive = (*(const unsigned*)(owner + field::character::stateFlags) & 0x800) == 0;
             if (mendCount || brokenCount) ownerNode = *(const uintptr_t*)(owner + field::character::sceneNode);
             (void)*(const volatile float*)(owner + woundCharacterBleed);

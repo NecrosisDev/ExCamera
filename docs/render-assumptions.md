@@ -73,15 +73,29 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
   No game code was found for the "low-stamina idle" the old comment named. The setting is now "Hurt and eye
   adjustment"; the shader's winded input stays 0. (Before 8389d19 this branch read `+0x10B8`/`+0x10BC`, which
   the HUD does not draw at all.)
-- **Death check.** PROVEN: `stateFlags +0xDF4 = 0x800` is written by 0x156480 (0x1564D6). The damage
-  function 0x159700 calls it (0x1598C3) right after clamping health to its minimum (0x15988C-0x15989D). Life
-  flag `+0xDF8 | 0x100` is set at one place only, 0x17B248 in 0x17B100. That function also zeroes `+0xDF4`
-  and plays motion 3, and its callers include TTendrilEmitter (0x1A2CE0) and 0x1A1550, 0x28F4F0. It is not
-  death. Fixed in render code: wound healing now tests `+0xDF4 & 0x800` (wounds.inl). overlay.inl's
-  crouch gate already covers 0x800 (in its 0xA00 mask), so I left its 0x100 test in place and commented it.
-  Other uses of `lifeFlags & 0x100` as "dead", outside render, are for the audit thread: camera.inl
-  ~113 and ~635, camera_motion.h ~480-482 (knockdown follow), combat.inl ~12, input.inl ~650 and ~1466,
-  motions.inl ~22, xr_bones.inl ~765, xr_drive.inl ~545.
+- **Death check.** PROVEN from the game's writers and tests of `stateFlags +0xDF4`:
+  - It is a state value whose values combine bits. The game writes 0, 1, 2, 8, 0x20, 0xC0, 0x100, 0x200,
+    0x300, 0x600, 0x800, 0xA00, 0x8000, 0x10000, 0x10004 (all `mov dword [char+0xDF4], imm` in `.pdata`
+    functions).
+  - It tests it both ways. By equality: `cmp …, 0xA00` 55 times, `cmp 2` 52, `cmp 0x300` 23, `cmp 1` 14. By
+    mask after a load: `and 0x200` 34 times, `and 0x800` 32, `and 0xA00` 12, `and 0xAC0` 7, `and 0x40204` once.
+  - 0x800 is written by 0x156480 (0x1564D6), which the damage function 0x159700 calls (0x1598C3) right after
+    clamping health to its minimum (0x15988C-0x15989D), and by 0x167ED0. 0xA00 (= 0x800 | 0x200) is written
+    by 0xF1220 (0xF12C4), 0x156D20 (0x156E48) and 0x1A0970 (0x1A0A95).
+  - Among all written values, `& 0x800` holds for exactly 0x800 and 0xA00, and it is the test the game itself
+    uses 32 times. **So dead is `(+0xDF4 & 0x800) != 0`**, that is, the state is 0x800 or 0xA00. Equality with
+    0x800 alone would miss 0xA00. Which of the two is "dying" and which is "dead and down" is UNPROVEN; both
+    carry the bit the game tests.
+  - Life flag `+0xDF8 | 0x100` is set in one place only, 0x17B248 in 0x17B100, which also zeroes `+0xDF4` and
+    plays motion 3; its callers include TTendrilEmitter (0x1A2CE0), 0x1A1550 and 0x28F4F0. It is not death.
+  - Fixed in render code: wound healing tests `+0xDF4 & 0x800` (wounds.inl).
+  - overlay.inl's crouch gate masks the state with `0xAC0 | 0x40204 | 0xA00`. Those are masks the game itself
+    applies to `+0xDF4` (`and 0xAC0` at 0x16388A and 6 more, `and 0x40204` at 0xBFF90, `and 0xA00` at 0xAB3E7
+    and 11 more), and the union covers both dead values. I left its extra 0x100 life-flag test in place,
+    commented.
+  - Other uses of `lifeFlags & 0x100` as "dead", outside render, are for the audit thread: camera.inl ~113
+    and ~635, camera_motion.h ~480-482 (knockdown follow), combat.inl ~12, input.inl ~650 and ~1466,
+    motions.inl ~22, xr_bones.inl ~765, xr_drive.inl ~545.
 
 ## Gated off by this audit (`unprovenRenderReads = false`, src/mod/wounds.inl)
 
