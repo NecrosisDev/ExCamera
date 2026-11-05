@@ -86,8 +86,7 @@ static bool arm(const char*& reason, const char*& hooks) {
     // The game window may have been rebuilt while stopped (re-arm): find it again.
     HWND window = hookedWindow.load(std::memory_order_acquire);
     if (!window || !IsWindow(window)) {
-        window = nullptr;
-        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&window));
+        window = gameOwnWindow();
         hookedWindow.store(window, std::memory_order_release);
     }
     if (!window || !installWindow(window)) {
@@ -199,8 +198,7 @@ static void rehookWindow() {
         HWND expected = owner.window;
         hookedWindow.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
     }
-    HWND w = nullptr;
-    EnumWindows(findWindow, reinterpret_cast<LPARAM>(&w));
+    const HWND w = gameOwnWindow();
     if (w && installWindow(w)) ++windowRehooks;
 }
 // Worker thread: F7 stops only when held (fp::stopKeyStep); a short press shows
@@ -509,23 +507,18 @@ static bool rearm(const wchar_t* executable) {
     rearmRunning();
     return true;
 }
-// Loaded by EMTK at the game's entry point, the DLL starts before the game has made its window (the
-// subclass and notices need it) or loaded OpenGL (the frame hook; not a static import of the game). Wait for
-// both, bounded; every check after runs unchanged (the dispatch slots are filled from the file before entry,
-// so a slot holding someone else's code is still a dispatch conflict). Through our launcher both are there.
+// Loaded by EMTK at the game's entry point (or by our launcher as soon as kernel32 is mapped), the DLL starts
+// before the game has made its window or its GL context. Our DLL imports OpenGL32 itself, so a loaded opengl32 says
+// nothing; and the first visible window may be a splash. Readiness is the game's own signal instead: its DC global
+// set, which happens only once its context is current on its window (gameOwnWindow). Bounded; every check after
+// runs unchanged.
 static constexpr ULONGLONG gameReadyWaitMs = 300000; // 5 minutes: a slow disk can take long to the title
 static bool waitForGame() {
     const ULONGLONG start = GetTickCount64();
     for (;;) {
-        if (GetModuleHandleW(
-                L"opengl32.dll")) { // the window looked for only then: not a window shown before the game's own
-            HWND window = hookedWindow.load(std::memory_order_acquire);
-            if (!window || !IsWindow(window)) {
-                window = nullptr;
-                EnumWindows(findWindow, reinterpret_cast<LPARAM>(&window));
-                hookedWindow.store(window, std::memory_order_release);
-            }
-            if (window) return true;
+        if (const HWND window = gameOwnWindow()) {
+            hookedWindow.store(window, std::memory_order_release);
+            return true;
         }
         if (GetTickCount64() - start >= gameReadyWaitMs) return false;
         Sleep(100);
@@ -1311,11 +1304,6 @@ static DWORD runSession() {
     if (slash) {
         wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - statusPath), L"first-person-status.json");
         swprintf_s(statusTempPath, L"%s.tmp", statusPath);
-    }
-    {
-        HWND initialWindow = nullptr;
-        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&initialWindow));
-        hookedWindow.store(initialWindow, std::memory_order_release);
     }
     wchar_t executable[MAX_PATH]{};
     if (!GetModuleFileNameW(nullptr, executable, MAX_PATH)) {
