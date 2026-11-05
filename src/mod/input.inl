@@ -114,17 +114,14 @@ static void syncPointerCapture(HWND w, const RECT& screenClip, const POINT& cent
 }
 
 static inline bool alternateBindingKey(unsigned key) {
-    const unsigned alternate = nativeBinding(6);
-    if (!key || key >= 256 || !alternate || alternate >= 256) return false;
-    if (key == alternate) return true;
-    constexpr unsigned modifiers[][3] = {{VK_MENU, VK_LMENU, VK_RMENU},
-                                         {VK_CONTROL, VK_LCONTROL, VK_RCONTROL},
-                                         {VK_SHIFT, VK_LSHIFT, VK_RSHIFT}};
-    for (const auto& family : modifiers)
-        if ((key == family[0] && (alternate == family[1] || alternate == family[2])) ||
-            (alternate == family[0] && (key == family[1] || key == family[2])))
-            return true;
-    return false;
+    return fp::sameKey(key, nativeBinding(6));
+}
+// Any of the game's own Controls bindings (fp::gameUsesKey): the mod's whole-key actions leave these to the game.
+static bool gameBindingKey(unsigned key) {
+    if (!base) return false;
+    unsigned bindings[field::bindings::count];
+    for (size_t i = 0; i < field::bindings::count; ++i) bindings[i] = nativeBinding(i);
+    return fp::gameUsesKey(key, bindings);
 }
 
 static bool holdingItem() {
@@ -365,7 +362,9 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 inputOwner.windowClaim(bindingKey);
                 return xbutton ? TRUE : 0;
             }
-            if (canTake && bindingKey && (bindingKey == kickKey.load() || bindingKey == jumpKey.load())) { // the kick and jump keys: the game never sees them
+            // The kick and jump keys: the game never sees them, so a key the game itself uses stays the game's.
+            if (canTake && bindingKey && (bindingKey == kickKey.load() || bindingKey == jumpKey.load()) &&
+                !gameBindingKey(unsigned(bindingKey))) {
                 inputOwner.windowClaim(bindingKey);
                 if (bindingKey == kickKey.load()) motionKickRequested = true;
                 if (bindingKey == jumpKey.load()) motionJumpRequested = true;
@@ -373,7 +372,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             }
             // Third person, a side chosen, Settings (F8) closed: the other shoulder. Anywhere else the game keeps it.
             if (canTake && bindingKey == swapShoulderKey.load() && viewMode.load() == 1 && tpShoulder.load() != 0 &&
-                !cursorFreeBitSet(cursorFreeBit)) {
+                !cursorFreeBitSet(cursorFreeBit) && !gameBindingKey(unsigned(bindingKey))) {
                 inputOwner.windowClaim(bindingKey);
                 swapShoulder();
                 return xbutton ? TRUE : 0;

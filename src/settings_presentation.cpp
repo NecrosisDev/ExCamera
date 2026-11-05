@@ -395,8 +395,8 @@ const wchar_t* settingTip(int id) {
     case setting::tpCombatAim: return L"Third person. Oval: the cursor moves freely and the view turns at its edge. Centre: the view turns directly.";
     case setting::eyeSetback: return L"Moves the first-person view back toward the middle of the head. Third-person framing and interaction distance use the same shifted eye position. Headwear that blocks the first-person view is hidden; its shadow remains.";
     case setting::rotateHeldKey: return L"Hold and move the mouse to turn what you're holding. The view stays still meanwhile. Delete clears the key.";
-    case setting::kickKey: return L"Plays the game's unused kick. Fighting stance, upright, needs most of your stamina. Delete clears the key.";
-    case setting::jumpKey: return L"Plays the game's unused jump. Upright, needs half your stamina. Delete clears the key.";
+    case setting::kickKey: return L"Plays the game's unused kick. Fighting stance, upright, needs most of your stamina. Not a key the game uses (Alt is its thrust). Delete clears the key.";
+    case setting::jumpKey: return L"Plays the game's unused jump. Upright, needs half your stamina. Not a key the game uses. Delete clears the key.";
     case setting::fpKnockdown: return L"Show third: knocked down in first person, the view goes to third person and back a moment after you are up. F6 meanwhile keeps your choice; death never switches.";
     case setting::tpLookFollow: return L"Out of combat, looking down lifts the camera and moves it back so the ground ahead shows; looking up brings it closer and lower. Walls still pull it in.";
     case setting::swapShoulderKey: return L"Third person: slides the camera over your other shoulder and keeps it there. Does nothing with the camera centred. Delete clears the key.";

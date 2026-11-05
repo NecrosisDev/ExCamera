@@ -967,6 +967,26 @@ inline bool heldPointOnPlane(const float* origin, const float* dir, float distan
     }
     return true;
 }
+// Two virtual keys name the same key: equal, or one is a modifier's generic code (VK_MENU 0x12, VK_CONTROL 0x11,
+// VK_SHIFT 0x10) and the other its left or right code.
+inline bool sameKey(unsigned a, unsigned b) {
+    if (!a || a >= 256 || !b || b >= 256) return false;
+    if (a == b) return true;
+    constexpr unsigned modifiers[][3] = {{0x12, 0xA4, 0xA5}, {0x11, 0xA2, 0xA3}, {0x10, 0xA0, 0xA1}};
+    for (const auto& family : modifiers)
+        if ((a == family[0] && (b == family[1] || b == family[2])) || (b == family[0] && (a == family[1] || a == family[2])))
+            return true;
+    return false;
+}
+// A key the game's own Controls use (its binding table: movement, run, crouch, the alternate attack that makes a
+// thrust, Cursor Look, interact...). The mod's Kick, Jump and Swap shoulder keys take their key from the game
+// altogether, so they never take one of these: Alt as Kick swallowed Alt + left mouse, the game's stab.
+template <size_t N>
+inline bool gameUsesKey(unsigned key, const unsigned (&bindings)[N]) {
+    for (unsigned bound : bindings)
+        if (sameKey(key, bound)) return true;
+    return false;
+}
 // The game's own windows that free the pointer by themselves (overlay.inl windowFreeStep), by the form's kind
 // tag (+0xB8): inventory/loot/container, the arena merchant and arsenal, the arena/company screens, and an
 // item description. The arena's post-fight result form (Next Fight) is not one of them, whatever its tag: the

@@ -440,6 +440,14 @@ bool NativeSettingsIntegration::completeCapture(int key) {
                             id == setting::swapShoulderKey ||
                             id == setting::trackingKey || id == setting::leanKey || id == setting::leanLeftKey ||
                             id == setting::leanRightKey;
+    // Kick, Jump and Swap shoulder take their key from the game entirely: one the game binds (Alt makes a thrust)
+    // is refused the same way, waiting for another key.
+    const bool wholeKey = id == setting::kickKey || id == setting::jumpKey || id == setting::swapShoulderKey;
+    if (key > 0 && wholeKey && gameKey && gameKey(key)) {
+        captureRow=id;
+        dirty=true;
+        return true;
+    }
     if (key > 0 && ownCapture &&
         (taken(setting::rotateHeldKey) || taken(setting::kickKey) || taken(setting::jumpKey) ||
          taken(setting::swapShoulderKey) ||

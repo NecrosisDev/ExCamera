@@ -134,6 +134,25 @@ bool input_f6_cycle_policy() {
     return true;
 }
 
+bool input_game_binding_keys() {
+    // Modifier families: Alt, Ctrl and Shift match their left/right codes both ways; other keys only themselves.
+    CHECK(fp::sameKey(VK_MENU, VK_MENU));
+    CHECK(fp::sameKey(VK_MENU, VK_LMENU) && fp::sameKey(VK_RMENU, VK_MENU));
+    CHECK(fp::sameKey(VK_CONTROL, VK_RCONTROL) && fp::sameKey(VK_LSHIFT, VK_SHIFT));
+    CHECK(!fp::sameKey(VK_LMENU, VK_RMENU)); // two physical keys
+    CHECK(!fp::sameKey(VK_MENU, VK_CONTROL));
+    CHECK(!fp::sameKey(0, 0) && !fp::sameKey(VK_MENU, 0) && !fp::sameKey(300, 300));
+    // Hunter's case: the game's alternate attack (the thrust modifier) is Alt, and Kick was bound to Alt.
+    const unsigned bindings[10] = {'W', 'A', 'S', 'D', VK_SHIFT, 'X', VK_LMENU, 'C', VK_SPACE, 'E'};
+    CHECK(fp::gameUsesKey(VK_MENU, bindings));
+    CHECK(fp::gameUsesKey(VK_SPACE, bindings));
+    CHECK(fp::gameUsesKey(VK_RSHIFT, bindings));
+    CHECK(!fp::gameUsesKey(VK_CONTROL, bindings));
+    CHECK(!fp::gameUsesKey('G', bindings));
+    CHECK(!fp::gameUsesKey(0, bindings));
+    return true;
+}
+
 bool input_cursor_panels() {
     CHECK(fp::cursorPanelOf(fp::windowInventory, false) == fp::cursorPanelInventory);
     CHECK(fp::cursorPanelOf(fp::windowLoot, false) == fp::cursorPanelInventory);
@@ -923,6 +942,7 @@ int main() {
         {"input combat cues, cursor, and ray helpers", input_combat_cues_cursor_and_ray_helpers},
         {"input F6 cycle policy", input_f6_cycle_policy},
         {"input cursor panels", input_cursor_panels},
+        {"input game binding keys", input_game_binding_keys},
         {"camera motion FOV, AimBox, NearPlane, and eye stabilization",
          camera_motion_fov_aimbox_nearplane_and_eye_stabilization},
         {"camera motion shoulder slide", camera_motion_shoulder_slide},
