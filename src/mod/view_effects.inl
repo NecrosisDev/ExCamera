@@ -1048,8 +1048,10 @@ void main() {
         // G: 1 + slot * 6, of 255; A: the game's material id at this texel (255 none).
         vec4 held = texture2D(silhouette, uv);
         float code = floor(held.g * 255.0 + 0.5) - 1.0;
-        float kind = lookOf(floor(held.a * 255.0 + 0.5));
-        if (code >= 0.0 && code < 240.0 && kind > -0.5) {
+        float heldId = floor(held.a * 255.0 + 0.5);
+        float kind = lookOf(heldId);
+        // 254: the game's own weapon blood stains drew here (gameBloodKeepShader); left exactly as drawn.
+        if (code >= 0.0 && code < 240.0 && kind > -0.5 && abs(heldId - 254.0) > 0.5) {
             float slot = floor(code / 6.0);
             vec4 tint = heldDatum(slot, 4.0);
             if (tint.a > 0.0)
@@ -1487,6 +1489,7 @@ vec3 woundMarks(vec3 color) {
         if (woundMaskOn > 0.5) {
             vec4 mask = texture2D(woundMask, uv);
             float code = floor(mask.g * 255.0 + 0.5) - 1.0, id = floor(mask.a * 255.0 + 0.5);
+            if (abs(id - 254.0) < 0.5) continue; // the game's own weapon blood stains: left as drawn
             if (code >= 0.0 && code < 240.0 && id < 25.5) family = woundMaterialFamily(id);
         }
         float cloth = layer * (family == 1.0 ? 1.0 : 0.0), metal = layer * (family == 3.0 ? 1.0 : 0.0);
@@ -1762,6 +1765,15 @@ void main() {
 // The floor blood layer's marks (bloodLayerUpdate): each is drawn into the layer's texture over its own
 // texel box (the quad's uv is the layer's), thickness adding in alpha, the source height and the time
 // taking the maximum in red and green, so a wet mark re-wets whatever it lands on.
+// The game's weapon blood stains kept as drawn: where its stain pass covered (sceneTex: our coverage texture,
+// alpha), the mask's alpha becomes 254, which the finish pass's held detail and the wound pass leave alone.
+static const char* const gameBloodKeepShader = R"glsl(
+void main() {
+    if (texture2D(sceneTex, uv).a < 0.05) discard;
+    gl_FragColor = vec4(0.0, 0.0, 0.0, 254.0 / 255.0);
+}
+)glsl";
+
 static const char* const bloodSplatShader = R"glsl(
 uniform vec4 bloodMapInfo; // x: the layer's size in texels, y: cm per texel
 uniform vec4 splatA;       // the mark's centre x, z in the layer's world (cm); z: half width across; w: half length along
@@ -1941,7 +1953,7 @@ static const char* const viewUniformNames[viewUniformCount] = {
 struct ViewProgramUniforms { GLint at[viewUniformCount]; };
 enum ViewProgram : unsigned {
     programAo, programDof, programFinish, programComposite, programResolve, programDofComposite,
-    programMeter, programDistance, programWounds, programFire, programBloodSplat, programCount
+    programMeter, programDistance, programWounds, programFire, programBloodSplat, programGameBlood, programCount
 };
 static ViewProgramUniforms viewUniforms[8][programCount]; // [cue context][ViewProgram]; cueLock
 
@@ -1951,7 +1963,8 @@ enum ViewEffectUnavailable : unsigned {
     viewHookMissing = 1, viewApiMissing = 2, viewTargetsFailed = 4, viewAoFailed = 8, // 16: the removed reflections
     viewDofFailed = 32, viewFaulted = 64, viewFinishFailed = 128, viewCompositeFailed = 256, viewResolveFailed = 512,
     viewDofCompositeFailed = 1024, viewMeterFailed = 2048,
-    viewDistanceFailed = 4096, viewWoundsFailed = 8192, viewFireFailed = 16384, viewBloodFailed = 32768
+    viewDistanceFailed = 4096, viewWoundsFailed = 8192, viewFireFailed = 16384, viewBloodFailed = 32768,
+    viewGameBloodFailed = 65536
 };
 static std::atomic<unsigned> viewEffectsUnavailable{0};
 static char viewEffectsReason[256];
@@ -2605,6 +2618,7 @@ static void setViewUniforms(gl::Api& g, const ViewProgramUniforms& u, const View
     g.uniform1f(u.at[uPixelScale], f.pixelScale);
     g.uniform1f(u.at[uEncoded], f.encoded ? 1.f : 0.f);
 }
+static void markGameBloodKept(gl::Api& g, fp::CueResources& r, const ViewProgramUniforms& u, const ViewFrame& frame);
 
 // The second colour target and the two framebuffers that hand the image between
 // passes; viewColor already holds this frame's copy at the view's size. Binds on
@@ -3580,7 +3594,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         owner->aoAttempted = owner->dofAttempted = owner->finishAttempted =
             owner->compositeAttempted = owner->resolveAttempted = owner->dofCompositeAttempted =
             owner->meterAttempted = owner->distanceAttempted = owner->woundAttempted = owner->fireAttempted =
-                owner->bloodSplatAttempted = false;
+                owner->bloodSplatAttempted = owner->gameBloodAttempted = false;
     }
     // Multi-output routing is checked on audit frames (see above).
     if (audit) owner->viewOutputsReady = cueOutputReady(g);
@@ -3623,7 +3637,9 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         {float(finishMode), &r.fireProgram, &owner->fireAttempted, nullptr, fireShader,
          viewFireFailed, "fire and smoke"},
         {float(finishMode && woundMarks.load(std::memory_order_relaxed) > 0.f), &r.bloodSplatProgram,
-         &owner->bloodSplatAttempted, nullptr, bloodSplatShader, viewBloodFailed, "blood layer"}};
+         &owner->bloodSplatAttempted, nullptr, bloodSplatShader, viewBloodFailed, "blood layer"},
+        {float(finishMode), &r.gameBloodKeepProgram, &owner->gameBloodAttempted, nullptr, gameBloodKeepShader,
+         viewGameBloodFailed, "game blood keep"}};
     for (unsigned i = 0; i < programCount; ++i) {
         if (!effects[i].mode || *effects[i].attempted) continue;
         *effects[i].attempted = true;
@@ -4100,6 +4116,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
         const bool bloodLayer = finishMode && r.woundProgram && g.uniform4fv && woundMarks.load(std::memory_order_relaxed) > 0.f &&
                                 (source == r.viewColor || source == r.chainTex) &&
                                 bloodLayerUpdate(g, r, viewUniforms[contextIndex][programBloodSplat], projection, request.wounds, now);
+        markGameBloodKept(g, r, viewUniforms[contextIndex][programGameBlood], frame); // the game's weapon stains: 254
         // Wound marks first, on the image the finishing pass reads, only inside their screen box.
         if (finishMode && (request.wounds.count || request.wounds.drips || request.wounds.caps || request.wounds.falls || bloodLayer ||
                            bloodDiagnose.load(std::memory_order_relaxed)) && r.woundProgram && g.uniform4fv &&
@@ -4832,6 +4849,127 @@ static bool prepareSilhouetteTargets(gl::Api& g, fp::CueResources& r, int width,
     r.silhouetteWidth = width;
     r.silhouetteHeight = height;
     return true;
+}
+
+// The game's own weapon blood stains (its stain pass, the function round 0x1009C0-0x100CE3 with "Error rendering
+// weapon blood stains.": per bloody weapon a uniform from its blood, then the weapon's first material drawn again
+// through 0x6B8B0 / 0x6B7F0, returning to 0x100ADE / 0x100BCD / 0x100C24). Each of those draws is issued once more,
+// as the game set it up, into our coverage texture (alpha, MAX-blended) with the scene's own depth attachment, so
+// only what the stain pass really covered is marked. Before the finish pass that coverage becomes 254 in the held
+// mask's alpha (markGameBloodKept), which the held detail and the wound pass leave exactly as the game drew it.
+static std::atomic<unsigned> gameBloodStainDraws{0}, gameBloodStainSkips{0}, gameBloodKeptFrames{0};
+static void markGameBloodStain(gl::Api& g, fp::CueResources& r, void (*native)(uintptr_t), uintptr_t material) {
+    if (!g.getAttachmentParameter || !g.genFramebuffers || !g.blendEquationSeparate || !g.blendFuncSeparate) return;
+    GLint drawFbo = 0, viewport[4]{};
+    glGetIntegerv(glc::drawFramebufferBinding, &drawFbo);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    GLint type = 0, name = 0;
+    if (drawFbo > 0) {
+        g.getAttachmentParameter(glc::drawFramebuffer, glc::depthAttachment, 0x8CD0 /*OBJECT_TYPE*/, &type);
+        g.getAttachmentParameter(glc::drawFramebuffer, glc::depthAttachment, 0x8CD1 /*OBJECT_NAME*/, &name);
+    }
+    const int width = viewport[0] + viewport[2], height = viewport[1] + viewport[3];
+    if (glGetError() != GL_NO_ERROR || drawFbo <= 0 || name <= 0 || (type != 0x8D41 && type != GL_TEXTURE) || width <= 0 ||
+        height <= 0) {
+        gameBloodStainSkips.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    GLint priorTexture = 0;
+    glGetIntegerv(glc::textureBinding2D, &priorTexture);
+    if (r.gameBloodWidth != width || r.gameBloodHeight != height || !r.gameBloodFbo) {
+        r.retireGameBlood(g);
+        g.genTextures(1, &r.gameBloodTex);
+        g.genFramebuffers(1, &r.gameBloodFbo);
+        if (!r.gameBloodTex || !r.gameBloodFbo) { r.retireGameBlood(g); return; }
+        g.bindTexture(GL_TEXTURE_2D, r.gameBloodTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GLint(glc::rgba8), width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        g.texParameteri(GL_TEXTURE_2D, glc::minFilter, glc::nearest);
+        g.texParameteri(GL_TEXTURE_2D, glc::magFilter, glc::nearest);
+        g.bindTexture(GL_TEXTURE_2D, GLuint(priorTexture)); // the game's unit cache holds this binding
+        r.gameBloodWidth = width;
+        r.gameBloodHeight = height;
+        r.gameBloodClear = true;
+    }
+    GLboolean mask[4]{}, blending = glIsEnabled(GL_BLEND), scissor = glIsEnabled(GL_SCISSOR_TEST);
+    GLint blend[6]{};
+    GLfloat clear[4]{};
+    glGetBooleanv(GL_COLOR_WRITEMASK, mask);
+    const GLenum queries[6] = {glc::blendSrcRgb, glc::blendDstRgb, glc::blendSrcAlpha, glc::blendDstAlpha,
+                               glc::blendEquationRgb, glc::blendEquationAlpha};
+    for (unsigned i = 0; i < 6; ++i) glGetIntegerv(queries[i], &blend[i]);
+    glGetFloatv(glc::colorClearValue, clear);
+    g.bindFramebuffer(glc::drawFramebuffer, r.gameBloodFbo);
+    g.framebufferTexture2D(glc::drawFramebuffer, glc::colorAttachment0, GL_TEXTURE_2D, r.gameBloodTex, 0);
+    if (type == 0x8D41) g.framebufferRenderbuffer(glc::drawFramebuffer, glc::depthAttachment, 0x8D41, GLuint(name));
+    else g.framebufferTexture2D(glc::drawFramebuffer, glc::depthAttachment, GL_TEXTURE_2D, GLuint(name), 0);
+    if (g.checkFramebufferStatus(glc::drawFramebuffer) == glc::framebufferComplete) {
+        if (r.gameBloodClear) {
+            glDisable(GL_SCISSOR_TEST);
+            glColorMask(1, 1, 1, 1);
+            glClearColor(0.f, 0.f, 0.f, 0.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            r.gameBloodClear = false;
+            if (scissor) glEnable(GL_SCISSOR_TEST);
+        }
+        glColorMask(0, 0, 0, 1);
+        glEnable(GL_BLEND);
+        g.blendEquationSeparate(glc::funcAdd, glc::funcMax);
+        g.blendFuncSeparate(GL_ZERO, GL_ONE, GL_ONE, GL_ONE);
+        native(material);
+        r.gameBloodDrawn = true;
+        gameBloodStainDraws.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        gameBloodStainSkips.fetch_add(1, std::memory_order_relaxed);
+    }
+    g.framebufferTexture2D(glc::drawFramebuffer, glc::depthAttachment, GL_TEXTURE_2D, 0, 0); // keep no hold on the game's depth
+    g.bindFramebuffer(glc::drawFramebuffer, GLuint(drawFbo));
+    glColorMask(mask[0], mask[1], mask[2], mask[3]);
+    (blending ? glEnable : glDisable)(GL_BLEND);
+    g.blendEquationSeparate(GLenum(blend[4]), GLenum(blend[5]));
+    g.blendFuncSeparate(GLenum(blend[0]), GLenum(blend[1]), GLenum(blend[2]), GLenum(blend[3]));
+    glClearColor(clear[0], clear[1], clear[2], clear[3]);
+}
+
+// This frame's stain coverage into the held mask as 254 (alpha only), at the finish pass, after the held replay
+// wrote its ids (so the game's stains win). A frame that reuses the last mask keeps its marks and adds these.
+static void markGameBloodKept(gl::Api& g, fp::CueResources& r, const ViewProgramUniforms& u, const ViewFrame& frame) {
+    const bool fits = r.gameBloodDrawn && r.gameBloodKeepProgram && r.silhouetteFbo && r.gameBloodTex &&
+                      r.gameBloodWidth == r.silhouetteWidth && r.gameBloodHeight == r.silhouetteHeight;
+    r.gameBloodDrawn = false;
+    r.gameBloodClear = true;
+    if (!fits) return;
+    GLint drawFbo = 0, viewport[4]{}, program = 0, vao = 0, texture = 0, activeUnit = 0;
+    GLboolean mask[4]{}, blending = glIsEnabled(GL_BLEND), depth = glIsEnabled(GL_DEPTH_TEST), scissor = glIsEnabled(GL_SCISSOR_TEST);
+    glGetIntegerv(glc::drawFramebufferBinding, &drawFbo);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glGetIntegerv(glc::currentProgram, &program);
+    glGetIntegerv(glc::vertexArrayBinding, &vao);
+    glGetIntegerv(glc::activeTexture, &activeUnit);
+    glGetBooleanv(GL_COLOR_WRITEMASK, mask);
+    g.activeTexture(glc::texture0);
+    glGetIntegerv(glc::textureBinding2D, &texture);
+    g.bindFramebuffer(glc::drawFramebuffer, r.silhouetteFbo);
+    setViewport(g, 0, 0, r.silhouetteWidth, r.silhouetteHeight);
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(0, 0, 0, 1);
+    g.useProgram(r.gameBloodKeepProgram);
+    setViewUniforms(g, u, frame);
+    g.bindTexture(GL_TEXTURE_2D, r.gameBloodTex);
+    g.bindVertexArray(r.viewVao);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    gameBloodKeptFrames.fetch_add(1, std::memory_order_relaxed);
+    g.bindVertexArray(GLuint(vao));
+    g.bindTexture(GL_TEXTURE_2D, GLuint(texture));
+    g.activeTexture(GLenum(activeUnit));
+    g.useProgram(GLuint(program));
+    glColorMask(mask[0], mask[1], mask[2], mask[3]);
+    (blending ? glEnable : glDisable)(GL_BLEND);
+    (depth ? glEnable : glDisable)(GL_DEPTH_TEST);
+    (scissor ? glEnable : glDisable)(GL_SCISSOR_TEST);
+    setViewport(g, viewport[0], viewport[1], viewport[2], viewport[3]);
+    g.bindFramebuffer(glc::drawFramebuffer, GLuint(drawFbo));
 }
 
 // One noted part, re-checked: still the player's (body) or still held in its slot,

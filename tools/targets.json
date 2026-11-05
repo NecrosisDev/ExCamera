@@ -937,6 +937,21 @@
       "rva": "0x152531",
       "optionalGroup": "kickClasses",
       "note": "Inside the equip posture selector 1523F0: (gripFlags & 0xF0) 0x10 one-handed (two weapons: dual wield, 0x90), 0x20 two-handed (0x521 greatsword posture 0x30, flag bit 0 posture 0x20, else 0x10), 0x30 polearm posture 0x40, else unarmed 0x80/0xC0; after the shield (+0xBF8) and special-held (+0xC00) branches. Read-only: pins the classes the Animated kick maps to clip sets."
+    },
+    "gameBloodStainDrawReturn": {
+      "rva": "0x100ade",
+      "note": "the game's weapon blood stain pass (the function with \"Error rendering weapon blood stains.\", 0x1009C0-0x100CE3): its first 0x6B8B0 draw",
+      "optionalGroup": "gameBloodStains"
+    },
+    "gameBloodStainBoundReturn": {
+      "rva": "0x100bcd",
+      "note": "the game's weapon blood stain pass (the function with \"Error rendering weapon blood stains.\", 0x1009C0-0x100CE3): its 0x6B7F0 draw in the per-sample loop",
+      "optionalGroup": "gameBloodStains"
+    },
+    "gameBloodStainOtherReturn": {
+      "rva": "0x100c24",
+      "note": "the game's weapon blood stain pass (the function with \"Error rendering weapon blood stains.\", 0x1009C0-0x100CE3): its 0x6B8B0 draw without samples",
+      "optionalGroup": "gameBloodStains"
     }
   },
   "globals": {
@@ -1254,6 +1269,11 @@
       "rva": "0x2ae0b0",
       "note": "DAT_1002AE0B0: the format table's last index",
       "optionalGroup": "textureReplace"
+    },
+    "gameBloodStainText": {
+      "rva": "0x30fbd0",
+      "note": "the string \"Error rendering weapon blood stains.\", referenced by the stain pass at 0x100CBB (witness)",
+      "optionalGroup": "gameBloodStains"
     }
   },
   "slots": {
@@ -1573,7 +1593,11 @@
     "textureFormatIndex",
     "textureFormatTable",
     "textureFormatLast",
-    "programLink"
+    "programLink",
+    "gameBloodStainDrawReturn",
+    "gameBloodStainBoundReturn",
+    "gameBloodStainOtherReturn",
+    "gameBloodStainText"
   ],
   "reviewed_signatures": [
     {
@@ -11266,6 +11290,50 @@
       "addend": 0,
       "known_rva": "0x1fa120",
       "pattern": "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? D0 89 ?? 89 ?? ?? 89 ?? ?? 31 ?? FF ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "gameBloodStainDrawReturn",
+      "kind": "Code",
+      "hook": false,
+      "entry": false,
+      "offset": 18,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x100ade",
+      "pattern": "48 8B 06 48 8B 80 D0 01 00 00 48 8B 08 E8 ?? ?? ?? ?? 8B 3D ?? ?? ?? ?? 83 FF 01 0F 8C"
+    },
+    {
+      "target": "gameBloodStainBoundReturn",
+      "kind": "Code",
+      "hook": false,
+      "entry": false,
+      "offset": 18,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x100bcd",
+      "pattern": "48 8B 06 48 8B 80 D0 01 00 00 48 8B 08 E8 ?? ?? ?? ?? 3B 7D E4 0F 8F"
+    },
+    {
+      "target": "gameBloodStainOtherReturn",
+      "kind": "Code",
+      "hook": false,
+      "entry": false,
+      "offset": 18,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x100c24",
+      "pattern": "48 8B 06 48 8B 80 D0 01 00 00 48 8B 08 E8 ?? ?? ?? ?? 3B 5D E8 0F 8F"
+    },
+    {
+      "target": "gameBloodStainText",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 12,
+      "insn_end": 16,
+      "addend": 0,
+      "known_rva": "0x30fbd0",
+      "pattern": "81 78 08 BE 8A A3 49 74 19 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 04 00 00 00"
     }
   ]
 }

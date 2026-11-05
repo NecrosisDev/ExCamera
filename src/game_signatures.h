@@ -285,6 +285,10 @@ enum Target : uint16_t {
     textureFormatTable,
     textureFormatLast,
     programLink,
+    gameBloodStainDrawReturn,
+    gameBloodStainBoundReturn,
+    gameBloodStainOtherReturn,
+    gameBloodStainText,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -567,6 +571,10 @@ inline constexpr const char* targetNames[targetCount] = {
     "textureFormatTable",
     "textureFormatLast",
     "programLink",
+    "gameBloodStainDrawReturn",
+    "gameBloodStainBoundReturn",
+    "gameBloodStainOtherReturn",
+    "gameBloodStainText",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -849,6 +857,10 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "textureReplace",
     "textureReplace",
     "materialIds",
+    "gameBloodStains",
+    "gameBloodStains",
+    "gameBloodStains",
+    "gameBloodStains",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
 // reference to a global or a vtable, or a call to the function).
@@ -1745,6 +1757,10 @@ inline constexpr Signature signatures[] = {
     {textureFormatLast, Kind::Relative, false, false, 24, 28, 0, 0x2AE0B0, "B8 FF FF FF FF 89 CA 81 E2 00 00 10 80 81 FA 00 00 10 00 75 54 44 8B 15 ?? ?? ?? ??"},
     {programLink, Kind::Code, true, true, 0, 0, 0, 0x1FA120, "53 57 56 41 54 41 55 48 8D 64 24 D0 89 CB 89 D6 44 89 C7 45 31 ED FF 15 ?? ?? ?? ??"},
     {programLink, Kind::Code, true, true, 0, 0, 0, 0x1FA120, "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? D0 89 ?? 89 ?? ?? 89 ?? ?? 31 ?? FF ?? ?? ?? ?? ??"},
+    {gameBloodStainDrawReturn, Kind::Code, false, false, 18, 0, 0, 0x100ADE, "48 8B 06 48 8B 80 D0 01 00 00 48 8B 08 E8 ?? ?? ?? ?? 8B 3D ?? ?? ?? ?? 83 FF 01 0F 8C"},
+    {gameBloodStainBoundReturn, Kind::Code, false, false, 18, 0, 0, 0x100BCD, "48 8B 06 48 8B 80 D0 01 00 00 48 8B 08 E8 ?? ?? ?? ?? 3B 7D E4 0F 8F"},
+    {gameBloodStainOtherReturn, Kind::Code, false, false, 18, 0, 0, 0x100C24, "48 8B 06 48 8B 80 D0 01 00 00 48 8B 08 E8 ?? ?? ?? ?? 3B 5D E8 0F 8F"},
+    {gameBloodStainText, Kind::Relative, false, false, 12, 16, 0, 0x30FBD0, "81 78 08 BE 8A A3 49 74 19 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 04 00 00 00"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {

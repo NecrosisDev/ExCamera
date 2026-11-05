@@ -37,6 +37,7 @@ VIEW_PROGRAMS = [
     ('wound marks', 'FP_WOUND_GLSL_HELPERS', 'woundShader'),
     ('fire and smoke', None, 'fireShader'),
     ('blood layer', None, 'bloodSplatShader'),
+    ('game blood keep', None, 'gameBloodKeepShader'),
 ]
 # The material-id replay's own two passes (material_ids.inl): (name, vertex, fragment).
 MATERIAL_ID_PROGRAMS = [
