@@ -1331,6 +1331,14 @@
       "pattern": "B8 FF FF FF FF 89 CA 81 E2 00 00 10 80 81 FA 00 00 10 00 75 54 44 8B 15 04 B9 23 00 45 85 D2 0F 8C 7F 00 00 00 BA FF FF",
       "entry_offset": 0,
       "target": "textureFormatIndex"
+    },
+    {
+      "name": "programLink",
+      "rva": "0x1fa120",
+      "end_rva": "0x1fa2a4",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 D0 89 CB 89 D6 44 89 C7 45 31 ED FF 15 A4 EB 29 00 41 89 C4 89 DA 44 89 E1 FF 15 66 EB",
+      "entry_offset": 0,
+      "target": "programLink"
     }
   ],
   "fields": [
@@ -6308,6 +6316,14 @@
       "pattern": "B8 FF FF FF FF 89 CA 81 E2 00 00 10 80 81 FA 00 00 10 00 75 54 44 8B 15 04 B9 23 00 45 85 D2 0F 8C 7F 00 00 00 BA FF FF FF FF 66 0F 1F 44 00 00 83 C2 01 4C 8B 0D 06 8E 42 00 4C 63 C2 4D 6B C0 14 47 8B 04 01 41 81 E0 FF FF 0C 80 41 89 C9 41 81 E1 FF FF 0C 80 45 39 C8 75 05 89 D0 C3 66 90 41 39 D2 7F CB 0F 1F 00 C3 44 8B 15 B0 B8 23 00 45 85 D2 7C 2F BA FF FF FF FF 66 0F 1F 44 00 00 83 C2 01 4C 8B 0D B6 8D 42 00 4C 63 C2 4D 6B C0 14 43 3B 0C 01 75 05 89 D0 C3 66 90 41 39 D2 7F DF 0F 1F 00 C3",
       "optional_group": "textureReplace",
       "provenance": "Whole body (RVA 0x72790-0x72835), byte-exact. FUN_100072790(format word): the index of the game's texture format table entry for an image format word: words with (word & 0x80100000) == 0x100000 match the table entry's word under mask 0x800CFFFF, others exactly; -1 when none. 0x73580 stores it at texture+0x44 and uploads with the entry's GL formats"
+    },
+    {
+      "name": "materialIds::programLinkBody",
+      "owner": "programLink",
+      "window_offset": 0,
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 D0 89 CB 89 D6 44 89 C7 45 31 ED FF 15 A4 EB 29 00 41 89 C4 89 DA 44 89 E1 FF 15 66 EB 29 00 89 F2 44 89 E1 FF 15 5B EB 29 00 85 FF 76 0B 89 FA 44 89 E1 FF 15 4C EB 29 00 4C 8B 05 C5 FD 0E 00 44 89 E1 31 D2 FF 15 4A EB 29 00 8B 05 94 13 2A 00 83 E0 10 7E 17 4C 8B 05 B0 FD 0E 00 44 89 E1 BA 01 00 00 00 FF 15 2A EB 29 00 66 90 8B 05 72 13 2A 00 83 E0 20 7E 15 4C 8B 05 96 FD 0E 00 44 89 E1 BA 04 00 00 00 FF 15 08 EB 29 00 8B 05 52 13 2A 00 83 E0 02 7E 15 4C 8B 05 7E FD 0E 00 44 89 E1 BA 02 00 00 00 FF 15 E8 EA 29 00 8B 05 32 13 2A 00 83 E0 04 7E 15 4C 8B 05 66 FD 0E 00 44 89 E1 BA 03 00 00 00 FF 15 C8 EA 29 00 8B 05 12 13 2A 00 83 E0 08 7E 15 4C 8B 05 4E FD 0E 00 44 89 E1 BA 06 00 00 00 FF 15 A8 EA 29 00 8B 05 F2 12 2A 00 83 E0 40 7E 15 4C 8B 05 36 FD 0E 00 44 89 E1 BA 07 00 00 00 FF 15 88 EA 29 00 44 89 E1 FF 15 1F EC 29 00 89 DA 44 89 E1 FF 15 D4 EA 29 00 89 F2 44 89 E1 FF 15 C9 EA 29 00 85 FF 76 0D 89 FA 44 89 E1 FF 15 BA EA 29 00 66 90 4C 8D 44 24 20 44 89 E1 BA 82 8B 00 00 FF 15 15 EB 29 00 83 7C 24 20 00 75 0E 44 89 E1 FF 15 75 EA 29 00 EB 06 0F 1F 00 45 89 E5 44 89 E8 90 48 8D 64 24 30 41 5D 41 5C 5E 5F 5B C3",
+      "optional_group": "materialIds",
+      "provenance": "Whole body (RVA 0x1FA120-0x1FA2A4), byte-exact. FUN_1001FA120(vertex shader, fragment shader, geometry shader or 0): creates a program, binds the attribute locations (vPos 0, vTex 1, vNrm 2, vCol 3, vTx2 4, vTng 6, by the vertex-stream flags DAT_10049B510), links (0x1FA23B), then detaches every shader (glDetachShader at 0x1FA246, 0x1FA251, 0x1FA260); returns the program, or 0 (deleted) when the link failed. Hooked: the vertex shader's source is read before the call, while it is still attached, and kept by the program it returns, for the material-id program (mod/material_ids.inl)"
     }
   ],
   "closures": {

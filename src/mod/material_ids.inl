@@ -85,6 +85,10 @@ struct ExtraApi {
     GetActiveUniformBlockiv getActiveUniformBlockiv = nullptr;
     GetActiveUniformBlockName getActiveUniformBlockName = nullptr;
     UniformBlockBinding uniformBlockBinding = nullptr;
+    void(APIENTRY* getShaderiv)(GLuint, GLenum, GLint*) = nullptr;
+    void(APIENTRY* getShaderSource)(GLuint, GLsizei, GLsizei*, char*) = nullptr;
+    void(APIENTRY* getShaderInfoLog)(GLuint, GLsizei, GLsizei*, char*) = nullptr;
+    void(APIENTRY* getProgramInfoLog)(GLuint, GLsizei, GLsizei*, char*) = nullptr;
 };
 static ExtraApi extra;
 static bool loadExtra() {
@@ -99,7 +103,10 @@ static bool loadExtra() {
                    loadGl(extra.getUniformBlockIndex, "glGetUniformBlockIndex") &&
                    loadGl(extra.getActiveUniformBlockiv, "glGetActiveUniformBlockiv") &&
                    loadGl(extra.getActiveUniformBlockName, "glGetActiveUniformBlockName") &&
-                   loadGl(extra.uniformBlockBinding, "glUniformBlockBinding");
+                   loadGl(extra.uniformBlockBinding, "glUniformBlockBinding") &&
+                   loadGl(extra.getShaderiv, "glGetShaderiv") && loadGl(extra.getShaderSource, "glGetShaderSource") &&
+                   loadGl(extra.getShaderInfoLog, "glGetShaderInfoLog") &&
+                   loadGl(extra.getProgramInfoLog, "glGetProgramInfoLog");
     return extra.loaded;
 }
 
@@ -546,10 +553,88 @@ static GLuint lookup(uintptr_t object) {
     return t->ids;
 }
 
-// The held-item replay's program: the game's own vertex shader object (attached to a second program of ours),
-// so the mesh lands exactly where the game drew it, with a fragment shader that writes the id at the mesh's
-// texcoord. Attribute locations as the game links its programs (0x1FA120: vPos 0, vTex 1, vNrm 2, vCol 3,
-// vTx2 4, vTng 6); shading_v passes vrTex = vTex, or vriTex with Mat.TexDsp, so both are tried.
+// The held-item replay's program: the game's own vertex shader text, compiled again by us, so the mesh lands
+// exactly where the game drew it, with a fragment shader that writes the id at the mesh's texcoord. The game's
+// linker 0x1FA120 detaches its shaders right after glLinkProgram (glDetachShader at 0x1FA246/0x1FA251/0x1FA260),
+// so a game program has no shader to reuse (glGetAttachedShaders finds none: every id program had failed on
+// that); the hook on 0x1FA120 reads the vertex shader's source while it is still attached and keeps it by the
+// program returned. Attribute locations as the game binds them there (vPos 0, vTex 1, vNrm 2, vCol 3, vTx2 4,
+// vTng 6); shading_v passes vrTex = vTex, or vriTex with Mat.TexDsp, so both are tried.
+using ProgramLink = GLuint(__fastcall*)(GLuint vertex, GLuint fragment, GLuint geometry);
+static ProgramLink originalLink = nullptr;
+static std::atomic<bool> linkHooked{false};
+struct LinkedSource { HGLRC context; GLuint program; char* text; };
+static LinkedSource linkedSources[1024];
+static unsigned linkedSourceNext = 0;
+static SRWLOCK linkedLock = SRWLOCK_INIT;
+static std::atomic<unsigned> sourcesKept{0};
+
+static GLuint programLink(GLuint vertex, GLuint fragment, GLuint geometry) {
+    char* text = nullptr;
+    __try {
+        GLint length = 0;
+        if (vertex && loadExtra()) extra.getShaderiv(vertex, 0x8B88 /*SHADER_SOURCE_LENGTH*/, &length);
+        if (length > 0 && length < (4 << 20) && (text = (char*)malloc(size_t(length))) != nullptr) {
+            GLsizei got = 0;
+            extra.getShaderSource(vertex, length, &got, text);
+            if (got <= 0) {
+                free(text);
+                text = nullptr;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        free(text);
+        text = nullptr;
+    }
+    const GLuint program = originalLink(vertex, fragment, geometry);
+    if (!program || !text) {
+        free(text);
+        return program;
+    }
+    const HGLRC context = cueCurrentContext();
+    AcquireSRWLockExclusive(&linkedLock);
+    LinkedSource* slot = nullptr;
+    for (auto& e : linkedSources)
+        if (e.text && e.context == context && e.program == program) slot = &e; // a reused name: the newer text
+    if (!slot) slot = &linkedSources[linkedSourceNext++ % (sizeof linkedSources / sizeof linkedSources[0])];
+    free(slot->text);
+    *slot = LinkedSource{context, program, text};
+    ReleaseSRWLockExclusive(&linkedLock);
+    sourcesKept.fetch_add(1, std::memory_order_relaxed);
+    return program;
+}
+// A copy of the vertex source the game linked this program with, or empty.
+static std::string linkedVertexSource(HGLRC context, GLuint program) {
+    std::string out;
+    AcquireSRWLockShared(&linkedLock);
+    for (const auto& e : linkedSources)
+        if (e.text && e.context == context && e.program == program) out = e.text;
+    ReleaseSRWLockShared(&linkedLock);
+    return out;
+}
+
+// The driver's own words when an id program does not build: the first few go to material-id-shader.log beside
+// first-person.ini, whole.
+static unsigned idFailuresLogged = 0;
+static void logIdFailure(const char* what, GLuint game, const char* log) {
+    if (idFailuresLogged >= 4) return;
+    ++idFailuresLogged;
+    wchar_t text[200];
+    swprintf_s(text, L"Material ids: %hs for game program %u (material-id-shader.log has the details).", what, game);
+    modMessage(NoticeKind::warning, text);
+    const std::wstring path = settingsFolderFile(L"material-id-shader.log");
+    if (path.empty()) return;
+    const HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    char head[200];
+    const int n = snprintf(head, sizeof head, "== %s (game program %u)\r\n", what, game);
+    DWORD written = 0;
+    WriteFile(file, head, DWORD(n), &written, nullptr);
+    if (log) WriteFile(file, log, DWORD(strlen(log)), &written, nullptr);
+    WriteFile(file, "\r\n", 2, &written, nullptr);
+    CloseHandle(file);
+}
 struct IdProgram {
     HGLRC context;
     GLuint game, program;
@@ -583,19 +668,27 @@ static const IdProgram* idProgramFor(gl::Api& g, GLuint game) {
     if (p.program && p.context == context) g.deleteProgram(p.program);
     p = IdProgram{context, game, 0, -1, 0, {}, true};
     if (!game || !loadExtra()) return nullptr;
-    GLuint shaders[8]{};
-    GLsizei attached = 0;
-    extra.getAttachedShaders(game, 8, &attached, shaders);
-    GLuint vertex = 0;
-    for (GLsizei i = 0; i < attached; ++i) {
-        GLint type = 0;
-        g.getShaderiv(shaders[i], 0x8B4F /*SHADER_TYPE*/, &type);
-        if (type == 0x8B31 /*VERTEX_SHADER*/) vertex = shaders[i];
-    }
-    if (!vertex) {
+    const std::string source = linkedVertexSource(context, game);
+    if (source.empty()) {
+        logIdFailure("no vertex source kept (linked before the hook, or the hook is off)", game, nullptr);
         idProgramsFailed.fetch_add(1, std::memory_order_relaxed);
         return nullptr;
     }
+    const GLuint vertex = g.createShader(0x8B31);
+    const char* sourceText = source.c_str();
+    g.shaderSource(vertex, 1, &sourceText, nullptr);
+    g.compileShader(vertex);
+    GLint compiled = 0;
+    g.getShaderiv(vertex, 0x8B81, &compiled);
+    if (!compiled) {
+        char log[4096] = "";
+        extra.getShaderInfoLog(vertex, sizeof log, nullptr, log);
+        logIdFailure("the game's vertex source did not compile again", game, log);
+        g.deleteShader(vertex);
+        idProgramsFailed.fetch_add(1, std::memory_order_relaxed);
+        return nullptr;
+    }
+    char lastLog[4096] = "";
     for (const char* text : idFragment) {
         const GLuint fs = g.createShader(0x8B30);
         g.shaderSource(fs, 1, &text, nullptr);
@@ -609,6 +702,7 @@ static const IdProgram* idProgramFor(gl::Api& g, GLuint game) {
         g.linkProgram(program);
         GLint linked = 0;
         g.getProgramiv(program, 0x8B82, &linked);
+        if (!linked) extra.getProgramInfoLog(program, sizeof lastLog, nullptr, lastLog);
         g.detachShader(program, vertex);
         g.detachShader(program, fs);
         g.deleteShader(fs);
@@ -619,8 +713,10 @@ static const IdProgram* idProgramFor(gl::Api& g, GLuint game) {
         p.program = program;
         break;
     }
+    g.deleteShader(vertex);
     drainGl();
     if (!p.program) {
+        logIdFailure("the id program did not link", game, lastLog);
         idProgramsFailed.fetch_add(1, std::memory_order_relaxed);
         return nullptr;
     }
@@ -640,6 +736,8 @@ static const IdProgram* idProgramFor(gl::Api& g, GLuint game) {
         if (char* bracket = strchr(name, '[')) *bracket = 0;
         const GLint to = g.getUniformLocation(p.program, name), from = g.getUniformLocation(game, name);
         if (to < 0 || from < 0 || p.uniformCount >= sizeof p.uniforms / sizeof p.uniforms[0]) {
+            logIdFailure(to < 0 || from < 0 ? "a vertex uniform missing from the game program" : "too many vertex uniforms",
+                         game, name);
             g.deleteProgram(p.program);
             p.program = 0;
             idProgramsFailed.fetch_add(1, std::memory_order_relaxed);
@@ -747,5 +845,9 @@ static void createMaterialIdsHook() {
     matid::hooked = matid::admitted && silhouetteHooked &&
                     MH_CreateHook((void*)gameAt(fp::sig::itemComposer), (void*)matid::composer,
                                   (void**)&matid::originalComposer) == MH_OK;
+    // The linker hook keeps vertex sources for the id programs; without it they cannot build (logged).
+    matid::linkHooked = matid::hooked &&
+                        MH_CreateHook((void*)gameAt(fp::sig::programLink), (void*)matid::programLink,
+                                      (void**)&matid::originalLink) == MH_OK;
 }
 static bool materialIdsReady() { return matid::hooked.load(std::memory_order_relaxed); }
