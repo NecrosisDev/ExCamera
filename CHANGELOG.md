@@ -3,6 +3,7 @@
 Unreleased
 
 - VR: new setting "VR: weapons follow hands (experimental)", off by default. On, a wielded weapon is moved by your tracked hands instead of the game's swing poses. It switches straight away; the game takes the weapon back while blocking, mid-swing or with a shield.
+- VR: new setting "VR: main hand" (Right or Left). Left mirrors the controls: the left hand attacks, points at menus, aims the teleport and turns, the right hand walks, stabs and holds the menus and the wrist menu, and the hip pouch moves to the right hip. It switches over once you let go of every button and stick.
 - VR: the wrist menu has a new last line, "Save report". It puts a ZIP named ExCamera-report-<date>-<time>.zip on your Desktop with the mod's status file, its fault log (if there is one) and your settings, ready to send. The line says when it's saved.
 - Finger poses and VR finger bones now stay off on game versions other than the supported one, instead of guessing at a changed skeleton.
 

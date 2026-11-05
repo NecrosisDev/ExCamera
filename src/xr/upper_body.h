@@ -23,12 +23,24 @@ struct BodySample {
     uint64_t epoch = 0; // tracking-space generation; a change invalidates every derived hold
     bool focused = false;
 };
-// The menu held in the left hand: a panel just above and ahead of the palm, turned to face the head
+// Handedness. Sample side 0 is the left controller, 1 the right. The main hand attacks, points and clicks,
+// aims the teleport and turns on its stick; the off hand walks on its stick, holds the stab modifier, the menu
+// panel and the wrist menu, and the pouch sits on its hip. Right-handed (the default) is main 1, off 0; the
+// left-handed setup is its exact mirror. Body, arms, fingers and grabs are per hand already and never swap.
+struct Handedness {
+    unsigned main = 1;
+    constexpr unsigned off() const { return 1 - main; }
+    constexpr float offSide() const { return main ? -1.f : 1.f; } // along the body's right axis: the off hand's side
+};
+constexpr Handedness handedness(bool leftMain) { return {leftMain ? 0u : 1u}; }
+// The menu held in the off hand: a panel just above and ahead of the palm, turned to face the head
 // (its +z towards the eyes, its up near the world's), while that hand is tracked. The host draws the
-// game's UI there and the right hand's pointer aims at the same pose, so both read this one function.
+// game's UI there and the main hand's pointer aims at the same pose, so both read this one function.
+// The placement is symmetric in the grip's x, so either hand holds it the same way.
 constexpr float handPanelWidth = .42f;
-inline bool handPanelPose(const BodySample& s, XrPosef& out) {
-    const auto& hand = s.hands[0];
+inline bool handPanelPose(const BodySample& s, XrPosef& out, unsigned side = 0) {
+    if (side > 1) return false;
+    const auto& hand = s.hands[side];
     if (!hand.tracked || !valid(hand.grip) || !valid(s.head)) return false;
     const XrVector3f at = add(hand.grip.position, rotate(hand.grip.orientation, {0, .07f, -.12f}));
     const XrVector3f toHead = sub(s.head.position, at);

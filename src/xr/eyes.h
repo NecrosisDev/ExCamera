@@ -13,14 +13,15 @@ struct EyeLayout {
     float panelWidthMetres = 1.2f, panelDistanceMetres = 1.5f; // the head-locked UI quad
     bool frameTimeReadout = false; // keep the status line up with the frame time on it
     bool relaxedGrab = true;       // tracked hands grasp by closing on a thing, not only by a tight fist
-    bool handPanel = true;         // the open UI is held in the left hand (handPanelPose) instead of in front of the head
+    bool handPanel = true;         // the open UI is held in the off hand (handPanelPose) instead of in front of the head
+    unsigned panelHand = 0;        // the off hand's sample side: 0 left (right-handed), 1 right (left-handed)
     static constexpr float fallbackIpdMetres = .064f;
     bool plausible() const {
         return std::isfinite(ipdOverrideMetres) && ipdOverrideMetres >= 0 && ipdOverrideMetres <= .1f &&
                std::isfinite(unitsPerMetre) && unitsPerMetre > 0 && std::isfinite(gripAngleDegrees) && std::fabs(gripAngleDegrees) <= 90 &&
                std::isfinite(hapticStrength) && hapticStrength >= 0 && hapticStrength <= 2 &&
                std::isfinite(panelWidthMetres) && panelWidthMetres >= .3f && panelWidthMetres <= 4 &&
-               std::isfinite(panelDistanceMetres) && panelDistanceMetres >= .5f && panelDistanceMetres <= 5;
+               std::isfinite(panelDistanceMetres) && panelDistanceMetres >= .5f && panelDistanceMetres <= 5 && panelHand <= 1;
     }
 };
 // Runtime-reported eye poses are trusted only when they are rigid with the head; otherwise the

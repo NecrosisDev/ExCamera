@@ -6,6 +6,11 @@
 #include "../xr/transaction.h"
 #include <memory>
 static void trackedReleaseTick();
+// The main hand in effect (fp::xr::Handedness: 1 right-handed, 0 left-handed). The "VR: main hand" row is
+// latched on the input thread only between gestures (trackedHandednessTick), so a held trigger, stick or
+// squeeze never moves to the other hand mid-action; the render thread reads the latched side.
+static std::atomic<unsigned> trackedMainSide{1};
+static fp::xr::Handedness trackedHands() { return {trackedMainSide.load(std::memory_order_relaxed) ? 1u : 0u}; }
 using TrackedItemRelease = uintptr_t (*)(uintptr_t, uintptr_t, int);
 static TrackedItemRelease trackedItemRelease = nullptr;
 static fp::xr::Backend stereoBackend{};
@@ -209,7 +214,8 @@ static void stereoFrustum(uintptr_t view) {
             if (stereoBackend.configure)
                 stereoBackend.configure({static_cast<float>(vrIpdMm.load()) * .001f, stereoUnitsPerMetre, static_cast<float>(vrGripAngle.load()),
                                          static_cast<float>(vrHapticPercent.load()) * .01f, static_cast<float>(vrPanelWidthCm.load()) * .01f, static_cast<float>(vrPanelDistanceCm.load()) * .01f,
-                                         vrFrameTime.load(std::memory_order_relaxed) != 0, vrTrackedGrab.load(std::memory_order_relaxed) != 0, vrHandPanel.load(std::memory_order_relaxed) != 0},
+                                         vrFrameTime.load(std::memory_order_relaxed) != 0, vrTrackedGrab.load(std::memory_order_relaxed) != 0, vrHandPanel.load(std::memory_order_relaxed) != 0,
+                                         trackedHands().off()},
                                         vrRenderMode.load() == 2 ? fp::xr::RenderMode::centerReconstructionFilled : vrRenderMode.load() == 1 ? fp::xr::RenderMode::centerReconstruction : fp::xr::RenderMode::geometryStereo);
             static unsigned seenReset = trackingReset.load(); // the mod's one recenter action, shared with the UDP tracker
             if (const unsigned reset = trackingReset.load(); reset != seenReset) {
@@ -739,7 +745,7 @@ struct TrackedHoldState {
     fp::xr::ItemTarget target{};
 };
 static thread_local TrackedHoldState trackedHold;
-// The hip pouch: the player's inventory reached at the left hip, through ScriptRuntime.dll's inventory
+// The hip pouch: the player's inventory reached at the off hand's hip (the left by default), through ScriptRuntime.dll's inventory
 // exports (work/vr-rebuild/INVENTORY-EXPORTS.md, version 1), the runtime being the one owner of every
 // transfer. Letting go of a held item at the hip puts it away (native release, then the runtime's pickup);
 // squeezing an empty hand there takes the last item put away back into that hand (the runtime's drop at
@@ -794,7 +800,8 @@ static bool trackedPouchReady() {
     trackedPouchExports = e;
     return true;
 }
-// The left hip in the tracking space: the waist tracker when there is one, else below and left of the head.
+// The off hand's hip in the tracking space (the left for the right-handed default): the waist tracker when there
+// is one, else below the head and to that side.
 static bool trackedPouchHip(const fp::xr::TrackingFrame& frame, XrVector3f& hip) {
     const auto& head = frame.sample.head;
     if (!fp::xr::valid(head)) return false;
@@ -803,19 +810,19 @@ static bool trackedPouchHip(const fp::xr::TrackingFrame& frame, XrVector3f& hip)
     const XrVector3f right = {std::cos(yaw), 0, -std::sin(yaw)};
     if (fp::xr::lowerValid(frame.lower, frame.lower.time)) {
         const XrPosef waist = frame.lower.trackers[0].pose;
-        hip = fp::xr::add(waist.position, fp::xr::scale(right, -.17f));
+        hip = fp::xr::add(waist.position, fp::xr::scale(right, .17f * trackedHands().offSide()));
         return true;
     }
-    hip = fp::xr::add({head.position.x, head.position.y - .68f, head.position.z}, fp::xr::scale(right, -.18f));
+    hip = fp::xr::add({head.position.x, head.position.y - .68f, head.position.z}, fp::xr::scale(right, .18f * trackedHands().offSide()));
     return true;
 }
 static bool trackedPouchAtHip(const fp::xr::TrackingFrame& frame, XrVector3f at) {
     XrVector3f hip{};
     if (trackedPouchHip(frame, hip) && fp::xr::length(fp::xr::sub(at, hip)) <= pouch::reach) return true;
-    // or over the inventory held in the left hand: the game's own release over a window never inserts
+    // or over the inventory held in the off hand: the game's own release over a window never inserts
     XrPosef panel{};
     return vrHandPanel.load(std::memory_order_relaxed) && *reinterpret_cast<int*>(gameAt(fp::sig::uiOpenCount)) > 0 &&
-           fp::xr::handPanelPose(frame.sample, panel) && fp::xr::length(fp::xr::sub(at, panel.position)) <= .25f;
+           fp::xr::handPanelPose(frame.sample, panel, trackedHands().off()) && fp::xr::length(fp::xr::sub(at, panel.position)) <= .25f;
 }
 static int trackedPouchStateCall(uint32_t request, uintptr_t* node) { // SEH-only frame
     __try { return trackedPouchExports.state(request, node); }

@@ -82,6 +82,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.vrPouch = vrPouch.load();
     s.vrFingerBones = vrFingerBones.load();
     s.vrWeapons = vrWeapons.load();
+    s.vrMainHand = vrMainHand.load();
     s.vrGrabTurn = vrGrabTurn.load();
     s.vrEyeScale = vrEyeScalePercent.load();
     s.tpLag = tpLag.load();
@@ -215,6 +216,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     vrPouch = s.vrPouch;
     vrFingerBones = s.vrFingerBones;
     vrWeapons = s.vrWeapons;
+    vrMainHand = s.vrMainHand;
     vrGrabTurn = s.vrGrabTurn;
     vrEyeScalePercent = s.vrEyeScale;
     tpBlockers = s.tpBlockers;

@@ -429,6 +429,8 @@ inline int vrKickFromText(const wchar_t* t) { return t && (((t[0] | 32) == 'o' &
 inline const wchar_t* vrKickText(int m) { return m ? L"on" : L"off"; }
 inline int vrFingerBonesFromText(const wchar_t* t) { return t && (((t[0] | 32) == 'o' && (t[1] | 32) == 'n') || t[0] == '1') ? 1 : 0; }
 inline const wchar_t* vrFingerBonesText(int m) { return m ? L"on" : L"off"; }
+inline int vrMainHandFromText(const wchar_t* t) { return t && ((t[0] | 32) == 'l' || t[0] == '1') ? 1 : 0; }
+inline const wchar_t* vrMainHandText(int m) { return m ? L"left" : L"right"; }
 inline void windupStep(Windup& w, bool swinging, int motion, float p, unsigned bits, unsigned long long now) {
     if (!swinging || !std::isfinite(p) || std::fabs(p) > 4.f) {
         if (w.phase == 1) {

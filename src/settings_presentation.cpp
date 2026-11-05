@@ -198,6 +198,8 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return settings.vrFingerBones ? L"On" : L"Off";
     case setting::vrWeapons:
         return settings.vrWeapons ? L"On" : L"Off";
+    case setting::vrMainHand:
+        return settings.vrMainHand ? L"Left" : L"Right";
     case setting::ambientOcclusion:
     case setting::depthOfField:
     case setting::screenSpaceReflections:
@@ -322,6 +324,7 @@ const wchar_t* settingLabel(int id) {
     case setting::vrPouch: return L"VR hip pouch";
     case setting::vrFingerBones: return L"VR finger bones";
     case setting::vrWeapons: return L"VR weapons follow hands (experimental)";
+    case setting::vrMainHand: return L"VR main hand";
     case setting::ambientOcclusion: return L"Contact shadows";
     case setting::depthOfField: return L"Focus blur";
     case setting::screenSpaceReflections: return L"Reflections";
@@ -430,6 +433,7 @@ const wchar_t* settingTip(int id) {
     case setting::vrPouch: return L"On: let go of a held item at your left hip to put it in your inventory; close an empty hand there to take the last one back. Needs the script runtime's inventory exports; without them nothing happens.";
     case setting::vrFingerBones: return L"Experimental. On: finger bones are added to your body's own skeleton and the skinned body mesh bends its fingers to the tracked joints. Shows on the full body; the hands-only body hides that mesh.";
     case setting::vrWeapons: return L"Experimental. On: a wielded weapon is moved by your tracked hands, one or both on its grip, instead of the game's own swing poses. Not with a shield, while blocking or mid-swing; the game takes the weapon back then. Off keeps the game's weapon handling.";
+    case setting::vrMainHand: return L"Right: the right hand attacks, points, aims the teleport and turns; the left walks, stabs and holds the menus. Left swaps all of them, the hip pouch too. It changes over once no button or stick is held.";
     case setting::ambientOcclusion: return L"Soft shadow in corners, under objects and where things touch. High values can darken narrow gaps.";
     case setting::depthOfField: return L"Softens very near and very far things while the middle stays sharp. First person only.";
     case setting::screenSpaceReflections: return L"Faint reflections on floors and other upward-facing surfaces, from what's on screen. Turn off if you see smearing.";

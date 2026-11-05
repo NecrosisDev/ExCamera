@@ -642,9 +642,9 @@ struct Host {
         if (uiOpenNow && uiInWorldNow && camera.calibrated()) { // a sign in the level, where the player looked when recentred
             quad.space = client.local;
             quad.pose = compose(camera.origin(), {{0, 0, 0, 1}, {0, 0, -uiDistance}});
-        } else if (uiOpenNow && config.layout.handPanel && config.upperBody) { // held in the left hand, facing the head
+        } else if (uiOpenNow && config.layout.handPanel && config.upperBody) { // held in the off hand, facing the head
             XrPosef held{};
-            if (handPanelPose(tracking.sample, held)) { quad.space = client.local; quad.pose = held; inHand = true; }
+            if (handPanelPose(tracking.sample, held, config.layout.panelHand)) { quad.space = client.local; quad.pose = held; inHand = true; }
         }
         const float width = inHand ? handPanelWidth : uiOpenNow ? uiWidth : status ? .8f : reticleWidth;
         quad.size = {width, width * float(chain.height) / float(chain.width)};

@@ -353,11 +353,12 @@ static bool trackedPointerHit(const xd::TrackingFrame& tracked, bool inLevel, fl
     XrPosef panel = fp::xr::compose(inLevel ? tracked.calibration.origin() : tracked.sample.head, {{0, 0, 0, 1}, {0, 0, -distance}});
     float panelWidth = width, panelHeight = height;
     XrPosef held{};
-    const bool inHand = !inLevel && vrHandPanel.load(std::memory_order_relaxed) && fp::xr::handPanelPose(tracked.sample, held); // the host's own placement
+    const auto hands = trackedHands();
+    const bool inHand = !inLevel && vrHandPanel.load(std::memory_order_relaxed) && fp::xr::handPanelPose(tracked.sample, held, hands.off()); // the host's own placement
     if (inHand) { panel = held; panelWidth = fp::xr::handPanelWidth; panelHeight = panelWidth * aspect; }
-    for (unsigned s : {1u, 0u}) { // the right hand first
+    for (unsigned s : {hands.main, hands.off()}) { // the main hand first
         const auto& hand = tracked.sample.hands[s];
-        if (!hand.aimTracked || (inHand && s == 0)) continue; // the hand holding the panel does not point at it
+        if (!hand.aimTracked || (inHand && s == hands.off())) continue; // the hand holding the panel does not point at it
         const XrPosef rel = fp::xr::compose(fp::xr::inverse(panel), hand.aim);
         const XrVector3f dir = fp::xr::rotate(rel.orientation, {0, 0, -1});
         if (!(dir.z < -pointerGrazing) || !(rel.position.z > 0)) continue; // must point at the panel from in front of it
@@ -376,7 +377,7 @@ static bool trackedPointerHit(const xd::TrackingFrame& tracked, bool inLevel, fl
 // An item carried out of the inventory: the game's own drag of an inventory item (format 0xFB01) leaving its
 // window turns into the item in the world following the cursor, placed where the cursor's ray meets the world
 // when the button is let go (ExCamera's inventory preview path owns that native flow). In VR the beam leaving the
-// hand panel with an item carried keeps the button held and puts the cursor where the right hand points: the
+// hand panel with an item carried keeps the button held and puts the cursor where the main hand points: the
 // point 1.5 m along its aim projected through the game's camera, so the native ray from the eye passes the same
 // point. Letting the trigger go places it there, to pick up with a squeeze. Nothing native is replaced.
 static std::atomic<unsigned> trackedItemCarries{0};
@@ -385,7 +386,7 @@ static bool trackedCarryingItem() {
     return readable(gui, field::gui::dragFormat + 4) && (*reinterpret_cast<unsigned*>(gui + field::gui::dragFormat) == 0xFB01 || *reinterpret_cast<unsigned*>(gui + field::gui::dragFormat) == 0xFB02);
 }
 static bool trackedCarryCursor(const xd::TrackingFrame& tracked, int width, int height, int& x, int& y) {
-    const auto& hand = tracked.sample.hands[1];
+    const auto& hand = tracked.sample.hands[trackedHands().main];
     if (!hand.aimTracked || !savedCamera || !readable(savedCamera, field::camera::fov + 4) || width < 2 || height < 2) return false;
     const float units = static_cast<float>(vrUnitsPerMetre.load(std::memory_order_relaxed));
     const XrVector3f ahead = xd::add(hand.aim.position, xd::rotate(hand.aim.orientation, {0, 0, -1.5f}));
@@ -417,10 +418,10 @@ static void trackedPointerTick(const xd::TrackingFrame& tracked, bool live) {
                      trackedPointerHit(tracked, stereoTitleWanted() && !savedRoot, static_cast<float>(client.bottom) / static_cast<float>(client.right), u, v, side, from, to);
     if (!hit && trackedPointerDown && live && vrHandPanel.load(std::memory_order_relaxed) && *reinterpret_cast<int*>(gameAt(fp::sig::uiOpenCount)) > 0 &&
         trackedCarryingItem() && hookedWindow && GetClientRect(hookedWindow, &client) && client.right > 1 && client.bottom > 1) {
-        int x = 0, y = 0; // an inventory item carried off the panel: the cursor follows the right hand into the world
+        int x = 0, y = 0; // an inventory item carried off the panel: the cursor follows the main hand into the world
         if (trackedCarryCursor(tracked, client.right, client.bottom, x, y)) {
             trackedPointerAct(x, y, pointerMove);
-            if (!tracked.sample.hands[1].trigger) { trackedPointerAct(x, y, pointerLeftUp); trackedPointerDown = false; trackedItemCarries.fetch_add(1, std::memory_order_relaxed); }
+            if (!tracked.sample.hands[trackedHands().main].trigger) { trackedPointerAct(x, y, pointerLeftUp); trackedPointerDown = false; trackedItemCarries.fetch_add(1, std::memory_order_relaxed); }
             trackedBeamPublish({});
             return;
         }
@@ -455,8 +456,8 @@ static void trackedBeamPresent() {
     ReleaseSRWLockShared(&trackedBeamLock);
     stereoBackend.beam(state.shown, state.from, state.to, state.u, state.v);
 }
-// Wrist menu: raise the left hand near the head with the palm or its back turned to the face, and a
-// small panel floats above that wrist with the toggles a player reaches for in the headset; the right
+// Wrist menu: raise the off hand (the left by default) near the head with the palm or its back turned to the face, and a
+// small panel floats above that wrist with the toggles a player reaches for in the headset; the main
 // hand points at a line and the trigger takes it (and does not attack while it does).
 static SRWLOCK trackedWristLock = SRWLOCK_INIT;
 static constexpr float wristReach = .7f;      // metres from the left grip to the head, at most
@@ -597,10 +598,11 @@ static void trackedWristAct(int row) {
 }
 static void trackedWristTick(const xd::TrackingFrame& tracked, bool live) {
     TrackedWristState next{};
-    const auto& left = tracked.sample.hands[0];
-    const auto& right = tracked.sample.hands[1];
+    // The off hand's wrist carries the panel and the main hand selects; named for the right-handed default.
+    const auto& left = tracked.sample.hands[trackedHands().off()];
+    const auto& right = tracked.sample.hands[trackedHands().main];
     const auto& head = tracked.sample.head;
-    const bool panelInHand = vrHandPanel.load(std::memory_order_relaxed) && *reinterpret_cast<int*>(gameAt(fp::sig::uiOpenCount)) > 0; // the left hand holds the menu instead
+    const bool panelInHand = vrHandPanel.load(std::memory_order_relaxed) && *reinterpret_cast<int*>(gameAt(fp::sig::uiOpenCount)) > 0; // the off hand holds the menu instead
     if (vrWristMenu.load(std::memory_order_relaxed) && live && left.tracked && !panelInHand) {
         const XrVector3f toHead = {head.position.x - left.grip.position.x, head.position.y - left.grip.position.y, head.position.z - left.grip.position.z};
         const float dist = std::sqrt(toHead.x * toHead.x + toHead.y * toHead.y + toHead.z * toHead.z);
@@ -647,7 +649,7 @@ static void trackedWristPresent() {
     const char* lines[xd::wristPanelLines] = {state.lines[0], state.lines[1], state.lines[2], state.lines[3], state.lines[4], state.lines[5], state.lines[6], state.lines[7]};
     stereoBackend.wrist(state.shown, state.pose, lines, xd::wristPanelLines, state.highlight); // all eight lines; the last saves a report
 }
-// Teleport: the right stick pushed forward aims an arc from the right hand's aim pose, shown by the pointer
+// Teleport: the main stick (the right by default) pushed forward aims an arc from the main hand's aim pose, shown by the pointer
 // beam to where it meets the floor under the player; letting the stick go moves the character there with the
 // game's own character move 170810(character, transform48, 1) (the low-level placement its arrival, knock-out
 // and device paths use), keeping the character's own basis and height. Every arc segment is checked against
@@ -676,9 +678,9 @@ static bool trackedTeleportAllowed(uintptr_t root) {
     if (readable(drag, 0x20) && (*reinterpret_cast<const unsigned*>(drag + field::drag::flags) & (0x2000u | 0x4000u | 0x8000u | 0x10000u | 0x80000u))) return false; // holding something through the drag manager
     return true;
 }
-// The landing point (native, global) of the arc from the right hand, or false: the floor is the plane through the player's feet.
+// The landing point (native, global) of the arc from the main hand, or false: the floor is the plane through the player's feet.
 static bool trackedTeleportArc(uintptr_t root, const xd::TrackingFrame& tracked, XrVector3f& landingXr, XrVector3f& landingNative) {
-    const auto& hand = tracked.sample.hands[1];
+    const auto& hand = tracked.sample.hands[trackedHands().main];
     if (!hand.aimTracked) return false;
     const uintptr_t actor = *reinterpret_cast<uintptr_t*>(root + field::character::sceneNode);
     if (!readable(actor, field::sceneNode::sector + 8)) return false;
@@ -723,7 +725,7 @@ static bool trackedTeleportArc(uintptr_t root, const xd::TrackingFrame& tracked,
     return false;
 }
 static void trackedTeleportTick(uintptr_t root, const xd::TrackingFrame& tracked) {
-    const auto& stick = tracked.sample.hands[1];
+    const auto& stick = tracked.sample.hands[trackedHands().main];
     const bool forward = stick.stickActive && stick.stick.y > .7f && std::fabs(stick.stick.x) < .5f;
     if (!trackedTeleportAllowed(root)) { trackedTeleportAiming = trackedTeleportValid = false; return; }
     if (forward) {
@@ -759,12 +761,29 @@ static void trackedTeleportTick(uintptr_t root, const xd::TrackingFrame& tracked
         trackedTeleports.fetch_add(1, std::memory_order_relaxed);
     }
 }
+// Latch the "VR: main hand" row between gestures: only when no trigger, squeeze, menu, stick click or stick
+// deflection is held on either hand and no pointer press, teleport aim or wrist press is open, so every
+// press-release pair begins and ends on one hand. The written stick and stab words are let go on the swap.
+static void trackedHandednessTick(const xd::TrackingFrame& tracked, bool live) {
+    const unsigned wanted = xd::handedness(vrMainHand.load(std::memory_order_relaxed) != 0).main;
+    if (wanted == trackedMainSide.load(std::memory_order_relaxed)) return;
+    if (live)
+        for (const auto& hand : tracked.sample.hands)
+            if (hand.trigger || hand.pressed || hand.menu || hand.kick || (hand.stickActive && (std::fabs(hand.stick.x) > .3f || std::fabs(hand.stick.y) > .3f))) return;
+    if (trackedPointerDown || trackedPointerRightDown || trackedTeleportAiming || trackedWristDown || trackedMenuWasDown) return;
+    trackedStickRelease();
+    trackedStabRelease();
+    trackedTurnArmed = true;
+    trackedMainSide = wanted;
+}
 static void trackedControllerInput(uintptr_t root, uintptr_t bh, bool owned) {
     trackedAttack = false;
     // The menu button must also close what it opened, so it only needs a focused, fresh sample.
     xd::TrackingFrame tracked{};
     const bool live = gameWindow() && xd::trackingFrame(tracked) && tracked.sample.focused;
-    const bool menuDown = live && (tracked.sample.hands[0].menu || tracked.sample.hands[1].menu);
+    trackedHandednessTick(tracked, live);
+    const auto sides = trackedHands();
+    const bool menuDown = live && (tracked.sample.hands[0].menu || tracked.sample.hands[1].menu); // wherever the runtime put it
     const uint64_t now = GetTickCount64();
     // A tap is the game's own menu key on release; a long hold recenters the play space instead.
     if (menuDown && !trackedMenuWasDown) { trackedMenuDownSince = now; trackedMenuLong = false; }
@@ -780,18 +799,18 @@ static void trackedControllerInput(uintptr_t root, uintptr_t bh, bool owned) {
     if (!owned || !bh || !live || !inputEnabled || !trackedDriveRead(root, frame) || !frame.bodySample.focused) { trackedStickRelease(); trackedStabRelease(); return; }
     const auto& hands = frame.bodySample.hands;
     if (*reinterpret_cast<int*>(gameAt(fp::sig::uiOpenCount)) > 0 || cursorFreeNow()) { trackedStickRelease(); trackedStabRelease(); trackedTurnStep(0, false); return; }
-    // The hand that does not walk turns: the right stick when the left walks, else nothing turns.
+    // The hand that does not walk turns: the main stick when the off stick walks, else nothing turns.
     trackedTeleportTick(root, tracked);
-    trackedTurnStep(trackedTeleportAiming ? 0.f : hands[1].stick.x, !trackedTeleportAiming && hands[0].stickActive && hands[1].stickActive);
+    trackedTurnStep(trackedTeleportAiming ? 0.f : hands[sides.main].stick.x, !trackedTeleportAiming && hands[sides.off()].stickActive && hands[sides.main].stickActive);
     trackedGrabTurn(root, frame);
     trackedKickTick(root, owned, frame);
     trackedJumpTick(root, owned, frame);
     trackedBonesTick(root, owned, frame);
-    trackedAttack = hands[1].trigger && trackedWristHighlight.load(std::memory_order_relaxed) < 0; // the trigger on a wrist line is a choice, not a swing
-    // Left trigger: the game's stab modifier (its Alt word bit) while held; the attack then stabs.
-    if (hands[0].trigger) { *(unsigned*)gameAt(fp::sig::keyWord) |= 0x80u; trackedStabWritten = true; }
+    trackedAttack = hands[sides.main].trigger && trackedWristHighlight.load(std::memory_order_relaxed) < 0; // the trigger on a wrist line is a choice, not a swing
+    // Off-hand trigger: the game's stab modifier (its Alt word bit) while held; the attack then stabs.
+    if (hands[sides.off()].trigger) { *(unsigned*)gameAt(fp::sig::keyWord) |= 0x80u; trackedStabWritten = true; }
     else trackedStabRelease();
-    const auto& hand = hands[0].stickActive ? hands[0] : hands[1];
+    const auto& hand = hands[sides.off()].stickActive ? hands[sides.off()] : hands[sides.main]; // the off stick walks, else the only one
     auto analog = reinterpret_cast<float*>(gameAt(fp::sig::analogStick));
     if (!hand.stickActive || (*reinterpret_cast<unsigned*>(gameAt(fp::sig::keyWord)) & movementBits) || (!trackedStickWritten && fp::analogActive(analog))) { trackedStickRelease(); return; }
     Aim a;

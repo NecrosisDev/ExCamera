@@ -31,6 +31,7 @@ static const OwnSection ownSections[] = {
     {L"VR", L"Headset", {setting::vrHeadset, setting::vrIpd, setting::vrScale, setting::vrRenderMode, setting::vrHands,
                          setting::vrPosture, setting::vrTurning, setting::vrEffects, setting::vrGripAngle, setting::vrHaptics,
                          setting::vrPanelWidth, setting::vrPanelDistance}, 12},
+    {L"VR", L"Controls", {setting::vrMainHand}, 1},
     {L"VR", L"Body and comfort", {setting::vrComfort, setting::vrBody, setting::vrHeight, setting::vrGrabTurn, setting::vrEyeScale,
                                   setting::vrGripSlide, setting::vrKick, setting::vrFingerBones, setting::vrWeapons}, 9},
 };
