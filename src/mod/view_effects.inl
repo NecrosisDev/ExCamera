@@ -1271,9 +1271,24 @@ uniform vec4 capA[8];      // a flesh cap on a severed limb: view-space centre; 
 uniform vec4 capB[8];      // its facing (view space); w: 0 the stump, 1 the severed end
 uniform float capCount;
 uniform float woundDebug;
+uniform vec4 levelLight[2];       // the two strongest game lights near the player (levelLightsFor): view-space
+uniform vec4 levelLightColour[2]; // position, weight 0..1 (w, 0 none); colour (rgb, brightest 1)
 
 // Wounds (wounds.inl) on the surface where they landed. They multiply the light already there, so a
-// wound in shadow stays in shadow; only wet blood adds a little shine, scaled by that same light.
+// wound in shadow stays in shadow. Blood is a liquid layer, not a dye: it absorbs (green and blue far
+// faster than red, so a thin film is the surface seen through red and a thick pool nearly black-red),
+// it has a rounded edge (the meniscus) that tips the surface normal, and while wet it is a smooth
+// dielectric (refractive index ~1.35, about 2% reflectance head-on, rising to a mirror at grazing angles)
+// that reflects the game's own lights as a sharp white highlight; dry, it is a matte brown-black crust.
+// Light arriving at a surface is estimated from its lit brightness over a typical albedo.
+const vec3 bloodAbsorb = vec3(1.1, 9.0, 10.0);     // fresh (oxyhaemoglobin), per unit thickness
+const vec3 driedAbsorb = vec3(2.2, 4.5, 5.5);      // dried (methaemoglobin): absorbs red more, so browner
+// What a film of blood leaves of the surface under it: the light through it twice (in and back out),
+// plus what the blood itself scatters back where it is thick (dark red fresh, dark brown dry).
+vec3 bloodFilm(float thickness, float dryness) {
+    vec3 through = exp(-2.0 * thickness * mix(bloodAbsorb, driedAbsorb, dryness));
+    return through + (1.0 - through) * mix(vec3(0.12, 0.004, 0.003), vec3(0.07, 0.033, 0.024), dryness);
+}
 // A severed limb's cap where the view ray meets it in front of the scene: raw flesh around a pale bone
 // with its marrow, a rim of skin and fat, lit from above and scaled by the skin's light around it.
 // Opaque; 0 coverage elsewhere.
@@ -1317,6 +1332,7 @@ vec3 woundMarks(vec3 color) {
     vec3 tint = vec3(1.0);
     float wet = 0.0;
     float grey = 0.0;
+    vec3 tilt = vec3(0.0); // the liquid's own slope (its meniscus), along the surface, view space
     for (int i = 0; i < 12; ++i) {
         if (float(i) >= woundCount) break;
         vec4 A = woundA[i], B = woundB[i], C = woundC[i];
@@ -1377,12 +1393,13 @@ vec3 woundMarks(vec3 color) {
                   (0.8 + 0.4 * woundHash(floor(q.x * 0.8) + floor(q.y * 0.8) * 13.0 + seed * 7.0));
         float soak = (1.0 - smoothstep(0.75, 1.0, e)) * (0.5 + 0.5 * severity);
         float tide = smoothstep(0.7, 0.9, e) * (1.0 - smoothstep(0.9, 1.0, e));
-        vec3 stain = mix(vec3(0.42, 0.16, 0.12), vec3(0.5, 0.07, 0.06), aux);
+        // Soaked fibres hold blood through their depth: deep crimson while wet, brownish once dry.
+        vec3 stain = mix(bloodFilm(0.55, 1.0), bloodFilm(0.45, 0.0), aux);
         vec3 fabric = mix(vec3(1.0), stain, soak * 0.85);
         fabric = mix(fabric, stain * 0.7, tide * 0.5);
         fabric = mix(fabric, fabric * 0.65, fray);
         fabric = mix(fabric, vec3(0.1, 0.02, 0.02), slit);
-        vec3 plate = mix(vec3(1.0), blood * 1.6, smear * 0.6);
+        vec3 plate = mix(vec3(1.0), bloodFilm(0.15 + 0.35 * smear, 1.0 - aux), smear * 0.9); // a film on the metal
 )glsl" R"glsl(        // Healing into a scar: a pale, thin line with a faint pink halo.
         cut = woundScarApply(cut, taper, x, scar);
         inside *= 1.0 - scar;
@@ -1398,6 +1415,7 @@ vec3 woundMarks(vec3 color) {
             float below = dot(d, down), across = dot(d, side);
             float ts = dot(t, side), td = dot(t, down);
             float thick = 0.2 + 0.25 * severity;
+            float runCross = 0.0; // where across the strongest run this point lies, -1..1
             for (int k = 0; k < 3; ++k) {
                 float fk = float(k);
                 float at = (woundHash(seed * 7.0 + fk) * 2.0 - 1.0) * (abs(ts) * A.w * 0.8 + C.z);
@@ -1407,10 +1425,16 @@ vec3 woundMarks(vec3 color) {
                 float len = C.w * (0.45 + 0.55 * woundHash(seed * 3.0 + fk + 5.0));
                 float along = below - start;
                 float bead = 1.0 + 0.8 * smoothstep(len * 0.7, len, along);
-                float line = 1.0 - smoothstep(thick * bead * 0.5, thick * bead, abs(across - at - 0.3 * sin(below * 0.4 + fk)));
-                run = max(run, line * step(0.0, along) * (1.0 - smoothstep(len * 0.85, len, along)));
+                float offset = across - at - 0.3 * sin(below * 0.4 + fk);
+                float line = 1.0 - smoothstep(thick * bead * 0.5, thick * bead, abs(offset));
+                float here = line * step(0.0, along) * (1.0 - smoothstep(len * 0.85, len, along));
+                if (here > run) { run = here; runCross = clamp(offset / (thick * bead), -1.0, 1.0); }
             }
-            cut = mix(cut, blood, run * 0.9 * (1.0 - 0.7 * cloth)); // cloth drinks most of it
+            // A run is a rounded bead of liquid: thickest along its middle, fattest at its tip.
+            float depth = run * sqrt(max(1.0 - runCross * runCross, 0.0)) * (0.6 + 0.4 * severity);
+            cut = mix(cut, bloodFilm(0.25 + 0.6 * depth, 1.0 - aux), run * (1.0 - 0.7 * cloth)); // cloth drinks most of it
+            // Its sides slope down to the skin: the normal tips outward there (cloth leaves no bead).
+            tilt += side * (runCross * 0.8 * run * (1.0 - cloth) * aux);
         }
         if (woundDebug > 0.5) {
             vec3 neonCut = vec3(0.0, 1.0, 0.95);
@@ -1487,21 +1511,66 @@ vec3 woundMarks(vec3 color) {
         float rimFrac = clamp(r / (radius * rim), 0.0, 1.0);
         float localDry = clamp(dry + rimFrac * 0.35, 0.0, 1.0);
         float coffeeRing = 1.0 + 0.3 * smoothstep(0.65, 0.95, rimFrac);
-        vec3 freshBlood = vec3(0.36, 0.015, 0.012);
-        vec3 driedBlood = vec3(0.11, 0.025, 0.018);
-        vec3 bloodColor = mix(freshBlood, driedBlood, localDry) * (1.0 - 0.2 * coffeeRing * localDry);
+        // A drop is a shallow pool: flat-topped, its edge rounding down to the surface. Thickest in the
+        // middle; drying, it thins and leaves its solids at the rim (the coffee ring).
+        float body = smoothstep(1.0, 0.55, rimFrac);
+        float thickness = mix(0.35 + 0.65 * body, 0.25 + 0.5 * coffeeRing * smoothstep(0.6, 0.95, rimFrac), localDry) *
+                          (0.5 + 0.5 * clamp(radius / 3.0, 0.0, 1.0));
+        vec3 bloodColor = bloodFilm(thickness, localDry);
         if (woundDebug > 0.5) bloodColor = vec3(0.1, 1.0, 0.35) * 2.2;
         tint *= mix(vec3(1.0), bloodColor, m);
-        wet += m * (1.0 - localDry) * 0.45;
+        float fresh = m * (1.0 - localDry);
+        wet += fresh;
+        // The rounded edge: the normal tips outward, most where the edge falls fastest.
+        float edgeFall = smoothstep(0.5, 0.8, rimFrac) * (1.0 - smoothstep(0.85, 1.05, rimFrac));
+        if (dot(spread, spread) > 1e-4) tilt += normalize(spread - n * dot(spread, n)) * (1.6 * edgeFall * fresh * mainDrop);
     }
     if (!near) return color;
     vec3 lit = toLight(color);
     float level = dot(lit, vec3(0.2126, 0.7152, 0.0722));
     lit *= tint;
-    if (wet > 0.0) {
-        vec3 lightDir = normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6));
-        float spec = pow(max(dot(n, normalize(lightDir + normalize(-p))), 0.0), 24.0);
-        lit += vec3(0.9, 0.55, 0.5) * spec * min(wet, 1.0) * level * (0.4 + 2.5 * level);
+    wet = min(wet, 1.0);
+    if (wet > 0.0 && woundDebug < 0.5) {
+        // The liquid's surface: the scene's normal tipped by its meniscus. Smooth while fresh.
+        vec3 N = normalize(n + tilt);
+        if (dot(N, n) < 0.2) N = n;
+        vec3 V = normalize(-p);
+        float NV = max(dot(N, V), 1e-3);
+        float fresnel = 0.02 + 0.98 * pow(1.0 - NV, 5.0); // Schlick, F0 of a ~1.35 index liquid
+        // Light reaching this spot, from its brightness before the blood over an albedo of about 0.3.
+        float incident = clamp(level / 0.3, 0.0, 2.0);
+        // Each game light: a GGX highlight (roughness 0.07 wet) in the light's own colour, falling off
+        // over a few metres as the level detail's lighting does; the fixed top/viewer light fills in.
+        float alpha2 = 0.07 * 0.07 * 0.07 * 0.07;
+        vec3 spec = vec3(0.0);
+        float found = 0.0;
+        for (int k = 0; k < 3; ++k) {
+            vec3 L;
+            vec3 colour = vec3(1.0);
+            float w;
+            if (k < 2) {
+                vec4 lamp = levelLight[k];
+                if (lamp.w <= 0.0) continue;
+                vec3 toLamp = lamp.xyz - p;
+                float d2 = dot(toLamp, toLamp);
+                L = toLamp * inversesqrt(max(d2, 1.0));
+                w = lamp.w / (1.0 + d2 / 90000.0);
+                colour = levelLightColour[k].rgb;
+                found += w;
+            } else {
+                L = normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6));
+                w = 1.0 - clamp(found * 2.0, 0.0, 1.0);
+                if (w <= 0.0) continue;
+            }
+            vec3 H = normalize(L + V);
+            float NH = max(dot(N, H), 0.0), NL = max(dot(N, L), 0.0);
+            float dn = NH * NH * (alpha2 - 1.0) + 1.0;
+            float D = alpha2 / (3.14159 * dn * dn);
+            spec += colour * w * min(D, 60.0) * NL / (4.0 * NV * max(NL, 0.05) + 1e-3) * NL;
+        }
+        lit += spec * fresnel * incident * wet;
+        // And the room it lies in: at grazing angles a wet surface mirrors the light around it.
+        lit += vec3(level) * (fresnel - 0.02) * 0.6 * wet;
     }
     return toStored(clamp(lit, 0.0, 1.0));
 }
@@ -2462,6 +2531,30 @@ struct ViewRequest {
 // World point to the native view space (row-major, row vector times matrix).
 static void toView(const float* m, const float* p, float* out) {
     for (int i = 0; i < 3; ++i) out[i] = p[0] * m[i] + p[1] * m[4 + i] + p[2] * m[8 + i] + m[12 + i];
+}
+
+// The game lights levelLightsFor found (ViewRequest lamps), into view space by the reading (sector-local or
+// global) in reach: position (xyz) and weight (w, 0 none); colour (rgb, brightest 1). Level detail and the
+// wound marks' wet highlights both light from these.
+static void lampsInView(const ViewRequest& request, const float* view, float (&lamps)[2][4], float (&lampColours)[2][4]) {
+    for (unsigned k = 0; k < 2; ++k) {
+        if (!(request.lamps[k][3] > 0.f)) continue;
+        float best = 2000.f * 2000.f;
+        for (int candidate = 0; candidate < 2; ++candidate) {
+            float w[3], c[3];
+            for (int i = 0; i < 3; ++i) w[i] = request.lamps[k][i] + (candidate ? request.lampOrigin[k][i] : 0.f);
+            toView(view, w, c);
+            const float sq = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
+            if (std::isfinite(sq) && sq < best) {
+                best = sq;
+                lamps[k][0] = c[0]; lamps[k][1] = c[1]; lamps[k][2] = c[2]; lamps[k][3] = request.lamps[k][3];
+            }
+        }
+        lampColours[k][0] = request.lampColour[k][0];
+        lampColours[k][1] = request.lampColour[k][1];
+        lampColours[k][2] = request.lampColour[k][2];
+        lampColours[k][3] = 1.f;
+    }
 }
 
 // View space to a held item's own space, for the shader (column-major, uploads
@@ -3556,6 +3649,12 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 }
                 g.uniform4f(u.at[uWorldUp], upX, upY, upZ, 0.f);
                 g.uniform1f(u.at[uWoundDebug], woundDebug.load(std::memory_order_relaxed) ? 1.f : 0.f);
+                {   // Wet blood's highlights come from the game's own lights.
+                    float lamps[2][4]{}, lampColours[2][4]{};
+                    lampsInView(request, projection.view, lamps, lampColours);
+                    g.uniform4fv(u.at[uLevelLight], 2, lamps[0]);
+                    g.uniform4fv(u.at[uLevelLightColour], 2, lampColours[0]);
+                }
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 if (scissored) glDisable(GL_SCISSOR_TEST);
                 else endPass(false);
@@ -3790,24 +3889,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 if (g.uniform4fv) g.uniform4fv(u.at[uLevelPeople], 6, people[0]);
                 // The lights, into view space by the reading (sector-local or global) in reach.
                 float lamps[2][4]{}, lampColours[2][4]{};
-                for (unsigned k = 0; k < 2; ++k) {
-                    if (!(request.lamps[k][3] > 0.f)) continue;
-                    float best = 2000.f * 2000.f;
-                    for (int candidate = 0; candidate < 2; ++candidate) {
-                        float w[3], c[3];
-                        for (int i = 0; i < 3; ++i) w[i] = request.lamps[k][i] + (candidate ? request.lampOrigin[k][i] : 0.f);
-                        toView(projection.view, w, c);
-                        const float sq = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
-                        if (std::isfinite(sq) && sq < best) {
-                            best = sq;
-                            lamps[k][0] = c[0]; lamps[k][1] = c[1]; lamps[k][2] = c[2]; lamps[k][3] = request.lamps[k][3];
-                        }
-                    }
-                    lampColours[k][0] = request.lampColour[k][0];
-                    lampColours[k][1] = request.lampColour[k][1];
-                    lampColours[k][2] = request.lampColour[k][2];
-                    lampColours[k][3] = 1.f;
-                }
+                lampsInView(request, projection.view, lamps, lampColours);
                 if (g.uniform4fv) {
                     g.uniform4fv(u.at[uLevelLight], 2, lamps[0]);
                     g.uniform4fv(u.at[uLevelLightColour], 2, lampColours[0]);
@@ -5265,6 +5347,8 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
         memcpy(request.held, heldMaskPoses, sizeof request.held);
     }
     levelDetailFor(request);
+    // Wet blood lights from the same game lights; level detail may be off, or have given way.
+    if (woundMarks.load(std::memory_order_relaxed) > 0.f && !(request.lamps[0][3] > 0.f)) levelLightsFor(request);
     // Wounds: desktop and VR eyes alike, in the space of the matrices this view was drawn with.
     if (woundMarks.load(std::memory_order_relaxed) <= 0.f && heldDetail.load(std::memory_order_relaxed) > 0.f &&
         TryAcquireSRWLockExclusive(&woundLock)) {
