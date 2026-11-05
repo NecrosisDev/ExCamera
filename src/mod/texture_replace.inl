@@ -11,9 +11,9 @@
 // same function: the game's own upload, filtering, mip and quality handling apply at the new size. The mod
 // makes no GL calls here.
 //
-// A replacement must be the same block format as the game's (BC1 for 0xC6 colour, BC3 for 0xE6/0xA4 with
-// alpha, BC4 for 0x42 one channel, BC5 for 0x84 two channels) and carry a full mip chain; anything else, or a
-// texture whose name key is longer than the 16 bytes the key holds, is left to the game, and the reason logged.
+// A replacement must have the block layout of the GL format the game uploads that texture with (its own format
+// table, src/texture_formats.h) and a full mip chain; anything else, or a texture whose name key is longer than
+// the 16 bytes the key holds, is left to the game, and the reason logged.
 
 static std::atomic<bool> textureReplacements{true}; // the F8 row; off draws the game's own textures only
 
@@ -82,16 +82,16 @@ static void refuse(Entry& e, const char* why) {
     modMessage(NoticeKind::warning, text);
 }
 
-// The DDS block format a game format word asks for: 1 BC1, 3 BC3, 4 BC4, 5 BC5; 0 not replaceable.
+// The DDS block format the game uploads this image with (1 BC1, 3 BC3, 4 BC4, 5 BC5; 0 not replaceable): its own
+// format-table entry (0x72790 on the format word, the runtime table 0x766F0 filled), that entry's GL internal
+// format (+4; the sRGB form at +8 is the same block layout), and fp::blockForGlInternal.
+using FormatIndex = int(__fastcall*)(uint32_t);
 static int blockFormatFor(uint32_t word) {
-    if (!(word >> 31)) return 0;
-    switch ((word >> 8) & 0xFF) {
-    case 0xC6: return 1;
-    case 0xE6: case 0xA4: return 3;
-    case 0x42: return 4;
-    case 0x84: return 5;
-    }
-    return 0;
+    const int index = ((FormatIndex)gameAt(fp::sig::textureFormatIndex))(word);
+    const uintptr_t table = *(const uintptr_t*)gameAt(fp::sig::textureFormatTable);
+    const int last = *(const int*)gameAt(fp::sig::textureFormatLast);
+    if (index < 0 || index > last || !table || !readable(table + size_t(index) * 0x14, 0x14)) return 0;
+    return int(fp::blockForGlInternal(*(const uint32_t*)(table + size_t(index) * 0x14 + 4)));
 }
 static int blockFormatOfDds(const uint8_t* h, size_t size, size_t& dataAt) {
     if (size < 128 || memcmp(h, "DDS ", 4)) return 0;
@@ -144,7 +144,7 @@ static void upload(uintptr_t texture, uintptr_t image) {
             const HANDLE handle = CreateFileW(e->path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
             LARGE_INTEGER length{};
             const char* why = nullptr;
-            if (!wanted) why = "the game's texture is not block-compressed";
+            if (!wanted) why = "the game uploads this texture in a format replacements do not cover";
             else if (!(flags & 0x80000)) why = "the game's texture has no mip chain";
             else if (handle == INVALID_HANDLE_VALUE || !GetFileSizeEx(handle, &length) || length.QuadPart > (512ll << 20))
                 why = "the file could not be read";
@@ -210,16 +210,7 @@ static bool admitTextureReplaceEntries(const fp::ImageView& file) {
     return true;
 }
 
-// Off until the block format is taken from the game's own format table. 0x72790 matches the whole format word
-// against the table 0x766F0 fills from 0x2AE290..., and the second byte alone does not decide it: 0x813BE601
-// (byte 0xE6) is GL_COMPRESSED_RGBA_S3TC_DXT1 (BC1, 8-byte blocks) while 0x817BE608 / 0x827BE608 (also 0xE6)
-// are DXT5 (BC3, 16). blockFormatFor would ask a BC3 file for the first and the game would upload it as BC1.
-inline constexpr bool textureFormatsFromTable = false;
 static void createTextureReplaceHook() {
-    if constexpr (!textureFormatsFromTable) {
-        texrep::hooked = false;
-        return;
-    }
     texrep::hooked = texrep::admitted &&
                      MH_CreateHook((void*)gameAt(fp::sig::textureUpload), (void*)texrep::upload,
                                    (void**)&texrep::originalUpload) == MH_OK;

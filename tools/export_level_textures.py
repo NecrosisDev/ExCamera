@@ -18,10 +18,8 @@ What counts as a level texture (docs/render-assumptions.md, "Level textures"):
     size, 32-byte entries of 16-byte name, offset, size).
 
 Texture files (.rfi): 32-byte header (u32 tag 0x1D2D3DC6, width, height, u32, u32 format, u32, u32, u32 data size),
-then the mip chain. The format word's top byte 0x8x is block-compressed (DXT5 when the low byte has 0x08 or the
-word is a normal-map form 0x92xxxxxx/0x827BA408, else DXT1), 0x01 uncompressed; this reading of the format word
-is from the files themselves (every compressed file's data size matches its mip chain), not from the game's
-loader, and is labelled so in the index.
+then the mip chain. Compressed formats come from the game's own format table (format_of); uncompressed ones are
+read from the files and labelled unproven.
 """
 from __future__ import annotations
 
@@ -101,15 +99,30 @@ def mip0_size(width: int, height: int, kind: str) -> int:
             'R8': width * height}[kind]
 
 
-# The format word's second byte names the channels (0xC6 RGB, 0x42 one channel, 0x84 two, 0xE6/0xA4 with alpha);
-# its top bit marks block compression: RGB -> DXT1 (BC1), one channel -> BC4, two -> BC5 (a normal map's X and Y),
-# with alpha -> DXT5 (BC3). Read from the files (each decodes to a coherent image), not from the game's loader.
+# Compressed formats as the game resolves them: 0x72790 matches the whole format word against its runtime table
+# (0x766F0 appends S3TC 0x2AE290, LATC 0x2AE310, RGTC1 0x2AE380 without LATC, RGTC2 0x2AE350; byte-exact copy in
+# src/texture_formats.h), and the entry's GL internal format decides the block layout. Uncompressed words are not
+# in those groups; their channel layout here is read from the files (labelled unproven in the index).
+S3TC = {0x813BC600: 0x83F0, 0x813BE601: 0x83F1, 0x823BC600: 0x83F0, 0x817BE608: 0x83F3, 0x827BE608: 0x83F3,
+        0x827BA408: 0x83F3}
+LATC = {0x813B4200: 0x8C70, 0x813B2008: 0x8C70, 0x817B6208: 0x8C72}
+RGTC2 = {0x817B8400: 0x8DBD, 0x927B8400: 0x8DBD}
+BLOCK = {0x83F0: 'DXT1', 0x83F1: 'DXT1', 0x83F3: 'DXT5', 0x8C70: 'BC4', 0x8DBB: 'BC4', 0x8DBD: 'BC5'}
+
+
+def matches(entry: int, word: int) -> bool:
+    if word & 0x80100000 == 0x100000:
+        return entry & 0x800CFFFF == word & 0x800CFFFF
+    return entry == word
+
+
 def format_of(word: int) -> str | None:
-    channels = (word >> 8) & 0xFF
-    if word >> 31:
-        return {0xC6: 'DXT1', 0x42: 'BC4', 0x84: 'BC5', 0xE6: 'DXT5', 0xA4: 'DXT5'}.get(channels)
+    for table in (S3TC, LATC, RGTC2):
+        for entry, internal in table.items():
+            if matches(entry, word):
+                return BLOCK.get(internal)
     if (word >> 24) in (0x01, 0x11):
-        return {0xC6: 'RGB8', 0xE6: 'RGBA8', 0x42: 'R8', 0x20: 'R8'}.get(channels)
+        return {0xC6: 'RGB8', 0xE6: 'RGBA8', 0x42: 'R8', 0x20: 'R8'}.get((word >> 8) & 0xFF)
     return None
 
 

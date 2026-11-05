@@ -26,6 +26,7 @@
 #include "hook_health.h"
 #include "status_json.h"
 #include "engine_text.h"
+#include "texture_formats.h"
 #include "game_structs.h"
 #include "pointer_set.h"
 #include "held_object.h"

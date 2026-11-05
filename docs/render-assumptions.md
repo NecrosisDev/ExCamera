@@ -535,9 +535,8 @@ With no lights captured in the last 250 ms the terms use the fixed light from ab
 - Terrain tile tables (`*.ftb`, `Mat <name>` then texture names): map type from the name's last letter only
   (UNPROVEN).
 - Pack reading matches the game's reader 0x6F400 (tag `0xAFBF0C01`, table size, 32-byte entries). PROVEN.
-- Image format: 32-byte `.rfi` header; the format word's second byte gives the channels and its top bit block
-  compression (BC1/BC3/BC4/BC5, else raw). Read from the files (every image decodes coherently), not from the
-  game's loader (UNPROVEN as code).
+- Image format: 32-byte `.rfi` header. Compressed formats from the game's own format table (see "Texture
+  replacements"); uncompressed channel layouts read from the files (UNPROVEN as code).
 - 80 names the level files reference exist in no pack (mostly the `ub6ap*` world set); listed in the index.
 
 ## Texture replacements (2026-11-05)
@@ -554,8 +553,16 @@ on by default). PROVEN from the binary:
   storage for every level down to 1x1, then glCompressedTexSubImage2D per level with sizes from width/height.
   The texture-quality top-level skip and the size cap (`DAT_1002AE080`) apply as for the game's own images.
 - The hook passes a copy of that description pointing at a .dds file's levels (same block format as the
-  game's: BC1/BC3/BC4/BC5 by the format word's channel byte; full mip chain required) to the same function, so
+  block layout of the GL format the game uploads it with; full mip chain required) to the same function, so
   filtering, anisotropy and mip handling are the game's at the new size. No GL calls of the mod's own. Anything
   that does not fit is refused, logged once per file, and the game's image is uploaded.
 - Folder: `textures\` beside first-person.ini (the portable copy's own folder, else Documents\ExCamera).
   File name: the texture's name without `.rfi` (as in the export's index.csv), `.dds`.
+- **Block layout from the game's table (2026-11-05, correcting a6180a8).** 0x72790 resolves the format word to
+  the runtime table 0x766F0 fills (S3TC 0x2AE290, LATC 0x2AE310, RGTC1 0x2AE380 only without LATC, RGTC2
+  0x2AE350; 0x14-byte entries: word, GL internal format, sRGB form, GL format), matching under mask 0x800CFFFF
+  when `(word & 0x80100000) == 0x100000`, else exactly. The hook calls 0x72790 itself and reads the entry's
+  internal format: 0x83F0/0x83F1 (and sRGB 0x8C4C/0x8C4D) BC1, 0x83F3/0x8C4F BC3, 0x8C70/0x8DBB BC4, 0x8DBD
+  BC5; anything else is refused. The first version read the word's second byte, which is wrong for 0x813BE601
+  (byte 0xE6, DXT1). The export used the same wrong rule; checked against the table, every exported texture's
+  block type was right (the level set has no 0x813BE601), and the exporter now uses the table too.
