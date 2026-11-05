@@ -477,6 +477,20 @@ Each ships on its own once proven; the rest stay off.
   Failures log the driver's info log once (`material-id-shader.log` beside first-person.ini, and a modMessage);
   `material_id_link_hooked` and `material_id_sources_kept` report the hook. tools/check_shaders.py `--dump
   shader-dump.glsl` links the id fragments against every textured game vertex shader in a dev build's dump.
+- **Programs linked before the mod (2026-11-05, Hunter: programs 89, 90, 159 "no vertex source kept").** The
+  launcher attaches to an already running game (src/launcher.cpp: steam://rungameid/362490, then OpenProcess and
+  CreateRemoteThread on LoadLibraryW), so programs the game links at start predate every hook; glLinkProgram is
+  loaded once (string at 0x2F4DD0) and called only from 0x1FA23B, and there is no program-binary path, so
+  0x1FA120 is the only link path (PROVEN). The hook now goes in as soon as the layout is known (before
+  waitForGame), and for programs it still missed the source is recovered: the game deletes only fragment shaders
+  after linking (glDeleteShader DAT_100498D10, 0x1FA5E0, 0x201E09) and keeps vertex shaders in its caches
+  (DAT_1005B1DC0 via 0x1F9F70), so the live vertex shaders are tried, and one is used only if every attribute our
+  program keeps matches the game program's (name, type, location), every attribute the game program has is
+  declared in its text, and every uniform it reads exists in the game program with the same type and size; two
+  different texts passing is ambiguous and refused. `material_id_first_linked`, `_sources_recovered` and
+  `_sources_ambiguous` report it; a program still without a source is skipped with one line in
+  material-id-shader.log, no console message. Pixels with no id (mask alpha 255) are never resurfaced: lookOf
+  gives -1 and heldSurface is not called, so they show the game's own pixels.
 - **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),
   parts drawn with ids and misses. Parallax (`Mat.TexDsp`) items read ids at the unshifted texcoord.
 
