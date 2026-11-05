@@ -278,7 +278,7 @@ static void outOfPose(const float* pose, const float* local, bool origin, float*
         out[i] = (origin ? pose[9 + i] : 0.f) + local[0] * pose[i] + local[1] * pose[3 + i] + local[2] * pose[6 + i];
 }
 
-static void addWound(const CharacterHitRecord& h) {
+static void addWound(const CharacterHitRecord& h, const float* types = nullptr) {
     const float permanent = std::isfinite(h.permanent) ? h.permanent : 0.f;
     const float recoverable = std::isfinite(h.recoverable) ? h.recoverable : 0.f;
     // The kind recordNativeHit read from the game (woundKindOfHit): a gash, a bruise or a puncture. But the damage
@@ -357,6 +357,19 @@ static void addWound(const CharacterHitRecord& h) {
     case woundCut: w.halfLength = 4.f + 7.f * w.severity; w.halfWidth = 0.35f + 0.5f * w.severity; break;
     case woundThrust: w.halfLength = 1.f + 0.8f * w.severity; w.halfWidth = 0.6f + 0.4f * w.severity; break;
     default: w.halfLength = 3.f + 4.f * w.severity; w.halfWidth = 0.f; break;
+    }
+    // And by the striking weapon's own value for that kind (weapon data +2C slash, +30 crush, +34 pierce, each
+    // 0.5 x (item byte / 100)^0.7 from 0x165AD0, so a byte of 100 gives 0.5): a gash's length, a puncture's width,
+    // a bruise's spread scale from 0.85 at nothing to 1 at a byte of 100 and at most 1.09 (byte 255), so wounds
+    // stay within the calibration above. Unread (a script-runtime hit): unchanged.
+    if (types) {
+        const float value = types[kind == woundCut ? 0 : kind == woundCrush ? 1 : 2];
+        if (value >= 0.f && std::isfinite(value)) {
+            const float scale = 0.85f + 0.15f * std::clamp(value / 0.5f, 0.f, 1.6f);
+            if (kind == woundCut) w.halfLength *= scale;
+            else if (kind == woundThrust) w.halfWidth *= scale;
+            else w.halfLength *= scale; // a bruise's radius
+        }
     }
     // A blow landing on a mark of the same kind deepens it; a part keeps its newest few marks.
     unsigned onPart = 0, oldest = woundLimit;
@@ -1073,24 +1086,26 @@ static void emitImpactSpatter(const CharacterHitRecord& r, const float* sectorOr
 // These are the weapon's values before armour; the split after armour exists only on physicalImpact's stack.
 constexpr size_t woundWeaponData = 0x6E0, woundPartParent = 0x428;
 constexpr size_t woundSlash = 0x2C, woundCrushValue = 0x30, woundPierce = 0x34;
-static uint8_t woundKindOfHit(uintptr_t attacker, uintptr_t weapon) {
-    if (readable(attacker + field::character::motion, sizeof(uint32_t)) &&
-        *reinterpret_cast<const uint32_t*>(attacker + field::character::motion) == woundThrustMotion)
-        return woundThrust;
+static uint8_t woundKindOfHit(uintptr_t attacker, uintptr_t weapon, float* types) {
+    types[0] = types[1] = types[2] = -1.f; // slash, crush, pierce: unread
+    const bool thrust = readable(attacker + field::character::motion, sizeof(uint32_t)) &&
+                        *reinterpret_cast<const uint32_t*>(attacker + field::character::motion) == woundThrustMotion;
     uintptr_t part = weapon, data = 0;
     for (int step = 0; part && step < 16; ++step) { // 0x1531E0's walk, bounded
-        if (!readable(part, woundPartParent + 8) || !readable(part, woundWeaponData + 8)) return woundCut;
+        if (!readable(part, woundPartParent + 8) || !readable(part, woundWeaponData + 8)) return thrust ? woundThrust : woundCut;
         data = *reinterpret_cast<const uintptr_t*>(part + woundWeaponData);
         if (data) break;
         const uintptr_t parent = *reinterpret_cast<const uintptr_t*>(part + woundPartParent);
         if (parent == part) break;
         part = parent;
     }
-    if (!data || !readable(data, woundPierce + 4)) return woundCut;
+    if (!data || !readable(data, woundPierce + 4)) return thrust ? woundThrust : woundCut;
     const float slash = *reinterpret_cast<const float*>(data + woundSlash);
     const float crush = *reinterpret_cast<const float*>(data + woundCrushValue);
     const float pierce = *reinterpret_cast<const float*>(data + woundPierce);
-    if (!std::isfinite(slash + crush + pierce)) return woundCut;
+    if (!std::isfinite(slash + crush + pierce)) return thrust ? woundThrust : woundCut;
+    types[0] = slash; types[1] = crush; types[2] = pierce;
+    if (thrust) return woundThrust;
     if (crush > slash && crush >= pierce) return woundCrush;
     if (pierce > slash && pierce > crush) return woundThrust;
     return woundCut;
@@ -1138,7 +1153,8 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float permanen
     }
     r.weapon = weapon;
 
-    r.kind = woundKindOfHit(attacker, weapon);
+    float types[3];
+    r.kind = woundKindOfHit(attacker, weapon, types);
 
     float sectorOrigin[3]{};
     if (part && readable(part + field::bodyPart::meshNode, sizeof(uintptr_t))) {
@@ -1153,7 +1169,7 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float permanen
 
     AcquireSRWLockExclusive(&woundLock);
     r.serial = ++woundSerial;
-    addWound(r);
+    addWound(r, types);
     addWeaponBlood(r);
     emitImpactSpatter(r, sectorOrigin);
     ReleaseSRWLockExclusive(&woundLock);
