@@ -11,9 +11,9 @@ static std::atomic<float> woundMarks{1.f}; // the Wounds row: 0 off
 #include "../settings_model.h" // panel::materialDataDecoded (the F8 rows it greys)
 // Game reads the render code makes on layouts no game code has yet been shown to read that way
 // (docs/render-assumptions.md, "UNPROVEN"): the held items' light from the light-node fields, their wear
-// and dirt from the item database record, and the level's two nearest lamps. Off until each is proven from
-// the game code; the effects then use their neutral fallbacks (default light from above, unread condition,
-// no lamps).
+// and dirt from the item database record. Off until each is proven from the game code; the effects then use
+// their neutral fallbacks (default light from above, unread condition). Blood is lit from the lights the game
+// itself drew the nearby meshes with (MeshLights, below), not from light nodes.
 constexpr bool unprovenRenderReads = false;
 // The held, worn, object and level detail choose each surface's material (steel, wood, leather, mail, paint,
 // cloth, plaster, earth, stone) from its colour, a guess that stands in for game material data; the game's own
@@ -1265,6 +1265,29 @@ static bool woundSkinMaterial(uintptr_t material) {
     ReleaseSRWLockShared(&woundSkinSetLock);
     return skin;
 }
+
+// The lights the game drew a mesh with, copied at its material draw (wounds_bake.inl captureMeshLights, render
+// thread). The submit 0x200770 writes [node+130] to renderer state +A0 (0x20078D), then packs the node's lights
+// (0x1FF430 at 0x2007AD) into the state: per slot i, +B0+16i the light, +B8+16i its tag (0x200 when the light's
+// +C & 0x300 is 0, else 0x100; 0x1FF76C/0x1FF776), count +A8, and three vec4 at +170+30i (A, B, C; uploaded at
+// 0x200BBD). The shaders' Light[i].Direct is the template callback 0x1FB040: slot tag & 0x300 == 0x200.
+// Each capture keeps [state+A0] and is used only when it equals the drawn node's +130 (else it counts a mismatch).
+struct MeshLights {
+    uintptr_t node = 0;
+    ULONGLONG tick = 0;
+    unsigned count = 0;
+    uintptr_t source[6]{}; // the light in each slot
+    bool direct[6]{};      // the slot is a Direct light (A.xyz a direction, no range falloff or shaping)
+    float light[18][4]{};  // A, B, C per slot, as the game packed them
+    float origin[3]{};     // the node's drawn origin (render transform row 3), to choose the space reading
+    float sector[3]{};     // its sector's origin
+    bool sectorKnown = false;
+};
+constexpr unsigned meshLightsLimit = 16;
+static MeshLights meshLights[meshLightsLimit];
+static unsigned meshLightsNext = 0;
+static SRWLOCK meshLightsLock = SRWLOCK_INIT;
+static std::atomic<unsigned> meshLightsCaptured{0}, meshLightsMismatched{0}, gameLightsUsed{0};
 
 static void createWoundHooks() {
     if (!layout.optionalGroupAvailable("wounds")) return;

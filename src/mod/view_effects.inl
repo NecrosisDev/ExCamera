@@ -164,6 +164,53 @@ const mat2 goldenTurn = mat2(-0.7373688, 0.6754903, -0.6754903, -0.7373688);
 // history, one bad texel would stay there and spread, a block on screen once upsampled.
 float finite(float x) { return x >= -1e20 && x <= 1e20 ? x : 0.0; }
 vec4 finite(vec4 v) { return vec4(finite(v.x), finite(v.y), finite(v.z), finite(v.w)); }
+)glsl" R"glsl(// The game's own per-light lighting: shading_f's lights loop and Lighting function (docs/render-assumptions.md,
+// "Per-light uniform layout"), over the lights it drew the nearby meshes with. gameLight holds, per light, A, B, C
+// as the game packed them, with A turned into view space and A.w 1 for a Direct light (the game's A.w, a shadow
+// term, is not used: no shadows are sampled here, so every light counts as unshadowed). gameLightUp: world +Y in
+// view space (xyz), and the light count (w). Out: dif = sum of colour x w x N.L, spc = sum of colour x the GGX term
+// x w, and reach = sum of the colour's luma x w, so a caller can take the lights' direction, colour and falloff
+// without the game's absolute units. gloss is the game's Gloss (1 - MatSpc.w: 0 mirror-smooth, 1 rough).
+uniform vec4 gameLight[18];
+uniform vec4 gameLightUp;
+void gameLighting(vec3 p, vec3 N, vec3 V, float gloss, out vec3 dif, out vec3 spc, out float reach) {
+    dif = vec3(0.0);
+    spc = vec3(0.0);
+    reach = 0.0;
+    float NdV = abs(dot(V, N));
+    float k = (gloss + 1.0) * (gloss + 1.0) * 0.125;
+    float gv = NdV / (NdV * (1.0 - k) + k);
+    float a2 = gloss * gloss;
+    a2 = a2 * a2;
+    float d = gv / max(NdV * 4.0, 0.001);
+    for (int i = 0; i < 6; ++i) {
+        if (float(i) >= gameLightUp.w) break;
+        vec4 A = gameLight[i * 3], B = gameLight[i * 3 + 1], C = gameLight[i * 3 + 2];
+        vec3 L = A.xyz; // a Direct light: A as given, w the shadow only (1 here)
+        float w = 1.0;
+        if (A.w < 0.5) {
+            // A point light: range falloff (1 - d B.w)^4, then the shader's factor on the direction's world y
+            // from C.y, C.z, C.w, exactly as written there.
+            vec3 t = A.xyz - p;
+            float dist = length(t);
+            L = t / max(dist, 1e-4);
+            float atn = max(1.0 - dist * B.w, 0.0);
+            atn = atn * atn;
+            w = atn * atn;
+            float y = dot(L, gameLightUp.xyz);
+            float a = (y + (1.0 - y) * C.y) * C.z;
+            w *= max((exp2(a) - 1.0) * C.w, 0.0);
+        }
+        float NdL = max(dot(N, L), 0.0);
+        float NdH = max(dot(N, normalize(L + V)), 0.0);
+        float b = NdH * NdH * (a2 - 1.0) + 1.0;
+        b = a2 / (b * b);
+        float gh = NdL / (NdL * (1.0 - k) + k);
+        spc += B.rgb * b * gh * d * w;
+        dif += B.rgb * w * NdL;
+        reach += dot(B.rgb, vec3(0.2126, 0.7152, 0.0722)) * w;
+    }
+}
 )glsl";
 
 // Half resolution: each texel's view distance (sky 1e5), for the occlusion taps.
@@ -478,10 +525,6 @@ uniform vec4 levelRow1;
 uniform vec4 levelRow2;
 uniform float woundDebug;
 uniform vec4 levelPeople[6];
-// The two strongest game lights near the player: view-space position (xyz), weight 0..1 (w, 0 none);
-// and their colour (rgb, brightest 1).
-uniform vec4 levelLight[2];
-uniform vec4 levelLightColour[2];
 uniform sampler3D heldNoise; // tiling smooth noise, 16 units a tile (held-item surfaces)
 uniform vec4 worldUp;      // world +Y in view space; w unused
 
@@ -970,19 +1013,27 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
             vec3 tip = sign(det) * (filmSlope.x * r1 + filmSlope.y * r2);
             vec3 N = abs(det) > 1e-6 && maskEdge < 0.5 ? normalize(abs(det) * n - tip) : n;
             if (dot(N, n) < 0.3) N = n;
-            // A sharp GGX highlight (roughness 0.08) from the game lights by this item, in their colour, and
-            // a mirror of the room at grazing angles; Fresnel for a ~1.35 index liquid. The light arriving is
-            // told from the lit brightness here over a dark steel albedo, so a torch makes it glint and
-            // darkness does not.
-            vec3 lightColour = mix(vec3(1.0), lightTint, lightInfo.w);
-            float NV = max(dot(N, view), 1e-3), NL = max(dot(N, lightDir), 0.0);
-            float NH = max(dot(N, halfway), 0.0);
+            // A sharp highlight (wet, Gloss 0.08) and a mirror of the room at grazing angles; Fresnel for a
+            // ~1.35 index liquid. The light arriving is told from the lit brightness here over a dark steel
+            // albedo, so a torch makes it glint and darkness does not. With the game's lights for this frame,
+            // the highlight is the game's own GGX over each of them (gameLighting); else the item's light.
+            float NV = max(dot(N, view), 1e-3);
             float fresnel = 0.02 + 0.98 * pow(1.0 - NV, 5.0);
-            float alpha2 = 0.08 * 0.08 * 0.08 * 0.08;
-            float dn = NH * NH * (alpha2 - 1.0) + 1.0;
-            float D = min(alpha2 / (3.14159 * dn * dn), 60.0);
             float incident = clamp(max(level, luma) / 0.2, 0.0, 2.5) * mix(0.7, 1.3, lightInfo.w);
-            vec3 gloss = lightColour * D * NL / max(4.0 * NV * max(NL, 0.05), 1.0) * NL * fresnel * incident;
+            vec3 gloss;
+            if (gameLightUp.w > 0.5) {
+                vec3 gDif, gSpc;
+                float gReach;
+                gameLighting(p, N, view, 0.08, gDif, gSpc, gReach);
+                gloss = gSpc / max(gReach, 1e-4) * fresnel * incident;
+            } else {
+                vec3 lightColour = mix(vec3(1.0), lightTint, lightInfo.w);
+                float NL = max(dot(N, lightDir), 0.0), NH = max(dot(N, halfway), 0.0);
+                float alpha2 = 0.08 * 0.08 * 0.08 * 0.08;
+                float dn = NH * NH * (alpha2 - 1.0) + 1.0;
+                float D = min(alpha2 / (3.14159 * dn * dn), 60.0);
+                gloss = lightColour * D * NL / max(4.0 * NV * max(NL, 0.05), 1.0) * NL * fresnel * incident;
+            }
             gloss = min(gloss, vec3(1.5)) + vec3(level) * min(fresnel - 0.02, 0.25) * 0.12;
             result += gloss * wet;
         }
@@ -1093,26 +1144,9 @@ vec3 levelSurface(vec3 color) {
     vec3 v = abs(det) > 1e-6 ? (abs(det) * n - sign(det) * (dh.x * r1 + dh.y * r2)) : n;
     vec3 bumped = dot(v, v) > 1e-6 ? normalize(v) : n;
     if (dot(bumped, n) < 0.55) bumped = n;
-)glsl" R"glsl(    // Light from the nearest real lights, each from its own position, weighted by how near and
-    // strong it is; the fixed top/viewer light fills in where none is found.
+)glsl" R"glsl(    // The fixed top/viewer light.
     vec3 lightDir = normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6));
     vec3 lightTint = vec3(1.0);
-    float found = 0.0;
-    vec3 sum = vec3(0.0), tintSum = vec3(0.0);
-    for (int i = 0; i < 2; ++i) {
-        vec4 lamp = levelLight[i];
-        if (lamp.w <= 0.0) continue;
-        vec3 toLamp = lamp.xyz - p;
-        float d = length(toLamp);
-        float w = lamp.w / (1.0 + d * d / 90000.0); // fades over a few metres
-        sum += w * toLamp / max(d, 1.0);
-        tintSum += w * levelLightColour[i].rgb;
-        found += w;
-    }
-    if (found > 0.0 && dot(sum, sum) > 1e-6) {
-        lightDir = normalize(mix(lightDir, normalize(sum), clamp(found * 2.0, 0.0, 1.0)));
-        lightTint = mix(vec3(1.0), tintSum / found, clamp(found * 2.0, 0.0, 1.0));
-    }
     float shade = clamp((0.4 + 0.6 * max(dot(bumped, lightDir), 0.0)) / (0.4 + 0.6 * max(dot(n, lightDir), 0.0)), 0.6, 1.5);
     vec3 halfway = normalize(lightDir + normalize(-p));
     float sheen = (damp * 0.35 + shine) * pow(max(dot(bumped, halfway), 0.0), metal ? 60.0 : 40.0);
@@ -1246,8 +1280,6 @@ uniform float woundDebug;         // 0 natural, 1 neon marks, 2 diagnostics (wha
 uniform vec4 fallA[16];           // a drop in the air: view-space position; w: radius (cm)
 uniform vec4 fallB[16];           // its velocity (cm/s), for its streak
 uniform float fallCount;
-uniform vec4 levelLight[2];       // the two strongest game lights near the player (levelLightsFor): view-space
-uniform vec4 levelLightColour[2]; // position, weight 0..1 (w, 0 none); colour (rgb, brightest 1)
 uniform sampler2D bloodMap;       // the floor blood layer (bloodLayerUpdate): r source height, g time (both encoded,
                                   // the newest), a thickness, over a wrapping window of texels around the player
 uniform vec4 bloodMapInfo;        // x: size in texels, y: cm per texel, zw: the window's centre texel (x, z)
@@ -1366,8 +1398,15 @@ vec4 fallAt(vec3 ray, float sceneT, float level) {
         if (cover <= 0.001) continue;
         // Lit as a wet sphere: dark red, a soft top light and a sharp glint, by the light around it.
         vec3 nrm = normalize(ray * t - q + vec3(0.0, 0.0, 1e-3));
-        float lit = 0.3 + 0.7 * max(dot(nrm, normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6))), 0.0);
-        float glint = pow(max(dot(nrm, normalize(normalize(worldUp.xyz + vec3(0.0, 0.0, 1.5)) - ray)), 0.0), 40.0);
+        vec3 lit = vec3(0.3 + 0.7 * max(dot(nrm, normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6))), 0.0));
+        vec3 glint = vec3(pow(max(dot(nrm, normalize(normalize(worldUp.xyz + vec3(0.0, 0.0, 1.5)) - ray)), 0.0), 40.0));
+        if (gameLightUp.w > 0.5) { // the game's lights here: their diffuse share and GGX (wet, Gloss 0.07)
+            vec3 gDif, gSpc;
+            float gReach;
+            gameLighting(ray * t, nrm, -ray, 0.07, gDif, gSpc, gReach);
+            lit = 0.3 + 0.7 * gDif / max(gReach, 1e-4);
+            glint = min(gSpc / max(gReach, 1e-4), vec3(40.0)) * 0.05;
+        }
         vec3 c = bloodFilm(1.3, 0.0) * level * 2.5 * lit + vec3(level) * (0.9 * glint + 0.08);
         if (abs(woundDebug - 1.0) < 0.5) c = vec3(1.0, 0.2, 1.0) * 2.0;
         return vec4(c, cover);
@@ -1443,37 +1482,34 @@ vec4 capAt(vec3 p) {
         // Light: the skin's light around the cut sets the level; a soft key from the light's side.
         float around = dot(toLight(texture2D(sceneTex, project(A.xyz + side * A.w * 1.4)).rgb), vec3(0.2126, 0.7152, 0.0722));
         vec3 lightDir = normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6));
-        vec3 lightColour = vec3(1.0);
-        float found = 0.0;
-        vec3 sum = vec3(0.0);
-        for (int i = 0; i < 2; ++i) {
-            vec4 lamp = levelLight[i];
-            if (lamp.w <= 0.0) continue;
-            vec3 toLamp = lamp.xyz - (A.xyz + hit);
-            float d2 = dot(toLamp, toLamp);
-            float w = lamp.w / (1.0 + d2 / 90000.0);
-            sum += w * toLamp * inversesqrt(max(d2, 1.0));
-            lightColour = mix(lightColour, levelLightColour[i].rgb, clamp(w * 2.0, 0.0, 1.0));
-            found += w;
-        }
-        if (found > 0.0 && dot(sum, sum) > 1e-6) lightDir = normalize(mix(lightDir, normalize(sum), clamp(found * 2.0, 0.0, 1.0)));
         // The surface undulates with the bundles and the fat's lobes; bone stands proud and smooth.
         vec3 bump = (side * (woundValueNoise(cm * 0.9 + seed + vec2(0.3, 0.0)) - bundles) +
                      downhill * (woundValueNoise(cm * 0.9 + seed + vec2(0.0, 0.3)) - bundles)) * 2.5 * (1.0 - bone);
         vec3 N = normalize(n + bump * (1.0 - 0.6 * film));
         float level = min(around * 2.5 + 0.02, 1.2);
-        float shade = 0.3 + 0.7 * max(dot(N, lightDir), 0.0);
-        vec3 lit = c * shade * level;
-        // Wet: a GGX highlight (roughness 0.1, sharper where blood lies) and Fresnel for a ~1.35 liquid.
+        // Wet: a GGX highlight (Gloss 0.14, 0.07 where blood lies) and Fresnel for a ~1.35 liquid; with the
+        // game's lights for this frame, their diffuse share and the game's own GGX (gameLighting), else the
+        // fixed light. The 0.3 floor stands for the ambient (the game's VoxelGI is not read).
         vec3 V = -ray;
-        vec3 H = normalize(lightDir + V);
-        float NV = max(dot(N, V), 1e-3), NL = max(dot(N, lightDir), 0.0), NH = max(dot(N, H), 0.0);
+        float NV = max(dot(N, V), 1e-3);
         float rough = mix(0.14, 0.07, film);
-        float a2 = rough * rough * rough * rough;
-        float dn = NH * NH * (a2 - 1.0) + 1.0;
-        float D = min(a2 / (3.14159 * dn * dn), 60.0);
         float fresnel = 0.02 + 0.98 * pow(1.0 - NV, 5.0);
-        lit += min(lightColour * D * NL / max(4.0 * NV * max(NL, 0.05), 1.0) * NL * fresnel * level * 1.5, vec3(1.5));
+        vec3 lit;
+        if (gameLightUp.w > 0.5) {
+            vec3 gDif, gSpc;
+            float gReach;
+            gameLighting(A.xyz + hit, N, V, rough, gDif, gSpc, gReach);
+            lit = c * (0.3 + 0.7 * gDif / max(gReach, 1e-4)) * level;
+            lit += min(gSpc / max(gReach, 1e-4) * fresnel * level * 1.5, vec3(1.5));
+        } else {
+            lit = c * (0.3 + 0.7 * max(dot(N, lightDir), 0.0)) * level;
+            vec3 H = normalize(lightDir + V);
+            float NL = max(dot(N, lightDir), 0.0), NH = max(dot(N, H), 0.0);
+            float a2 = rough * rough * rough * rough;
+            float dn = NH * NH * (a2 - 1.0) + 1.0;
+            float D = min(a2 / (3.14159 * dn * dn), 60.0);
+            lit += vec3(min(D * NL / max(4.0 * NV * max(NL, 0.05), 1.0) * NL * fresnel * level * 1.5, 1.5));
+        }
         if (abs(woundDebug - 1.0) < 0.5) lit = mix(lit, vec3(1.0, 0.3, 0.0) * 2.0, 0.6);
         return vec4(toStored(clamp(lit, 0.0, 1.0)), 1.0);
     }
@@ -1805,36 +1841,25 @@ vec3 woundMarks(vec3 color) {
         float fresnel = 0.02 + 0.98 * pow(1.0 - NV, 5.0); // Schlick, F0 of a ~1.35 index liquid
         // Light reaching this spot, from its brightness before the blood over an albedo of about 0.3.
         float incident = clamp(level / 0.3, 0.0, 2.0);
-        // Each game light: a GGX highlight (roughness 0.07 wet) in the light's own colour, falling off
-        // over a few metres as the level detail's lighting does; the fixed top/viewer light fills in.
-        float alpha2 = 0.07 * 0.07 * 0.07 * 0.07;
-        vec3 spec = vec3(0.0);
-        float found = 0.0;
-        for (int k = 0; k < 3; ++k) {
-            vec3 L;
-            vec3 colour = vec3(1.0);
-            float w;
-            if (k < 2) {
-                vec4 lamp = levelLight[k];
-                if (lamp.w <= 0.0) continue;
-                vec3 toLamp = lamp.xyz - p;
-                float d2 = dot(toLamp, toLamp);
-                L = toLamp * inversesqrt(max(d2, 1.0));
-                w = lamp.w / (1.0 + d2 / 90000.0);
-                colour = levelLightColour[k].rgb;
-                found += w;
-            } else {
-                L = normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6));
-                w = 1.0 - clamp(found * 2.0, 0.0, 1.0);
-                if (w <= 0.0) continue;
-            }
+        // The highlight (wet, Gloss 0.07): with the game's lights for this frame, the game's own GGX over each
+        // of them in its colour, range and shaping (gameLighting), as a share of the light they bring; else the
+        // fixed top/viewer light.
+        vec3 spec;
+        if (gameLightUp.w > 0.5) {
+            vec3 gDif, gSpc;
+            float gReach;
+            gameLighting(p, N, V, 0.07, gDif, gSpc, gReach);
+            spec = gSpc / max(gReach, 1e-4);
+        } else {
+            float alpha2 = 0.07 * 0.07 * 0.07 * 0.07;
+            vec3 L = normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6));
             vec3 H = normalize(L + V);
             float NH = max(dot(N, H), 0.0), NL = max(dot(N, L), 0.0);
             float dn = NH * NH * (alpha2 - 1.0) + 1.0;
             float D = alpha2 / (3.14159 * dn * dn);
             // The geometry term's 1 / (4 NV NL) is held to at most 1: at grazing angles (NV near 0) it grew
             // without bound and turned whole pools white.
-            spec += colour * w * min(D, 60.0) * NL / max(4.0 * NV * max(NL, 0.05), 1.0) * NL;
+            spec = vec3(min(D, 60.0) * NL / max(4.0 * NV * max(NL, 0.05), 1.0) * NL);
         }
         // A highlight is at most 1.5 times the light's colour, and only where there is wet blood.
         lit += min(spec * fresnel * incident, vec3(1.5)) * wet;
@@ -2023,7 +2048,7 @@ enum ViewUniform : unsigned {
     uStrength, uTaps, uWorldUp, uFocus, uMaxBlur, uLens, uSmoothEdges, uVisor, uGhostA, uGhostB, uCondition,
     uAoHalf, uHalfSize, uAoStrength, uBounceOn, uBounceStrength, uSharpen, uPreviousDepth, uSurfacesOn, uDofOn, uDistanceHalf, uDistanceHalfOn,
     uFrameOffset, uCurrent, uHistory, uToPrevious, uPreviousProjection, uHistoryWeight, uDofHalf, uCells, uExposure,
-    uSilhouette, uSilhouetteOn, uHeldDetail, uHeldNoise, uHeldData, uLevelDetail, uLevelRow0, uLevelRow1, uLevelRow2, uLevelPeople, uLevelLight, uLevelLightColour,
+    uSilhouette, uSilhouetteOn, uHeldDetail, uHeldNoise, uHeldData, uLevelDetail, uLevelRow0, uLevelRow1, uLevelRow2, uLevelPeople, uGameLight, uGameLightUp,
     uWoundA, uWoundB, uWoundC, uWoundM, uWoundMask, uWoundMaskOn, uWoundCount, uWoundRect, uDripA, uDripCount,
     uFireA, uFireB, uFireC, uFireCount, uFireRect, uFireLook, uFireRight, uFireNoise, uCapA, uCapB, uCapCount, uWoundDebug,
     uBloodMap, uBloodMapInfo, uBloodMapTime, uSplatA, uSplatB, uSplatC, uFallA, uFallB, uFallCount, viewUniformCount
@@ -2033,7 +2058,7 @@ static const char* const viewUniformNames[viewUniformCount] = {
     "strength", "taps", "worldUp", "focus", "maxBlur", "lens", "smoothEdges", "visor", "ghostA", "ghostB", "condition",
     "aoHalf", "halfSize", "aoStrength", "bounceOn", "bounceStrength", "sharpen", "previousDepth", "surfacesOn", "dofOn", "distanceHalf", "distanceHalfOn",
     "frameOffset", "current", "history", "toPrevious", "previousProjection", "historyWeight", "dofHalf", "cells", "exposure",
-    "silhouette", "silhouetteOn", "heldDetail", "heldNoise", "heldData", "levelDetail", "levelRow0", "levelRow1", "levelRow2", "levelPeople", "levelLight", "levelLightColour",
+    "silhouette", "silhouetteOn", "heldDetail", "heldNoise", "heldData", "levelDetail", "levelRow0", "levelRow1", "levelRow2", "levelPeople", "gameLight", "gameLightUp",
     "woundA", "woundB", "woundC", "woundM", "woundMask", "woundMaskOn", "woundCount", "woundRect", "dripA", "dripCount",
     "fireA", "fireB", "fireC", "fireCount", "fireRect", "fireLook", "fireRight", "fireNoise", "capA", "capB", "capCount", "woundDebug",
     "bloodMap", "bloodMapInfo", "bloodMapTime", "splatA", "splatB", "splatC", "fallA", "fallB", "fallCount"};
@@ -2827,9 +2852,6 @@ struct ViewRequest {
     float level = 0.f;                   // level surfaces' strength, already scaled for the frame rate
     float people[6][3]{};                // people near the camera (sector-local, as their mesh is drawn), for level
     float peopleOrigin[6][3]{};          // and their sectors' origins
-    float lamps[2][4]{};                 // the two strongest lights near the player: sector-local position, weight
-    float lampOrigin[2][3]{};            // their sectors' origins
-    float lampColour[2][3]{};            // their colour, brightest channel 1
     unsigned peopleCount = 0;
     HeldPose held[heldSlotLimit]{};
     WoundUniforms wounds;                // wounds in view, already in this view's space
@@ -2846,28 +2868,115 @@ static void toView(const float* m, const float* p, float* out) {
     for (int i = 0; i < 3; ++i) out[i] = p[0] * m[i] + p[1] * m[4 + i] + p[2] * m[8 + i] + m[12 + i];
 }
 
-// The game lights levelLightsFor found (ViewRequest lamps), into view space by the reading (sector-local or
-// global) in reach: position (xyz) and weight (w, 0 none); colour (rgb, brightest 1). Level detail and the
-// wound marks' wet highlights both light from these.
-static void lampsInView(const ViewRequest& request, const float* view, float (&lamps)[2][4], float (&lampColours)[2][4]) {
-    for (unsigned k = 0; k < 2; ++k) {
-        if (!(request.lamps[k][3] > 0.f)) continue;
-        float best = 2000.f * 2000.f;
-        for (int candidate = 0; candidate < 2; ++candidate) {
+// The lights the game drew meshes with in the last quarter second (MeshLights, wounds.inl), into view space for
+// gameLighting: the union over the captured meshes (characters and their gear, as the material-draw hook sees
+// them), each light once, the six that bring the most light to the mesh they were packed for (colour luma x the
+// game's range falloff at that mesh; a Direct light by its luma). Whether the packed positions are sector-local
+// or global is not established, so as for held items both readings are tried: the mesh's own origin by the one
+// in reach of the camera, each point light by the one nearer that mesh. Returns the count; up: world +Y in view.
+#if FP_DEV_TOOLS
+static bool renderAuditOn();
+static void renderAuditLog(const char* format, ...);
+#endif
+static unsigned gameLightsInView(const float* view, float (&out)[18][4], float (&up)[4]) {
+    memset(out, 0, sizeof out);
+    for (int i = 0; i < 3; ++i) up[i] = view[4 + i];
+    const float upLength = std::sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
+    if (!(upLength > 1e-6f)) return 0;
+    for (int i = 0; i < 3; ++i) up[i] /= upLength;
+    struct Pick { uintptr_t source; float score; float light[3][4]; };
+    Pick picks[6]{};
+    unsigned count = 0, readings[2]{};
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockShared(&meshLightsLock);
+    for (const MeshLights& m : meshLights) {
+        if (!m.node || now - m.tick > 250) continue;
+        float nodeView[3]{}, best = 5000.f * 5000.f;
+        bool placed = false;
+        for (int candidate = 0; candidate < (m.sectorKnown ? 2 : 1); ++candidate) {
             float w[3], c[3];
-            for (int i = 0; i < 3; ++i) w[i] = request.lamps[k][i] + (candidate ? request.lampOrigin[k][i] : 0.f);
+            for (int i = 0; i < 3; ++i) w[i] = m.origin[i] + (candidate ? m.sector[i] : 0.f);
             toView(view, w, c);
             const float sq = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
             if (std::isfinite(sq) && sq < best) {
                 best = sq;
-                lamps[k][0] = c[0]; lamps[k][1] = c[1]; lamps[k][2] = c[2]; lamps[k][3] = request.lamps[k][3];
+                memcpy(nodeView, c, sizeof c);
+                placed = true;
             }
         }
-        lampColours[k][0] = request.lampColour[k][0];
-        lampColours[k][1] = request.lampColour[k][1];
-        lampColours[k][2] = request.lampColour[k][2];
-        lampColours[k][3] = 1.f;
+        if (!placed) continue;
+        for (unsigned j = 0; j < m.count && j < 6; ++j) {
+            const float* A = m.light[j * 3];
+            const float* B = m.light[j * 3 + 1];
+            const float luma = 0.2126f * B[0] + 0.7152f * B[1] + 0.0722f * B[2];
+            float a[4]{};
+            float score = luma;
+            if (m.direct[j]) { // a direction: turned only
+                for (int i = 0; i < 3; ++i) a[i] = A[0] * view[i] + A[1] * view[4 + i] + A[2] * view[8 + i];
+                a[3] = 1.f;
+            } else {
+                float nearest = -1.f;
+                for (int candidate = 0; candidate < 2; ++candidate) {
+                    float w[3], c[3];
+                    for (int i = 0; i < 3; ++i) w[i] = A[i] + (candidate ? m.sector[i] : 0.f);
+                    if (candidate && !m.sectorKnown) break;
+                    toView(view, w, c);
+                    const float d[3] = {c[0] - nodeView[0], c[1] - nodeView[1], c[2] - nodeView[2]};
+                    const float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                    if (std::isfinite(dist) && (nearest < 0.f || dist < nearest)) {
+                        nearest = dist;
+                        memcpy(a, c, sizeof c);
+                        ++readings[candidate];
+                    }
+                }
+                if (nearest < 0.f) continue;
+                const float falloff = (std::max)(1.f - nearest * B[3], 0.f);
+                score = luma * falloff * falloff * falloff * falloff;
+                a[3] = 0.f;
+            }
+            if (!(score > 0.f) || !std::isfinite(score)) continue;
+            unsigned at = count;
+            for (unsigned k = 0; k < count; ++k) if (picks[k].source == m.source[j]) at = k;
+            if (at < count) { // already taken from another mesh: keep the reading where it brings the most
+                if (score <= picks[at].score) continue;
+            } else if (count < 6) {
+                ++count;
+            } else { // full: replace the weakest if this brings more
+                at = 0;
+                for (unsigned k = 1; k < 6; ++k) if (picks[k].score < picks[at].score) at = k;
+                if (picks[at].score >= score) continue;
+            }
+            picks[at].source = m.source[j];
+            picks[at].score = score;
+            memcpy(picks[at].light[0], a, sizeof a);
+            memcpy(picks[at].light[1], B, 16);
+            memcpy(picks[at].light[2], m.light[j * 3 + 2], 16);
+        }
     }
+    ReleaseSRWLockShared(&meshLightsLock);
+    for (unsigned k = 0; k < count; ++k) memcpy(out[k * 3], picks[k].light, sizeof picks[k].light);
+    gameLightsUsed.store(count, std::memory_order_relaxed);
+#if FP_DEV_TOOLS
+    static ULONGLONG logged = 0;
+    if (renderAuditOn() && now - logged > 1000) {
+        logged = now;
+        renderAuditLog("blood lights: %u in use (captures %u, mismatches %u; point readings raw %u, sector %u); "
+                       "first: %s at %.1f %.1f %.1f, colour %.3f %.3f %.3f, 1/range %.5f",
+                       count, meshLightsCaptured.load(), meshLightsMismatched.load(), readings[0], readings[1],
+                       count ? (out[0][3] > 0.5f ? "Direct" : "point") : "none", out[0][0], out[0][1], out[0][2],
+                       out[1][0], out[1][1], out[1][2], out[1][3]);
+    }
+#endif
+    return count;
+}
+
+// The game's lights for gameLighting, on the bound program (uGameLight, uGameLightUp; count 0: the fixed light).
+static void uploadGameLights(gl::Api& g, const ViewProgramUniforms& u, const float* view) {
+    float lights[18][4], up[4]{};
+    const unsigned count = gameLightsInView(view, lights, up);
+    up[3] = float(count);
+    g.uniform4fv(u.at[uGameLight], 18, lights[0]);
+    g.uniform4f(u.at[uGameLightUp], up[0], up[1], up[2], up[3]);
 }
 
 // View space to a held item's own space, for the shader (column-major, uploads
@@ -4192,15 +4301,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                                    r.bloodBox[1], r.bloodBox[4], r.bloodBox[2], r.bloodBox[5], r.bloodMapCentre[0],
                                    r.bloodMapCentre[1], r.bloodMapCamera[0], r.bloodMapCamera[1], r.bloodMapCamera[2], upX, upY, upZ);
 #endif
-                {   // Wet blood's highlights from the game's lights near the player, under the one flag that
-                    // gates every light-node read (unprovenRenderReads, off: levelLightsFor finds none and the
-                    // shaders use their fixed light from above). Kind 5 is stored only by the constructor at
-                    // 0x518D0, which also sets +210 and +21C; that they are the drawn lights is not shown yet.
-                    float lamps[2][4]{}, lampColours[2][4]{};
-                    lampsInView(request, projection.view, lamps, lampColours);
-                    g.uniform4fv(u.at[uLevelLight], 2, lamps[0]);
-                    g.uniform4fv(u.at[uLevelLightColour], 2, lampColours[0]);
-                }
+                uploadGameLights(g, u, projection.view); // wet blood lit by the lights the game drew meshes with
                 {   // The floor layer on unit 2, and the view's world rows to read it by.
                     g.activeTexture(glc::texture2);
                     g.bindTexture(GL_TEXTURE_2D, bloodLayer ? r.bloodMapTex : r.viewDepth);
@@ -4453,13 +4554,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 }
                 const bool levelOn = request.level > 0.f && g.uniform4fv && projection.worldUpValid;
                 if (g.uniform4fv) g.uniform4fv(u.at[uLevelPeople], 6, people[0]);
-                // The lights, into view space by the reading (sector-local or global) in reach.
-                float lamps[2][4]{}, lampColours[2][4]{};
-                lampsInView(request, projection.view, lamps, lampColours);
-                if (g.uniform4fv) {
-                    g.uniform4fv(u.at[uLevelLight], 2, lamps[0]);
-                    g.uniform4fv(u.at[uLevelLightColour], 2, lampColours[0]);
-                }
+                if (g.uniform4fv) uploadGameLights(g, u, projection.view); // blade blood's highlights
                 g.uniform4f(u.at[uLevelDetail], levelOn ? std::clamp(effectScale(request.level, 0.5f, 1.f), 0.f, 1.f) : 0.f,
                             250.f, 300.f, silhouette || held ? 1.f : 0.f);
                 if (levelOn && !held) { // the level reads the shared noise even when no held item does
@@ -5531,57 +5626,6 @@ static void readCondition(ViewRequest& request) {
 // frame), so it is the first effect to give way when the game runs slow. And the people near the
 // player (the world roster within 4 m, nearest six), whose bodies and faces it leaves alone.
 static std::atomic<unsigned> levelPeopleSeen{0};
-// The two strongest game lights near the player, read-only from the same kind-5 light list the held
-// items use (collectHeldLights; rebuilt from the player's sector at most every half second), for
-// level detail: strength = intensity x colour brightness x the light's own range falloff.
-static void levelLightsFor(ViewRequest& request) {
-    if constexpr (!unprovenRenderReads) return; // light-node fields unproven (render-assumptions.md): no lamps
-    __try {
-        const uintptr_t player = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
-        const uintptr_t mesh = player && readable(player, field::character::sceneNode + 8)
-                                   ? *(const uintptr_t*)(player + field::character::sceneNode) : 0;
-        if (!mesh || !readable(mesh, field::sceneNode::renderTransform + 64)) return;
-        const uintptr_t sector = *(const uintptr_t*)(mesh + field::sceneNode::sector);
-        const LightList& list = lightsOf(sector);
-        float centre[3];
-        if (!heldGlobalOrigin(mesh, centre)) return;
-        float best[2] = {0.f, 0.f};
-        for (unsigned k = 0; k < list.count; ++k) {
-            const uintptr_t light = list.nodes[k];
-            float origin[3];
-            if (!heldLightNode(light) || !sectorOriginOf(light, origin)) continue;
-            const float* at = (const float*)(light + field::sceneNode::transformOrigin);
-            const float* c = (const float*)(light + lightColour);
-            const float intensity = *(const float*)(light + lightIntensity), range = *(const float*)(light + lightRange);
-            float d[3];
-            for (int i = 0; i < 3; ++i) d[i] = at[i] + origin[i] - centre[i];
-            const float distance = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-            const float luma = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
-            if (!std::isfinite(distance + intensity + range + luma) || intensity <= 0.f || luma <= 0.f) continue;
-            const float reach = range > 1.f ? 1.f - distance / range : 1.f / (1.f + distance * distance / 250000.f);
-            if (reach <= 0.f) continue;
-            const float w = (std::min)(intensity, 8.f) * luma * reach * reach;
-            const unsigned slot = w > best[0] ? 0 : w > best[1] ? 1 : 2;
-            if (slot == 2) continue;
-            if (slot == 0) { // the old strongest moves down
-                memcpy(request.lamps[1], request.lamps[0], sizeof request.lamps[0]);
-                memcpy(request.lampOrigin[1], request.lampOrigin[0], sizeof request.lampOrigin[0]);
-                memcpy(request.lampColour[1], request.lampColour[0], sizeof request.lampColour[0]);
-                best[1] = best[0];
-            }
-            best[slot] = w;
-            for (int i = 0; i < 3; ++i) {
-                request.lamps[slot][i] = at[i];
-                request.lampOrigin[slot][i] = origin[i];
-            }
-            const float brightest = (std::max)(c[0], (std::max)(c[1], c[2]));
-            for (int i = 0; i < 3; ++i) request.lampColour[slot][i] = brightest > 0.f ? c[i] / brightest : 1.f;
-        }
-        for (unsigned k = 0; k < 2; ++k) request.lamps[k][3] = (std::min)(best[k] * 2.f, 1.f);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-    }
-}
-
 static void levelDetailFor(ViewRequest& request) {
     if (!InterlockedCompareExchange(&cameraReady, 0, 0) ||
         !InterlockedCompareExchange(&active, 0, 0) ||
@@ -5640,7 +5684,6 @@ static void levelDetailFor(ViewRequest& request) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     levelPeopleSeen.store(request.peopleCount, std::memory_order_relaxed);
-    levelLightsFor(request);
 }
 
 // The light-grid smoothing: a detour on the driver's glShaderSource (the entry the game loads by
@@ -5887,8 +5930,6 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
         memcpy(request.held, heldMaskPoses, sizeof request.held);
     }
     levelDetailFor(request);
-    // Wet blood lights from the same game lights; level detail may be off, or have given way.
-    if (woundMarks.load(std::memory_order_relaxed) > 0.f && !(request.lamps[0][3] > 0.f)) levelLightsFor(request);
     // Wounds: desktop and VR eyes alike, in the space of the matrices this view was drawn with.
     if (woundMarks.load(std::memory_order_relaxed) <= 0.f && heldDetail.load(std::memory_order_relaxed) > 0.f &&
         TryAcquireSRWLockExclusive(&woundLock)) {

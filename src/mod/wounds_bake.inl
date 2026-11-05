@@ -1283,35 +1283,48 @@ static void woundSkinDiagnose(uintptr_t node, uintptr_t material, bool bind) {
     }
 }
 #endif
-// The lights the game drew a node with, copied at its material draw (infrastructure, nothing reads it yet).
-// The submit 0x200770 packs the node's lights into renderer state +170 (0x1FF430 at 0x2007AD; three vec4 a light,
-// count at state +A8, uploaded at 0x200BBD) before the node's material draws, so at a draw the state holds that
-// node's lights: A position (w shadow depth scale), B colour (w inverse range), C shadow spread and shaping
-// (docs/render-assumptions.md, "Per-light uniform layout"). Render thread only.
-struct MeshLights { uintptr_t node = 0; ULONGLONG tick = 0; unsigned count = 0; float light[18][4]{}; };
-static MeshLights meshLights[16];
-static unsigned meshLightsNext = 0;
+// The lights the game drew a node with, copied at its material draw into MeshLights (wounds.inl, where the
+// state's layout is cited). The copy is used only when the state was packed for this node: the submit writes
+// [node+130] to state +A0 before packing, so a different value there means another node's lights.
 static void captureMeshLights(uintptr_t node) {
     const uintptr_t renderer = *(const uintptr_t*)gameAt(fp::sig::headwearWorldRenderer);
-    if (!readable(renderer, 0x170 + 18 * 16) || !node) return;
+    if (!node || !readable(renderer, 0x170 + 18 * 16) || !readable(node, 0x138) ||
+        !readable(node, field::sceneNode::renderTransform + 64)) return;
     const int count = *(const int*)(renderer + 0xa8);
     if (count < 0 || count > 6) return;
+    const uintptr_t packedFor = *(const uintptr_t*)(renderer + 0xa0), expected = *(const uintptr_t*)(node + 0x130);
+    if (packedFor != expected) {
+        meshLightsMismatched.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    MeshLights m{};
+    m.node = node;
+    m.tick = GetTickCount64();
+    m.count = unsigned(count);
+    for (int i = 0; i < count; ++i) {
+        m.source[i] = *(const uintptr_t*)(renderer + 0xb0 + size_t(i) * 16);
+        m.direct[i] = (*(const unsigned*)(renderer + 0xb8 + size_t(i) * 16) & 0x300) == 0x200;
+    }
+    memcpy(m.light, (const void*)(renderer + 0x170), size_t(count) * 3 * 16);
+    memcpy(m.origin, (const float*)(node + field::sceneNode::renderTransform) + 12, sizeof m.origin);
+    m.sectorKnown = sectorOriginOf(node, m.sector);
+    AcquireSRWLockExclusive(&meshLightsLock);
     MeshLights* slot = nullptr;
-    for (MeshLights& m : meshLights) if (m.node == node) slot = &m;
-    if (!slot) { slot = &meshLights[meshLightsNext]; meshLightsNext = (meshLightsNext + 1) % 16; }
-    slot->node = node;
-    slot->tick = GetTickCount64();
-    slot->count = unsigned(count);
-    memcpy(slot->light, (const void*)(renderer + 0x170), size_t(count) * 3 * 16);
+    for (MeshLights& e : meshLights) if (e.node == node) slot = &e;
+    if (!slot) { slot = &meshLights[meshLightsNext]; meshLightsNext = (meshLightsNext + 1) % meshLightsLimit; }
+    *slot = m;
+    ReleaseSRWLockExclusive(&meshLightsLock);
+    meshLightsCaptured.fetch_add(1, std::memory_order_relaxed);
 #if FP_DEV_TOOLS
     static ULONGLONG logged = 0;
-    if (renderAuditOn() && slot->tick - logged > 1000) {
-        logged = slot->tick;
-        renderAuditLog("mesh lights: node %p count %u%s; first: position %.1f %.1f %.1f (w %.4f), colour %.3f %.3f %.3f "
-                       "(1/range %.5f), shadow spread %.3f, shaping %.3f %.3f %.3f",
-                       (void*)node, slot->count, count ? "" : " (none)", slot->light[0][0], slot->light[0][1],
-                       slot->light[0][2], slot->light[0][3], slot->light[1][0], slot->light[1][1], slot->light[1][2],
-                       slot->light[1][3], slot->light[2][0], slot->light[2][1], slot->light[2][2], slot->light[2][3]);
+    if (renderAuditOn() && m.tick - logged > 1000) {
+        logged = m.tick;
+        renderAuditLog("mesh lights: node %p packed for %p (node+130 %p, mismatches %u) count %u%s; first: %s, A %.1f %.1f %.1f "
+                       "(w %.4f), colour %.3f %.3f %.3f (1/range %.5f), C %.3f %.3f %.3f %.3f",
+                       (void*)node, (void*)packedFor, (void*)expected, meshLightsMismatched.load(), m.count,
+                       count ? "" : " (none)", m.direct[0] ? "Direct" : "point", m.light[0][0], m.light[0][1],
+                       m.light[0][2], m.light[0][3], m.light[1][0], m.light[1][1], m.light[1][2], m.light[1][3],
+                       m.light[2][0], m.light[2][1], m.light[2][2], m.light[2][3]);
     }
 #endif
 }
