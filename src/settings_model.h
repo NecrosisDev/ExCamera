@@ -133,11 +133,13 @@ enum : int {
     count
 };
 }
-// Held-item and armour detail take each pixel's material from the game's own item composer (mod/material_ids.inl,
-// docs/render-assumptions.md). Object and level detail are not yet built on the game's data: until they are,
-// their rows are inactive and their effects draw nothing (colourMaterialGuesses, wounds.inl).
+// Held-item, armour and object detail take each pixel's material from the game's own item composer
+// (mod/material_ids.inl, docs/render-assumptions.md); an object whose textures the composer did not build gets
+// none. Level detail is not yet built on the game's data: until it is, its row is inactive and draws nothing
+// (colourMaterialGuesses, wounds.inl).
 inline constexpr bool heldMaterialDataDecoded = true;
 inline constexpr bool armourMaterialDataDecoded = true;
+inline constexpr bool objectMaterialDataDecoded = true;
 inline constexpr bool materialDataDecoded = false;
 // Whether the helmet view is shaped by the helmet's own geometry; until it is, Helmet view is inactive (it had
 // treated anything within 18 cm of the eye as helmet).
@@ -729,7 +731,9 @@ struct ModSettings {
             if (row == setting::heldDetail) return L"Off until the game's own material data is decoded.";
         if constexpr (!armourMaterialDataDecoded)
             if (row == setting::armourDetail) return L"Off until the game's own material data is decoded.";
-        if (!materialDataDecoded && (row == setting::objectDetail || row == setting::levelDetail))
+        if constexpr (!objectMaterialDataDecoded)
+            if (row == setting::objectDetail) return L"Off until the game's own material data is decoded.";
+        if (!materialDataDecoded && row == setting::levelDetail)
             return L"Off until the game's own material data is decoded.";
         if (!helmetShapeDecoded && row == setting::helmetVisor)
             return L"Off until the helmet's own shape is used.";
