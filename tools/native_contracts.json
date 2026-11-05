@@ -1169,6 +1169,13 @@
       "end_rva": "0x168731",
       "pattern": "53 48 8D 64 24 B0 66 0F 7F 74 24 30 66 44 0F 7F 44 24 40 48 89 CB 8B 83 F4 0D 00 00 25 00 0A 00",
       "entry_offset": 0
+    },
+    {
+      "name": "characterDie",
+      "rva": "0x156480",
+      "end_rva": "0x1568dc",
+      "entry_offset": 0,
+      "pattern": "55 48 89 E5 48 8D 64 24 90 66 0F 7F 75 C0 48 89 4D F8 48 C7 45 E0 00 00 00 00 48 C7 45 E8 00 00 00 00 90 48 8B 45 F8 8B 80 F4 0D 00 00 25 00 08 00 00"
     }
   ],
   "fields": [
@@ -5799,6 +5806,14 @@
       "window_offset": 196,
       "pattern": "48 8B 45 F8 83 B8 B8 09 00 00 0B 75 18 48 8B 80 F8 0A 00 00 8B 40 1C 83 E0 08 75 09 C6 85 EC FE FF FF 01 EB 07 C6 85 EC FE FF FF 00 80 BD EC FE FF FF 00 74 48 48 8B 45 F8 48 8B 80 38 0C 00 00 48 05 AC 02 00 00 48 8D 55 DC F3 0F 10 02 F3 0F 59 00 F3 0F 10 4A 04 F3 0F 59 48 04 F3 0F 58 C8 F3 0F 10 42 08 F3 0F 59 40 08 F3 0F 58 C1 F3 0F 59 05 ?? ?? ?? ??",
       "provenance": "physicalImpact 0x159A60 at 0x159B28 compares the striking character's motion (+9B8) with 0xB; when it matches (and bit 8 of [+AF8]+1C is clear) the impact speed is the contact velocity dotted with the weapon's own axis (impactWeapon +C38, then +2AC), instead of the full speed taken otherwise (0x159BA1-0x159BBA), and the damage path later branches on the same flag (0x159CB8). Motion 0xB is therefore the game's point-first (thrust) attack: the wounds pass draws a puncture for it.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "characterDie::deadState",
+      "owner": "characterDie",
+      "window_offset": 35,
+      "pattern": "48 8B 45 F8 8B 80 F4 0D 00 00 25 00 08 00 00 0F 87 10 04 00 00 48 8B 55 F8 83 A2 F8 0D 00 00 DF 90 48 8B 4D F8 BA 02 00 00 00 E8 ?? ?? ?? ?? 48 8B 45 F8 C7 80 F4 0D 00 00 00 08 00 00",
+      "provenance": "The character death routine 0x156480 (called by the damage routine 0x159700 at 0x1598C3 once +D58 falls below 0.01 and the blow may kill, and by the bleed tick 0x168410): it returns at once when character::stateFlags (+DF4) already has 0x800, otherwise clears bit 0x20 of +DF8 and writes +DF4 = 0x800 (0x1564D6). A character is dead while +DF4 has 0x800, the routine's own test.",
       "optional_group": "wounds"
     }
   ],

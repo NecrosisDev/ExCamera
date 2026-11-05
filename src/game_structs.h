@@ -39,7 +39,7 @@ inline constexpr size_t bleed = 0x10DC;          // float 0..20: bleed rate (0x1
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
 inline constexpr size_t stateFlags =
     0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
-inline constexpr size_t lifeFlags = 0xDF8; // 0x100: dead
+inline constexpr size_t lifeFlags = 0xDF8; // 0x100: set by 0x17B100 (at 0x17B248), not by the death routine; death is stateFlags 0x800
 inline constexpr size_t aimOpponent = 0xE38; // native selected combat opponent
 inline constexpr size_t contextualTarget = 0xE50;
 inline constexpr size_t handParts = 0xE78;   // [2] body parts
