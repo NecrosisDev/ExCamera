@@ -1159,6 +1159,61 @@ static void physicalImpactDetour(uintptr_t attacker) {
     }
 }
 
+// The game's skin assignment, observed (skinShare, 0x207240, witnesses skinShare::skinTest/skinWrites): for a
+// skinned node it gives every material whose definition has a 38-character name (byte [mat+D0]+208 == 0x26,
+// 0x2072F7) the character's shared skin set and definition: mat+100 = [S+10], mat+D0 = [S+18] with S =
+// [rcx+20] (0x20742E-0x207458). After it returns, the materials holding [S+18] are those it marked skin, and
+// their set is recorded here. A material is skin iff its set is in this table: exactly the value the game wrote.
+constexpr unsigned woundSkinSetLimit = 64;
+static uintptr_t woundSkinSets[woundSkinSetLimit];
+static unsigned woundSkinSetNext = 0;
+static SRWLOCK woundSkinSetLock = SRWLOCK_INIT;
+static std::atomic<bool> skinShareHooked{false};
+static std::atomic<unsigned> woundSkinSetsSeen{0};
+using SkinShareFn = void (*)(uintptr_t, uintptr_t);
+static SkinShareFn originalSkinShare = nullptr;
+static void skinShareDetour(uintptr_t owner, uintptr_t node) {
+    originalSkinShare(owner, node);
+    __try {
+        if (!readable(owner, 0x28) || !readable(node, 0x1d8)) return;
+        const uintptr_t shared = *(const uintptr_t*)(owner + 0x20);
+        if (!readable(shared, 0x20)) return;
+        const uintptr_t definition = *(const uintptr_t*)(shared + 0x18), set = *(const uintptr_t*)(shared + 0x10);
+        if (!definition || !set) return;
+        const int last = *(const int*)(node + 0x1c8);
+        const uintptr_t table = *(const uintptr_t*)(node + 0x1d0);
+        if (last < 0 || last >= 256 || !readable(table, size_t(last + 1) * 8)) return;
+        bool marked = false;
+        for (int i = 0; i <= last && !marked; ++i) {
+            const uintptr_t material = *(const uintptr_t*)(table + size_t(i) * 8);
+            marked = material && readable(material, 0x108) && *(const uintptr_t*)(material + 0xd0) == definition &&
+                     *(const uintptr_t*)(material + 0x100) == set;
+        }
+        if (!marked) return;
+        AcquireSRWLockExclusive(&woundSkinSetLock);
+        bool known = false;
+        for (uintptr_t s : woundSkinSets) known = known || s == set;
+        if (!known) {
+            woundSkinSets[woundSkinSetNext] = set;
+            woundSkinSetNext = (woundSkinSetNext + 1) % woundSkinSetLimit;
+            woundSkinSetsSeen.fetch_add(1, std::memory_order_relaxed);
+        }
+        ReleaseSRWLockExclusive(&woundSkinSetLock);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        woundFaults.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+static bool woundSkinMaterial(uintptr_t material) {
+    if (!material || !readable(material, 0x108)) return false;
+    const uintptr_t set = *(const uintptr_t*)(material + 0x100);
+    if (!set) return false;
+    AcquireSRWLockShared(&woundSkinSetLock);
+    bool skin = false;
+    for (uintptr_t s : woundSkinSets) skin = skin || s == set;
+    ReleaseSRWLockShared(&woundSkinSetLock);
+    return skin;
+}
+
 static void createWoundHooks() {
     if (!layout.optionalGroupAvailable("wounds")) return;
     const uintptr_t impactTarget = optionalGameAt(fp::sig::woundImpact);
@@ -1178,5 +1233,10 @@ static void createWoundHooks() {
                       reinterpret_cast<void*>(physicalImpactDetour),
                       reinterpret_cast<void**>(&originalPhysicalImpact));
     }
+
+    const uintptr_t skinTarget = optionalGameAt(fp::sig::skinShare);
+    if (skinTarget && MH_CreateHook(reinterpret_cast<void*>(skinTarget), reinterpret_cast<void*>(skinShareDetour),
+                                    reinterpret_cast<void**>(&originalSkinShare)) == MH_OK)
+        skinShareHooked.store(true, std::memory_order_release);
 }
 

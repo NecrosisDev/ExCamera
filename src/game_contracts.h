@@ -818,6 +818,7 @@ inline constexpr ContractOwner owners[] = {
     {"characterDie", sig::targetCount, "55 48 89 E5 48 8D 64 24 90 66 0F 7F 75 C0 48 89 4D F8 48 C7 45 E0 00 00 00 00 48 C7 45 E8 00 00 00 00 90 48 8B 45 F8 8B 80 F4 0D 00 00 25 00 08 00 00", 0},
     {"weaponDataBuild", sig::targetCount, "53 57 56 41 54 41 55 48 8D 64 24 D0 66 0F 7F 74 24 20 49 89 CD 49 89 D4 49 83 BD E0 06 00 00 00 75 1E 49 8D 8D E0 06 00 00 BA 70 00 00 00 E8 ?? ?? ?? ??", 0},
     {"weaponDataOf", sig::targetCount, "48 8B 81 E0 06 00 00 EB 1E 0F 1F 80 00 00 00 00 48 8B 89 28 04 00 00 48 3B 89 28 04 00 00 74 0C 48 8B 81 E0 06 00 00 48 85 C0 74 E4 C3", 0},
+    {"skinShare", sig::skinShare, "53 57 56 48 8D 64 24 D0 48 89 4C 24 20 48 89 D3 8B 43 08 83 E0 5F 83 F8 09 0F 85 15 02 00 00 8B BB C8 01 00 00 85 FF 0F 8C 07 02 00 00", 0},
 };
 inline constexpr FieldContract fields[] = {
     {"character::sceneNode", 9, 0x3F9, "89 44 24 40 48 8B 73 28 48 8B 46 18 48 8B 80 30 01 00 00 48 8D 50 64 48 8D 4C 24 38", nullptr},
@@ -1192,6 +1193,8 @@ inline constexpr FieldContract fields[] = {
     {"skinController::boneLoop", 121, 0x164, "48 8B 94 24 B8 00 00 00 8B 42 10 67 8D 58 FF 85 DB 0F 8C 31 01 00 00 B8 FF FF FF FF 48 89 84 24 D0 00 00 00 48 83 84 24 D0 00 00 00 01 48 8B 84 24 B8 00 00 00 48 8B 50 18 48 63 84 24 D0 00 00 00 4C 8B 04 C2 48 8B 84 24 B8 00 00 00 48 8B 50 20 48 63 84 24 D0 00 00 00 48 6B C0 30 48 01 C2 48 8B 84 24 B8 00 00 00 48 8B 48 28 48 63 84 24 D0 00 00 00 48 6B C0 30 48 01 C1 E8 ?? ?? ?? ??", "headwearRender"},
     {"meshNode::faces", 114, 0x53B, "48 8B 90 90 02 00 00 44 89 E8 48 6B C0 0C 8B 04 02 48 8B 95 20 FE FF FF 89 02 48 8B 85 70 FE FF FF 48 8B 90 90 02 00 00 44 89 E8 48 6B C0 0C 8B 44 02 04 48 8B 95 20 FE FF FF 89 42 04 48 8B 85 70 FE FF FF 48 8B 90 90 02 00 00 44 89 E8", "headwearRender"},
     {"meshNode::faceValues", 113, 0x260, "48 83 BB F8 02 00 00 00 0F 84 6A 00 00 00 48 63 83 68 02 00 00 48 8D 50 01 48 C1 E2 02 48 8D 4C 24 38 E8 ?? ?? ?? ?? 44 8B 8B 68 02 00 00 45 85 C9 7C 2D BE FF FF FF FF 83 C6 01 4C 8B 44 24 38 48 8B 54 24 28 89 F0 8B 0C 82 48 8B 93 F8 02 00 00 89 F0 8B 04 82", "headwearRender"},
+    {"skinShare::skinTest", 161, 0xA2, "48 8B 93 D0 01 00 00 48 63 C6 48 8B 04 C2 48 8B 80 D0 00 00 00 80 B8 08 02 00 00 26 0F 85 ?? ?? ?? ??", "wounds"},
+    {"skinShare::skinWrites", 161, 0x1C5, "48 8B 42 20 48 89 83 E8 01 00 00 48 8B 42 28 48 89 83 F0 01 00 00 48 8B 93 D0 01 00 00 48 63 C6 48 8B 14 C2 48 8B 44 24 20 48 8B 40 20 48 8B 40 18 48 89 82 D0 00 00 00 48 8B 93 D0 01 00 00 48 63 C6 48 8B 14 C2 48 8B 44 24 20 48 8B 40 20 48 8B 40 10 48 89 82 00 01 00 00", "wounds"},
 };
 inline constexpr std::array<FieldOffsetBinding, 254> fieldBindings = {{
     {0u, 8u, 24, false, game::character::sceneNode, &game::live::character::sceneNode},

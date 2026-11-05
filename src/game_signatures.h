@@ -264,6 +264,7 @@ enum Target : uint16_t {
     textureUnitCache,
     engineLogger,
     engineLog,
+    skinShare,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -525,6 +526,7 @@ inline constexpr const char* targetNames[targetCount] = {
     "textureUnitCache",
     "engineLogger",
     "engineLog",
+    "skinShare",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -786,6 +788,7 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "silhouette",
     "engineLog",
     "engineLog",
+    "wounds",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
 // reference to a global or a vtable, or a call to the function).
@@ -1646,6 +1649,8 @@ inline constexpr Signature signatures[] = {
     {textureUnitActive, Kind::Relative, false, false, 38, 42, 0, 0x49B5F0, "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ?? 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D ?? ?? ?? ?? 74 14"},
     {engineLogger, Kind::Relative, false, false, 10, 14, 0, 0x2AB6B0, "48 8D 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? 89 05 ?? ?? ?? ?? 89 05"},
     {engineLog, Kind::Code, false, true, 0, 0, 0, 0x25D80, "55 48 89 E5 48 8D 64 24 A0 48 89 5D C8 89 CB 48 89 55 F8 4C 89 45 F0 48 8B 4D F8 E8 ?? ?? ?? ?? 48 8B 4D F0 E8 ?? ?? ?? ?? 48 C7 45 E8 00 00 00 00"},
+    {skinShare, Kind::Code, true, true, 0, 0, 0, 0x207240, "53 57 56 48 8D 64 24 D0 48 89 4C 24 20 48 89 D3 8B 43 08 83 E0 5F 83 F8 09 0F 85 15 02 00 00 8B BB C8 01 00 00 85 FF 0F 8C 07 02 00 00"},
+    {skinShare, Kind::Code, true, true, 0, 0, 0, 0x207240, "53 57 56 48 8D 64 24 D0 48 89 4C 24 20 48 89 D3 8B 43 08 83 E0 5F 83 F8 09 0F 85 ?? ?? ?? ?? 8B BB C8 01 00 00 85 FF 0F 8C ?? ?? ?? ?? BE FF FF FF FF 66 0F 1F 44 00 00 83 C6 01 48 8B 93 D0 01 00 00 48 63 C6 48 8B 04 C2 48 83 B8 00 01 00 00 00 74 4F 48 8B 93 D0 01 00 00 48 63 C6 48 8B 14 C2 48 8B 44 24 20 48 8B 48 20 48 8B 82 00 01 00 00 48 89 41 10"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {

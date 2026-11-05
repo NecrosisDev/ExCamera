@@ -115,8 +115,7 @@ static bool woundSkinMesh(uintptr_t node, WoundSkinMesh& m) {
         !readable(m.uvs.data, size_t(m.uvs.count) * 8) || !wearStream(node, m.uvs, vertices, m.uvIndices))
         return false;
     m.triangles = *(uintptr_t*)(node + 0x290);
-    m.tags = *(uintptr_t*)(node + 0x2f8);
-    return readable(m.triangles, size_t(m.lastFace + 1) * 12) && readable(m.tags, size_t(m.lastFace + 1) * 4);
+    return readable(m.triangles, size_t(m.lastFace + 1) * 12);
 }
 
 // The closest point of triangle abc to p (Ericson, Real-Time Collision Detection 5.1.5), as barycentric weights.
@@ -147,8 +146,17 @@ static void woundClosest(const float* p, const float* a, const float* b, const f
 
 // One wound onto its character's skin. woundLock held, render thread. Leaves w.mapped false when the
 // struck part is no bone of a _SKIN mesh or no body face lies within reach (a hit on gear, say).
+// The bake's proof gate: the skin controller and mesh layout witnesses (headwearRender group: boneLoop, faces),
+// the observed skin assignment (skinShare hooked), the wounds group (UVs: the 0x10 attribute, as headwearNative_5e340
+// and the binder 0x1FA181 show). The texture units (stoneSkinOriginals) and the draw range (wearMeshFormat, the
+// game's own descriptor as headwearDrawBound 0x6B7F0 draws it) are checked at each draw.
+static bool woundSkinProven() {
+    return headwearRenderReady.load(std::memory_order_relaxed) && skinShareHooked.load(std::memory_order_acquire) &&
+           layout.optionalGroupAvailable("wounds");
+}
+
 static void woundSkinMap(Wound& w) {
-    if constexpr (!unprovenRenderReads) return; // skin layout unproven (see the header): no mapping, the screen pass draws the marks
+    if (!woundSkinProven()) return; // the marks stay with the screen pass
     w.mapTried = true;
     const uintptr_t actor = *(const uintptr_t*)(w.owner + field::character::sceneNode);
     const uintptr_t partNode = *(const uintptr_t*)(w.part + field::bodyPart::meshNode);
@@ -181,10 +189,23 @@ static void woundSkinMap(Wound& w) {
         float hit[3], dir[3];
         if (!fp::wear::point(toBone, world, hit) || !fp::wear::point(toBone, path, dir, true)) continue;
         const auto* weights = (const fp::wear::Weights*)m.weights.data;
+        // Only faces of the node's skin materials (the game's own assignment, woundSkinMaterial), each over the
+        // face range the game draws it with (material +B0..+B4).
+        static thread_local std::vector<unsigned char> skinFace;
+        skinFace.assign(size_t(m.lastFace) + 1, 0);
+        const int lastMaterial = *(const int*)(node + 0x1c8);
+        const uintptr_t materials = *(const uintptr_t*)(node + 0x1d0);
+        if (lastMaterial < 0 || lastMaterial >= 256 || !readable(materials, size_t(lastMaterial + 1) * 8)) continue;
+        for (int i = 0; i <= lastMaterial; ++i) {
+            const uintptr_t material = *(const uintptr_t*)(materials + size_t(i) * 8);
+            if (!woundSkinMaterial(material) || !readable(material, 0xb8)) continue;
+            const int first = *(const int*)(material + 0xb0), lastOne = *(const int*)(material + 0xb4);
+            for (int f = (std::max)(first, 0); f <= lastOne && f <= m.lastFace; ++f) skinFace[size_t(f)] = 1;
+        }
         float best = woundMapReachCm * woundMapReachCm, bestW[3]{}, bestP[3][3]{};
         unsigned bestTri[3]{};
         for (int f = 0; f <= m.lastFace; ++f) {
-            if (*(const unsigned*)(m.tags + size_t(f) * 4) != 0) continue; // the body itself, not a worn piece
+            if (!skinFace[size_t(f)]) continue; // skin, as the game assigned it; worn pieces keep their own sets
             const unsigned* tri = (const unsigned*)(m.triangles + size_t(f) * 12);
             float corner[3][3];
             bool moved = false, valid = true;
@@ -679,7 +700,7 @@ static void restoreWoundBakeGlSnapshot(gl::Api& g, fp::CueResources& r, const Wo
 // Called by the view-effects pass inside its state snapshot. Early-outs before touching any OpenGL
 // state when no character skin slot needs baking this frame. cueLock held.
 static void bakeWoundSkins(gl::Api& g, fp::CueResources& r) {
-    if constexpr (!unprovenRenderReads) return; // skin map slots and layout unproven: no bake
+    if (!woundSkinProven()) return;
     if (woundSkinBroken || woundMarks.load(std::memory_order_relaxed) <= 0.f) return;
     WoundBakeGlSnapshot glSnapshot{};
     WoundSkinGl s{};
@@ -1066,8 +1087,8 @@ static const GLuint* woundSkinReplacement(fp::CueResources& r, const StoneGl&, c
 // Records the body material's maps on its first draw (or when the game re-made that material's
 // textures); true when the slot's copies stand for exactly these originals.
 static bool woundSkinCurrent(WoundSkinSlot& slot, uintptr_t material, const GLuint* originals) {
-    if (slot.material && slot.material != material) return false; // another part of the mesh keeps its own maps
-    if (slot.material == material && slot.diffuse.source == originals[0] && slot.normal.source == originals[2] &&
+    // Every skin material of a character shares one set (0x207458), so the slot follows the maps, not the material.
+    if (slot.material && slot.diffuse.source == originals[0] && slot.normal.source == originals[2] &&
         slot.spec.source == originals[1])
         return slot.ready;
     slot.material = material;
@@ -1083,15 +1104,11 @@ static bool woundSkinCurrent(WoundSkinSlot& slot, uintptr_t material, const GLui
 }
 
 static bool woundSkinDrawBody(uintptr_t node, uintptr_t material, bool bind) {
-    if constexpr (!unprovenRenderReads) return false; // nothing baked or cut: the game draws its own
+    if (!woundSkinProven()) return false; // the game draws its own
     const int found = woundSkinSlotOf(node);
     if (found < 0) return false;
-    // Strictly verify that this material is material index 0 (the primary body skin) of the node.
-    // In Exanima, a character's _SKIN node has index 0 as the body skin, while hair, beard,
-    // and accessories are sub-materials (indices 1+). Wounds only belong on the body skin.
-    if (!readable(node, 0x1d8)) return false;
-    const uintptr_t table = *(uintptr_t*)(node + 0x1d0);
-    if (!table || !readable(table, sizeof(uintptr_t)) || *(uintptr_t*)table != material) return false;
+    // A skin material, as the game assigned it (woundSkinMaterial); any other keeps the game's draw.
+    if (!woundSkinMaterial(material)) return false;
     WoundSkinSlot& slot = woundSkinSlots[found];
     GLuint originals[3]{};
     if (!stoneSkinOriginals(material, originals)) return false;
@@ -1099,19 +1116,12 @@ static bool woundSkinDrawBody(uintptr_t node, uintptr_t material, bool bind) {
     if (lastFace < 0 || lastFace >= int(fp::wear::maxFaces) || lastVertex < 0 || lastVertex >= int(fp::wear::maxVertices)) return false;
     WearPlan plan{};
     if (!wearMeshFormat(node, material, lastFace, lastVertex, plan)) return false;
-    const uintptr_t tags = *(uintptr_t*)(node + 0x2f8);
-    if (!readable(tags, (size_t(plan.first) + plan.count) * 4)) return false;
+    // The whole material, as the game draws it: the copies are the originals plus the marks.
     static thread_local std::vector<unsigned char> body;
-    body.assign(plan.count, 0);
-    unsigned faces = 0;
-    for (unsigned f = 0; f < plan.count; ++f) {
-        body[f] = *(unsigned*)(tags + (size_t(plan.first) + f) * 4) == 0 ? 1 : 0;
-        faces += body[f];
-    }
-    if (!faces) return false;
+    body.assign(plan.count, 1);
     const bool ready = woundSkinCurrent(slot, material, originals);
-    // A severed limb: its faces draw with the limb, the band that bridged the joint is left out.
-    const WoundSeverMesh* cut = woundSeverOf(node, slot.actor);
+    // A severed limb (the Injuries addon's bits; unproven, off): its faces draw with the limb, the band left out.
+    const WoundSeverMesh* cut = unprovenRenderReads ? woundSeverOf(node, slot.actor) : nullptr;
     if (!ready && !cut) return false;
     if (cut) {
         for (unsigned f = 0; f < plan.count; ++f) {
@@ -1160,7 +1170,9 @@ static void woundSkinDiagnose(uintptr_t node, uintptr_t material, bool bind) {
     const auto activeTexture = (ActiveTexture)wglGetProcAddress("glActiveTexture");
     GLint program = 0, priorUnit = 0;
     glGetIntegerv(0x8B8D /* CURRENT_PROGRAM */, &program);
-    renderAuditLog("skin witness: node %p material %p program %d", (void*)node, (void*)material, program);
+    renderAuditLog("skin witness: node %p material %p program %d; skin hook %s, %u skin sets seen, bake gate %s",
+                   (void*)node, (void*)material, program, skinShareHooked.load() ? "on" : "off", woundSkinSetsSeen.load(),
+                   woundSkinProven() ? "open" : "closed");
     // The game's skin marking (0x207240): a material whose definition [mat+D0] has a 38-character name (byte +208
     // == 0x26) receives the character's shared skin set (mat+100) and a new definition (mat+D0, 0x207436). Whether
     // that rule can still be read at draw time is what these lines show: each material's definition, its name
@@ -1177,8 +1189,9 @@ static void woundSkinDiagnose(uintptr_t node, uintptr_t material, bool bind) {
             length = *(unsigned char*)(def + 0x208);
             memcpy(name, (const void*)(def + 0x209), (std::min)(length, 39u));
         }
-        renderAuditLog("skin witness: material[%d] %p%s: definition %p name length %u \"%s\", set %p, faces %d..%d", i,
-                       (void*)m, m == material ? " (this draw)" : "", (void*)def, length, name, (void*)set,
+        renderAuditLog("skin witness: material[%d] %p%s%s: definition %p name length %u \"%s\", set %p, faces %d..%d", i,
+                       (void*)m, m == material ? " (this draw)" : "", woundSkinMaterial(m) ? " SKIN (game-assigned set)" : "",
+                       (void*)def, length, name, (void*)set,
                        m && readable(m, 0xb8) ? *(int*)(m + 0xb0) : -1, m && readable(m, 0xb8) ? *(int*)(m + 0xb4) : -1);
     }
     GLuint originals[3]{};
@@ -1289,8 +1302,8 @@ static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind) {
 // The player's own skinned mesh in first person stays with the headwear path, which swaps maps for the
 // body's runs through StoneSwap (stone_skin.inl falls back to this when the player is not stone).
 static bool woundSkinWearBegin(uintptr_t node, uintptr_t material, StoneSwap& swap) {
-    if constexpr (!unprovenRenderReads) { swap = {}; return false; }
     swap = {};
+    if (!woundSkinProven() || !woundSkinMaterial(material)) return false;
     if (woundSkinBroken || !wearScope.colourPass) return false;
     __try {
         const int found = woundSkinSlotOf(node);
