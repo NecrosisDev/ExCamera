@@ -4463,8 +4463,9 @@ static std::atomic<unsigned> heldConditionReads{0};
 static void heldConditionOf(uintptr_t node, bool apparel, float* out) {
     out[0] = out[1] = out[2] = out[3] = 0.f;
     if constexpr (!unprovenRenderReads) return; // item record layout unproven (render-assumptions.md): read as unknown
-    if (!node || !layout.optionalGroupAvailable("itemCondition") || !readable(node, 0x184)) return;
-    const uint32_t id = *(const uint32_t*)(node + 0x180);
+    // The item id: node +0x184, where the item builder 0x107600 stores it (0x1077B8); +0x180 was wrong.
+    if (!node || !layout.optionalGroupAvailable("itemCondition") || !readable(node, 0x188)) return;
+    const uint32_t id = *(const uint32_t*)(node + 0x184);
     if (!id) return;
     const fp::sig::Target table = (id & 0x80000000u) ? fp::sig::levelItemDatabase
                                   : (id & 0x40000000u) ? fp::sig::worldItemDatabase : fp::sig::itemDatabase;
