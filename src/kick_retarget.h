@@ -23,19 +23,38 @@ struct Clip { const char* name; const Frame* frames; int count; float fps; int p
 
 // What drives the body for the weapon in hand: the clip set and how much of the body follows it.
 enum class Mode : uint8_t { full, lowerBody };
-enum class WeaponClass : uint8_t { unarmed, oneHanded, twoHanded, polearm, count };
+// The holds the game itself tells apart (docs/MIXAMO-KICK-DESIGN.md section 9): its equip posture selector
+// 1523F0 and grip lookup 155250 read the weapon's flag word, kept in character::gripFlags. (gripFlags & 0x70):
+// 0x10 one hand (two weapons: dual wield, 0x90), 0x20 two hands right lead (two-handed swords, the greatsword,
+// two-handed axes, hammers and maces, bars and staves), 0x30 two hands left lead (polearms); anything else, or no
+// weapon, is unarmed (0x80/0xC0). A shield (character::shieldPart) or a special held part comes first, as there.
+enum class WeaponClass : uint8_t { unarmed, oneHanded, oneHandedShield, dualWield, twoHanded, polearm, shieldOnly, specialHeld, count };
 struct ClassRule { int set; Mode mode; };
-// Per weapon class (Hunter, 2026-11-05). Polearms keep their hold: legs and hips only, from the unarmed set,
-// until a polearm clip is added. (Nothing the mod reads tells a polearm from a two-handed sword yet; classify.)
+// Per class, from comparing each hold with the clips' arms (section 9). Set 0: Standing Melee v2, Sword and
+// Shield, MMA; set 1: Great Sword, Great Sword 1. Lower body: the game keeps the arms and the hold.
 inline constexpr ClassRule classRules[size_t(WeaponClass::count)] = {
-    {0, Mode::full}, {0, Mode::full}, {1, Mode::full}, {0, Mode::lowerBody}};
-inline constexpr const char* classNames[] = {"unarmed", "one_handed", "two_handed", "polearm"};
-// The class from what the character holds: weapon count, the items in the two hands, and the grip class of
-// its weapon (character::gripFlags: 0x10 one hand, 0x20/0x30 two hands with a right/left lead).
-inline WeaponClass classify(int weaponCount, uintptr_t heldA, uintptr_t heldB, unsigned grip) {
-    if (weaponCount < 1 || (!heldA && !heldB)) return WeaponClass::unarmed;
-    if (weaponCount == 1 && ((heldA && heldA == heldB) || grip == 0x20 || grip == 0x30)) return WeaponClass::twoHanded;
-    return WeaponClass::oneHanded;
+    {0, Mode::full},      // unarmed
+    {0, Mode::full},      // one-handed
+    {0, Mode::full},      // one-handed and a shield
+    {0, Mode::full},      // dual wield
+    {1, Mode::full},      // two-handed
+    {0, Mode::lowerBody}, // polearm: its left-lead haft hold matches no clip's arms
+    {0, Mode::full},      // a shield alone
+    {0, Mode::lowerBody}, // a special held part (the game's own carried-object hold)
+};
+inline constexpr const char* classNames[] = {"unarmed", "one_handed", "one_handed_shield", "dual_wield",
+                                             "two_handed", "polearm", "shield_only", "special_held"};
+static_assert(sizeof classNames / sizeof *classNames == size_t(WeaponClass::count));
+inline WeaponClass classify(int weaponCount, unsigned gripFlags, bool shield, bool specialHeld) {
+    if (specialHeld) return WeaponClass::specialHeld;
+    if (shield) return weaponCount > 0 ? WeaponClass::oneHandedShield : WeaponClass::shieldOnly;
+    if (weaponCount < 1) return WeaponClass::unarmed;
+    switch (gripFlags & 0x70) {
+    case 0x10: return weaponCount > 1 || (gripFlags & 0xF0) == 0x90 ? WeaponClass::dualWield : WeaponClass::oneHanded;
+    case 0x20: return WeaponClass::twoHanded;
+    case 0x30: return WeaponClass::polearm;
+    default: return WeaponClass::unarmed;
+    }
 }
 // The next clip of a set, never the one just played when the set has another (a rotation).
 inline int nextClip(const Clip* clips, int count, int set, int last) {

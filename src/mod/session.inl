@@ -1089,8 +1089,20 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
             .str("last_class", cls >= 0 && cls < int(fp::kick::WeaponClass::count) ? fp::kick::classNames[cls] : "none")
             .str("last_mode", kickLastMode.load() == 1 ? "lower_body" : kickLastMode.load() == 0 ? "full_body" : "none")
             .boolean("last_mirrored", kickLastMirror.load() == 1)
-            .fixed("native_peak_progress", peak >= 0 ? peak / 1000.0 : -1.0, 3)
-            .end();
+            .fixed("native_peak_progress", peak >= 0 ? peak / 1000.0 : -1.0, 3);
+        j.object("stance_by_class"); // the game's stance at each class's last kick start: hands (cm), lead foot, twist
+        for (size_t c = 0; c < size_t(fp::kick::WeaponClass::count); ++c) {
+            const auto& s = kickStances[c];
+            if (!s.seen.load()) continue;
+            j.object(fp::kick::classNames[c]);
+            for (unsigned side = 0; side < 2; ++side) {
+                const std::string text = std::to_string(s.v[side * 3].load()) + "," + std::to_string(s.v[side * 3 + 1].load()) + "," +
+                                         std::to_string(s.v[side * 3 + 2].load());
+                j.str(side ? "right_hand_cm" : "left_hand_cm", text.c_str());
+            }
+            j.str("lead_foot", s.v[6].load() ? "right" : "left").num("shoulder_twist_deg", s.v[7].load()).end();
+        }
+        j.end().end();
     }
     j.object("blade") // every build: the drawn edge and the sinking thrust on the game's impact path
         .boolean("ready", bladeReady.load())

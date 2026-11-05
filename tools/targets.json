@@ -670,6 +670,11 @@
       "rva": "0x1ff3c0",
       "optionalGroup": "xrStereo",
       "note": "Native shader matrix cache invalidation after OpenXR replay"
+    },
+    "kickGripClass": {
+      "rva": "0x155250",
+      "optionalGroup": "kickClasses",
+      "note": "Grip-table entry for a weapon's flag word 155250(flags, slot): slot 1 is entry 5, (flags & 0xF0) == 0x90 entry 1, else (flags & 0x70) >> 4 (0x1x one-handed, 0x2x two-handed right lead, 0x3x polearm left lead). Read-only: pins the class bits the Animated kick reads from character::gripFlags."
     }
   },
   "returns": {
@@ -836,6 +841,11 @@
       "rva": "0x176cb7",
       "optionalGroup": "xrDrive",
       "note": "world-frame candidate into native pelvis target; native balance re-orthogonalization follows"
+    },
+    "kickStanceClass": {
+      "rva": "0x152531",
+      "optionalGroup": "kickClasses",
+      "note": "Inside the equip posture selector 1523F0: (gripFlags & 0xF0) 0x10 one-handed (two weapons: dual wield, 0x90), 0x20 two-handed (0x521 greatsword posture 0x30, flag bit 0 posture 0x20, else 0x10), 0x30 polearm posture 0x40, else unarmed 0x80/0xC0; after the shield (+0xBF8) and special-held (+0xC00) branches. Read-only: pins the classes the Animated kick maps to clip sets."
     }
   },
   "globals": {
@@ -1405,7 +1415,9 @@
     "xrStereoShaderManager",
     "xrStereoFogState",
     "xrStereoBatchFlag",
-    "xrStereoBatchQueue"
+    "xrStereoBatchQueue",
+    "kickGripClass",
+    "kickStanceClass"
   ],
   "reviewed_signatures": [
     {
@@ -10636,6 +10648,28 @@
       "addend": 0,
       "known_rva": "0x5b7480",
       "pattern": "8B ?? ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 01 83 ?? ?? ?? ?? ?? 01 75 1B 89 ??"
+    },
+    {
+      "target": "kickGripClass",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x155250",
+      "pattern": "83 FA 01 75 07 BA 05 00 00 00 EB 1D 89 C8 25 F0 00 00 00 3D 90 00 00 00 75 07 BA 01 00 00 00 EB 08 83 E1 70 C1 E9 04 89 CA 21 D2 48 69 C2 B8 00 00 00 48 8D 15 ?? ?? ?? ?? 48 01 D0 C3"
+    },
+    {
+      "target": "kickStanceClass",
+      "kind": "Code",
+      "hook": false,
+      "entry": false,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x152531",
+      "pattern": "8B 83 68 10 00 00 25 F0 00 00 00 83 F8 10 0F 8C AB 00 00 00 83 E8 10 74 16 83 E8 10 74 4D 83 E8 10 0F 84 84 00 00 00 E9 93 00 00 00 0F 1F 00 83 BB 20 09 00 00 01 7E 1E BF 04 00 00 00 C7 83 68 10 00 00 90 00 00 00 C7 83 98 11 00 00 06 00 00 00 E9 91 00 00 00 BF 01 00 00 00 C7 83 98 11 00 00 01 00 00 00 E9 7D 00 00 00 90 81 BB 68 10 00 00 21 05 00 00 75 0E BF 30 00 00 00 C6 83 09 13 00 00 01 EB 17 8B 83 68 10 00 00 83 E0 01 7E 07 BF 20 00 00 00 EB 05 BF 10 00 00 00 C7 83 98 11 00 00 02 00 00 00 EB 3F 0F 1F 00 BF 40 00 00 00 C7 83 98 11 00 00 02 00 00 00"
     }
   ]
 }

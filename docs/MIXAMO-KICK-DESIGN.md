@@ -13,7 +13,7 @@ Hunter changed the plan after Phase 1: the clips play **as authored on the whole
 per-step safety cap), and the clip set depends on what the player holds. Sections 4, 5 and 8 are rewritten for
 that; sections 3 and 7 still hold, and section 1 is the superseded leg-only summary. What Phase 2 built:
 
-* **Clip sets and modes** (`src/kick_retarget.h`, `classRules`, a per-weapon-class table):
+* **Clip sets and modes** (`src/kick_retarget.h`, `classRules`; superseded by the full class list and verdicts in section 9):
 
   | weapon class (detected) | set | body |
   |---|---|---|
@@ -256,3 +256,87 @@ Signatures: `playerRoot`, `motionPlay` (group `kick`), `poseBuilder`, `xrCompose
 **Patch risk** is unchanged: the drive uses only the `kick` and `xrDrive` groups and witnessed fields; any mismatch
 withholds Animated and the kick stays Classic. **Run-time risk** is higher than the leg-only plan: the whole body
 and the hips move as authored.
+
+## 9. Weapon classes and which kicks suit them (2026-11-05)
+
+### 9.1 How the game classifies a held weapon (reviewed exe 0.9.5.2g)
+
+* **The flag word.** A weapon's item record carries a weapon chunk (tag 0x4000) whose first u32 is its flag word
+  (ExanimaLua reads the same chunk). On equip, the posture selector `0x1523F0` copies the primary weapon's word
+  (`weapon part +0x18` → node `+0x198` → payload, low 16 bits) into `character::gripFlags` (+0x1068) at `0x15241F`;
+  `gripRefresh 0x152100` does the same at `0x1521A2`.
+* **The decision** (`0x152531`..`0x1525F0`, now pinned by the reviewed signature `kickStanceClass`, group
+  `kickClasses`), after two earlier branches: a shield part (`character::shieldPart` +0xBF8) selects the shield
+  postures 0x100/0x200/0x300 by the shield's kind bits (+0xC40, `0x15245D`); a special held part
+  (`character::specialHeldPart` +0xC00) selects posture 3 (`0x1524DD`). Otherwise by `gripFlags & 0xF0`:
+  * 0x10 one-handed: two weapons → dual wield (gripFlags 0x90, posture 4, kind 6); else posture 1, kind 1.
+  * 0x20 two-handed: flag word 0x521 → posture 0x30 (and +0x1309 set, the greatsword); flag bit 0 → posture 0x20;
+    else posture 0x10; kind 2.
+  * 0x30 → posture 0x40, kind 2.
+  * anything else → unarmed: gripFlags 0x80, or 0xC0 when the character data's +0x58 bit 0x100 is set.
+  Before this, a weapon whose item type passes `0x104440(type, 0x100)` takes posture 0x10010001 (`0x152527`): an
+  item category the table below does not cover (unresolved: likely tools held as weapons).
+* **The hold** (`gripLookup 0x155250`, pinned by `kickGripClass`): grip-table entry (0xB8 bytes at 0x2BAC50) =
+  `(flags & 0x70) >> 4`, with 0x90 → entry 1 and the second weapon slot always entry 5. Entry 1: one hand, weapon on
+  the right; entry 2: two hands, right lead (callback 0x152A30); entry 3: two hands, left lead, the haft across the
+  body (callback 0x152E10); entry 5: the left (off) hand.
+* **The items** (the game's item database `objdb.rdb` in `Resource.rpk`, 208 weapon chunks; names from the records,
+  a few attributions are noisy):
+
+  | flag word | class (gripFlags & 0x70) | examples |
+  |---|---|---|
+  | 0x11 | one-handed, cutting | swords (short, arming, gladius, Proctor), daggers, knives, cleaver, saw |
+  | 0x12 | one-handed, chopping/crushing | flanged/knobbed maces, war hammer, horseman's axe, throwing axe, pickaxe, smithing hammer |
+  | 0x13 | one-handed, blunt stick | clubs, spiked club, cudgel, baton |
+  | 0x14 | one-handed, flail | flail |
+  | 0x22 | two-handed, right lead (posture 0x10) | battle axe 2H, bardiche, sledgehammer, 2H mace, woodcutter's axe, shovel |
+  | 0x23 | two-handed, right lead (posture 0x20) | metal bar, broom, crutch, improvised 2H items |
+  | 0x421 | two-handed, right lead (posture 0x20) | two-handed swords, 2H falchion |
+  | 0x521 | two-handed, right lead (posture 0x30) | the Greatsword |
+  | 0x32 / 0x33 | polearm, left lead (posture 0x40) | poleaxe, halberd, glaive, guisarme, spetum, voulge, polehammer, awl pike, pitchfork, 2H bill |
+
+  Spears, partisans and quarterstaffs are built by the item factories (`Factories.rpk`) and did not show as
+  database chunks; by their hold they should be 0x3x (left-lead hafts). Confirm in play from the status
+  (`stance_by_class`).
+
+* **What the mod reads.** Only fields it already reads and witnesses: `character::weaponCount`, `gripFlags`,
+  `shieldPart`, `specialHeldPart`. The class bits are `gripFlags & 0x70`, which survive the posture selector's
+  final `& 0xF0` (`0x152618`). The finer two-handed split (axe vs. staff vs. sword vs. greatsword) is in the low bits
+  that `0x152618` clears, so it is not used; it does not change the hold (all use grip entry 2).
+* **Fail-safe.** New optional signature group `kickClasses` (`kickGripClass` at 0x155250, `kickStanceClass` at
+  0x152531, both whole-instruction code patterns in `tools/targets.json`, checked by `check_game.py` and at
+  start-up). If a game update changes either, Animated is withheld and the kick stays Classic.
+
+### 9.2 The clips' arms and stances (measured from the converted clips)
+
+Hands from the mid-hip in cm (across to the left, up, forward); lead foot at the start.
+
+| clip | start: left hand / right hand, hand gap | strike: hands | lead foot | reads as |
+|---|---|---|---|---|
+| Standing Melee v2 | (19, 7, 44) / (-47, 10, -13), 87 cm | left up in front, right back | left | loose guard, right hand low behind: unarmed or a one-handed weapon held back |
+| Sword and Shield | (-9, 25, 42) / (-38, 18, -22), 71 cm | arms wide for balance | left | shield up in front, sword cocked low behind |
+| MMA | (6, 46, 45) / (-24, 44, 25), 35 cm | right arm swings down and back | left | both fists at the face: boxing guard |
+| Great Sword | (6, 1, 30) / (-13, 8, 38), 23 cm | hands together, low right | left | two hands on one hilt, low in front, right hand on top |
+| Great Sword 1 | same start, 23 cm | hands together, high left | left | same hold, swung the other way |
+
+### 9.3 Verdicts (class × clip) and the default per class
+
+full = full body OK; lower = lower body only (the game keeps the arms); no = not compatible.
+
+| class | Standing Melee | Sword and Shield | MMA | Great Sword / 1 | default (code `classRules`) |
+|---|---|---|---|---|---|
+| unarmed | full: loose fists | full: an empty guard | full: boxing guard, best fit | no: hands clasp an invisible hilt | set 0, full |
+| one-handed | full: weapon hand low behind | full: weapon cocked behind, best fit | full: weapon raised by the face (watch clipping) | no: second hand would grab the blade | set 0, full |
+| one-handed + shield | full | full: shield up front, best fit | full: shield at the face | no | set 0, full |
+| dual wield | full | full: left weapon forward | full | no | set 0, full |
+| shield only | full | full, best fit | full | no | set 0, full |
+| two-handed (0x2x) | lower: the arms pull 87-109 cm apart, against the grip | lower: same | lower: hands 35-83 cm apart | full: right-lead two-hand hold matches entry 2 | set 1, full |
+| polearm (0x3x) | lower | lower | lower | no: right-lead hilt hold against a left-lead haft across the body | set 0, lower |
+| special held | lower | lower | lower | lower | set 0, lower |
+
+Caveats: the game's own stance pose was not extracted from its motion files (they are not decoded); the verdicts
+compare the clips' measured arms with the hold the code defines (grip-table side and lead). The status file now
+records the game's actual stance at each kick start per class (`kick_animated.stance_by_class`: hands in the same
+cm frame as 9.2, lead foot, shoulder twist), so the table can be confirmed or corrected from one play session per
+class. Two-handed axes, hammers and staves hold the hands farther apart on the haft than a hilt; if the Great Sword
+arms fight their grip, that class's two-handed sub-kinds move to lower body (needs the low flag bits, see 9.1).

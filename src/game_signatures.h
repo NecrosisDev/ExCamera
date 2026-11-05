@@ -258,6 +258,8 @@ enum Target : uint16_t {
     xrStereoFogState,
     xrStereoBatchFlag,
     xrStereoBatchQueue,
+    kickGripClass,
+    kickStanceClass,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -513,6 +515,8 @@ inline constexpr const char* targetNames[targetCount] = {
     "xrStereoFogState",
     "xrStereoBatchFlag",
     "xrStereoBatchQueue",
+    "kickGripClass",
+    "kickStanceClass",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -768,6 +772,8 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "xrStereo",
     "xrStereo",
     "xrStereo",
+    "kickClasses",
+    "kickClasses",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
 // reference to a global or a vtable, or a call to the function).
@@ -1622,6 +1628,8 @@ inline constexpr Signature signatures[] = {
     {xrStereoBatchQueue, Kind::Relative, false, false, 2, 10, 0, 0x5B7480, "81 ?? ?? ?? ?? ?? FF 03 00 00 7C 08 E8 ?? ?? ?? ?? 0F 1F ?? 8B ?? ?? ?? ?? ??"},
     {xrStereoBatchQueue, Kind::Relative, false, false, 2, 6, 0, 0x5B7480, "8B 15 ?? ?? ?? ?? 83 05 ?? ?? ?? ?? 01 83 3D ?? ?? ?? ?? 01 75 1B 89 D0"},
     {xrStereoBatchQueue, Kind::Relative, false, false, 2, 6, 0, 0x5B7480, "8B ?? ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 01 83 ?? ?? ?? ?? ?? 01 75 1B 89 ??"},
+    {kickGripClass, Kind::Code, false, true, 0, 0, 0, 0x155250, "83 FA 01 75 07 BA 05 00 00 00 EB 1D 89 C8 25 F0 00 00 00 3D 90 00 00 00 75 07 BA 01 00 00 00 EB 08 83 E1 70 C1 E9 04 89 CA 21 D2 48 69 C2 B8 00 00 00 48 8D 15 ?? ?? ?? ?? 48 01 D0 C3"},
+    {kickStanceClass, Kind::Code, false, false, 0, 0, 0, 0x152531, "8B 83 68 10 00 00 25 F0 00 00 00 83 F8 10 0F 8C AB 00 00 00 83 E8 10 74 16 83 E8 10 74 4D 83 E8 10 0F 84 84 00 00 00 E9 93 00 00 00 0F 1F 00 83 BB 20 09 00 00 01 7E 1E BF 04 00 00 00 C7 83 68 10 00 00 90 00 00 00 C7 83 98 11 00 00 06 00 00 00 E9 91 00 00 00 BF 01 00 00 00 C7 83 98 11 00 00 01 00 00 00 E9 7D 00 00 00 90 81 BB 68 10 00 00 21 05 00 00 75 0E BF 30 00 00 00 C6 83 09 13 00 00 01 EB 17 8B 83 68 10 00 00 83 E0 01 7E 07 BF 20 00 00 00 EB 05 BF 10 00 00 00 C7 83 98 11 00 00 02 00 00 00 EB 3F 0F 1F 00 BF 40 00 00 00 C7 83 98 11 00 00 02 00 00 00"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {

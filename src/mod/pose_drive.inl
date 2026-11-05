@@ -158,6 +158,33 @@ static void kickWatchFall(uintptr_t root, KickRun& run) {
     }
 }
 
+static kk::WeaponClass kickClassOf(uintptr_t root) {
+    return kk::classify(*reinterpret_cast<int*>(root + field::character::weaponCount), *reinterpret_cast<unsigned*>(root + field::character::gripFlags),
+                        *reinterpret_cast<uintptr_t*>(root + field::character::shieldPart) != 0,
+                        *reinterpret_cast<uintptr_t*>(root + field::character::specialHeldPart) != 0);
+}
+// The game's own stance at the start of each kick, per class (status: compares the hold with the clips'): hands
+// from the mid-hip in cm (across to the left, up, forward), which foot leads, and the shoulders' turn from the hips.
+struct KickStance { std::atomic<int> v[8]{}; std::atomic<bool> seen{false}; };
+static KickStance kickStances[size_t(kk::WeaponClass::count)];
+static void kickCaptureStance(uintptr_t root, const KickBody& body) {
+    const auto facing = reinterpret_cast<const float*>(root + field::character::facing);
+    const auto h = kk::headingFrom({facing[0], facing[1], facing[2]}, fp::xr::sub(body.thigh[0].pose.position, body.thigh[1].pose.position));
+    if (!h.valid) return;
+    const auto mid = fp::xr::scale(fp::xr::add(body.thigh[0].pose.position, body.thigh[1].pose.position), .5f);
+    auto& s = kickStances[size_t(kickClassOf(root))];
+    for (unsigned side = 0; side < 2; ++side) {
+        const auto d = fp::xr::sub(body.hand[side].pose.position, mid);
+        s.v[side * 3 + 0] = int(std::lround(fp::xr::dot(d, h.left) * 100));
+        s.v[side * 3 + 1] = int(std::lround(fp::xr::dot(d, h.up) * 100));
+        s.v[side * 3 + 2] = int(std::lround(fp::xr::dot(d, h.forward) * 100));
+    }
+    s.v[6] = fp::xr::dot(fp::xr::sub(body.foot[0].pose.position, body.foot[1].pose.position), h.forward) > 0 ? 0 : 1;
+    const auto across = [&](XrVector3f v) { return std::atan2(fp::xr::dot(v, h.forward), fp::xr::dot(v, h.left)); };
+    s.v[7] = int(std::lround((across(fp::xr::sub(body.upper[0].pose.position, body.upper[1].pose.position)) -
+                              across(fp::xr::sub(body.thigh[0].pose.position, body.thigh[1].pose.position))) * 57.2958f));
+    s.seen = true;
+}
 static bool kickPlan(uintptr_t root) {
     KickRun& run = kickRun;
     const uintptr_t scene = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene));
@@ -181,6 +208,7 @@ static bool kickPlan(uintptr_t root) {
         run.active = true;
         run.root = root;
         run.scene = scene;
+        kickCaptureStance(root, body); // every style: the game's own stance as the kick starts
     }
     run.lastProgress = progress;
     // The game's own kicking leg: the first one it lifts while the other stands (status: does ours agree).
@@ -198,9 +226,7 @@ static bool kickPlan(uintptr_t root) {
         const auto facing = reinterpret_cast<const float*>(root + field::character::facing);
         run.heading = kk::headingFrom({facing[0], facing[1], facing[2]}, fp::xr::sub(body.thigh[0].pose.position, body.thigh[1].pose.position));
         if (!run.heading.valid) { kickRefusedHeading.fetch_add(1, std::memory_order_relaxed); return false; }
-        const auto held = reinterpret_cast<const uintptr_t*>(root + field::character::heldItems);
-        const auto weaponClass = kk::classify(*reinterpret_cast<int*>(root + field::character::weaponCount), held[0], held[1],
-                                              *reinterpret_cast<unsigned*>(root + field::character::gripFlags));
+        const auto weaponClass = kickClassOf(root);
         const auto rule = kk::classRules[size_t(weaponClass)];
         const int pick = kk::nextClip(kk::clips, kk::clipCount, rule.set, kickRotation[rule.set]);
         if (pick < 0) return false;
@@ -370,7 +396,8 @@ static void kickCompose(float* out, float* local, const float* parent) {
 // After the stereo hooks: the VR drive may already own the xrCompose detour (then it chains to kickComposeFor).
 static bool createKickDriveHook() {
     kickDriveReady = false;
-    if (!layout.optionalGroupAvailable("kick") || !layout.optionalGroupAvailable("xrDrive")) return true;
+    // kickClasses pins the game's weapon-class bits the clip sets are chosen by: changed, and the kick stays Classic.
+    if (!layout.optionalGroupAvailable("kick") || !layout.optionalGroupAvailable("xrDrive") || !layout.optionalGroupAvailable("kickClasses")) return true;
     if (!kickComposeChained &&
         MH_CreateHook(reinterpret_cast<void*>(gameAt(fp::sig::xrCompose)), reinterpret_cast<void*>(kickCompose), reinterpret_cast<void**>(&kickComposeOriginal)) != MH_OK)
         return false;

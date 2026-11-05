@@ -37,14 +37,23 @@ bool baked_clips_are_right_leg_kicks_in_both_sets() {
 }
 
 bool weapon_classes_pick_sets_and_modes() {
-    CHECK(k::classify(0, 0, 0, 0x80) == k::WeaponClass::unarmed);
-    CHECK(k::classify(1, 0x1000, 0, 0x10) == k::WeaponClass::oneHanded);
-    CHECK(k::classify(2, 0x1000, 0x2000, 0x90) == k::WeaponClass::oneHanded); // dual wield, or a sword and shield
-    CHECK(k::classify(1, 0x1000, 0x1000, 0x20) == k::WeaponClass::twoHanded);
-    CHECK(k::classify(1, 0x1000, 0, 0x30) == k::WeaponClass::twoHanded);
-    CHECK(k::classify(1, 0, 0, 0x20) == k::WeaponClass::unarmed); // a weapon record but nothing in the hands
-    CHECK(k::classRules[size_t(k::WeaponClass::twoHanded)].set == 1 && k::classRules[size_t(k::WeaponClass::twoHanded)].mode == k::Mode::full);
-    CHECK(k::classRules[size_t(k::WeaponClass::polearm)].mode == k::Mode::lowerBody);
+    using C = k::WeaponClass;
+    CHECK(k::classify(0, 0x80, false, false) == C::unarmed);
+    CHECK(k::classify(0, 0xC0, false, false) == C::unarmed);
+    CHECK(k::classify(1, 0x10, false, false) == C::oneHanded);
+    CHECK(k::classify(1, 0x11, false, false) == C::oneHanded); // the unmasked flag word (a sword, 0x11)
+    CHECK(k::classify(2, 0x90, false, false) == C::dualWield);
+    CHECK(k::classify(1, 0x10, true, false) == C::oneHandedShield);
+    CHECK(k::classify(0, 0x80, true, false) == C::shieldOnly);
+    CHECK(k::classify(1, 0x20, false, false) == C::twoHanded);
+    CHECK(k::classify(1, 0x421, false, false) == C::twoHanded); // a two-handed sword
+    CHECK(k::classify(1, 0x521, false, false) == C::twoHanded); // the greatsword
+    CHECK(k::classify(1, 0x23, false, false) == C::twoHanded);  // a bar or staff
+    CHECK(k::classify(1, 0x30, false, false) == C::polearm);
+    CHECK(k::classify(1, 0x32, false, false) == C::polearm);    // halberd, glaive, spetum...
+    CHECK(k::classify(1, 0x30, false, true) == C::specialHeld);
+    CHECK(k::classRules[size_t(C::twoHanded)].set == 1 && k::classRules[size_t(C::twoHanded)].mode == k::Mode::full);
+    CHECK(k::classRules[size_t(C::polearm)].mode == k::Mode::lowerBody && k::classRules[size_t(C::specialHeld)].mode == k::Mode::lowerBody);
     for (const auto& r : k::classRules) CHECK(k::nextClip(k::clips, k::clipCount, r.set, -1) >= 0);
     return true;
 }
