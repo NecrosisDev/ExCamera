@@ -458,6 +458,12 @@ Each ships on its own once proven; the rest stay off.
     set at 0x14A789), not by the surface hit.
   - Level geometry draws with plain `TMaterial` (VMT 0x2FFE10): its textures (+0x48..+0x68) and shader feature
     flags; the procedural ids above belong to the item composer only (`TProcMaterial`, VMT 0x32FE78).
+  - **Correction (2026-11-05, texture export):** the material manager (0x6E370 -> 0x6E030 -> 0x6CC60) gives every
+    TMaterial a collision sound class from its record (`data+0xAC`, up to 4 characters, else the first 3 of the
+    material name) and loads `<class>col` (0x6CEB3..0x6CF5D) into `TMaterial+0x288`; Sound.rpk has `stncol`,
+    `mtlcol`, `mtlmcol`... So level materials do carry a coarse surface class for sounds. Not traced: where
+    that sound is played, and whether the class is meaningful for every level material. The removal stands
+    (Hunter chose texture replacement); this is recorded so the earlier "nothing asks the floor" is not relied on.
   - So Level detail could not pick wood, stone or plaster from game data. It is removed (Hunter, 2026-11-05). What the game does have
     per pixel for level surfaces is its specular and gloss data (`MatSpc` x `SpcTex`, `GlsTex`), which says how
     shiny a surface is, not what it is made of.
@@ -514,3 +520,22 @@ game's lights loop and Lighting function above applied to each captured light. W
 
 With no lights captured in the last 250 ms the terms use the fixed light from above. The old kind-5 light-node path
 (levelLightsFor, lampsInView) is removed; level detail keeps its fixed light.
+
+## Level textures (export, 2026-11-05)
+
+`tools/export_level_textures.py` writes PNGs and `index.csv`/`index.html` to `E:\ExCamera-playtest	extures\level`
+(never committed). What it counts and how it was established:
+- Level files: Resource.rpk `*.rfc` (actor models `*base`, `*morph`, `dummyhead`, `menuscene` excluded). Their
+  material records (tag `0x0000BA01`, size, name) are what the material manager turns into TMaterials (VMT
+  0x2FFE10: 0x6E030 constructs it with 0x6C710, 0x6CC60 fills it from the record). PROVEN.
+- Texture entries inside a record carry slot bits that equal the renderer's sampler flags >> 16 tested in
+  0x2010C0 (DifTex 0x2, SpcTex 0x4, EmiTex 0x8, NrmTex 0x20, OpcTex 0x40, DspTex 0x80, GlsTex 0x100, DrtTex
+  0x800). The equality holds for all eight flags; the code that copies record bits into the renderer flags is
+  not traced (UNPROVEN link). Slot 0x10 (the `R` reflection maps) matches no sampler flag.
+- Terrain tile tables (`*.ftb`, `Mat <name>` then texture names): map type from the name's last letter only
+  (UNPROVEN).
+- Pack reading matches the game's reader 0x6F400 (tag `0xAFBF0C01`, table size, 32-byte entries). PROVEN.
+- Image format: 32-byte `.rfi` header; the format word's second byte gives the channels and its top bit block
+  compression (BC1/BC3/BC4/BC5, else raw). Read from the files (every image decodes coherently), not from the
+  game's loader (UNPROVEN as code).
+- 80 names the level files reference exist in no pack (mostly the `ub6ap*` world set); listed in the index.
