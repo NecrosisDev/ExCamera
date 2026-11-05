@@ -79,6 +79,8 @@ python tools/release.py verify --local
 
 After a game update, `python tools/check_game.py` finds `Exanima.exe` (or takes a path), identifies the build by hash, and runs the signature, field-contract and VR checks read-only. See [tools/README.md](tools/README.md).
 
+After changing any GLSL (`src/mod/view_effects.inl`, `src/mod/wounds_bake.inl`, `src/mod/wound_glsl.h`), `python tools/check_shaders.py` compiles and links every shader program on this PC's OpenGL driver in a hidden window, assembled exactly as the mod builds them, and prints each error with its source line. It needs a GPU driver (Windows), not the game; a shader that fails in game only turns its effect off, so this is the only way to catch it before playing.
+
 `tools/run_cpp_tests.py` uses `build/_cpp_tests/` for object files and test executables so it never contends with `build/.build.lock`.
 
 ## Profiling (`tools/profile.py`)
