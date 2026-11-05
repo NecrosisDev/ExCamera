@@ -27,8 +27,10 @@ Date: 2026-11-05.
 
 ## Decisions for Hunter (all in one place)
 
-1. **Winded**: Hunter wants it reworked onto a real game value. The game has no stamina or fatigue system (section
-   1b); the real candidates are balance, footing and the shield guard. Render owns the rework.
+1. **Winded**: Hunter wants it reworked onto a real game value (decided 2026-11-05). The game has no stamina or fatigue
+   system (section 1b); the real candidates are balance, footing and the shield guard. Render owns the rework.
+   Hunter also asked (same day) for the balance physics to be understood before the kick is made to topple anyone;
+   that's section 1c.
 2. **Fix the "dead" check everywhere to use the game's death test, `(+DF4 & 0x800) != 0`.** That covers both
    dying (0x800) and corpse (0xA00), and it's the same test the game itself makes 32 times. Recommended: yes. It's a
    straight correction and the feature thread owns it.
@@ -36,7 +38,7 @@ Date: 2026-11-05.
    hasn't been re-decoded line by line. Recommended: keep the plumbing (removing it removes the mod) and remove or
    disable only the **game-rule** claims marked UNPROVEN until each one is decoded. Say if you'd rather pull
    everything unproven.
-4. **Knocked-down camera: paused until Hunter says otherwise (2026-11-05).** It is now mostly proven. Its state check matches the game's on-the-ground, getting-up
+4. **The knocked-down camera is now mostly proven.** (No decision from Hunter yet.) Its state check matches the game's on-the-ground, getting-up
    and dead states. Only its use of the spell-stun bit as "dead" is wrong (fix #2 covers it). Recommended: keep it.
 5. **The game's own vocabulary.** The game's loading tips say "Impact mainly deals stamina damage" (exe text at
    0x316F00), so the developer seems to call recoverable health loss "stamina damage". The mod should use your terms
@@ -111,6 +113,41 @@ effect had nothing in the game to read, and a rebuilt effect should use one of t
 
 Recommendation for the render thread: a "winded"-style effect should key off **balance** (universal, PROVEN,
 already read by the kick gate) or **footing**; the shield guard is a third option for shield users only.
+
+## 1c. How balance works (for the kick, asked 2026-11-05)
+
+All decoded; every line has its routine.
+
+**The value.** +10B8 balance, +10BC its maximum. Both floats; the HUD never draws them.
+
+**What lowers it.** One routine, 1587E0(character, k, p): `k = min(k, 0.9)`; if the character is in active
+defense (state 2) it first runs the block routine 158EF0 with p; then `balance -= k × balance` (so a hit removes a
+*fraction*), and anything under 0.05 snaps to the floor constant G31C238 (1587E0). Its callers:
+- physicalImpact 159A60 after a hit lands: k is the hit's balance term (local −0x58: part factor +6C4 × 0.5, scaled by
+  the hit energy, ×0.25 when the victim has +12A4 bit 0x40, halved when +DF8 bit 0x800000, then × sqrt(energy)), with
+  p = attacker progress × 0.5 when +C40 & 0x8000000, else progress, else 1 (15BC77–15BCED, 15C5C7–15C5D5).
+- the swing-contact routine 157FF0: k = 0.5 × contact energy, right after it applies 0.5 × energy as recoverable
+  health damage through bodyDamage (158284–1582B7).
+- force spells (231710 Blast/Wave, 2393A0 Torrent, 23C5C0, 23D680, 242A00) write it directly.
+
+**What restores it.** The dynamics step 169200 adds 0.005 a step (169A72), or 0.005 + 0.01 × (1 − progress) while
+getting up (169A2C–169A64). A spell stun sets it to max − 0.5 (169B5F).
+
+**What it gates (the game's own thresholds).**
+- **max − 0.05**: under this the dynamics step plays Rebalance (0x21) and interrupts whatever isn't in state &0xAC0
+  or 2 (169B99–169C06); the pose builder blends the pose by balance/max (1760F0 at 17676E–1767B3); the requested combat
+  posture B7560 refuses below it (B75D2) and below health 0.01 (B7576). The mod's kick gate copies exactly this pair.
+- **0.8 × max**: the player's attack chooser AE9D0 isn't even called below it (C286E–C2892), so no new swing starts;
+  after a defense exchange, below 0.8 the attack power scale +DC8 is zeroed (166580 at 167A90–167AB6).
+- **Continuous**: motion blend terms +AEC / +AF0 shift by (1 − balance) × 0.3 and × 0.6 (169304, 16934D); the
+  per-part pose strength is 1 − footing(+590) × balance for parts with bind role ≥ 8 (151580 at 1518A5–1518BD), so
+  low balance *and* good footing make the body go limp together; death timing is (1.2 − balance) × 300 ms (156504).
+
+**What this means for a kick that should topple.** The game never topples from balance alone. Falling (state
+0x200) comes from uprightness +12B0 dropping under 0.3 (16A6BA), which is physics: the body's actual tilt. Balance
+only weakens the pose (151580, 1760F0) and triggers Rebalance, which is what lets a physics push tip a body over.
+So a toppling kick needs a real push (the rigid push 89240 the jump already uses, or a contact through 159A60) on a
+target whose balance is already low, not a write to +10B8.
 
 ### Knocked-down verdict (every value the mod's mask matches)
 
