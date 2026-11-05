@@ -93,6 +93,17 @@ static void swapLocked(fp::CueSide& cueSideNow, LONG& cueX, LONG& cueY, float& c
     windowFreeStep();
     crouchFrame();
     InterlockedIncrement(&swapCalls);
+    {   // A presented frame with no view-effects pass since the last one: the frame the player saw lacked the wound
+        // pass, floor blood, finishing, occlusion and depth of field. Counted with the last reason given.
+        static unsigned drawsAtLastSwap = 0;
+        const unsigned draws = viewEffectsDraws.load(std::memory_order_relaxed);
+        if (draws == drawsAtLastSwap && cameraReady && active) {
+            viewEffectsMissedSwaps.fetch_add(1, std::memory_order_relaxed);
+            const char* why = viewEffectsSkip.load(std::memory_order_relaxed);
+            countViewSkip(viewMissedReasons, why && *why ? why : "no world pass reached the effects (no reason given)");
+        }
+        drawsAtLastSwap = draws;
+    }
     if (savedCamera) {
         uintptr_t view = 0, camera = 0;
         currentCamera(view, camera);

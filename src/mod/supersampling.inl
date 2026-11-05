@@ -30,14 +30,42 @@ static thread_local SupersampleRenderScope supersampleRenderScope;
 static thread_local SupersampleTerrainScope supersampleTerrainScope;
 static std::atomic<unsigned> supersampleScopes{0}, supersampleCorrections{0},
     supersampleTerrainCorrections{0}, supersampleFaults{0};
+// Why a main-viewport frame was not admitted (the whole frame then draws without the mod's view effects: no wound
+// pass, floor blood, finishing, occlusion or depth of field): cameraLock held elsewhere, or which test failed.
+enum SupersampleReject : unsigned {
+    rejectLockBusy, rejectNotOurs, rejectParked, rejectRestoreUnknown, rejectOwner, rejectIdentity, rejectNotFinite,
+    rejectCount
+};
+static const char* const supersampleRejectNames[rejectCount] = {
+    "camera lock busy", "camera not ours (pending restore unset)", "parked", "restoration unknown",
+    "camera owner changed", "player or scene changed", "stock near or pose not finite"};
+static std::atomic<unsigned> supersampleRejects[rejectCount]{}, supersampleAdmittedByPose{0};
+// The last frame admitted the ordinary way, for frames drawn with our pose after the bookkeeping let go.
+static SupersampleRenderScope lastAdmittedScope;
 
 inline bool admitSupersampleRender(uintptr_t viewport, SupersampleRenderScope& scope) {
-    if (!viewport || !TryAcquireSRWLockShared(&cameraLock)) return false;
+    if (!viewport) return false;
+    const bool main = viewport == *(uintptr_t*)gameAt(fp::sig::mainViewport);
+    // cameraLock is held exclusively by the camera update (navProfileBody) and the swap; in the playtest both ran on
+    // the render thread (nav_thread == swap_thread), so a busy lock here is not expected. Counted if it happens.
+    const bool locked = TryAcquireSRWLockShared(&cameraLock);
+    if (!locked) {
+        if (main) supersampleRejects[rejectLockBusy].fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     bool admitted = false;
     __try {
         uintptr_t view = 0, camera = 0;
         currentCamera(view, camera);
-        if (viewport == *(uintptr_t*)gameAt(fp::sig::mainViewport) &&
+        if (main) {
+            const unsigned reject = !InterlockedCompareExchange(&pendingRestore, 0, 0) ? rejectNotOurs
+                                  : park.active ? rejectParked
+                                  : InterlockedCompareExchange(&restorationUnknown, 0, 0) ? rejectRestoreUnknown
+                                  : !sameOwner(view, camera) ? rejectOwner
+                                  : !savedRoot || !savedScene || identityChanged() ? rejectIdentity : rejectCount;
+            if (reject != rejectCount) supersampleRejects[reject].fetch_add(1, std::memory_order_relaxed);
+        }
+        if (main &&
             InterlockedCompareExchange(&pendingRestore, 0, 0) && !park.active &&
             !InterlockedCompareExchange(&restorationUnknown, 0, 0) && sameOwner(view, camera) &&
             savedRoot && savedScene && !identityChanged()) {
@@ -58,7 +86,30 @@ inline bool admitSupersampleRender(uintptr_t viewport, SupersampleRenderScope& s
                 scope.owned = true;
                 InterlockedIncrement(&renderScopesInFlight);
                 admitted = true;
+                lastAdmittedScope = scope;
+            } else {
+                supersampleRejects[rejectNotFinite].fetch_add(1, std::memory_order_relaxed);
             }
+        }
+        // The effects follow what is drawn: a frame whose camera still carries exactly the pose, field of view and near
+        // plane first person last wrote (the game drawing our view, as through the arena's round-end prompt, while
+        // the ownership bookkeeping above let go: parked, owner or identity changed) is admitted with the last
+        // admitted frame's stock values. A camera the game moved, or set its own fov or near on, is not ours.
+        if (!admitted && main && camera && lastAdmittedScope.owned && !InterlockedCompareExchange(&restorationUnknown, 0, 0) &&
+            readable(camera + field::camera::pose, 48) &&
+            *(const float*)(camera + field::camera::fov) == renderedFov &&
+            *(const float*)(camera + field::camera::nearPlane) == renderedNear &&
+            !memcmp((const void*)(camera + field::camera::pose), writtenPose, 48)) {
+            scope = lastAdmittedScope;
+            scope.viewport = viewport;
+            scope.view = view;
+            scope.camera = camera;
+            // The player as it is now (a round's end may make a new one), never a record that may be gone.
+            scope.root = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
+            scope.scene = *(const uintptr_t*)gameAt(fp::sig::currentScene);
+            InterlockedIncrement(&renderScopesInFlight);
+            admitted = true;
+            supersampleAdmittedByPose.fetch_add(1, std::memory_order_relaxed);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         supersampleFaults.fetch_add(1, std::memory_order_relaxed);

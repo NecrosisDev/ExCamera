@@ -1979,7 +1979,26 @@ constexpr unsigned viewAuditFrames = 120;
 static std::atomic<const char*> viewEffectsSkip{""};
 static void publishViewTargetSizes(int width, int height, int aoWidth, int aoHeight,
                                    int dofWidth, int dofHeight, bool low);
+// Each reason a main-view frame drew no effects, counted (first-person-status.json view_effects_skip_counts).
+struct ViewSkipCount { std::atomic<const char*> why{nullptr}; std::atomic<unsigned> count{0}; };
+static ViewSkipCount viewSkipCounts[16], viewMissedReasons[16];
+static std::atomic<unsigned> viewEffectsMissedSwaps{0};
+static void countViewSkip(ViewSkipCount* table, const char* why) {
+    if (!why || !*why) return;
+    for (unsigned k = 0; k < 16; ++k) {
+        const char* held = table[k].why.load(std::memory_order_relaxed);
+        if (!held) {
+            if (!table[k].why.compare_exchange_strong(held, why) && held != why) continue;
+            held = why;
+        }
+        if (held == why) {
+            table[k].count.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
+}
 static void skipViewEffects(const char* why) {
+    countViewSkip(viewSkipCounts, why);
     viewEffectsSkip.store(why, std::memory_order_relaxed);
     if (why && *why)
         publishViewTargetSizes(0, 0, 0, 0, 0, 0, false);

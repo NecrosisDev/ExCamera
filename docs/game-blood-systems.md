@@ -91,6 +91,34 @@ duplicates what this handler already does.
   (factor −1, units −256, about 1.5e-5 of a 24-bit depth range), with the game's own polygon-offset state put
   back after. A dev audit line logs the depth func and the offsets in effect at the stain draw.
 
+## Calling the game's own spray spawn and skin-blood queue: proof so far
+
+**Sprays (TBloodSprays.Spawn 0x1000E0). Verdict: unknown, so not called.**
+- **Arguments** (proven from its only two call sites, 0x15C7B9 and 0x15C7E8, both in the hit handler):
+  this = [0x4F0860], rdx = &point (vec3), r8 = &direction (vec3), xmm3 = amount, 5th argument (stack) = the
+  victim character.
+- **Callers:** no other code calls 0x1000E0, so it only ever runs on the thread that runs the hit handler.
+- **What the object is:** a particle object on a scene node. Its VMT 0x30F6D0 holds only base-class methods
+  (0xF3xxx-0xF5xxx, 0x51xxx). Its records are 0x70 bytes at +0x138, count +0x130.
+  - The base's set-up 0xF3410 sizes the array and gives each record a phase at +0x30, −1 at +0x34 (free), and
+    a pointer to the node's matrix (+0x18's +0x40) at +0x38.
+  - 0xF33B0 attaches it to a node: node+0x160 = the object, node+8 |= 0x10000, node+0xC |= 0x20, and the first
+    material's +0xF0 |= 0x20. So the sprays are drawn as part of that node, not by a pass of their own.
+- **Not traced:** the per-frame update (which base method advances the records: gravity, life at +0x34) and
+  whether a spray lands or only fades. Until those and the thread are known, ExCamera doesn't spawn sprays.
+
+**Skin-blood queue (0x158D70 → 0x1A890 on .data 0x499990). Verdict: unknown for our threads, so not called.**
+- **Not a blood-only queue:** 0x499990 is the game's general deferred-call queue, used by dozens of producers
+  (0xAA795, 0xB4B6D, 0x1348ED … 0x158D01).
+- **Layout:** a ring of 128 entries of 16 bytes (code, argument) from +8, head at +0, tail at +4.
+- **Enqueue 0x1A890:** it takes the queue's lock object at +0x808 when there is one (0x1A410 before, 0x1A430
+  after), and silently drops the entry when the ring is full (0x1A8CD).
+- **Drain:** 0x1AC10 on that queue at 0x26603, inside the game's frame loop (0x26580-0x265DB runs the timers just
+  before it), so the jobs (0x158A90 → 0x62DA0) run on the frame loop's thread.
+- **Safe from the hit handler's thread.** From ours it depends on two things not yet shown: the +0x808 lock being
+  present at run time, and our render-thread hooks running on the frame loop's thread. A run-time check of both
+  (the lock pointer, and GetCurrentThreadId in our hook against the drain's) would settle it. Not called until then.
+
 ## Not yet decoded (next reads)
 
 - 0x158AD0 → 0xD1A10 / 0xD32C0: the weapon blood path for item+0x67C == −2.

@@ -543,6 +543,7 @@ static std::atomic<int> nearClip{
     fp::nearClipDefaultTenths};  // [Camera] NearClip: the dynamic near plane's floor, tenths of a cm
 static float renderedFov = 75;   // Protected by cameraLock, paired with lastCamera.
 static float renderedNear = 1.f; // the near plane first person wrote (cameraLock)
+static float writtenPose[12]{};  // the pose first person last wrote into the camera (cameraLock); see admitSupersampleRender
 // the view's heading as last drawn (render thread), so an aim that (re)starts begins where
 // the view looks instead of snapping to the body's heading and level pitch.
 static std::atomic<uintptr_t> viewRoot{0};
