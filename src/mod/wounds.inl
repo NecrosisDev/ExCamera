@@ -1315,7 +1315,27 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float permanen
 // The damage routine 0x159700: it lowers +D58 by 0.1 times its second argument (0.05 times when +DF8 has
 // 0x800000) and +D5C by 0.2 times its third (0x15972E-0x1597C5). The names below are the record's; what the
 // two values mean beyond that arithmetic is not established here.
+// Which thread does what (dev builds, first-person-status.json): the damage routine 0x159700's (the hit handler
+// 0x15C680-0x15C8F5 calls it at 0x15C735, on its own thread) and the blood job 0x158A90's (run by whichever thread
+// drains the deferred-call queue 0x499990), each the first seen; set once.
+static std::atomic<unsigned> hitThread{0}, bloodJobThread{0};
+#if FP_DEV_TOOLS
+using BloodJobFn = unsigned char (*)(uintptr_t);
+static BloodJobFn originalBloodJob = nullptr;
+static unsigned char bloodJobDetour(uintptr_t job) {
+    unsigned none = 0;
+    bloodJobThread.compare_exchange_strong(none, unsigned(GetCurrentThreadId()), std::memory_order_relaxed);
+    return originalBloodJob(job);
+}
+#endif
+
 static unsigned char bodyDamageDetour(uintptr_t character, float recoverable, float permanent, char mayKill) {
+#if FP_DEV_TOOLS
+    {
+        unsigned none = 0;
+        hitThread.compare_exchange_strong(none, unsigned(GetCurrentThreadId()), std::memory_order_relaxed);
+    }
+#endif
     const auto result = originalBodyDamage(character, recoverable, permanent, mayKill);
     __try {
         recordNativeHit(character, currentImpactAttacker, permanent, recoverable);
@@ -1441,5 +1461,10 @@ static void createWoundHooks() {
     if (skinTarget && MH_CreateHook(reinterpret_cast<void*>(skinTarget), reinterpret_cast<void*>(skinShareDetour),
                                     reinterpret_cast<void**>(&originalSkinShare)) == MH_OK)
         skinShareHooked.store(true, std::memory_order_release);
+#if FP_DEV_TOOLS
+    if (const uintptr_t jobTarget = layout.optionalGroupAvailable("gameBloodJob") ? optionalGameAt(fp::sig::bloodJob) : 0)
+        MH_CreateHook(reinterpret_cast<void*>(jobTarget), reinterpret_cast<void*>(bloodJobDetour),
+                      reinterpret_cast<void**>(&originalBloodJob));
+#endif
 }
 

@@ -104,6 +104,9 @@ duplicates what this handler already does.
     a pointer to the node's matrix (+0x18's +0x40) at +0x38.
   - 0xF33B0 attaches it to a node: node+0x160 = the object, node+8 |= 0x10000, node+0xC |= 0x20, and the first
     material's +0xF0 |= 0x20. So the sprays are drawn as part of that node, not by a pass of their own.
+- **Set-up 0xF3B20** (also a base method, VMT slot +0x148). Each record's matrix pointer at +0x38 is pointed at
+  the carrying object's +0x2D0, or the node's +0x40 when there is none, and positioned with 0x18B60 against the
+  node's +0x70. The records ride on a node's frame, which points at particles that move with what emitted them.
 - **Not traced:** the per-frame update (which base method advances the records: gravity, life at +0x34) and
   whether a spray lands or only fades. Until those and the thread are known, ExCamera doesn't spawn sprays.
 
@@ -115,6 +118,15 @@ duplicates what this handler already does.
   after), and silently drops the entry when the ring is full (0x1A8CD).
 - **Drain:** 0x1AC10 on that queue at 0x26603, inside the game's frame loop (0x26580-0x265DB runs the timers just
   before it), so the jobs (0x158A90 → 0x62DA0) run on the frame loop's thread.
+- **The lock is always there.** It is created at start-up (0x26D13, 0x1A2F0) and stored at 0x26D18 into
+  [0x49A198], the queue's +0x808. 0x1A410 / 0x1A430 wrap EnterCriticalSection / LeaveCriticalSection on its +8. The
+  drain 0x1AC10 takes the same lock around each pop and calls the job outside it (0x1AC38-0x1AC89). Enqueueing from
+  any thread is therefore safe.
+- **Three drain sites:** 0x26603 (the frame loop), 0x8BD9B (a wait loop) and 0x180996 (a level set-up path).
+  Whichever thread drains runs the job.
+- **Still unchecked:** 0x158D70 also allocates (0xED70) and reads the victim before queueing. Calling it is the
+  same as the game's own call only on the thread that runs the hit handler. Our hooks' thread (nav = swap =
+  sector, one id in the playtest) has not yet been compared with the drain's or the hit handler's thread id.
 - **Safe from the hit handler's thread.** From ours it depends on two things not yet shown: the +0x808 lock being
   present at run time, and our render-thread hooks running on the frame loop's thread. A run-time check of both
   (the lock pointer, and GetCurrentThreadId in our hook against the drain's) would settle it. Not called until then.

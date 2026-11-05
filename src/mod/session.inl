@@ -739,6 +739,10 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.boolean("installed", true);
     j.num("nav_thread", InterlockedCompareExchange(&navThread, 0, 0));
     j.num("swap_thread", InterlockedCompareExchange(&swapThread, 0, 0));
+    // Dev builds: the damage routine's thread (the hit handler's), the blood job's (the queue drain's), and ours.
+    j.unum("hit_thread", hitThread.load());
+    j.unum("drain_thread", bloodJobThread.load());
+    j.num("our_thread", InterlockedCompareExchange(&swapThread, 0, 0));
     j.num("active", InterlockedCompareExchange(&active, 0, 0));
     j.unum("samples", samples.load());
     j.unum("controls", controlCalls.load());
