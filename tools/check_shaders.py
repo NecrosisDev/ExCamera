@@ -105,6 +105,8 @@ class Gl:
                                            wintypes.HWND, ctypes.c_void_p, wintypes.HINSTANCE, wintypes.LPVOID]
         user32.GetDC.restype = wintypes.HDC
         user32.GetDC.argtypes = [wintypes.HWND]
+        user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+        user32.DestroyWindow.argtypes = [wintypes.HWND]
         gdi32.ChoosePixelFormat.argtypes = [wintypes.HDC, ctypes.POINTER(PIXELFORMATDESCRIPTOR)]
         gdi32.SetPixelFormat.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.POINTER(PIXELFORMATDESCRIPTOR)]
         opengl32.wglCreateContext.restype = ctypes.c_void_p
