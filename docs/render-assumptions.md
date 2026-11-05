@@ -539,3 +539,23 @@ With no lights captured in the last 250 ms the terms use the fixed light from ab
   compression (BC1/BC3/BC4/BC5, else raw). Read from the files (every image decodes coherently), not from the
   game's loader (UNPROVEN as code).
 - 80 names the level files reference exist in no pack (mostly the `ub6ap*` world set); listed in the index.
+
+## Texture replacements (2026-11-05)
+
+`textureReplace` optional group, `src/mod/texture_replace.inl`, F8 row "Texture replacements" (View/TextureReplacements,
+on by default). PROVEN from the binary:
+- Every texture's pixels go through `0x73580(texture, image)` (callers include the by-name loader 0x6FF70, which
+  finds or creates the texture with 0x72300 and loads the image with 0x70110 from the registered packs).
+- 0x72300 stores the texture's 16-byte name key, lowercased by 0x17B20, at `texture+8`. For names of 16 bytes or
+  less 0x6FF70 builds it zero-padded from the name (longer names take 0x725C0 and are not matched).
+- The image description 0x73580 reads: `+0` pixel data, `+8`/`+0xA` width/height (u16), `+0x10` format word,
+  `+0x14` flags (0x80000: mip chain), `+0x1C` data size. It copies 32 bytes to `texture+0x20`, sets the target
+  and filtering (0x72840, 0x72990, 0x72A60) from `texture+0x18`, and uploads compressed levels with 0x72AD0:
+  storage for every level down to 1x1, then glCompressedTexSubImage2D per level with sizes from width/height.
+  The texture-quality top-level skip and the size cap (`DAT_1002AE080`) apply as for the game's own images.
+- The hook passes a copy of that description pointing at a .dds file's levels (same block format as the
+  game's: BC1/BC3/BC4/BC5 by the format word's channel byte; full mip chain required) to the same function, so
+  filtering, anisotropy and mip handling are the game's at the new size. No GL calls of the mod's own. Anything
+  that does not fit is refused, logged once per file, and the game's image is uploaded.
+- Folder: `textures\` beside first-person.ini (the portable copy's own folder, else Documents\ExCamera).
+  File name: the texture's name without `.rfi` (as in the export's index.csv), `.dds`.

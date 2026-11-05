@@ -749,6 +749,12 @@
       "note": "FUN_1001603F0: per-step leg contacts, lean (uprightness +12B0) and step planner, called once from combatUpdate (0x16DDD0); read-only witness owner for the balance shadow",
       "hook": false,
       "optionalGroup": "balanceShadow"
+    },
+    "textureUpload": {
+      "rva": "0x73580",
+      "note": "FUN_100073580(texture, image): uploads an image to a texture object. Copies the image's 32-byte header to texture+0x20, picks the GL target from texture+0x18, then uploads every mip level (compressed: 0x72AD0, glCompressedTexSubImage2D per level down to 1x1, sizes from the image's +8/+0xA width and height) and sets filtering through 0x72840/0x72990/0x72A60. The texture's lowercase 16-byte name key is at texture+8 (0x72300 stores it). Hooked: a replacement file of that name is uploaded in the image's place",
+      "optionalGroup": "textureReplace",
+      "hook": true
     }
   },
   "returns": {
@@ -1541,7 +1547,8 @@
     "proceduralMaterials",
     "blendModeCache",
     "programCache",
-    "contactFrame"
+    "contactFrame",
+    "textureUpload"
   ],
   "reviewed_signatures": [
     {
@@ -11146,6 +11153,28 @@
       "addend": 0,
       "known_rva": "0x1603f0",
       "pattern": "53 57 56 41 54 41 55 48 8D A4 24 C0 FE FF FF 66 0F 7F B4 24 00 01 00 00 66 44 0F 7F 84 24 10 01 00 00"
+    },
+    {
+      "target": "textureUpload",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x73580",
+      "pattern": "55 48 89 E5 48 8D A4 24 60 FF FF FF 48 89 5D 98 48 89 7D A0 48 89 75 A8 4C 89 65 B0 49 89 CC 48 89 55 F8"
+    },
+    {
+      "target": "textureUpload",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x73580",
+      "pattern": "55 ?? 89 ?? ?? 8D ?? ?? 60 FF FF FF ?? 89 ?? 98 ?? 89 ?? A0 ?? 89 ?? A8 ?? 89 ?? B0 ?? 89 ?? ?? 89 ?? F8"
     }
   ]
 }

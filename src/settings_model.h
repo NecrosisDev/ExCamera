@@ -129,6 +129,7 @@ enum : int {
     fpKnockdown,
     kickStyle,
     parryDirection,
+    textureReplacements,
     count
 };
 }
@@ -161,12 +162,13 @@ inline bool fixedSetting(int row) {
 enum : unsigned {
     capFingers = 1u << 0, capFarRooms = 1u << 1, capViewEffects = 1u << 2, capWounds = 1u << 3,
     capBlades = 1u << 4, capKick = 1u << 5, capJump = 1u << 6, capManualDefense = 1u << 7,
-    capAnimatedKick = 1u << 8,
+    capAnimatedKick = 1u << 8, capTextures = 1u << 9,
 };
 inline unsigned rowCapability(int row) {
     switch (row) {
     case setting::fingerPoses: case setting::fingerPosesOthers: return capFingers;
     case setting::farRooms: return capFarRooms;
+    case setting::textureReplacements: return capTextures;
     case setting::ambientOcclusion: case setting::depthOfField:
     case setting::edgeSmoothing: case setting::helmetVisor: case setting::playerGhost:
     case setting::conditionEffects: case setting::lightSmoothing: case setting::heldDetail:
@@ -203,6 +205,7 @@ struct ModSettings {
     int drawDistance = 60; // metres beyond which small props and far characters are not drawn; 0 draws everything
     int objectLights = 4;  // lights each mesh takes of the game's six; the strongest are kept
     bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
+    bool textureReplacements = true; // .dds files in the textures folder uploaded in place of the game's; on by default
     bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
     int hitReaction = 100; // percent of the first-person view's kick when a hit lands; 100 as before
     int f6Cycle = 0;
@@ -1258,6 +1261,11 @@ inline const RowInfo& rowInfo(int row) {
          L"View", L"WoundDebug", nullptr, nullptr,
          L"Highlights all procedural wounds, blade blood, and floor spatters in vibrant neon colors (cyan for cuts and blades, "
          L"magenta for bruises, green for droplets) so they stand out distinctly from vanilla textures. Toggleable with F12."},
+        {setting::textureReplacements, L"Texture replacements", RowInfo::toggle, nullptr,
+         &ModSettings::textureReplacements, L"View", L"TextureReplacements", nullptr, nullptr,
+         L"Uses .dds files from the textures folder beside first-person.ini in place of the game textures of the "
+         L"same name (for example upscaled walls and floors). Off draws only the game's own textures. Takes "
+         L"effect from the next level load."},
         {setting::farRooms, L"Draw far rooms", RowInfo::toggle, nullptr, &ModSettings::farRooms,
          L"View", L"FarRooms", nullptr, nullptr,
          L"The game only draws rooms next to the one you're in, built for its overhead camera. This draws one "

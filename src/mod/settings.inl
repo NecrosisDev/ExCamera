@@ -23,6 +23,7 @@ static void rowCapabilities(unsigned& unavailable, unsigned& faulted) {
     if (!nodeMoveHooked.load() || !layout.optionalGroupAvailable("fingerBones")) unavailable |= panel::capFingers;
     if (trackedBoneFault.load() || skinMergeFault.load()) faulted |= panel::capFingers;
     if (!roomViewHooked.load()) unavailable |= panel::capFarRooms;
+    if (!texrep::hooked.load()) unavailable |= panel::capTextures;
     const unsigned effects = viewEffectsUnavailable.load(std::memory_order_relaxed);
     if (effects & viewHookMissing) unavailable |= panel::capViewEffects;
     if (effects & viewFaulted) faulted |= panel::capViewEffects;
@@ -62,6 +63,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.woundMarks = woundMarks.load() > 0.f;
     s.woundDebug = woundDebug.load(std::memory_order_relaxed);
     s.lightSmoothing = lightSmoothing.load();
+    s.textureReplacements = textureReplacements.load();
     s.farRooms = farRooms.load();
     s.f6Cycle = f6Cycle.load();
     s.fpKnockdown = fpKnockdown.load();
@@ -200,6 +202,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     woundMarks = s.woundMarks ? 1.f : 0.f;
     woundDebug.store(s.woundDebug, std::memory_order_relaxed);
     lightSmoothing = s.lightSmoothing;
+    textureReplacements = s.textureReplacements;
     farRooms = s.farRooms;
     f6Cycle = s.f6Cycle;
     fpKnockdown = s.fpKnockdown;

@@ -22,7 +22,7 @@ static const OwnSection ownSections[] = {
                                       image, setting::depthOfField, setting::edgeSmoothing, damage,
                                       setting::conditionEffects, setting::woundMarks, setting::woundDebug}, 10},
     {L"Graphics", L"Performance", {setting::farRooms, setting::drawDistance, setting::objectLights}, 3},
-    {L"Graphics", L"Surface detail", {setting::heldDetail, setting::armourDetail, setting::objectDetail}, 3},
+    {L"Graphics", L"Surface detail", {setting::heldDetail, setting::armourDetail, setting::objectDetail, setting::textureReplacements}, 4},
     {L"Combat", L"Blocking and aim", {setting::fpDefense, setting::parryDirection, setting::fpSwingSelection, setting::tpCombatAim, setting::indicator}, 5},
     {L"Combat", L"Wind-up arc", {setting::attackCue, setting::cueThrust, setting::cueSize, setting::cueOpacity}, 4},
     {L"Combat", L"Blades", {setting::bladeDrag, setting::stabSink, setting::bladeGain}, 3},
