@@ -263,6 +263,28 @@ The item factory 0x20FB80 gives each layer of an item part its procedural materi
 `+0x50` (0x2103FC). **Missing:** the link from a drawn mesh material (`node+0x1D0[i]`) back to its layer and
 procedural ID. That is the next step to bring the four detail rows back with the game's own materials.
 
+**Material link, traced further (PROVEN unless marked):**
+- **Items.** The item builder 0x107600 finds the record's factory name in chunk 0x100000 (0x10766B-0x107691) and
+  calls 0x20AC10(name, record, …). 0x20AC10 looks the factory up by name in the list at `DAT_5B2140`, creates
+  the item's scene node (0x20DF30, r15), allocates a texture set into `factory+0x158` and stores it as the
+  node's **first** material's set: `[[node+0x1D0]+0]+0x100 = set` (0x20B10E-0x20B11F). The set points back:
+  `set+8 = node`, and `node+0x204 |= 0x20` (0x20B126-0x20B131). Then it runs the factory 0x2105C0 ->
+  0x20FB80, which composites every layer's procedural material (ID 1-25, above) into that one set.
+- So an item's drawn material is `node+0x1D0[0]`, and its texture set is the factory's composite of all its
+  layers. **UNPROVEN, and possibly not available:** which texel came from which layer (blade vs haft). The
+  composite keeps no per-texel layer ID that I have found; the layer masks would have to be decoded from the
+  factory (0x20FB80, `[factory+0x178]`, `[rsi+0xAC]` rows of 0x2C bytes). Also missing: the link from
+  `node+0x180`'s item id to that factory (the record's chunk 0x100000 name is the likely key).
+- **Character skin (blood thread's question).** 0x207240 walks a skinned node (`node+8 & 0x5F == 9`, recursing
+  through children `+0x118/+0x120`). A material that already has a set (`+0x100`) donates it to the
+  character's shared skin entry; a material whose definition `[mat+0xD0]` has a 38-character name
+  (`byte [def+0x208] == 0x26`, name at `+0x209`, 0x2072F0-0x207346) **receives** the character's shared skin set:
+  `mat+0x100 = [obj+0x20]+0x10` and `mat+0xD0 = [obj+0x20]+0x18` (0x2073FC-0x207458). So the game marks bare-skin
+  materials by their definition's name, not by index: **"skin is [0]" is UNPROVEN**. The test is
+  `[[node+0x1D0][i]+0xD0]+0x208 == 0x26` (with the name compared at `+0x209`). Worn pieces merged into the
+  _SKIN mesh keep their own sets, from their own factory (item rule above), and so their own layer IDs.
+  Which exact 38-character name it is was not read here (it is runtime data).
+
 ## The game's own shading, as decoded (for the reflections and AO work)
 
 - `shading_f`: `layout(std140) uniform Material { MatDif, MatSpc, MatEmi, MatDrt, ... }`. Specular: per light
