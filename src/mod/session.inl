@@ -1048,6 +1048,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("matrices", supersampleCorrections.load())
         .unum("terrain_matrices", supersampleTerrainCorrections.load())
         .unum("faults", supersampleFaults.load())
+        .unum("admitted_by_pose", supersampleAdmittedByPose.load())
         .end();
     {   // Main-viewport frames not admitted, by reason (supersampling.inl SupersampleReject).
         std::string text;

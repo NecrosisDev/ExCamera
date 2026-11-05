@@ -340,6 +340,7 @@ inline uintptr_t navLocked(void* self, float offset) {
         InterlockedExchange(&pendingRestore, 1);
         std::memcpy((void*)(camera + field::camera::pose), pose, 48);
         std::memcpy((void*)(camera + field::camera::pose2), pose, 48);
+        std::memcpy(writtenPose, pose, 48);
         rebuildInverse(camera + field::camera::inverse, camera + field::camera::pose);
         renderedFov = fov > 0.f && std::isfinite(fov) ? fov : static_cast<float>(selectedFov.load());
         *(float*)(camera + field::camera::fov) = renderedFov;

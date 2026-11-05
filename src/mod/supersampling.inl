@@ -39,7 +39,9 @@ enum SupersampleReject : unsigned {
 static const char* const supersampleRejectNames[rejectCount] = {
     "camera lock busy", "camera not ours (pending restore unset)", "parked", "restoration unknown",
     "camera owner changed", "player or scene changed", "stock near or pose not finite"};
-static std::atomic<unsigned> supersampleRejects[rejectCount]{};
+static std::atomic<unsigned> supersampleRejects[rejectCount]{}, supersampleAdmittedByPose{0};
+// The last frame admitted the ordinary way, for frames drawn with our pose after the bookkeeping let go.
+static SupersampleRenderScope lastAdmittedScope;
 
 inline bool admitSupersampleRender(uintptr_t viewport, SupersampleRenderScope& scope) {
     if (!viewport) return false;
@@ -84,9 +86,30 @@ inline bool admitSupersampleRender(uintptr_t viewport, SupersampleRenderScope& s
                 scope.owned = true;
                 InterlockedIncrement(&renderScopesInFlight);
                 admitted = true;
+                lastAdmittedScope = scope;
             } else {
                 supersampleRejects[rejectNotFinite].fetch_add(1, std::memory_order_relaxed);
             }
+        }
+        // The effects follow what is drawn: a frame whose camera still carries exactly the pose, field of view and near
+        // plane first person last wrote (the game drawing our view, as through the arena's round-end prompt, while
+        // the ownership bookkeeping above let go: parked, owner or identity changed) is admitted with the last
+        // admitted frame's stock values. A camera the game moved, or set its own fov or near on, is not ours.
+        if (!admitted && main && camera && lastAdmittedScope.owned && !InterlockedCompareExchange(&restorationUnknown, 0, 0) &&
+            readable(camera + field::camera::pose, 48) &&
+            *(const float*)(camera + field::camera::fov) == renderedFov &&
+            *(const float*)(camera + field::camera::nearPlane) == renderedNear &&
+            !memcmp((const void*)(camera + field::camera::pose), writtenPose, 48)) {
+            scope = lastAdmittedScope;
+            scope.viewport = viewport;
+            scope.view = view;
+            scope.camera = camera;
+            // The player as it is now (a round's end may make a new one), never a record that may be gone.
+            scope.root = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
+            scope.scene = *(const uintptr_t*)gameAt(fp::sig::currentScene);
+            InterlockedIncrement(&renderScopesInFlight);
+            admitted = true;
+            supersampleAdmittedByPose.fetch_add(1, std::memory_order_relaxed);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         supersampleFaults.fetch_add(1, std::memory_order_relaxed);
