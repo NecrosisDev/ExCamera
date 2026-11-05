@@ -86,6 +86,11 @@ inline constexpr size_t uprightness = 0x12B0;   // float 0..1: (cos chest lean)^
 inline constexpr size_t leanCounter = 0x12B4;   // int: uprightness takes the new value only once this reaches 100
 inline constexpr size_t stepping = 0x12EE;      // u8: a corrective step is under way (contactFrame)
 inline constexpr size_t onFeet = 0x12FC;        // u8: some leg contact is within reach of the ground
+// The clip clock (docs/GAME-BALANCE-PHYSICS.md): +A20 gains motionRate x 0.6 a step for non-attack motions
+// (0x16CB27-0x16CB4B); the kick sets motionRate = 2 x motionRateBase (0x16B0A6). motionPlay stores its blend at +A24.
+inline constexpr size_t motionRate = 0xDC8, motionRateBase = 0xDCC; // floats
+inline constexpr size_t travelling = 0x12EA;    // u8: TPlayerBehaviour's travel (0xC2A22); motionPlay clears it (0x179F48)
+inline constexpr size_t supportScale = 0x410;   // float: while travelling, supportHeight's in-air margin is 30 x this
 } // namespace character
 
 // A character's behaviour (character::behaviour); the player's runs the input step.
@@ -116,6 +121,7 @@ inline constexpr size_t flags = 0xC;             // 0x4000: the pose builder app
 inline constexpr size_t meshNode = 0x18;         // its scene node
 inline constexpr size_t poseCoefficients = 0xB0; // turn the points into a pose
 inline constexpr size_t points = 0xF0;           // float[4][3]: the physics tetrahedron
+inline constexpr size_t motorStrength = 0x594;    // float: the joint motor scale 0x15DA80 multiplies its gain by (0x15DE27)
 inline constexpr size_t history =
     0x120; // float[4][3]: the points a step before (Verlet: the velocity is the difference)
 inline constexpr size_t history2 =

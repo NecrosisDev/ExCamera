@@ -1339,6 +1339,21 @@
       "pattern": "53 57 56 41 54 41 55 48 8D 64 24 D0 89 CB 89 D6 44 89 C7 45 31 ED FF 15 A4 EB 29 00 41 89 C4 89 DA 44 89 E1 FF 15 66 EB",
       "entry_offset": 0,
       "target": "programLink"
+    },
+    {
+      "name": "combatUpdate",
+      "rva": "0x169200",
+      "end_rva": "0x16e1c4",
+      "pattern": "55 48 89 E5 48 8D A4 24 F0 FE FF FF 48 89 9D 20 FF FF FF 48 89 BD 28 FF FF FF 48 89 B5 30 FF FF FF",
+      "entry_offset": 0,
+      "target": "combatUpdate"
+    },
+    {
+      "name": "jointSolver",
+      "rva": "0x15da80",
+      "end_rva": "0x15efaf",
+      "pattern": "55 48 89 E5 48 8D A4 24 A0 FE FF FF 48 89 9D D0 FE FF FF 48 89 BD D8 FE FF FF 48 89 B5 E0 FE FF FF 4C 89 A5 E8 FE FF FF 4C 89 AD F0 FE FF FF 66 0F 7F B5 10 FF FF FF 66 44 0F 7F 85 20 FF FF FF",
+      "entry_offset": 0
     }
   ],
   "fields": [
@@ -5143,6 +5158,76 @@
       "displacement_offset": 14,
       "displacement_bytes": 4,
       "optional_group": "balanceShadow"
+    },
+    {
+      "owner": "combatUpdate",
+      "width": 4,
+      "provenance": "float: the clip clock +A20 gains +DC8 x 0.6 a step for motion 13 and the other non-attack motions (0x16CB27-0x16CB4B); 0x16B0A6 sets it to 2 x +DCC for the kick.",
+      "name": "character::motionRate",
+      "instruction": "0x16cb33",
+      "value": "0xdc8",
+      "window_offset": 14635,
+      "pattern": "F3 0F 5A 88 20 0A 00 00 F3 0F 5A 80 C8 0D 00 00 F2 0F 59 05 F5 F8 1A 00",
+      "native_instruction": "cvtss2sd xmm0, dword ptr [rax + 0xdc8]",
+      "displacement_offset": 12,
+      "displacement_bytes": 4,
+      "optional_group": "kick"
+    },
+    {
+      "owner": "combatUpdate",
+      "width": 4,
+      "provenance": "float: the base clip rate; motion 0x1F copies it to +DC8 (0x16B51E-0x16B528).",
+      "name": "character::motionRateBase",
+      "instruction": "0x16b522",
+      "value": "0xdcc",
+      "window_offset": 8986,
+      "pattern": "00 00 01 00 48 8B 55 F8 8B 82 CC 0D 00 00 89 82 C8 0D 00 00 E9 5C",
+      "native_instruction": "mov eax, dword ptr [rdx + 0xdcc]",
+      "displacement_offset": 10,
+      "displacement_bytes": 4,
+      "optional_group": "kick"
+    },
+    {
+      "owner": "supportHeight",
+      "width": 1,
+      "provenance": "u8: set in TPlayerBehaviour travel (0xC2A22), cleared by motionPlay (0x179F48); while set, supportHeight neither zeroes uprightness (0x16F975-0x16F98D) nor uses the 20 cm standing margin (0x16F7E0).",
+      "name": "character::travelling",
+      "instruction": "0x16f975",
+      "value": "0x12ea",
+      "window_offset": 6045,
+      "pattern": "F3 0F 10 15 B3 C5 1A 00 80 BB EA 12 00 00 00 75 16 80 BB FC 12 00 00",
+      "native_instruction": "cmp byte ptr [rbx + 0x12ea], 0",
+      "displacement_offset": 10,
+      "displacement_bytes": 4,
+      "optional_group": "jump"
+    },
+    {
+      "owner": "supportHeight",
+      "width": 4,
+      "provenance": "float: while travelling, the in-air margin is 30 x this (0x16F7E9-0x16F7F1).",
+      "name": "character::supportScale",
+      "instruction": "0x16f7f1",
+      "value": "0x410",
+      "window_offset": 5657,
+      "pattern": "F3 0F 10 05 EF CC 1A 00 F3 0F 59 83 10 04 00 00 44 0F 28 D8 EB 09 F3 44",
+      "native_instruction": "mulss xmm0, dword ptr [rbx + 0x410]",
+      "displacement_offset": 12,
+      "displacement_bytes": 4,
+      "optional_group": "jump"
+    },
+    {
+      "owner": "jointSolver",
+      "width": 4,
+      "provenance": "float: the part joint motor scale (0x15DA80 multiplies the motor gain by it at 0x15DE27).",
+      "name": "bodyPart::motorStrength",
+      "instruction": "0x15de27",
+      "value": "0x594",
+      "window_offset": 927,
+      "pattern": "FF FF F3 41 0F 10 45 3C F3 0F 59 83 94 05 00 00 F3 0F 59 C6 44 0F 28 D8",
+      "native_instruction": "mulss xmm0, dword ptr [rbx + 0x594]",
+      "displacement_offset": 12,
+      "displacement_bytes": 4,
+      "optional_group": "kick"
     }
   ],
   "references": [

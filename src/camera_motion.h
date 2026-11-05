@@ -566,15 +566,25 @@ inline constexpr float jumpInAirMarginCm = 20.f;
 inline constexpr int jumpPushSteps = 8;
 inline constexpr unsigned jumpStepGap = 3;      // more steps than this between polls: stop
 inline constexpr unsigned jumpTrackSteps = 166; // the peak is followed for at most two seconds of steps
-inline float jumpTakeoffSpeed() { return std::sqrt(2.f * jumpGravity * jumpPeakCm); }
+// Travelling (+12EA, set by TPlayerBehaviour's travel at 0xC2A22), the in-air margin is 30 x character+410 instead of
+// 20 cm (0x16F7E9) and uprightness is not zeroed (0x16F975): a running hop may rise to that margin less
+// jumpRunSlackCm, at most jumpRunPeakCm (both ours).
+inline constexpr float jumpRunMarginScale = 30.f, jumpRunPeakCm = 40.f, jumpRunSlackCm = 5.f;
+inline float jumpRunPeak(float supportScale) {
+    const float room = jumpRunMarginScale * supportScale - jumpRunSlackCm;
+    return std::isfinite(room) ? std::clamp(room, jumpPeakCm, jumpRunPeakCm) : jumpPeakCm;
+}
+inline float jumpTakeoffSpeed(float peakCm = jumpPeakCm) { return std::sqrt(2.f * jumpGravity * peakCm); }
 struct JumpPush {
     bool active = false, tracking = false;
     uintptr_t root = 0, scene = 0;
     unsigned lastStep = 0, firstStep = 0;
     int left = 0;
-    float startY = 0.f, lastY = 0.f, risen = 0.f, peak = 0.f;
-    static JumpPush start(uintptr_t root, uintptr_t scene, unsigned step, float y) {
+    float startY = 0.f, lastY = 0.f, risen = 0.f, peak = 0.f, peakCm = jumpPeakCm, target = 0.f;
+    static JumpPush start(uintptr_t root, uintptr_t scene, unsigned step, float y, float peakCm = jumpPeakCm) {
         JumpPush p;
+        p.peakCm = peakCm;
+        p.target = jumpTakeoffSpeed(peakCm);
         p.active = p.tracking = std::isfinite(y);
         p.root = root;
         p.scene = scene;
@@ -604,9 +614,9 @@ inline float jumpPushStep(JumpPush& p, bool owned, uintptr_t root, uintptr_t sce
     if (!p.active) return 0.f;
     const int n = int(passed) < p.left ? int(passed) : p.left;
     p.left -= n;
-    const float target = jumpTakeoffSpeed();
-    if (p.left <= 0 || speed >= target || p.risen >= jumpPeakCm) p.active = false;
-    return speed < target && p.risen < jumpPeakCm ? std::fmin(target - std::fmax(speed, 0.f), target) : 0.f;
+    const float target = p.target;
+    if (p.left <= 0 || speed >= target || p.risen >= p.peakCm) p.active = false;
+    return speed < target && p.risen < p.peakCm ? std::fmin(target - std::fmax(speed, 0.f), target) : 0.f;
 }
 // The half-size of the box the camera is kept clear by (cm): bigger than the near plane's own rectangle, so
 // a wall beside the view never comes inside the near plane and shows through.

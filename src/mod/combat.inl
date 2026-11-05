@@ -366,6 +366,8 @@ static void combatUpdate(uintptr_t root) {
         if (!nestedActor) balanceShadowObserve(root, shadowMicroseconds(before, after));
         // Read-only: what the native update left for the threat markers (threats.inl).
         if (!nestedActor) threatObserve(root);
+        // The kick's standing leg, a little stiffer, while the player's motion is 13 (motions.inl).
+        if (!nestedActor) kickStanceStep(root);
         // Recheck the current physical/input owner after native code. UI, focus,
         // scene, actor and policy handoffs cannot carry an old hold forward.
         if (!nestedActor && !update.reactiveSeen && manualInterceptionReady(root)) defenseReactive(root);

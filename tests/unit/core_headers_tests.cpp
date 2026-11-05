@@ -547,6 +547,16 @@ bool camera_motion_jump_push() {
         CHECK(!r.active && !r.tracking);
     }
     CHECK(!fp::JumpPush::start(0x1000, 0x2000, 0, NAN).active);
+    // Travelling, the hop is sized to the game's margin 30 x +410, less the slack, between the standing hop and 40 cm.
+    CHECK(near_equal(fp::jumpRunPeak(1.f), 25.f));
+    CHECK(near_equal(fp::jumpRunPeak(2.f), fp::jumpRunPeakCm));
+    CHECK(near_equal(fp::jumpRunPeak(.3f), fp::jumpPeakCm));
+    CHECK(near_equal(fp::jumpRunPeak(NAN), fp::jumpPeakCm));
+    auto run = fp::JumpPush::start(0x1000, 0x2000, 0, 0.f, 25.f);
+    CHECK(near_equal(run.target, std::sqrt(2.f * 980.665f * 25.f)) && near_equal(run.peakCm, 25.f));
+    // Walking or running (DF4 1) is no refusal for the jump, which plays no motion; the kick keeps the game's rule.
+    CHECK(fp::motionGate(false, false, 1u & ~1u, 1.f, 1.f) == fp::MotionRefusal::count);
+    CHECK(fp::motionGate(false, false, 1u, 1.f, 1.f) == fp::MotionRefusal::otherState);
     return true;
 }
 

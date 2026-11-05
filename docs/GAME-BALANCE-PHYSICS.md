@@ -475,6 +475,27 @@ at most ground (+0x90) + its tolerance (+0x94) + a margin, and its flags lack 0x
 - The root's peak rise is followed until he is back down and reported as `motions.jump_last_rise_cm`. The takeoff
   speed is reported as `jump_takeoff_cm_s`.
 
+**Walking and running (Hunter: "doesn't work while moving").** Walking and running put DF4 = 1 every update
+(0x16B470, in combatUpdate's branch for motion 0 "Walk" or 1 "Run", 0x16B354–0x16B365). The game's on-demand rule
+refuses that bit (0x16993D), so the game itself plays no +DC0 motion while moving. It does start its attacks then:
+attackDispatch 0xAE9D0 → 0xAEF50 → 0x157700 has no DF4 test. The jump plays no motion, only a push, so its gate
+lets DF4 1 through; every other bit of the on-demand rule still refuses it. The kick keeps the rule unchanged
+(motionPlay is a motion start).
+
+**Sized to the game's margin while moving.** Travelling (+12EA, set at 0xC2A22), supportHeight's in-air margin is
+30 × character+410 (0x16F7E9) and it does not zero uprightness (0x16F975). The jump never calls motionPlay
+0x179EE0, which clears +12EA/+12EB at 0x179F48/0x179F4F. So a jump started while +12EA is set aims at
+min(30 × [+410] − 5, 40) cm and never below 15. The slack and the 40 cm cap are ours. Standing, it stays at 15 cm.
+
+Status, per jump:
+- `jump_travelling`: +12EA at takeoff;
+- `jump_support_scale`: +410 at takeoff;
+- `jump_peak_target_cm` and `jump_takeoff_cm_s`: the target;
+- `jump_last_rise_cm`: what the root actually reached;
+- `jump_travel_lost`: the game cleared +12EA while he was still in the air. combatUpdate clears the walking flags
+  when uprightness drops under 0.6 (0x16A62C), and that brings back the 20 cm margin;
+- `jump_push_active`: true on the steps the push is added (for the balance shadow).
+
 **Landing brace: not built.**
 - The game's crouch has no ramp. TPlayerBehaviour writes duckAmount +0x100C = 1.0 in one step (0xC25B9) while the
   crouch input bit 0x10 (0x49CDC0) is held, and combatUpdate lowers it by 0.02 a step down to 0 (0x1698CC–0x1698F7).
@@ -490,3 +511,29 @@ motion (0x169970) only when DF4 & 0xA00 is clear (0x16990A) and DF4 & 0x10203 is
 
 The old gate needed DF4 == 0. The balance test (balanceMax − 0.05) is the game's own (0xB75E4: 0.05). The last
 refused DF4 is reported as `motions.refused_state_last`.
+
+## The kick: the delay, the Animated drive and the standing leg
+
+**The ~2 s wait before the leg moves was ours.**
+- motionPlay keeps its third argument at +A24 as a float (0x17A05E–0x17A063).
+- The pose builder's progress is (clock +A20 − +A24) / clip length (0x1761D7–0x1761F7).
+- For the kick the clock gains +DC8 × 0.6 a step (0x16CB27–0x16CB4B), with +DC8 = 2 × +DCC (0x16B0A6).
+- So our blend of 200 is clock units, not milliseconds: about 167 steps (2 s) at +DCC = 1. In Hunter's 10 logged
+  kicks the foot lifted 2.64–2.70 s after motion 13 began.
+- The game's own blends are 0 (0x169970), "+2" (the attacks, 0x157A42/0x15759A) and 20 (its recover motions,
+  0x162E58, 0x16A7F4). The kick now uses 20.
+- kick.csv now logs progress, +DC8, +DCC, gripFlags and the weapon class (the kick drive's classify).
+
+**The Animated kick never drove** (refused_body every step). `kick_animated.refused_body_reasons` now says which of
+kickReadBody's checks refused the body, numbered in source order, so the next play shows the cause.
+
+**The standing leg (KickStanceStiffness).**
+- The joint motors are scaled by each part's motorStrength +594 (0x15DA80 at 0x15DE27), not by standingFactor
+  +1020. +1020 is what drops when the lean rule fires, and it weakens the world pull and the hip spring.
+- So while the player's motion is 13, the support leg's thigh, shin and foot get their own +594 times
+  `[Input] KickStanceStiffness` (1.2 by default, ours; 0 or 1 = stock).
+- The support leg is the leg whose foot is lower once the feet are 3 cm apart; in Hunter's log the native clip
+  lifts legs[0] every time.
+- The exact values read are restored when the kick ends, at a knockdown or death, and at F7, but only where the
+  game has not written its own since.
+- Status: `kick_stance_factor`, `kick_stance_applied`, `kick_stance_kept_game`.

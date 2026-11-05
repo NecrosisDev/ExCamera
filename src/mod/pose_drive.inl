@@ -66,12 +66,20 @@ static bool kickShinSupported(uintptr_t shin) {
         if ((*reinterpret_cast<unsigned*>(contacts + size_t(i) * 0x98 + field::contact::flags) & 0x12) == 2) return true;
     return false;
 }
+// Which check of kickReadBody refused the body last (status kick_animated.refused_body_reasons, by check number in
+// the order they appear below; 14 is the hands' and hips' sides disagreeing).
+static constexpr unsigned kickBodyChecks = 15;
+static std::atomic<unsigned> kickBodyRefusals[kickBodyChecks]{};
+static bool kickBodyFail(unsigned check) {
+    if (check < kickBodyChecks) kickBodyRefusals[check].fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
 static bool kickReadBody(uintptr_t root, KickBody& b) {
     const int count = *reinterpret_cast<int*>(root + field::character::partCount), legs = *reinterpret_cast<int*>(root + field::character::legCount);
     const auto parts = *reinterpret_cast<uintptr_t*>(root + field::character::parts), legArray = *reinterpret_cast<uintptr_t*>(root + field::character::legs);
-    if (count < 8 || count > 64 || legs != 2 || !readable(parts, size_t(count) * 8) || !readable(legArray, 16)) return false;
+    if (count < 8 || count > 64 || legs != 2 || !readable(parts, size_t(count) * 8) || !readable(legArray, 16)) return kickBodyFail(0);
     auto take = [&](KickPart& p, uintptr_t part) {
-        if (!kickOwned(part, root)) return false;
+        if (!kickOwned(part, root)) return kickBodyFail(1);
         p.part = part;
         p.pose = kickPartPose(part);
         return true;
@@ -79,46 +87,47 @@ static bool kickReadBody(uintptr_t root, KickBody& b) {
     auto plain = [](uintptr_t part) { return !(*reinterpret_cast<unsigned*>(part + field::bodyPart::flags) & 0x40); };
     const auto pelvis = *reinterpret_cast<uintptr_t*>(parts);
     if (!take(b.pelvis, pelvis) || *reinterpret_cast<uintptr_t*>(pelvis + field::bodyPart::rootPart) != pelvis || kickParentOf(pelvis) != pelvis ||
-        plain(pelvis)) return false;
+        plain(pelvis)) return kickBodyFail(2);
     const auto chest = *reinterpret_cast<uintptr_t*>(root + field::character::chestPart), head = *reinterpret_cast<uintptr_t*>(root + field::character::headPart);
     if (!take(b.chest, chest) || !take(b.head, head) || kickParentOf(head) != chest || !take(b.belly, kickParentOf(chest)) || kickParentOf(b.belly.part) != pelvis ||
-        !plain(chest) || !plain(head) || !plain(b.belly.part)) return false;
+        !plain(chest) || !plain(head) || !plain(b.belly.part)) return kickBodyFail(3);
     for (unsigned side = 0; side < 2; ++side) { // the native bind graph puts the left hand in slot 1
         if (!take(b.hand[side], *reinterpret_cast<uintptr_t*>(root + field::character::handParts + (1 - side) * 8)) || !take(b.fore[side], kickParentOf(b.hand[side].part)) ||
             !take(b.upper[side], kickParentOf(b.fore[side].part)) || !take(b.shoulder[side], kickParentOf(b.upper[side].part)) || kickParentOf(b.shoulder[side].part) != chest)
-            return false;
-        for (const auto* p : {&b.hand[side], &b.fore[side], &b.upper[side], &b.shoulder[side]}) if (!plain(p->part)) return false;
+            return kickBodyFail(4);
+        for (const auto* p : {&b.hand[side], &b.fore[side], &b.upper[side], &b.shoulder[side]}) if (!plain(p->part)) return kickBodyFail(5);
     }
     unsigned seen = 0;
     for (unsigned leg = 0; leg < 2; ++leg) {
         const auto shin = *reinterpret_cast<uintptr_t*>(legArray + leg * 8);
-        if (!kickOwned(shin, root) || *reinterpret_cast<int*>(shin + field::bodyPart::role) != 0x10) return false;
+        if (!kickOwned(shin, root) || *reinterpret_cast<int*>(shin + field::bodyPart::role) != 0x10) return kickBodyFail(6);
         const auto thigh = kickParentOf(shin);
-        if (!kickOwned(thigh, root) || kickParentOf(thigh) != pelvis) return false;
+        if (!kickOwned(thigh, root) || kickParentOf(thigh) != pelvis) return kickBodyFail(7);
         uintptr_t foot = 0;
         for (int i = 1; i < count; ++i) {
             const auto part = *reinterpret_cast<uintptr_t*>(parts + size_t(i) * 8);
             if (kickOwned(part, root) && kickParentOf(part) == shin && *reinterpret_cast<int*>(part + field::bodyPart::role) == 0x13) {
-                if (foot) return false;
+                if (foot) return kickBodyFail(8);
                 foot = part;
             }
         }
-        if (!foot || !plain(thigh) || !plain(shin) || !plain(foot)) return false;
+        if (!foot || !plain(thigh) || !plain(shin) || !plain(foot)) return kickBodyFail(9);
         KickPart t{}, s{}, f{};
-        if (!take(t, thigh) || !take(s, shin) || !take(f, foot)) return false;
+        if (!take(t, thigh) || !take(s, shin) || !take(f, foot)) return kickBodyFail(10);
         const auto hip = fp::xr::rotate(fp::xr::conjugate(b.pelvis.pose.orientation), fp::xr::sub(t.pose.position, b.pelvis.pose.position));
-        if (std::abs(hip.x) < .02f) return false;
+        if (std::abs(hip.x) < .02f) return kickBodyFail(11);
         const unsigned side = hip.x > 0 ? 0 : 1; // positive native X is left
-        if (seen & (1u << side)) return false;
+        if (seen & (1u << side)) return kickBodyFail(12);
         seen |= 1u << side;
         b.thigh[side] = t;
         b.shin[side] = s;
         b.foot[side] = f;
         b.supported[side] = kickShinSupported(shin);
     }
-    if (seen != 3) return false;
+    if (seen != 3) return kickBodyFail(13);
     // The hands' slots and the hips' sides must agree on which side is left.
-    return fp::xr::dot(fp::xr::sub(b.upper[0].pose.position, b.upper[1].pose.position), fp::xr::sub(b.thigh[0].pose.position, b.thigh[1].pose.position)) > 0;
+    return fp::xr::dot(fp::xr::sub(b.upper[0].pose.position, b.upper[1].pose.position), fp::xr::sub(b.thigh[0].pose.position, b.thigh[1].pose.position)) > 0 ||
+           kickBodyFail(14);
 }
 
 // One kick, from the step the game's kick clip starts to the step it ends (pose-builder thread).

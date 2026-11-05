@@ -1172,7 +1172,15 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .boolean("jump_fault", motionJumpFault.load())
         .unum("jump_push_steps", jumpPushApplied.load())
         .fixed("jump_last_rise_cm", double(jumpPushRiseMm.load()) / 10.0, 1) // the root's peak rise of the last jump
-        .fixed("jump_takeoff_cm_s", double(fp::jumpTakeoffSpeed()), 1)
+        .fixed("jump_takeoff_cm_s", double(fp::jumpTakeoffSpeed(float(jumpLastPeakMm.load()) / 10.f)), 1)
+        .fixed("jump_peak_target_cm", double(jumpLastPeakMm.load()) / 10.0, 1)
+        .boolean("jump_travelling", jumpLastTravelling.load() != 0)    // +12EA at the last takeoff
+        .fixed("jump_support_scale", double(jumpLastScaleMilli.load()) / 1000.0, 3) // +410 at the last takeoff
+        .unum("jump_travel_lost", jumpTravelLost.load())               // +12EA cleared while still in the air
+        .boolean("jump_push_active", jumpPushActive.load())
+        .fixed("kick_stance_factor", double(kickStanceFactor < 0 ? 0.f : kickStanceFactor), 2) // KickStanceStiffness
+        .unum("kick_stance_applied", kickStanceApplied.load())   // kicks whose standing leg was stiffened
+        .unum("kick_stance_kept_game", kickStanceKeptGame.load()) // parts the game rewrote meanwhile (left as the game set)
         .unum("refused_state_last", motionRefusedState.load()); // character+DF4 at the last "state" refusal
     for (const bool jump : {false, true}) { // refused key presses by reason (fp::MotionRefusal)
         j.object(jump ? "jump_refused" : "kick_refused");
@@ -1204,6 +1212,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
             .str("last_mode", kickLastMode.load() == 1 ? "lower_body" : kickLastMode.load() == 0 ? "full_body" : "none")
             .boolean("last_mirrored", kickLastMirror.load() == 1)
             .fixed("native_peak_progress", peak >= 0 ? peak / 1000.0 : -1.0, 3);
+        { // which kickReadBody check refused the body, "check: count; ..." (pose_drive.inl numbers them)
+            std::string reasons;
+            for (unsigned k = 0; k < kickBodyChecks; ++k)
+                if (const unsigned n = kickBodyRefusals[k].load())
+                    reasons += (reasons.empty() ? "" : "; ") + std::to_string(k) + ": " + std::to_string(n);
+            j.str("refused_body_reasons", reasons.c_str());
+        }
         j.object("stance_by_class"); // the game's stance at each class's last kick start: hands (cm), lead foot, twist
         for (size_t c = 0; c < size_t(fp::kick::WeaponClass::count); ++c) {
             const auto& s = kickStances[c];
@@ -1615,6 +1630,7 @@ static DWORD runSession() {
         }
         InterlockedExchange(&stopping, 1);
         balanceShadowFlush(); // the summary as of the stop; it resumes if the mod is turned back on
+        kickStanceRestore();  // the kick's standing leg back to the game's own motor strength
         profileStop("mod_stopped");
         profilePulse(false);
         trackingReceiver.stop();
