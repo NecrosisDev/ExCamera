@@ -275,15 +275,16 @@ static void shadowAppend(const wchar_t* suffix, const char* text) {
     CloseHandle(file);
 }
 
-static const wchar_t* shadowProblemText(bs::Event e) {
+// The rest of "Balance check: you ..." (player) or "Balance check: an NPC ..." (anyone else).
+static const wchar_t* shadowProblemText(bs::Event e, bool player) {
     switch (e) {
-    case bs::Event::nonFinite: return L"has broken body maths (a NaN position)";
+    case bs::Event::nonFinite: return player ? L"have broken body maths (a NaN position)" : L"has broken body maths (a NaN position)";
     case bs::Event::flung: return L"had a body part flung faster than 30 m/s";
-    case bs::Event::floating: return L"is upright with no foot on the ground (floating)";
-    case bs::Event::shaking: return L"is shaking while standing still";
-    case bs::Event::stuckDown: return L"has been on the ground for 15 s";
+    case bs::Event::floating: return player ? L"are upright with no foot on the ground (floating)" : L"is upright with no foot on the ground (floating)";
+    case bs::Event::shaking: return player ? L"are shaking while standing still" : L"is shaking while standing still";
+    case bs::Event::stuckDown: return player ? L"have been on the ground for 15 s" : L"has been on the ground for 15 s";
     case bs::Event::failedGetUp: return L"failed to get up";
-    case bs::Event::fallByRule: return L"fell by a rule while its weight was over its feet";
+    case bs::Event::fallByRule: return player ? L"fell by a rule while your weight was over your feet" : L"fell by a rule while its weight was over its feet";
     default: return L"";
     }
 }
@@ -463,7 +464,7 @@ static void balanceShadowPulse() {
         }
         wchar_t text[256];
         swprintf_s(text, L"Balance check: %s %s%s.%s", e.player ? L"you" : L"an NPC",
-                   e.airborne ? L"fell by the game's in-the-air rule (no foot near the ground)" : shadowProblemText(e.kind),
+                   e.airborne ? L"fell by the game's in-the-air rule (no foot near the ground)" : shadowProblemText(e.kind, e.player),
                    e.kick ? L" (kick)" : L"", shadowSuppressed[k] ? L" (more since the last notice: see the balance log)" : L"");
         modMessage(NoticeKind::warning, text);
         shadowLastFlag[k] = now, shadowSuppressed[k] = 0;
