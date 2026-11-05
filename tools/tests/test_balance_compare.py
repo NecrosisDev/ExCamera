@@ -49,6 +49,16 @@ class BalanceCompareTests(unittest.TestCase):
             self.assertEqual(balance_compare.main([base, weaker]), 1)
             self.assertEqual(balance_compare.main([base, ruled]), 1)
 
+    def test_kick_breakdown_lines_change_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = self.write(folder, 'a.txt', BASE)
+            tagged = self.write(folder, 'b.txt', BASE + 'event.fall_by_rule.kick=1\nevent.recovered.kick=3\n'
+                                'kick_rows_dropped=0\n')
+            plain = balance_compare.compare(balance_compare.read(base), balance_compare.read(base))
+            with_kick = balance_compare.compare(balance_compare.read(base), balance_compare.read(tagged))
+            self.assertEqual(plain, with_kick)
+            self.assertEqual(balance_compare.main([base, tagged]), 0)
+
     def test_worse_problem_rate_or_any_fault_fails(self):
         with tempfile.TemporaryDirectory() as folder:
             base = self.write(folder, 'a.txt', BASE)

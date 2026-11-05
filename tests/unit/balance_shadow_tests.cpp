@@ -176,6 +176,17 @@ bool getting_up_back_to_lying_is_a_failed_get_up_and_long_down_is_stuck() {
     return true;
 }
 
+bool kick_window_covers_the_kick_and_its_tail() {
+    b::KickWindow k;
+    CHECK(!k.feed(0, 0));
+    CHECK(k.feed(b::kickMotion, 100) && k.feed(b::kickMotion, 900));
+    CHECK(k.feed(0, 1000) && k.feed(0, 900 + b::kickTailMs - 1));
+    CHECK(!k.feed(0, 900 + b::kickTailMs));
+    CHECK(!k.feed(5, 5000));
+    CHECK(k.feed(b::kickMotion, 6000)); // a second kick opens a new window
+    return true;
+}
+
 bool spread_quantiles_are_bin_edges() {
     b::Spread s;
     s.low = 0, s.high = 32;
@@ -201,6 +212,7 @@ int main() {
         {"falls are split by the capture point", falls_are_split_by_the_capture_point},
         {"a stumble that comes back inside is a recovery", a_stumble_that_comes_back_inside_is_a_recovery},
         {"failed get-up and stuck down", getting_up_back_to_lying_is_a_failed_get_up_and_long_down_is_stuck},
+        {"kick window covers the kick and its tail", kick_window_covers_the_kick_and_its_tail},
         {"spread quantiles are bin edges", spread_quantiles_are_bin_edges},
     });
 }

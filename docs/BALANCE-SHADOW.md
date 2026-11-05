@@ -38,6 +38,7 @@ If a game update moves any of them, the shadow switches itself off; nothing else
 | `character::chestPosition` +BE8, `tone` +590 | the chest point the lean rule uses; muscle tone |
 | `contact::position` +3C, `contact::groundHeight` +90 | each leg contact's point and the ground under it |
 | (existing) part nodes `+F0` / `+120` / `+150`, parts, legs, state, motion | the body itself |
+| (existing) `character::balance` +10B8 | the balance value, logged in the kick log only |
 
 ## What it measures, per fighter, per physics step
 
@@ -86,12 +87,25 @@ They're written beside `first-person.ini` in a `balance` folder, one set per ses
 time):
 
 * `balance-<stamp>-events.csv`: one row per event and per game physics report: time, kind, fighter, player,
-  state, margin, height, uprightness.
+  state, margin, height, uprightness, cause. `cause` is `kick` for the player's events inside the kick window
+  (below) and empty otherwise; other fighters' events are never tagged. It is a column, not an event kind: a fall
+  in the window is still `fall_physical` or `fall_by_rule`, a caught stumble still `recovered`, and every total,
+  rate and the resilience stay exactly as they were. A problem flagged on screen inside the window ends in
+  "(kick)".
+* `balance-<stamp>-kick.csv`: the kick lean log. While the player's motion is 13 ("Kick") and for 1.5 s after
+  its last kick step, one row per physics step: time, state (+DF4), motion, uprightness (+12B0), the lean
+  counter (+12B4), balance (+10B8), the chest point contactFrame leans from (`chestPosition` +BE8), our measured
+  centre of mass and capture point (the game keeps no capture point; the support point the lean rule tests is
+  not a stored field, so the capture point and the margin to the feet stand in for it), the margin, and the first
+  two legs' contacts in the game's leg order (`contact::position`, and down by the same support test the shadow
+  uses: support flag 2 and within 20 of its ground). Read-only, with the shadow's own reads and guards.
 * `balance-<stamp>-seconds.csv`: one row per fighter per second: step rate, state, motion, uprightness, foot down,
   margin, height, shake.
 * `balance-<stamp>-summary.txt`: rewritten every 10 s and when the mod stops. It holds:
   * totals and rates per standing fighter-minute;
   * **resilience**: stumbles caught ÷ (caught + real falls);
+  * the breakdown by cause: `event.<kind>.kick=N`, how many of each count happened in the player's kick window
+    (already included in `event.<kind>`), and `kick_rows_dropped`;
   * the spreads (mean, p50, p95, p99, peak) of how deep and how long caught stumbles were, margin, shake, step
     rate and both costs;
   * the faults, and `balance_model=game`.

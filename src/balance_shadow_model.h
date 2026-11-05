@@ -188,6 +188,20 @@ inline constexpr unsigned recoverSteps = 17;    // 0.2 s back inside the feet en
 inline bool dead(unsigned state) { return (state & 0x800) != 0; }   // the game's own death test (CV section 1)
 inline bool down(unsigned state) { return (state & 0xA00) != 0; }   // on the ground, getting up, scripted down, dead
 inline constexpr int jumpMotion = 18;                              // the game's "Jump" clip
+inline constexpr int kickMotion = 13;                              // the game's "Kick" clip
+inline constexpr uint64_t kickTailMs = 1500;                       // the kick window runs on this long after it
+
+// The player's kick window: while motion 13 plays and for kickTailMs after its last step (the kick lean log and
+// the cause=kick column on the shadow's events). It only labels: no event is counted differently inside it.
+struct KickWindow {
+    bool active = false;
+    uint64_t until = 0;
+    bool feed(int motion, uint64_t nowMs) {
+        if (motion == kickMotion) active = true, until = nowMs + kickTailMs;
+        else if (active && nowMs >= until) active = false;
+        return active;
+    }
+};
 
 // One fighter's running state. feed() returns a bit mask of the events that started this step; a condition
 // that lasts reports once, when it reaches its duration, and again only after it has cleared.

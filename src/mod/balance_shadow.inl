@@ -6,7 +6,8 @@
 // Physics thread: balanceShadowObserve (combat.inl, after the native update). Worker: balanceShadowPulse
 // (session loop) writes Documents\ExCamera\balance\ (or a portable copy's own folder) and flags problems
 // through modMessage (the game's own log line). Optional group balanceShadow; off with
-// [Diagnostics] BalanceShadow=0 in first-person.ini.
+// [Diagnostics] BalanceShadow=0 in first-person.ini. While the player kicks (motion 13 and 1.5 s after), each step
+// is also logged to balance-<stamp>-kick.csv and the player's events carry cause=kick (docs/BALANCE-SHADOW.md).
 #include "../balance_shadow_model.h"
 namespace bs = fp::balance;
 
@@ -21,6 +22,7 @@ struct ShadowEvent {
     bs::Event kind = bs::Event::count;
     unsigned state = 0;
     float margin = 0, height = 0, uprightness = 0;
+    bool kick = false; // the player's event inside the kick window (cause=kick)
 };
 struct ShadowFighter {
     uintptr_t root = 0;
@@ -47,6 +49,22 @@ static uint64_t shadowSteps = 0, shadowStandingSteps = 0, shadowPlayerSteps = 0;
 static bs::Spread shadowRecoveryDepth{-60, 0}, shadowRecoverySeconds{0, 2}, shadowMargin{-60, 60}, shadowShake{0, 8000}, shadowRate{0, 166}, shadowCostUs{0, 200},
     shadowUpdateUs{0, 2000};
 static std::atomic<unsigned> shadowReadFaults{0};
+// The kick window (player only) and its log: one row per physics step, drained by the worker (under shadowLock).
+static bs::KickWindow shadowKick;
+static uint32_t shadowKickTotals[size_t(bs::Event::count)]{}; // events inside the window, a breakdown of shadowTotals
+struct ShadowKickRow {
+    ULONGLONG at = 0;
+    unsigned state = 0;
+    int motion = 0, leanCounter = 0;
+    float uprightness = 0, balance = 0, margin = 0;
+    bs::V3 chest{}, com{}, foot[2]{};
+    bs::V2 capture{};
+    bool footDown[2]{};
+    unsigned feet = 0;
+};
+constexpr unsigned shadowKickRing = 512;
+static ShadowKickRow shadowKickRows[shadowKickRing];
+static unsigned shadowKickHead = 0, shadowKickCount = 0, shadowKickDropped = 0;
 
 // What one physics step read (physics thread, stack). Plain data so the reader can use SEH.
 struct ShadowRead {
@@ -57,6 +75,13 @@ struct ShadowRead {
     float ground = 0;
     unsigned grounded = 0;
     bs::GameState game{};
+    // For the kick lean log: the lean counter, balance, the chest point contactFrame leans from, and the first two
+    // legs' contacts (position, and down as the support test below has it), in the game's leg order.
+    int leanCounter = 0;
+    float balance = 0;
+    bs::V3 chest{}, leg[2]{};
+    bool legDown[2]{};
+    unsigned legs = 0;
 };
 
 // The character being updated and its parts are the game's own live objects, read on the game's thread in the
@@ -74,6 +99,10 @@ static bool shadowRead(uintptr_t root, ShadowRead& r) {
         r.game.footDown = *reinterpret_cast<const float*>(root + field::character::footDown) > .5f;
         r.game.uprightness = *reinterpret_cast<const float*>(root + field::character::uprightness);
         r.game.stepping = *reinterpret_cast<const uint8_t*>(root + field::character::stepping) != 0;
+        r.leanCounter = *reinterpret_cast<const int*>(root + field::character::leanCounter);
+        r.balance = *reinterpret_cast<const float*>(root + field::character::balance);
+        const auto chest = reinterpret_cast<const float*>(root + field::character::chestPosition);
+        r.chest = {chest[0], chest[1], chest[2]};
         const int count = *reinterpret_cast<const int*>(root + field::character::partCount);
         const auto parts = *reinterpret_cast<const uintptr_t*>(root + field::character::parts);
         if (count <= 0 || count > int(shadowPartLimit) || !shadowReadable(parts, size_t(count) * 8)) return false;
@@ -92,6 +121,11 @@ static bool shadowRead(uintptr_t root, ShadowRead& r) {
                 const auto at = reinterpret_cast<const float*>(contact + field::contact::position);
                 const float ground = *reinterpret_cast<const float*>(contact + field::contact::groundHeight);
                 const unsigned flags = *reinterpret_cast<const unsigned*>(contact + field::contact::flags);
+                if (i < 2) {
+                    r.leg[i] = {at[0], at[1], at[2]};
+                    r.legDown[i] = (flags & 2) && std::isfinite(at[1]) && std::isfinite(ground) && at[1] <= ground + 20;
+                    r.legs = unsigned(i) + 1;
+                }
                 // A support contact within 20 units of its ground: the game's own "foot down" test without its
                 // small per-contact offset (supportHeight 0x16F84B-0x16F872).
                 if (!(flags & 2) || !std::isfinite(at[1]) || !std::isfinite(ground) || at[1] > ground + 20) continue;
@@ -166,6 +200,7 @@ static void balanceShadowObserve(uintptr_t root, double updateUs) {
         ShadowFighter& f = shadowSlotFor(root, now);
         f.player = player;
         f.lastSeen = now;
+        const bool kick = player && shadowKick.feed(read.game.motion, now);
         const uint32_t events = f.tracker.feed(read.game, m);
         ++f.steps, ++shadowSteps;
         if (player) ++shadowPlayerSteps;
@@ -183,6 +218,7 @@ static void balanceShadowObserve(uintptr_t root, double updateUs) {
         for (unsigned e = 0; e < unsigned(bs::Event::count); ++e) {
             if (!(events & (1u << e))) continue;
             ++f.events[e], ++shadowTotals[e];
+            if (kick) ++shadowKickTotals[e];
             if (bs::Event(e) == bs::Event::recovered) {
                 shadowRecoveryDepth.add(f.tracker.lastStumbleDepth);
                 shadowRecoverySeconds.add(float(f.tracker.lastStumbleSteps) / bs::stepsPerSecond);
@@ -192,7 +228,16 @@ static void balanceShadowObserve(uintptr_t root, double updateUs) {
                 continue;
             }
             shadowEvents[(shadowEventHead + shadowEventCount++) % shadowEventRing] =
-                {now, f.id, player, bs::Event(e), read.game.state, m.margin, m.height, read.game.uprightness};
+                {now, f.id, player, bs::Event(e), read.game.state, m.margin, m.height, read.game.uprightness, kick};
+        }
+        if (kick) {
+            if (shadowKickCount == shadowKickRing) ++shadowKickDropped;
+            else {
+                ShadowKickRow& k = shadowKickRows[(shadowKickHead + shadowKickCount++) % shadowKickRing];
+                k = {now, read.game.state, read.game.motion, read.leanCounter, read.game.uprightness, read.balance,
+                     m.margin, read.chest, m.com, {read.leg[0], read.leg[1]}, m.xcom,
+                     {read.legDown[0], read.legDown[1]}, read.legs};
+            }
         }
         QueryPerformanceCounter(&t1);
         shadowCostUs.add(float(shadowMicroseconds(t0, t1)));
@@ -296,6 +341,9 @@ static void shadowWriteSummary() {
     for (unsigned e = 0; e < unsigned(bs::Event::count); ++e)
         put("event.%s=%u\r\nrate.%s_per_fighter_minute=%.4f\r\n", bs::eventNames[e], shadowTotals[e], bs::eventNames[e],
             minutes > 0 ? double(shadowTotals[e]) / minutes : 0.0);
+    // By cause: how much of each count happened in the player's kick window (already inside the totals above).
+    for (unsigned e = 0; e < unsigned(bs::Event::count); ++e) put("event.%s.kick=%u\r\n", bs::eventNames[e], shadowKickTotals[e]);
+    put("kick_rows_dropped=%u\r\n", shadowKickDropped);
     {
         const double recovered = shadowTotals[size_t(bs::Event::recovered)],
                      fell = shadowTotals[size_t(bs::Event::fallPhysical)];
@@ -347,7 +395,10 @@ static void balanceShadowStart(bool updateHooked) {
     }
     shadowStarted = shadowLastSecond = shadowLastSummary = GetTickCount64();
     shadowReadGameLog(true);
-    shadowAppend(L"events.csv", "ms,event,fighter,player,state,margin_cm,height_cm,uprightness\r\n");
+    shadowAppend(L"events.csv", "ms,event,fighter,player,state,margin_cm,height_cm,uprightness,cause\r\n");
+    shadowAppend(L"kick.csv", "ms,state,motion,uprightness,lean_counter,balance,chest_x,chest_y,chest_z,com_x,com_y,com_z,"
+                              "capture_x,capture_z,margin_cm,foot0_x,foot0_y,foot0_z,foot0_down,foot1_x,foot1_y,foot1_z,"
+                              "foot1_down,legs\r\n");
     shadowAppend(L"seconds.csv", "ms,fighter,player,steps_per_s,state,motion,uprightness,foot_down,margin_cm,height_cm,shake_cm_s2\r\n");
     balanceShadowEnabled = true;
 }
@@ -357,19 +408,43 @@ static void balanceShadowPulse() {
     if (!balanceShadowEnabled.load()) return;
     const ULONGLONG now = GetTickCount64();
     ShadowEvent drained[shadowEventRing];
-    unsigned count = 0;
+    static ShadowKickRow kicks[shadowKickRing];
+    unsigned count = 0, kickCount = 0;
     AcquireSRWLockExclusive(&shadowLock);
     while (shadowEventCount && count < shadowEventRing) {
         drained[count++] = shadowEvents[shadowEventHead];
         shadowEventHead = (shadowEventHead + 1) % shadowEventRing, --shadowEventCount;
     }
+    while (shadowKickCount && kickCount < shadowKickRing) {
+        kicks[kickCount++] = shadowKickRows[shadowKickHead];
+        shadowKickHead = (shadowKickHead + 1) % shadowKickRing, --shadowKickCount;
+    }
     ReleaseSRWLockExclusive(&shadowLock);
+    if (kickCount) { // the kick lean log: one row per physics step of the window
+        static char kickText[shadowKickRing * 280];
+        int n = 0;
+        for (unsigned i = 0; i < kickCount && n >= 0 && size_t(n) < sizeof kickText; ++i) {
+            const ShadowKickRow& k = kicks[i];
+            n += snprintf(kickText + n, sizeof kickText - size_t(n),
+                          "%llu,0x%X,%d,%.4f,%d,%.3f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d,%.1f,%.1f,"
+                          "%.1f,%d,%u\r\n",
+                          (unsigned long long)(k.at - shadowStarted), k.state, k.motion, double(k.uprightness), k.leanCounter,
+                          double(k.balance), double(k.chest.x), double(k.chest.y), double(k.chest.z), double(k.com.x),
+                          double(k.com.y), double(k.com.z), double(k.capture.x), double(k.capture.z), double(k.margin),
+                          double(k.foot[0].x), double(k.foot[0].y), double(k.foot[0].z), k.footDown[0] ? 1 : 0,
+                          double(k.foot[1].x), double(k.foot[1].y), double(k.foot[1].z), k.footDown[1] ? 1 : 0, k.feet);
+        }
+        if (n > 0) {
+            kickText[(std::min)(size_t(n), sizeof kickText - 1)] = 0;
+            shadowAppend(L"kick.csv", kickText);
+        }
+    }
     for (unsigned i = 0; i < count; ++i) {
         const ShadowEvent& e = drained[i];
         char row[200];
-        snprintf(row, sizeof row, "%llu,%s,%u,%d,0x%X,%.1f,%.1f,%.3f\r\n", (unsigned long long)(e.at - shadowStarted),
+        snprintf(row, sizeof row, "%llu,%s,%u,%d,0x%X,%.1f,%.1f,%.3f,%s\r\n", (unsigned long long)(e.at - shadowStarted),
                  bs::eventNames[size_t(e.kind)], e.fighter, e.player ? 1 : 0, e.state, double(e.margin), double(e.height),
-                 double(e.uprightness));
+                 double(e.uprightness), e.kick ? "kick" : "");
         shadowAppend(L"events.csv", row);
         if (!bs::eventIsProblem[size_t(e.kind)]) continue;
         // On screen through the game's log, at most once per problem kind every 15 s; the rest are counted.
@@ -379,8 +454,8 @@ static void balanceShadowPulse() {
             continue;
         }
         wchar_t text[256];
-        swprintf_s(text, L"Balance check: %s %s.%s", e.player ? L"you" : L"an NPC", shadowProblemText(e.kind),
-                   shadowSuppressed[k] ? L" (more since the last notice: see the balance log)" : L"");
+        swprintf_s(text, L"Balance check: %s %s%s.%s", e.player ? L"you" : L"an NPC", shadowProblemText(e.kind),
+                   e.kick ? L" (kick)" : L"", shadowSuppressed[k] ? L" (more since the last notice: see the balance log)" : L"");
         modMessage(NoticeKind::warning, text);
         shadowLastFlag[k] = now, shadowSuppressed[k] = 0;
         ++shadowFlagsShown;
