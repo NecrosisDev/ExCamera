@@ -25,6 +25,7 @@ import native_contracts  # noqa: E402
 import release  # noqa: E402
 import run_cpp_tests  # noqa: E402
 import signatures  # noqa: E402
+import vr_tester  # noqa: E402
 import xr_contracts  # noqa: E402
 
 
@@ -569,6 +570,43 @@ class BuildHelperTests(unittest.TestCase):
             run_cpp_tests.extra_sources_for(ROOT / 'tests/unit/core_headers_tests.cpp'),
             [],
         )
+
+
+
+class VrTesterTests(unittest.TestCase):
+    def _openxr_zip(self, folder, version, files=None):
+        files = files if files is not None else {
+            'ExanimaFirstPerson.dll': b'dll', 'ExCamera.exe': b'exe', 'openxr_loader.dll': b'loader',
+            'manifest.toml': f'version = "{version}"\n'.encode(), 'README.txt': b'readme'}
+        with zipfile.ZipFile(Path(folder) / f'ExCamera-{version}-openxr.zip', 'w') as z:
+            for name, data in files.items():
+                z.writestr(name, data)
+
+    def test_package_adds_filled_readme_and_keeps_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._openxr_zip(d, '0.3.0')
+            target = vr_tester.package(d, '0.3.0', 'abcdef1234567890')
+            self.assertEqual(target.name, 'ExCamera-0.3.0-vr-tester.zip')
+            with zipfile.ZipFile(target) as z:
+                self.assertIn('openxr_loader.dll', z.namelist())
+                readme = z.read('VR-TESTER-README.txt').decode('utf-8')
+            self.assertIn('Version 0.3.0, build abcdef123456', readme)
+            self.assertNotIn('{', readme)
+            self.assertIn('\r\n', readme)
+
+    def test_package_rejects_missing_loader_bad_manifest_and_bad_commit(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._openxr_zip(d, '0.3.0', {'ExanimaFirstPerson.dll': b'x', 'ExCamera.exe': b'x', 'manifest.toml': b'version = "0.3.0"\n'})
+            with self.assertRaises(ValueError):
+                vr_tester.package(d, '0.3.0')
+        with tempfile.TemporaryDirectory() as d:
+            self._openxr_zip(d, '0.3.0', {'ExanimaFirstPerson.dll': b'x', 'ExCamera.exe': b'x', 'openxr_loader.dll': b'x', 'manifest.toml': b'version = "0.2.0"\n'})
+            with self.assertRaises(ValueError):
+                vr_tester.package(d, '0.3.0')
+            with self.assertRaises(ValueError):
+                vr_tester.package(d, '0.3.0', 'not-a-sha')
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(FileNotFoundError):
+            vr_tester.package(d, '0.3.0')
 
 
 if __name__ == '__main__':

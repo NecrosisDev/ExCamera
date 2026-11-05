@@ -1,0 +1,75 @@
+name: VR tester build
+
+# Private tester package of the OpenXR build. Manual only: it never runs on a push, never tags,
+# and never creates a GitHub Release. The ZIP is a workflow artifact for invited testers.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: excamera-vr-tester-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vr-tester:
+    name: Windows x64 (OpenXR tester ZIP)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      OPENXR_SDK_TAG: release-1.1.43
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      - name: Check generated compatibility tables
+        shell: pwsh
+        run: python tools/check_generated.py
+
+      - name: Run Python unit tests
+        shell: pwsh
+        run: python -m unittest discover -s tools/tests -v
+
+      - name: Run C++ header unit tests
+        shell: pwsh
+        run: python tools/run_cpp_tests.py
+
+      # The loader is built from the pinned SDK source rather than downloaded as a binary.
+      - name: Fetch OpenXR SDK
+        uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/OpenXR-SDK
+          ref: ${{ env.OPENXR_SDK_TAG }}
+          path: openxr-sdk
+          persist-credentials: false
+
+      - name: Build openxr_loader.dll
+        shell: pwsh
+        run: |
+          cmake -S openxr-sdk -B openxr-sdk/build -G "Visual Studio 17 2022" -A x64 -DDYNAMIC_LOADER=ON
+          cmake --build openxr-sdk/build --config Release --target openxr_loader
+
+      - name: Build and package the OpenXR runtime with warnings as errors
+        shell: pwsh
+        run: python build.py --openxr-sdk openxr-sdk --package --wx
+
+      - name: Make the tester ZIP
+        shell: pwsh
+        run: python tools/vr_tester.py --commit "${{ github.sha }}"
+
+      - name: Upload tester ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          path: build/ExCamera-*-vr-tester.zip
+          name: ExCamera-vr-tester
+          if-no-files-found: error
+          retention-days: 14
