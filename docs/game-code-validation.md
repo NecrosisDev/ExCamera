@@ -26,7 +26,8 @@ Date: 2026-11-05.
 
 1. **Remove "Winded" from Hurt and winded, or turn it into a magic effect.** Recommended: remove it. The game has
    no stamina bar for it to read.
-2. **Fix the "dead" check everywhere to use the game's death state (+DF4 == 0x800).** Recommended: yes. It's a
+2. **Fix the "dead" check everywhere to use the game's death test, `(+DF4 & 0x800) != 0`.** That covers both
+   dying (0x800) and corpse (0xA00), and it's the same test the game itself makes 32 times. Recommended: yes. It's a
    straight correction and the feature thread owns it.
 3. **Plumbing vs game rules.** Camera, render and scene fields are located in named game routines, but their meaning
    hasn't been re-decoded line by line. Recommended: keep the plumbing (removing it removes the mod) and remove or
@@ -60,8 +61,8 @@ Date: 2026-11-05.
 | Max health (`healthMax`) | +103C | HUD divides both health values by it. The part past restorable is drawn red (13C880 colours 0x2BA470–4A0). | **PROVEN** | Hurt effect, wound sizing |
 | Blue bar (`stamina`, `staminaCeiling`) | +D74 / +D78 | Spent only by 17A640, which only spell classes call: TForceBlastEffect, TForceWaveEffect, TForceTorrentEffect, TForceBarrierEffect, TPwrForceKinesis_S, TPwrDispVanish_I, TPwrDispLongDoor_I, TPwrEnergyShock_I. Refilled by 17A6B0. The AI spell picker B7E20 compares +D74×200 with spell cost. +D78 is read only by the HUD, the refill, init and copy routines. | **PROVEN = MAGIC**. "Stamina" label **WRONG** | **Winded** screen effect (view_effects.inl:5712–5736): **WRONG**. Its "low-stamina idle" claim has no game code. |
 | Balance (`balance`, `balanceMax`) | +10B8 / +10BC | 169A4C adds 0.005 per physics step. Impacts multiply it down (1587E0, from 159A60/157FF0). Force spells lower it (231710, 2393A0, 23C5C0, 23D680, 242A00). Below max − 0.05, TMotileDynamics plays the recover motion (169B99 → 179810). Death timing uses (1.2 − balance)×300 (156504). | **PROVEN** (hidden balance, not on the HUD) | Kick gate "balance ≥ max − 0.05" (combat.inl:141, input.inl:1515), the same threshold the game uses |
-| "Dead" bit (`lifeFlags & 0x100`) | +DF8 bit 0x100 | Set only by 17B100 (from spell effects TTendrilEmitter 1A2CE0, 1A1550 and 28F4F0). 17B100 deals damage, sets a 500–700 ms timer (+11B4), and plays motion 3. TMotileDynamics clears it when the timer runs out (169B8A) and meanwhile plays motion 0x21 and sets balance to max − 0.5. | **WRONG**: it's a short spell-hit stun, not death | camera.inl:113 (opponent alive), combat.inl:12, input.inl:695, input.inl:1513, motions.inl:25 and :88, overlay.inl:891, camera.inl:406/665 and camera_motion.h:474 (knockdown follow) |
-| Death | +DF4 == 0x800 (dying) or 0xA00 (corpse) | The die routine 156480 writes 0x800 (1564D6). It's called from bodyDamage and bleed when health < 0.01, and 167ED0 also writes it. While the state is 0x800, 167ED0 runs every step and fades +590 by 0.003. Once that drops under 0.25 it switches the body's physics off (+4C8 = 0) and 156D20 sets 0xA00. 1568E0 then clears combat stance for the corpse. Low health alone doesn't knock you down: between 0.01 and 0.05, 158A10 only plays a warning for the player every 60 s (13D700). | **PROVEN** | Not used by the mod yet (it should be) |
+| "Dead" bit (`lifeFlags & 0x100`) | +DF8 bit 0x100 | Set only by 17B100 (from spell effects TTendrilEmitter 1A2CE0, 1A1550 and 28F4F0). 17B100 deals damage, sets a 500–700 ms timer (+11B4), and plays motion 3. TMotileDynamics clears it when the timer runs out (169B8A) and meanwhile plays motion 0x21 and sets balance to max − 0.5. | **WRONG**: it's a short spell-hit stun, not death | camera.inl:113 (opponent alive), combat.inl:12, input.inl:695, input.inl:1513, motions.inl:25 and :88, overlay.inl:891, camera.inl:406/665 and camera_motion.h:474–482 (knockdown follow), xr_bones.inl ~765, xr_drive.inl ~545. Render has already fixed its copy in wounds.inl. |
+| Death | +DF4 == 0x800 (dying) or 0xA00 (corpse) | The die routine 156480 writes 0x800 (1564D6). It's called from bodyDamage and bleed when health < 0.01, and 167ED0 also writes it. While the state is 0x800, 167ED0 runs every step and fades +590 by 0.003. Once that drops under 0.25 it switches the body's physics off (+4C8 = 0) and 156D20 sets 0xA00. 1568E0 then clears combat stance for the corpse. Low health alone doesn't knock you down: between 0.01 and 0.05, 158A10 only plays a warning for the player every 60 s (13D700). | **PROVEN**. Test it as `(DF4 & 0x800) != 0`, the game's own form | Not used by the mod yet (it should be) |
 | State (`stateFlags`) | +DF4 | The game uses it both as values and as bit masks: it tests &0xAC0, &0xA00, &0x200, &0x40 and &0x10203. Decoded so far: 0x200 = **on the ground** (16A6BA sets it when uprightness +12B0 < 0.3 and +1038 < 25; 156A90 also sets it and clears gait). 0x300 = **getting up** (162C10 picks get-up motion 0xE or 0xF by facing, and 169A20 refills balance faster). 0x800 = **dying**, 0xA00 = **corpse**. 0xAC0 is the game's own "don't interrupt" mask: low balance resets the state to 0 unless state&0xAC0 or state == 2 (169BE6). | 0x200 / 0x300 / 0x800 / 0xA00 **PROVEN**. The mod's mask 0xAC0 is the game's own mask (**PROVEN**). Bit 0x40000 in 0x40204 is never written by the game (dead code). Bit 0x4 and "== 0x20 means right mouse is the game's" are **UNPROVEN**. | Knockdown camera, "upright" gate, kick gates, attack cue |
 | Bleeding rate | +10DC | 168410 (TMotileDynamics step) adds 0.03×inflow(+10D4), caps at 20, drains current health by 4e-5×rate and, above 1, restorable by (0.002×rate)², decays 0.1/step without inflow, and kills at health < 0. | **PROVEN**. Comment "drains health and balance" is **WRONG**: it drains current and restorable health. | Wounds / blood |
 | Crouch (`duckAmount`) | +100C | Written by TPlayerBehaviour (C25B9). TMotileDynamics lowers it by 0.02 per step (1698E3). | **PROVEN** location and decay; "the game's crouch" **UNPROVEN** (no key handler traced) | Toggle crouch (input.inl:1437, combat.inl:253) |
@@ -120,7 +121,7 @@ depends on the camera hooks in section 4, whose game classes are identified ther
 | First/Third person: defense (Manual), Swing selection | defense hooks 163880/166580/156FB0/162E80 and combatUpdate 169200 (TMotileDynamics methods, **PROVEN** identity), attack starters 157240/157700. Motion range 3–12 and grip table **UNPROVEN** meaning | Hook identity **PROVEN**, rules **UNPROVEN** |
 | Attack wind-up arc, size / opacity / thrusts, Crosshair during a swing, Crosshair out of combat, Aim marker, Aim indicator | motion +9B8, progress +A28, swingBits +1018 & 0x26 | "Thrust" classification and "hit past 0.30" **UNPROVEN** |
 | Blade drag cuts, Stabs sink in, Blade draw gain | impact record +C18–C40 (physicalContact 1590D0), armour rows | Record location **PROVEN**, armour-row meaning **UNPROVEN** |
-| Hurt and winded | Hurt: health/max (**PROVEN**). Winded: blue bar (**WRONG**) | **Remove Winded** |
+| Hurt and winded | Hurt: health/max (**PROVEN**). Winded: blue bar (**WRONG**) | Render branch has removed Winded and Hurt reads +D58 |
 | Wounds, Wound debug highlight | section 2 | Mixed (see section 2) |
 | Hide helmet and hair, Helmet view | headwear render hooks 4E610 (TRenderer), 6B8B0, 6AB40 | Render plumbing; render thread is auditing |
 | See yourself through walls | silhouettePass 4F1D0 (TRenderer / T3DViewport) | Render plumbing |
@@ -130,6 +131,11 @@ depends on the camera hooks in section 4, whose game classes are identified ther
 | Head / eye tracking, Recenter tracking | none (UDP input) | Mod-only |
 | Lean, Lean controls, Lean left/right key | none: hidden legacy rows, ARCHITECTURE.md says lean has no runtime input or pose path | No game claim; nothing to prove |
 | All 25 VR rows | xr_* whole-function byte contracts | Not playable in this build without the OpenXR build. Not audited in this pass |
+
+Render settings are covered row by row in `docs/render-assumptions.md` on branch `claude/project-thread-abkkik`
+(PROVEN / WITNESSED / UNPROVEN per setting). Its open item: the headwear descriptor +0x14 and the renderer
++0x80 → +0xC → +0x14 chain are still UNPROVEN, but they run inside byte-verified game routines, and a wrong value
+falls back to the game's own draw, so they're safe to keep while they're decoded.
 
 ## 4. Every hooked or called game routine (139)
 
