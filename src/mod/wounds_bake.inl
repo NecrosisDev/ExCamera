@@ -677,9 +677,11 @@ static void bakeWoundSkins(gl::Api& g, fp::CueResources& r) {
             WoundSkinSlot& slot = woundSkinSlots[k];
             if (!slot.actor || !slot.diffuse.source || slot.diffuse.failed) continue;
             const float burn = woundBurnLevel(slot.actor), burnScar = woundBurnScar(slot.actor);
-            // Marks change (a new one, a mend) or age (bruises darken, mends close): re-bake then, at most every 2 s.
+            // Marks change (a new one, a mend) or age (bruises darken, mends close, blood dries): re-bake then,
+            // ageing at most every 6 s. Each bake copies all three full-size maps; drying blood re-baked every 2 s
+            // for a minute after every cut, which was most of a session's bakes and nothing an eye follows.
             const bool changed = slot.bakedVersion != woundSkinVersion;
-            const bool aging = slot.ready && now - slot.bakedAt >= 2000;
+            const bool aging = slot.ready && now - slot.bakedAt >= 6000;
             if (slot.ready && !changed && !aging) continue;
             float P[woundSkinMarks][4], Q[woundSkinMarks][4], R[woundSkinMarks][4], corners[woundSkinMarks * 6 + 6][2];
             unsigned count = 0;
