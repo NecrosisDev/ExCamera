@@ -258,6 +258,8 @@ enum Target : uint16_t {
     xrStereoFogState,
     xrStereoBatchFlag,
     xrStereoBatchQueue,
+    textureUnitActive,
+    textureUnitCache,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -513,6 +515,8 @@ inline constexpr const char* targetNames[targetCount] = {
     "xrStereoFogState",
     "xrStereoBatchFlag",
     "xrStereoBatchQueue",
+    "textureUnitActive",
+    "textureUnitCache",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -768,6 +772,8 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "xrStereo",
     "xrStereo",
     "xrStereo",
+    "silhouette",
+    "silhouette",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
 // reference to a global or a vtable, or a call to the function).
@@ -1622,6 +1628,8 @@ inline constexpr Signature signatures[] = {
     {xrStereoBatchQueue, Kind::Relative, false, false, 2, 10, 0, 0x5B7480, "81 ?? ?? ?? ?? ?? FF 03 00 00 7C 08 E8 ?? ?? ?? ?? 0F 1F ?? 8B ?? ?? ?? ?? ??"},
     {xrStereoBatchQueue, Kind::Relative, false, false, 2, 6, 0, 0x5B7480, "8B 15 ?? ?? ?? ?? 83 05 ?? ?? ?? ?? 01 83 3D ?? ?? ?? ?? 01 75 1B 89 D0"},
     {xrStereoBatchQueue, Kind::Relative, false, false, 2, 6, 0, 0x5B7480, "8B ?? ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 01 83 ?? ?? ?? ?? ?? 01 75 1B 89 ??"},
+    {textureUnitCache, Kind::Relative, false, false, 21, 25, 0, 0x49B600, "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ?? 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D ?? ?? ?? ?? 74 14"},
+    {textureUnitActive, Kind::Relative, false, false, 38, 42, 0, 0x49B5F0, "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ?? 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D ?? ?? ?? ?? 74 14"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {

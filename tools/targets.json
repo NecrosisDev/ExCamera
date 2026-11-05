@@ -1113,6 +1113,16 @@
       "rva": "0x5b7480",
       "optionalGroup": "xrStereo",
       "note": "Native draw batch queue snapshotted around OpenXR replay"
+    },
+    "textureUnitActive": {
+      "rva": "0x49b5f0",
+      "note": "DAT_10049B5F0: the texture unit FUN_10006FC30 made active last (its cache; it calls glActiveTexture only on a change)",
+      "optionalGroup": "silhouette"
+    },
+    "textureUnitCache": {
+      "rva": "0x49b600",
+      "note": "DAT_10049B600: FUN_10006FC30's per-unit cache, 16 units of 16 bytes (+0 texture object, +8 GL target); a unit whose entry already holds the object is not bound again",
+      "optionalGroup": "silhouette"
     }
   },
   "slots": {
@@ -1405,7 +1415,9 @@
     "xrStereoShaderManager",
     "xrStereoFogState",
     "xrStereoBatchFlag",
-    "xrStereoBatchQueue"
+    "xrStereoBatchQueue",
+    "textureUnitActive",
+    "textureUnitCache"
   ],
   "reviewed_signatures": [
     {
@@ -10636,6 +10648,28 @@
       "addend": 0,
       "known_rva": "0x5b7480",
       "pattern": "8B ?? ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 01 83 ?? ?? ?? ?? ?? 01 75 1B 89 ??"
+    },
+    {
+      "target": "textureUnitCache",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 21,
+      "insn_end": 25,
+      "addend": 0,
+      "known_rva": "0x49b600",
+      "pattern": "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ?? 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D ?? ?? ?? ?? 74 14"
+    },
+    {
+      "target": "textureUnitActive",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 38,
+      "insn_end": 42,
+      "addend": 0,
+      "known_rva": "0x49b5f0",
+      "pattern": "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ?? 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D ?? ?? ?? ?? 74 14"
     }
   ]
 }

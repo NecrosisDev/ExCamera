@@ -1098,6 +1098,13 @@
       "entry_offset": 0
     },
     {
+      "name": "textureBind",
+      "rva": "0x6fc30",
+      "end_rva": "0x6fd3e",
+      "pattern": "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 B7 B9 42 00 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D 96 B9",
+      "entry_offset": 0
+    },
+    {
       "name": "characterMove",
       "rva": "0x170810",
       "end_rva": "0x1710a2",
@@ -5551,6 +5558,14 @@
       "pattern": "53 57 56 48 8D 64 24 E0 48 89 CB 48 3B 1D FE 55 47 00 0F 84 4A 01 00 00 8B 43 08 3B 05 3F 56 47 00 74 19 8B 53 08 B9 40 8D 00 00 FF 15 CF 41 47 00 8B 43 08 89 05 26 56 47 00 66 90 8B 83 94 00 00 00 48 C1 E0 04 48 8D 44 03 14 48 89 C2 48 89 D1 44 8B 4A 0C 8B 51 04 41 29 D1 48 89 C2 48 89 D1 44 8B 42 08 8B 11 41 29 D0 8B 53 10 8B 48 0C 29 CA 8B 08 FF 15 06 37 47 00 48 8B 0D 8F 55 47 00 E8 5A FF FF FF 40 88 C6 80 BB CC 01 00 00 00 74 54 48 8D 83 BC 01 00 00 48 89 C2 44 8B 4A 0C 8B 52 04 41 29 D1 48 89 C2 44 8B 42 08 8B 12 41 29 D0 8B 53 10 8B 48 0C 29 CA 8B 08 FF 15 CE 36 47 00 83 BB B8 01 00 00 00 0F 85 7E 00 00 00 40 84 F6 0F 85 75 00 00 00 B9 11 0C 00 00 FF 15 DD 37 47 00 90 EB 67 83 BB B8 01 00 00 00 75 13 40 84 F6 74 59 B9 11 0C 00 00 FF 15 D1 37 47 00 90 EB 4B 8B 83 B8 01 00 00 48 6B C0 24 48 8D BC 03 A8 00 00 00 40 84 F6 75 0B B9 11 0C 00 00 FF 15 9C 37 47 00 48 89 F8 44 8B 48 0C 8B 40 04 41 29 C1 48 89 F8 44 8B 40 08 8B 00 41 29 C0 8B 53 10 8B 47 0C 29 C2 8B 0F FF 15 43 36 47 00 48 8B 05 BC 54 47 00 48 89 83 D8 01 00 00 48 89 1D AE 54 47 00 90 48 8D 64 24 20 5E 5F 5B C3",
       "optional_group": "silhouette",
       "provenance": "Whole FUN_100024E90 body (RVA 0x24E90-0x24FFC), byte-exact: binds framebuffer object +8 with glBindFramebuffer(GL_FRAMEBUFFER) only when it differs from DAT_10049A4F0 and then stores it there (0x24EAB, 0x24EC4), so DAT_10049A4F0 names the GL framebuffer the game bound last."
+    },
+    {
+      "name": "silhouette::textureBindBody",
+      "owner": "textureBind",
+      "window_offset": 0,
+      "pattern": "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 B7 B9 42 00 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D 96 B9 42 00 74 14 67 8D 8B C0 84 00 00 FF 15 C7 8D 42 00 89 1D 81 B9 42 00 90 8B 05 7A B9 42 00 48 C1 E0 04 48 8D 15 7F B9 42 00 48 8D 1C 02 48 85 F6 74 06 83 7E 58 00 75 2B 83 3D 59 B9 42 00 00 7D 0F 83 7B 08 00 76 09 8B 4B 08 FF 15 B8 8A 42 00 C7 43 08 00 00 00 00 48 C7 03 00 00 00 00 E9 7A 00 00 00 83 3D 2E B9 42 00 00 7D 24 8B 46 40 3B 43 08 74 1C 83 7B 08 00 76 0A 8B 4B 08 FF 15 85 8A 42 00 90 8B 4E 40 FF 15 6B 8A 42 00 0F 1F 00 8B 46 40 89 43 08 8B 56 58 8B 4B 08 FF 15 A6 8C 42 00 8B 46 18 25 00 02 00 00 75 1C F3 0F 10 05 64 E3 23 00 BA 01 85 00 00 8B 4B 08 0F 28 D0 FF 15 A3 89 42 00 0F 1F 00 8B 05 CA B8 42 00 48 C1 E0 04 48 8D 15 CF B8 42 00 48 89 34 02 90 48 8D 64 24 28 5E 5B C3",
+      "optional_group": "silhouette",
+      "provenance": "Whole FUN_10006FC30 body (RVA 0x6FC30-0x6FD3E), byte-exact: binds texture object rdx on unit ecx only when DAT_10049B600[unit*16] differs; calls glActiveTexture only when the unit differs from DAT_10049B5F0, then stores both. FUN_100073F20 calls it for units 0-4. A raw GL restore after it must restore these caches too (ExCamera silhouette replay)."
     }
   ],
   "closures": {
