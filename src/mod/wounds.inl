@@ -89,6 +89,7 @@ struct Wound {
     float spurt = 0.f;     // an artery's beat timer; spurts: beats left (set at the hit on a deep cut of a limb or neck)
     uint8_t spurts = 0;
     uint8_t kind = 0;
+    uint8_t material = 0; // the struck surface's material id from the game (1..25), 0 until that link is proven
 };
 
 // What the finishing pass takes: view-space marks, nearest first.
@@ -132,6 +133,7 @@ struct WoundUniforms {
     float a[woundShownLimit][4]; // centre; w: half length, cm (a bruise's radius)
     float b[woundShownLimit][4]; // the blade's path, unit; w: kind
     float c[woundShownLimit][4]; // severity 0..1, seed, half width (cm), blood run length (cm)
+    float m[woundShownLimit][4]; // x: the struck surface's material id (factory 0x1EAEE0, 1..25), 0 unknown
 };
 
 static Wound woundStore[woundLimit];
@@ -787,6 +789,8 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         memcpy(out.a[k], a, sizeof a);
         memcpy(out.b[k], b, sizeof b);
         memcpy(out.c[k], c, sizeof c);
+        const float m[4] = {float(w.material), 0.f, 0.f, 0.f};
+        memcpy(out.m[k], m, sizeof m);
     }
     out.count = count;
     activeWoundsCount.store(visible, std::memory_order_relaxed);
