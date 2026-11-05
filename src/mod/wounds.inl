@@ -8,18 +8,13 @@
 
 static std::atomic<float> woundMarks{1.f}; // the Wounds row: 0 off
 
-#include "../settings_model.h" // panel::materialDataDecoded (the F8 rows it greys)
+#include "../settings_model.h" // panel::*MaterialDataDecoded (view_effects.inl)
 // Game reads the render code makes on layouts no game code has yet been shown to read that way
 // (docs/render-assumptions.md, "UNPROVEN"): the held items' light from the light-node fields, their wear
 // and dirt from the item database record. Off until each is proven from the game code; the effects then use
 // their neutral fallbacks (default light from above, unread condition). Blood is lit from the lights the game
 // itself drew the nearby meshes with (MeshLights, below), not from light nodes.
 constexpr bool unprovenRenderReads = false;
-// The held, worn, object and level detail choose each surface's material (steel, wood, leather, mail, paint,
-// cloth, plaster, earth, stone) from its colour, a guess that stands in for game material data; the game's own
-// material data for them is not decoded. Off until it is (render-assumptions.md, "Colour heuristics"):
-// those four effects then draw nothing, and their replay and texture readback do not run.
-constexpr bool colourMaterialGuesses = panel::materialDataDecoded; // settings_model.h: greys the four rows
 
 // The runtime's record, shared with ScriptRuntime's character_hits: version 2 (0x78 bytes); a version 1
 // runtime writes the first 0x70 bytes only (no weapon, kind 0 or 3).

@@ -896,11 +896,9 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.boolean("light_smoothing_hooked", originalShaderSource != nullptr);
     j.unum("light_smoothing_rewrites", lightSmoothingRewrites.load());
     j.unum("light_smoothing_faults", lightSmoothingFaults.load());
-    j.fixed("level_detail_scale", levelDetailScale.load(std::memory_order_relaxed), 2);
     j.fixed("fire_volumes", float(fireShown.load(std::memory_order_relaxed)), 0);
     j.fixed("fire_quality", fireQuality.load(std::memory_order_relaxed), 2);
     j.fixed("fire_faults", float(fireFaults.load(std::memory_order_relaxed)), 0);
-    j.unum("level_people", levelPeopleSeen.load());
     j.unum("view_effects_draws", viewEffectsDraws.load());
     // Render audit (--dev, [Dev] RenderAudit=1): all zero when off or clean; see render-audit.log.
     j.boolean("render_audit", renderAuditActive.load(std::memory_order_relaxed));

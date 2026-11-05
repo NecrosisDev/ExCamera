@@ -116,7 +116,6 @@ enum : int {
     heldDetail,
     armourDetail,
     objectDetail,
-    levelDetail,
     woundMarks,
     woundDebug,
     drawDistance,
@@ -137,12 +136,10 @@ enum : int {
 }
 // Held-item, armour and object detail take each pixel's material from the game's own item composer
 // (mod/material_ids.inl, docs/render-assumptions.md); an object whose textures the composer did not build gets
-// none. Level detail is not yet built on the game's data: until it is, its row is inactive and draws nothing
-// (colourMaterialGuesses, wounds.inl).
+// none. (Level detail is removed: the game keeps no per-surface material for level geometry.)
 inline constexpr bool heldMaterialDataDecoded = true;
 inline constexpr bool armourMaterialDataDecoded = true;
 inline constexpr bool objectMaterialDataDecoded = true;
-inline constexpr bool materialDataDecoded = false;
 // Whether the helmet view is shaped by the helmet's own geometry; until it is, Helmet view is inactive (it had
 // treated anything within 18 cm of the eye as helmet).
 inline constexpr bool helmetShapeDecoded = false;
@@ -175,7 +172,7 @@ inline unsigned rowCapability(int row) {
     case setting::ambientOcclusion: case setting::depthOfField:
     case setting::edgeSmoothing: case setting::helmetVisor: case setting::playerGhost:
     case setting::conditionEffects: case setting::lightSmoothing: case setting::heldDetail:
-    case setting::armourDetail: case setting::objectDetail: case setting::levelDetail:
+    case setting::armourDetail: case setting::objectDetail:
         return capViewEffects;
     case setting::woundMarks: return capWounds;
     case setting::bladeDrag: case setting::stabSink: case setting::bladeGain: return capBlades;
@@ -209,7 +206,6 @@ struct ModSettings {
     int objectDetail = 0; // the same on loose items and placed objects near you, percent; off by default: thin dark lines on furniture
     int drawDistance = 60; // metres beyond which small props and far characters are not drawn; 0 draws everything
     int objectLights = 4;  // lights each mesh takes of the game's six; the strongest are kept
-    int levelDetail = 30; // walls, floors and ceilings within about 3 m, percent; light by default, drops first when slow
     bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
     bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
     int hitReaction = 100; // percent of the first-person view's kick when a hit lands; 100 as before
@@ -327,7 +323,6 @@ struct ModSettings {
         case setting::heldDetail: heldDetail = std::clamp(heldDetail + delta * 10, 0, 100); break;
         case setting::armourDetail: armourDetail = std::clamp(armourDetail + delta * 10, 0, 100); break;
         case setting::objectDetail: objectDetail = std::clamp(objectDetail + delta * 10, 0, 100); break;
-        case setting::levelDetail: levelDetail = std::clamp(levelDetail + delta * 10, 0, 100); break;
         case setting::woundDebug: woundDebug = !woundDebug; break;
         case setting::drawDistance: drawDistance = std::clamp(drawDistance + delta * 10, 0, 200); break;
         case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
@@ -511,7 +506,6 @@ struct ModSettings {
         case setting::heldDetail: return heldDetail ? std::to_wstring(heldDetail) + L"%" : L"Off";
         case setting::armourDetail: return armourDetail ? std::to_wstring(armourDetail) + L"%" : L"Off";
         case setting::objectDetail: return objectDetail ? std::to_wstring(objectDetail) + L"%" : L"Off";
-        case setting::levelDetail: return levelDetail ? std::to_wstring(levelDetail) + L"%" : L"Off";
         case setting::drawDistance: return drawDistance ? std::to_wstring(drawDistance) + L" m" : L"Off";
         case setting::objectLights: return objectLights >= 6 ? std::wstring(L"6 (game)") : std::to_wstring(objectLights);
         case setting::hitReaction:
@@ -743,8 +737,6 @@ struct ModSettings {
             if (row == setting::armourDetail) return L"Off until the game's own material data is decoded.";
         if constexpr (!objectMaterialDataDecoded)
             if (row == setting::objectDetail) return L"Off until the game's own material data is decoded.";
-        if (!materialDataDecoded && row == setting::levelDetail)
-            return L"Off until the game's own material data is decoded.";
         if (!helmetShapeDecoded && row == setting::helmetVisor)
             return L"Off until the helmet's own shape is used.";
         return nullptr;
@@ -1250,12 +1242,6 @@ inline const RowInfo& rowInfo(int row) {
         {setting::objectLights, L"Lights per object", RowInfo::number, &ModSettings::objectLights, nullptr,
          L"View", L"LightsPerObject", nullptr, nullptr,
          L"How many lights each object takes. The game uses six; the strongest are kept.", {1,6,1,5}},
-        {setting::levelDetail, L"Level detail", RowInfo::choice, &ModSettings::levelDetail, nullptr,
-         L"View", L"LevelDetail", nullptr, nullptr,
-         L"Fine surface detail on walls, floors and ceilings: within about 3 m stone grain and mortar, wood fibres, "
-         L"rusted metal, dirt and gravel, cracked plaster; out to about 8 m broad weathering and damp. People are "
-         L"left alone. It turns itself down as the frame rate drops below about "
-         L"55 fps and off below about 40, before anything else. Not in VR.", {0,100,5,20}},
         {setting::objectDetail, L"World object detail", RowInfo::choice, &ModSettings::objectDetail, nullptr,
          L"View", L"ObjectDetail", nullptr, nullptr,
          L"The same surface detail on loose items and placed objects within 6 m: weapons on the floor or a rack, "

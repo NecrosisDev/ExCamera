@@ -58,7 +58,7 @@ static FireNodes fireNodeExport() {
 static bool bladeLine(uintptr_t weapon, XrVector3f& hilt, XrVector3f& tip, XrVector3f& axis, float& length); // blade.inl
 static bool sectorOriginOf(uintptr_t node, float* origin);                                                    // view_effects.inl
 
-// Steps and smoke for this frame: like level detail, the scale falls from 1 to 0 as the eased frame
+// Steps and smoke for this frame: the scale falls from 1 to 0 as the eased frame
 // period grows from 18 to 25 ms and climbs back 2% a frame. At 0 the flames still draw, coarser and
 // without smoke; they never vanish on a slow frame.
 static void fireQualityNow(float period, FireUniforms& out) {
