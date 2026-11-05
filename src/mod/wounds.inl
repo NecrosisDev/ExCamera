@@ -54,6 +54,7 @@ constexpr float woundBleedFull = 6.f, woundFreshSeconds = 10.f, woundDrySeconds 
 // (0x159A60) reads its victim there and hands the same pointer to the damage applier, so it equals the
 // record's victim.
 
+constexpr uint32_t woundThrustMotion = 0xB; // see recordNativeHit
 struct Wound {
     uintptr_t part = 0, owner = 0; // the part, and the character it named at the hit; a change retires the mark
     float local[3]{}, along[3]{};  // centre and the blade's path, in the part's own frame
@@ -260,12 +261,12 @@ static void outOfPose(const float* pose, const float* local, bool origin, float*
 static void addWound(const CharacterHitRecord& h) {
     const float health = std::isfinite(h.health) ? h.health : 0.f;
     const float balance = std::isfinite(h.balance) ? h.balance : 0.f;
-    // PROVISIONAL(2026-10-22, until the runtime reports the weapon's cut/crush split a cut is told
-    // from a blow by moving more health per balance, ratify-by: 2026-11-05)
-    const uint8_t kind = h.kind >= woundCut && h.kind <= woundThrust ? uint8_t(h.kind)
-                         : health > 0.4f * balance                  ? woundCut
-                                                                    : woundCrush;
-    if (kind == woundCrush ? balance < 0.05f && health < 1e-3f : health < 1e-3f) return; // nothing got through
+    // Two kinds only, both from the game: a thrust where the striker's motion is the one the impact routine
+    // measures along the weapon (woundThrustMotion, set by recordNativeHit), an open wound otherwise. Telling a
+    // cut from a crushing blow by the ratio of the routine's two arguments was a guess (it lapsed unratified
+    // on 2026-11-05) and is gone; a blunt blow that does damage now shows as an open wound too.
+    const uint8_t kind = h.kind == woundThrust ? woundThrust : woundCut;
+    if (health < 1e-3f) return; // nothing got through: the routine took nothing from +D5C
     Wound w;
     w.part = uintptr_t(h.part);
     float healthMax = 1.f;
@@ -1058,17 +1059,12 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, 
     }
     r.weapon = weapon;
 
-    uint32_t motion = 0;
-    if (readable(attacker + field::character::motion, sizeof(uint32_t))) {
-        motion = *reinterpret_cast<const uint32_t*>(attacker + field::character::motion);
-        if (motion == 0xb) {
-            r.kind = woundThrust;
-        } else {
-            r.kind = (health > 0.4f * balance) ? woundCut : woundCrush;
-        }
-    } else {
-        r.kind = (health > 0.4f * balance) ? woundCut : woundCrush;
-    }
+    // A thrust: the motion physicalImpact (0x159B28) measures along the weapon's own axis, a point-first
+    // attack (witness physicalImpact::thrustMotion, wounds group). Anything else is an open wound.
+    r.kind = woundCut;
+    if (readable(attacker + field::character::motion, sizeof(uint32_t)) &&
+        *reinterpret_cast<const uint32_t*>(attacker + field::character::motion) == woundThrustMotion)
+        r.kind = woundThrust;
 
     float sectorOrigin[3]{};
     if (part && readable(part + field::bodyPart::meshNode, sizeof(uintptr_t))) {

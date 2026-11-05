@@ -5792,6 +5792,14 @@
       "pattern": "48 8B 53 08 8B 45 D0 48 6B C0 18 48 8D 84 02 90 06 00 00 F3 0F 10 00",
       "provenance": "physicalImpact 0x159A60 walks the struck part's ([rbx+8]) two protection rows from row 1 down to row 0: part + 690 + row*18, six floats each, compared with the hit's scalar. Blade sinking reads the same rows (690 under, 6A8 outer).",
       "optional_group": "xrPhysicalContacts"
+    },
+    {
+      "name": "physicalImpact::thrustMotion",
+      "owner": "physicalImpact",
+      "window_offset": 196,
+      "pattern": "48 8B 45 F8 83 B8 B8 09 00 00 0B 75 18 48 8B 80 F8 0A 00 00 8B 40 1C 83 E0 08 75 09 C6 85 EC FE FF FF 01 EB 07 C6 85 EC FE FF FF 00 80 BD EC FE FF FF 00 74 48 48 8B 45 F8 48 8B 80 38 0C 00 00 48 05 AC 02 00 00 48 8D 55 DC F3 0F 10 02 F3 0F 59 00 F3 0F 10 4A 04 F3 0F 59 48 04 F3 0F 58 C8 F3 0F 10 42 08 F3 0F 59 40 08 F3 0F 58 C1 F3 0F 59 05 ?? ?? ?? ??",
+      "provenance": "physicalImpact 0x159A60 at 0x159B28 compares the striking character's motion (+9B8) with 0xB; when it matches (and bit 8 of [+AF8]+1C is clear) the impact speed is the contact velocity dotted with the weapon's own axis (impactWeapon +C38, then +2AC), instead of the full speed taken otherwise (0x159BA1-0x159BBA), and the damage path later branches on the same flag (0x159CB8). Motion 0xB is therefore the game's point-first (thrust) attack: the wounds pass draws a puncture for it.",
+      "optional_group": "wounds"
     }
   ],
   "closures": {

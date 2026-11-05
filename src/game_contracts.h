@@ -1176,6 +1176,7 @@ inline constexpr FieldContract fields[] = {
     {"character::bleedUpdate", 157, 0x57, "F3 0F 10 8B DC 10 00 00 F3 0F 58 C8 F3 0F 11 8B DC 10 00 00 F3 0F 10 83 DC 10 00 00 0F 2F 05 ?? ?? ?? ?? 7A 10 76 0E 8B 05 ?? ?? ?? ?? 89 83 DC 10 00 00", "wounds"},
     {"bodyPart::indexFallback", 151, 0x543, "8B 46 2C 89 46 44 0F 1F 00 41 83 BD 68 04 00 00 00 7D 22 49 8B 85 28 04 00 00", "wounds"},
     {"bodyPart::armourRows", 140, 0x149C, "48 8B 53 08 8B 45 D0 48 6B C0 18 48 8D 84 02 90 06 00 00 F3 0F 10 00", "xrPhysicalContacts"},
+    {"physicalImpact::thrustMotion", 140, 0xC4, "48 8B 45 F8 83 B8 B8 09 00 00 0B 75 18 48 8B 80 F8 0A 00 00 8B 40 1C 83 E0 08 75 09 C6 85 EC FE FF FF 01 EB 07 C6 85 EC FE FF FF 00 80 BD EC FE FF FF 00 74 48 48 8B 45 F8 48 8B 80 38 0C 00 00 48 05 AC 02 00 00 48 8D 55 DC F3 0F 10 02 F3 0F 59 00 F3 0F 10 4A 04 F3 0F 59 48 04 F3 0F 58 C8 F3 0F 10 42 08 F3 0F 59 40 08 F3 0F 58 C1 F3 0F 59 05 ?? ?? ?? ??", "wounds"},
 };
 inline constexpr std::array<FieldOffsetBinding, 252> fieldBindings = {{
     {0u, 8u, 24, false, game::character::sceneNode, &game::live::character::sceneNode},
