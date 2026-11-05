@@ -369,7 +369,10 @@ Everything below is read from the reviewed exe; nothing is implemented yet.
 * **Shin +0x40C is the part's ground-contact grip**: 0x84BD0 walks the part's own physics contacts (+0x348 count,
   entries at +0x34C, stride 0x30, normal at +0x20) and scales each one's response by +0x40C × k × (a·n.y² + b)
   (0x84C08–0x84CF7). A shin in the air has no ground contacts, so the grip the kick gives the lifted leg does nothing.
-* **Not decoded yet**: the rest of `supportHeight`
+* `supportHeight`'s other bit-2 test (0x16F1A5) only runs while walking (+0x12EA, 0x16F198): it sets bit 0x10 by a
+  gait timing test (0x16F1B2–0x16F272). Standing, a supporting leg goes to 0x16F296: bit 0x10 cleared, shin +0x63C
+  reset, then the bit-4 logic (0x16F2A8 on).
+* **Not decoded yet**: the rest of `supportHeight` from 0x16F2A8
   (0x16F1A5 on, `heightForce` 0x16FDF0), and how the support height moves the pelvis. Until these are read, the
   cause of the toppling is not proven, and there is no proven moment between `contactFrame` and `supportHeight` for a
   fix: changing a kicking leg's flag would need a new hook there (a new signature target, to be reported first).
