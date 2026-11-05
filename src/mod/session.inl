@@ -872,6 +872,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("wound_faults", woundFaults.load());
     j.unum("wound_skin_mapped", woundSkinMapped.load());
     j.unum("wound_skin_unmapped", woundSkinUnmapped.load());
+    {   // Why wounds did not map onto skin (wounds_bake.inl WoundUnmapped), "reason: count; ..."
+        std::string reasons;
+        for (unsigned k = 0; k < unmappedReasonCount; ++k)
+            if (const unsigned n = woundUnmappedReasons[k].load())
+                reasons += std::string(reasons.empty() ? "" : "; ") + woundUnmappedNames[k] + ": " + std::to_string(n);
+        j.str("wound_skin_unmapped_reasons", reasons.c_str());
+    }
     j.unum("wound_skin_bakes", woundSkinBakes.load());
     j.unum("wound_skin_draws", woundSkinDraws.load());
     j.unum("wound_skin_faults", woundSkinFaults.load());
@@ -883,6 +890,8 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("mesh_lights_captured", meshLightsCaptured.load());
     j.unum("mesh_lights_mismatched", meshLightsMismatched.load());
     j.unum("blood_game_lights", gameLightsUsed.load());
+    j.unum("blood_light_set_changes", gameLightsSetChanges.load());
+    j.unum("blood_light_fixed_frames", gameLightsFallbackFrames.load());
     j.boolean("wound_hits_linked", characterHits.load() != nullptr);
     // The game's material ids (material_ids.inl): textures composed and replayed, parts drawn with ids.
     j.boolean("material_ids_hooked", matid::hooked.load());
