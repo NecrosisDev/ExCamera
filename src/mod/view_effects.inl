@@ -870,9 +870,11 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     // function), so it is shaped here and coloured, lit and made glossy there.
     float cover = 0.0, wet = 0.0, thick = 0.0;
     if (condition.z > 0.5) {
-        // Blade or not is not read from the game yet (the item's material id link is the render thread's work);
-        // until it is, every carried item takes the plain soaked blot below, nothing judged from its colours.
-        bool blade = false;
+        // Blade or not from the game's own material at this texel: the id the held-item replay writes into the mask's
+        // alpha (material_ids.inl, the factory's ids 1-25; 255 none). Steel, iron and copper (11-16, 19-21) take the
+        // edge film, beads and runs; anything else (wood, leather, the wired grip 22, unknown) the soaked blot.
+        float texelId = floor(texture2D(silhouette, uv).a * 255.0 + 0.5);
+        bool blade = (texelId > 10.5 && texelId < 16.5) || (texelId > 18.5 && texelId < 21.5);
         for (int k = 0; k < 4; ++k) {
             if (float(k) >= condition.z) break; // condition.z: how many spots this item carries
             vec4 spot = heldDatum(slot, 5.0 + float(k));
@@ -1228,6 +1230,8 @@ uniform vec4 worldUp;      // world +Y in view space; w unused
 uniform vec4 woundA[12];   // a wound's view-space centre; w: half length, cm (a bruise's radius)
 uniform vec4 woundB[12];   // the blade's path, view space; w: kind (1 cut, 2 crush, 3 thrust) + 0.98 x a cut's
                            // wetness or a bruise's age, 0..1
+uniform sampler2D woundMask; // the held, gear and object mask (G slot code, alpha the game's material id), unit 3
+uniform float woundMaskOn;    // 1 when that mask holds this frame's replay at this view's size
 uniform vec4 woundM[12];   // x: the struck surface's material id (the game's factory 0x1EAEE0, 1..25), 0 unknown
 uniform vec4 woundC[12];   // severity 0..1, seed (negative: the skin part is baked into the skin texture), half width (cm),
                            // length of the blood runs (cm)
@@ -1565,7 +1569,14 @@ vec3 woundMarks(vec3 color) {
         // What the outer layer is made of comes only from the game: woundM[i].x, the material id of the struck
         // surface (woundMaterialFamily). 0, unknown until that link is proven, gives a plain stain; nothing is
         // guessed from the picture.
+        // The game's material at this pixel when the replay drew worn gear here (woundMask: the held, gear and object
+        // mask, G its slot code, alpha the material id); else the wound's own id (0 until proven: a plain stain).
         float family = woundMaterialFamily(woundM[i].x);
+        if (woundMaskOn > 0.5) {
+            vec4 mask = texture2D(woundMask, uv);
+            float code = floor(mask.g * 255.0 + 0.5) - 1.0, id = floor(mask.a * 255.0 + 0.5);
+            if (code >= 0.0 && code < 240.0 && id < 25.5) family = woundMaterialFamily(id);
+        }
         float cloth = layer * (family == 1.0 ? 1.0 : 0.0), metal = layer * (family == 3.0 ? 1.0 : 0.0);
         float gear = layer - cloth - metal;
         // Only the surface at the wound: something a few cm off it (another limb, a wall behind) is left alone.
@@ -2013,7 +2024,7 @@ enum ViewUniform : unsigned {
     uAoHalf, uHalfSize, uAoStrength, uBounceOn, uBounceStrength, uSharpen, uPreviousDepth, uSurfacesOn, uDofOn, uDistanceHalf, uDistanceHalfOn,
     uFrameOffset, uCurrent, uHistory, uToPrevious, uPreviousProjection, uHistoryWeight, uDofHalf, uCells, uExposure,
     uSilhouette, uSilhouetteOn, uHeldDetail, uHeldNoise, uHeldData, uLevelDetail, uLevelRow0, uLevelRow1, uLevelRow2, uLevelPeople, uLevelLight, uLevelLightColour,
-    uWoundA, uWoundB, uWoundC, uWoundM, uWoundCount, uWoundRect, uDripA, uDripCount,
+    uWoundA, uWoundB, uWoundC, uWoundM, uWoundMask, uWoundMaskOn, uWoundCount, uWoundRect, uDripA, uDripCount,
     uFireA, uFireB, uFireC, uFireCount, uFireRect, uFireLook, uFireRight, uFireNoise, uCapA, uCapB, uCapCount, uWoundDebug,
     uBloodMap, uBloodMapInfo, uBloodMapTime, uSplatA, uSplatB, uSplatC, uFallA, uFallB, uFallCount, viewUniformCount
 };
@@ -2023,7 +2034,7 @@ static const char* const viewUniformNames[viewUniformCount] = {
     "aoHalf", "halfSize", "aoStrength", "bounceOn", "bounceStrength", "sharpen", "previousDepth", "surfacesOn", "dofOn", "distanceHalf", "distanceHalfOn",
     "frameOffset", "current", "history", "toPrevious", "previousProjection", "historyWeight", "dofHalf", "cells", "exposure",
     "silhouette", "silhouetteOn", "heldDetail", "heldNoise", "heldData", "levelDetail", "levelRow0", "levelRow1", "levelRow2", "levelPeople", "levelLight", "levelLightColour",
-    "woundA", "woundB", "woundC", "woundM", "woundCount", "woundRect", "dripA", "dripCount",
+    "woundA", "woundB", "woundC", "woundM", "woundMask", "woundMaskOn", "woundCount", "woundRect", "dripA", "dripCount",
     "fireA", "fireB", "fireC", "fireCount", "fireRect", "fireLook", "fireRight", "fireNoise", "capA", "capB", "capCount", "woundDebug",
     "bloodMap", "bloodMapInfo", "bloodMapTime", "splatA", "splatB", "splatC", "fallA", "fallB", "fallCount"};
 struct ViewProgramUniforms { GLint at[viewUniformCount]; };
@@ -4146,6 +4157,17 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform4fv(u.at[uWoundB], GLsizei(wounds.count), &wounds.b[0][0]);
                 g.uniform4fv(u.at[uWoundC], GLsizei(wounds.count), &wounds.c[0][0]);
                 g.uniform4fv(u.at[uWoundM], GLsizei(wounds.count), &wounds.m[0][0]);
+                GLint woundMaskPrior = 0; // unit 3's texture, put back after the draw
+                {   // The held/gear/object mask on unit 3 when it holds this frame's replay at this view's size.
+                    const bool maskOk = r.silhouetteMask && request.heldSlots &&
+                        (request.offscreen ? r.silhouetteWidth == r.offscreenSceneWidth && r.silhouetteHeight == r.offscreenSceneHeight
+                                           : r.silhouetteWidth == viewport[2] && r.silhouetteHeight == viewport[3]);
+                    g.activeTexture(glc::texture3);
+                    glGetIntegerv(glc::textureBinding2D, &woundMaskPrior);
+                    g.bindTexture(GL_TEXTURE_2D, maskOk ? r.silhouetteMask : r.viewDepth);
+                    g.uniform1i(u.at[uWoundMask], 3);
+                    g.uniform1f(u.at[uWoundMaskOn], maskOk ? 1.f : 0.f);
+                }
                 g.uniform4f(u.at[uWoundRect], box[0], box[1], box[2], box[3]);
                 g.uniform1f(u.at[uDripCount], float(wounds.drips));
                 if (wounds.drips) g.uniform4fv(u.at[uDripA], GLsizei(wounds.drips), &wounds.d[0][0]);
@@ -4199,6 +4221,8 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                                 bloodHeightScale, bloodTimeScale);
                 }
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                g.activeTexture(glc::texture3);
+                g.bindTexture(GL_TEXTURE_2D, GLuint(woundMaskPrior));
                 if (scissored) glDisable(GL_SCISSOR_TEST);
                 else endPass(false);
             }
