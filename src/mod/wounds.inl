@@ -81,7 +81,7 @@ struct Wound {
 };
 
 // What the finishing pass takes: view-space marks, nearest first.
-constexpr unsigned woundDripLimit = 128, woundDripShown = 32;
+constexpr unsigned woundDripLimit = 128, woundDripShown = 48;
 constexpr float woundDripSeconds = 120.f, woundDripDrySeconds = 30.f;
 // On the living: an open cut closes into a scar over this long (the Regenerate mark's own time while it
 // runs); a bruise fades away over this long.
@@ -179,6 +179,10 @@ struct WoundDrip { float from[3], sectorOrigin[3], radius; ULONGLONG born; float
 // A drop in the air, for the first moments after it leaves: from start to from over flight seconds (0: straight
 // down from start, which is then from), falling under gravity the while; drawn by the wound pass as a bead.
 static WoundDrip woundDrips[woundDripLimit];
+// The drops the wound pass draws stay the same ones until they dry and go: a drop given a place keeps it
+// (its born time is kept here, so a slot reused by a newer drop starts unshown), and new drops only take
+// free places. Choosing the nearest each frame instead swapped drops in and out as the camera moved.
+static ULONGLONG woundDripShownBorn[woundDripLimit];
 static unsigned woundDripNext = 0;
 static bool woundSkinBaked(uintptr_t character);            // wounds_bake.inl
 static void bakeWoundSkins(gl::Api& g, fp::CueResources& r); // wounds_bake.inl, from the view-effects pass
@@ -862,13 +866,15 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         }
     }
     activeWeaponBloodMax.store(maxWeaponSaturation, std::memory_order_relaxed);
-    // The drops, nearest first, as their point in view space (the nearer reading of the sector origin, as
-    // for the wounds); gone after two minutes, dry after half of one.
-    struct ShownDrip { float distanceSq, centre[3], w; };
+    // The drops, as their point in view space (the nearer reading of the sector origin, as for the wounds);
+    // gone after two minutes, dry after half of one. Those already shown first, then new ones nearest first
+    // into what places are left (woundDripShownBorn).
+    struct ShownDrip { float distanceSq, centre[3], w; unsigned index; bool kept; };
     ShownDrip drops[woundDripLimit];
     unsigned dropCount = 0;
     out.falls = 0;
-    for (WoundDrip& d : woundDrips) {
+    for (unsigned di = 0; di < woundDripLimit; ++di) {
+        WoundDrip& d = woundDrips[di];
         if (!d.born) continue;
         // In the air: along its path from start to from (or straight down), falling under gravity, for its
         // first 1.2 s (a floor 2 m down is reached in 0.65 s; what falls further is out of sight).
@@ -903,8 +909,8 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
             }
         }
         const float age = float(now - d.born) / 1000.f;
-        if (age > woundDripSeconds) { d = {}; continue; }
-        ShownDrip s{woundReachCm * woundReachCm, {}, 0.f};
+        if (age > woundDripSeconds) { d = {}; woundDripShownBorn[di] = 0; continue; }
+        ShownDrip s{woundReachCm * woundReachCm, {}, 0.f, di, woundDripShownBorn[di] == d.born};
         bool found = false;
         for (int candidate = 0; candidate < 2; ++candidate) {
             float q[3], c[3];
@@ -919,9 +925,23 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         drops[dropCount++] = s;
     }
     activeDripsCount.store(dropCount, std::memory_order_relaxed);
-    const unsigned dripCount = (std::min)(dropCount, woundDripShown);
-    std::partial_sort(drops, drops + dripCount, drops + dropCount,
-                      [](const ShownDrip& l, const ShownDrip& r) { return l.distanceSq < r.distanceSq; });
+    // Kept drops never outnumber the places (a place is only given while one is free).
+    unsigned kept = 0;
+    for (unsigned k = 0; k < woundDripLimit; ++k)
+        if (woundDripShownBorn[k] && woundDripShownBorn[k] != woundDrips[k].born) woundDripShownBorn[k] = 0; // reused
+        else if (woundDripShownBorn[k]) ++kept;
+    std::sort(drops, drops + dropCount, [](const ShownDrip& l, const ShownDrip& r) {
+        return l.kept != r.kept ? l.kept : l.distanceSq < r.distanceSq;
+    });
+    unsigned dripCount = 0;
+    for (unsigned k = 0; k < dropCount && dripCount < woundDripShown; ++k) {
+        if (!drops[k].kept) {
+            if (kept >= woundDripShown) break; // full: a new drop waits until a shown one dries away
+            woundDripShownBorn[drops[k].index] = woundDrips[drops[k].index].born;
+            ++kept;
+        }
+        drops[dripCount++] = drops[k];
+    }
     for (unsigned k = 0; k < dripCount; ++k) {
         const float v[4] = {drops[k].centre[0], drops[k].centre[1], drops[k].centre[2], drops[k].w};
         memcpy(out.d[k], v, sizeof v);
