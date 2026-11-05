@@ -30,6 +30,9 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from export_level_textures import Pack, decode, format_of, mip0_size  # noqa: E402
+# tools/ also holds profile.py, which would shadow the standard module torch imports: drop the folder again.
+_tools = str(Path(__file__).resolve().parent)
+sys.path[:] = [p for p in sys.path if Path(p or '.').resolve() != Path(_tools)]
 
 # Approved by Hunter (2026-11-05) from improvement-report.html: (group, scale, name pattern over the export).
 GROUPS = [
@@ -78,7 +81,8 @@ class Upscaler:
                 if not onnx.exists():
                     dummy = torch.zeros(1, 3, 64, 64)
                     torch.onnx.export(self.model.model, dummy, str(onnx), input_names=['x'], output_names=['y'],
-                                      dynamic_axes={'x': {2: 'h', 3: 'w'}, 'y': {2: 'h', 3: 'w'}}, opset_version=17)
+                                      dynamic_axes={'x': {2: 'h', 3: 'w'}, 'y': {2: 'h', 3: 'w'}}, opset_version=17,
+                                      dynamo=False)
                 self.session = ort.InferenceSession(str(onnx), providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
         except Exception as e:  # torch on CPU still works, slowly
             print('onnxruntime GPU path unavailable:', e)
@@ -322,13 +326,22 @@ def main(argv: list[str]) -> int:
                         'dds_mb': round((out / 'dds' / f'{name}.dds').stat().st_size / 2 ** 20, 1),
                         'status': 'dry run (Lanczos): do not install' if up.dry else 'written'})
             rows.append(rec)
-            cards.append(f'<tr><td><b>{html.escape(name)}</b><br>{html.escape(group)}<br>{rec["from"]} &rarr; {rec["to"]} '
-                         f'{rec["block"]}<br>seam {rec["seam_before"]} &rarr; {rec["seam_after"]}</td>'
-                         f'<td><img src="crops/{name}_before.png"></td><td><img src="crops/{name}_after.png"></td>'
-                         f'<td><img src="crops/{name}_tiled.png"></td></tr>')
             print(name, rec['status'], rec.get('to'))
     fields = ['group', 'name', 'type', 'scale', 'from', 'to', 'format_word', 'block', 'mips', 'dds_mb', 'seam_before',
               'seam_after', 'status']
+    # Earlier runs' rows stay unless this run redid that texture (runs can be split by --only).
+    if (out / 'upscale.csv').exists():
+        done = {r['name'] for r in rows}
+        rows = [r for r in csv.DictReader(open(out / 'upscale.csv', encoding='utf-8')) if r['name'] not in done] + rows
+    order = {g: i for i, (g, _, _) in enumerate(GROUPS)}
+    rows.sort(key=lambda r: (order.get(r['group'], 99), r['name']))
+    for rec in rows:
+        if rec.get('status') in ('written', 'dry run (Lanczos): do not install'):
+            name = rec['name']
+            cards.append(f'<tr><td><b>{html.escape(name)}</b><br>{html.escape(rec["group"])}<br>{rec["from"]} &rarr; '
+                         f'{rec["to"]} {rec["block"]}<br>seam {rec["seam_before"]} &rarr; {rec["seam_after"]}</td>'
+                         f'<td><img src="crops/{name}_before.png"></td><td><img src="crops/{name}_after.png"></td>'
+                         f'<td><img src="crops/{name}_tiled.png"></td></tr>')
     with open(out / 'upscale.csv', 'w', newline='', encoding='utf-8') as f:
         w = csv.DictWriter(f, fields, extrasaction='ignore')
         w.writeheader()
