@@ -1,15 +1,16 @@
-// The kick and the jump, every build. The kick: the game's own motion player started on motion 0xD, which the game
-// handles itself (16B06F: state 0x8000; 1612C9: no leg-support check) but no game code is known to start, behind
-// the gates in fp::motionGate (docs/GAME-FIELDS-AUDIT.md). The jump plays no clip: every part
-// of the body gets an upward push through the game's own rigid-body push (89240, a Verlet velocity change per
-// physics step) for several steps (fp::jumpPushStep), so the game's airborne and landing handling takes over.
-// Triggered by a key (unbound until the
-// player picks one) on a flat screen and by the controllers in VR (xr_drive.inl). Game thread only.
+// The kick and the jump, every build. The kick: the game's own motion player started on motion 13, "Kick" in the
+// game's motion-set table (Resource.rpk 0x19582826), which its own inputs never start; the game handles it while it
+// plays (16B06F: state 0x8000; 1612C9: no leg-support check), behind the gates in fp::motionGate
+// (docs/GAME-FIELDS-AUDIT.md). The jump plays no clip: every part of the body gets an upward push through the game's
+// own rigid-body push (89240, a Verlet velocity change per physics step) for several steps (fp::jumpPushStep), so
+// the game's airborne and landing handling takes over. Triggered by a key (unbound until the player picks one) on a
+// flat screen and by the controllers in VR (xr_drive.inl). Game thread only.
 static std::atomic<unsigned> motionKicks{0}, motionJumps{0};
 static std::atomic<bool> motionKickFault{false}, motionJumpFault{false};
 static uint64_t motionKickLast = 0, motionJumpLast = 0;
-// The kick blends in over 200 ms (40 toppled the player) from both feet planted; the jump plays no clip (its clip
-// held the motion for about 2 s and fought the push) but stays a busy motion should anything else start it.
+// Motions 13 "Kick" and 18 "Jump" (the motion-set table). The kick blends in over 200 ms (40 toppled the player)
+// from standing (state 0); the jump plays no clip (its clip held the motion for about 2 s and fought the push) but
+// stays a busy motion should anything else start it.
 static constexpr int kickMotion = 0xD, kickBlendMs = 200, jumpMotion = 0x12, attackFamilyFirst = 5, attackFamilyLast = 12;
 static constexpr uint64_t kickRepeatMs = 300, jumpRepeatMs = 900;
 static fp::JumpPush jumpPush; // game thread: the push in progress (fp::jumpPushStep)
