@@ -943,6 +943,22 @@ static void updateAim(uintptr_t behavior) {
             addTo(heldTurnY, float(dy));
             dx = dy = 0;
         }
+        // A Manual guard with a parry direction lends the mouse to the parry drag: the view and aim stay
+        // still (turning would also move the defender's front-half test, own +A08, in 163880).
+        static fp::ParryDrag parryDrag;
+        static bool parryDragging = false;
+        const bool dragging = combat && parryDragHeld.load() && (keyState(VK_RBUTTON) & 0x8000);
+        if (dragging != parryDragging) {
+            parryDrag.reset();
+            parryDragPose = 0;
+            parryDragging = dragging;
+        }
+        if (dragging) {
+            const int deadZone = parryDragDeadZone.load();
+            parryDrag.move(dx, dy, float(deadZone));
+            parryDragPose = parryDrag.pose(float(deadZone), parryDragMirror.load());
+            dx = dy = 0;
+        }
         worldPointerMotion(dx, dy);
         if (combat) aim.swing.move(dx, dy, float(rect.right));
         dx *= manipulationGain;

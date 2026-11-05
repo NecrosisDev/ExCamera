@@ -759,6 +759,13 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.boolean("held_throw_ready", heldThrowReady.load());
     j.unum("guard_denied", guardDenied.load());
     j.unum("guard_withdrawals", guardWithdrawals.load());
+    {
+        const int parry = parryDirectionMode.load();
+        j.str("parry_direction", parry == fp::parryStrict ? "strict" : parry == fp::parryAssisted ? "assisted" : "automatic");
+    }
+    j.unum("parry_assisted", parryAssisted.load());
+    j.unum("parry_strict_matches", parryStrictMatches.load());
+    j.unum("parry_strict_refusals", parryStrictRefusals.load());
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
     j.num("fov", selectedFov.load());
     j.boolean("settings_saved", !settingsSavePending() && pendingModsByModSave.load(std::memory_order_acquire) < 0);
@@ -1221,6 +1228,8 @@ static DWORD runSession() {
         if (GetPrivateProfileIntW(L"Safe", L"Reset", 0, settingsPath)) applySafeReset(settingsPath);
         persistedFov = selectedFov.load();
         attackSideKey = GetPrivateProfileIntW(L"Input", L"AttackSideKey", 0, settingsPath);
+        parryDragDeadZone = std::clamp(int(GetPrivateProfileIntW(L"Input", L"ParryDragDeadZone", 40, settingsPath)), 5, 400);
+        parryDragMirror = GetPrivateProfileIntW(L"Input", L"ParryDragMirror", 0, settingsPath) != 0;
         {
             wchar_t oh[16];
             GetPrivateProfileStringW(L"Compat", L"OtherHooks", L"ask", oh, 16, settingsPath);

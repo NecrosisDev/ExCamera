@@ -241,6 +241,10 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return settings.fpKnockdown ? L"Show third" : L"Stay first";
     case setting::kickStyle:
         return settings.kickStyle ? L"Animated" : L"Classic";
+    case setting::parryDirection:
+        return settings.parryDirection == fp::parryAssisted ? L"Drag: assisted"
+               : settings.parryDirection == fp::parryStrict ? L"Drag: strict"
+                                                            : L"Automatic";
     case setting::f6Cycle:
         return settings.f6Cycle ? L"1st/3rd only" : L"1st/3rd/game";
     default: return L"";
@@ -291,6 +295,7 @@ const wchar_t* settingLabel(int id) {
     case setting::tpLookFollow: return L"Follow look angle";
     case setting::fpKnockdown: return L"Knocked down";
     case setting::kickStyle: return L"Kick style";
+    case setting::parryDirection: return L"Parry direction";
     case setting::leanKey: return L"Lean";
     case setting::holdHeading: return L"Heading correction";
     case setting::autoRecenter: return L"Auto-center";
@@ -401,6 +406,7 @@ const wchar_t* settingTip(int id) {
     case setting::kickKey: return L"Plays the game's own kick when you are not mid-swing or reacting to a hit. Not a key the game uses (Alt is its thrust). Delete clears the key.";
     case setting::jumpKey: return L"Plays the game's own jump when you are not mid-swing or reacting to a hit. Not a key the game uses. Delete clears the key.";
     case setting::kickStyle: return L"Classic: the game's own kick. Animated: the same kick, gates and hit, with your body moved like a motion-captured kick that suits what you hold. Experimental.";
+    case setting::parryDirection: return L"Needs Block on Hold RMB. Holding RMB keeps the view still and a drag picks the parry: up, left, right, down-left, down-right. Automatic: the game picks. Assisted: your drag picks; a small drag leaves it to the game. Strict: you parry only if your drag matches the incoming swing.";
     case setting::fpKnockdown: return L"Show third: knocked down in first person, the view goes to third person and back a moment after you are up. F6 meanwhile keeps your choice; death never switches.";
     case setting::tpLookFollow: return L"Out of combat, looking down lifts the camera and moves it back so the ground ahead shows; looking up brings it closer and lower. Walls still pull it in.";
     case setting::swapShoulderKey: return L"Third person: slides the camera over your other shoulder and keeps it there. Does nothing with the camera centred. Delete clears the key.";

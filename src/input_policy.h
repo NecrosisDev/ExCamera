@@ -15,6 +15,55 @@ inline int defenseModeFromText(const wchar_t* text) {
 inline const wchar_t* defenseModeText(int mode) {
     return mode == 1 ? L"manual" : L"automatic";
 }
+// Manual parry direction. The game's parry picker 156FB0 (reached from 163880 via 1636E0) answers an
+// incoming swing with one of five clips, named in Resource.rpk: 20 Parry Left, 21 Parry Right,
+// 22 Parry Up, 23 Parry Left Dn, 24 Parry Rgt Dn. Automatic keeps its answer. Assisted plays the
+// direction the right-mouse drag points to. Strict parries only when the drag matches the game's answer.
+enum ParryDirection : int { parryAutomatic = 0, parryAssisted = 1, parryStrict = 2 };
+inline int parryDirectionFromText(const wchar_t* text) {
+    auto is = [&](const wchar_t* word) {
+        const wchar_t* t = text;
+        while (*t && *word && ((*t | 32) == *word)) {
+            ++t;
+            ++word;
+        }
+        return !*t && !*word;
+    };
+    if (!text) return parryAutomatic;
+    return is(L"assisted") ? parryAssisted : is(L"strict") ? parryStrict : parryAutomatic;
+}
+inline const wchar_t* parryDirectionText(int mode) {
+    return mode == parryAssisted ? L"assisted" : mode == parryStrict ? L"strict" : L"automatic";
+}
+inline bool parryMotion(int motion) { return motion >= 20 && motion <= 24; }
+// Accumulated drag in mouse counts, screen y down. The length is held to a few dead zones so a
+// reversal turns the choice round quickly. Inside the dead zone there is no choice (0).
+// Which screen side the game's "Left" clips face is unproven in play; `mirror` swaps the sides.
+struct ParryDrag {
+    float x = 0.f, y = 0.f;
+    void reset() { x = y = 0.f; }
+    void move(float dx, float dy, float deadZone) {
+        if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(deadZone) || !(deadZone > 0.f)) return;
+        x += dx;
+        y += dy;
+        const float length = std::sqrt(x * x + y * y), limit = deadZone * 3.f;
+        if (length > limit) {
+            x *= limit / length;
+            y *= limit / length;
+        }
+    }
+    int pose(float deadZone, bool mirror) const {
+        if (!std::isfinite(deadZone) || !(deadZone > 0.f) || !(x * x + y * y >= deadZone * deadZone)) return 0;
+        const float degrees = std::atan2(-y, mirror ? -x : x) * 57.29578f; // 0 right, 90 up, -90 down
+        if (degrees >= 45.f && degrees <= 135.f) return 22;                  // up
+        if (degrees > -30.f && degrees < 45.f) return 21;                    // right
+        if (degrees >= -90.f && degrees <= -30.f) return 24;                 // down and right
+        if (degrees > -150.f && degrees < -90.f) return 23;                  // down and left
+        return 20;                                                           // left
+    }
+};
+// Strict: the drag must be the game's own answer to this swing. No drag, no parry.
+inline bool parryStrictMatch(int chosen, int native) { return parryMotion(native) && chosen == native; }
 // Native semantic bits, not physical keys. Polling remains owned by the game.
 inline unsigned movementKey(unsigned key, const unsigned* bindings) {
     unsigned mask = 0;

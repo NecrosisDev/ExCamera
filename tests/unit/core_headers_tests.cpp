@@ -395,6 +395,43 @@ bool camera_motion_look_follow_framing() {
     return true;
 }
 
+bool parry_drag_direction() {
+    fp::ParryDrag d;
+    CHECK(d.pose(40.f, false) == 0);
+    d.move(10.f, -10.f, 40.f);
+    CHECK(d.pose(40.f, false) == 0); // inside the dead zone: the game's choice
+    d.reset();
+    d.move(0.f, -60.f, 40.f);
+    CHECK(d.pose(40.f, false) == 22); // up
+    d.reset();
+    d.move(-60.f, 0.f, 40.f);
+    CHECK(d.pose(40.f, false) == 20); // left
+    CHECK(d.pose(40.f, true) == 21);  // mirrored
+    d.reset();
+    d.move(60.f, 5.f, 40.f);
+    CHECK(d.pose(40.f, false) == 21); // right
+    d.reset();
+    d.move(-40.f, 50.f, 40.f);
+    CHECK(d.pose(40.f, false) == 23); // down and left
+    d.reset();
+    d.move(40.f, 50.f, 40.f);
+    CHECK(d.pose(40.f, false) == 24); // down and right
+    d.reset();
+    d.move(-1000.f, 0.f, 40.f);
+    d.move(300.f, 0.f, 40.f); // held to three dead zones, so a reversal turns it round
+    CHECK(d.pose(40.f, false) == 21);
+    d.move(NAN, 0.f, 40.f);
+    CHECK(d.pose(40.f, false) == 21);
+    CHECK(fp::parryStrictMatch(22, 22));
+    CHECK(!fp::parryStrictMatch(0, 22));
+    CHECK(!fp::parryStrictMatch(21, 20));
+    CHECK(!fp::parryStrictMatch(-1, -1));
+    CHECK(fp::parryDirectionFromText(L"Strict") == fp::parryStrict);
+    CHECK(fp::parryDirectionFromText(L"assisted") == fp::parryAssisted);
+    CHECK(fp::parryDirectionFromText(L"x") == fp::parryAutomatic);
+    CHECK(fp::parryDirectionFromText(fp::parryDirectionText(fp::parryStrict)) == fp::parryStrict);
+    return true;
+}
 bool camera_motion_knockdown_view() {
     using Step = fp::KnockdownViewStep;
     const bool knocked = true, dead = true;
@@ -1032,6 +1069,7 @@ int main() {
         {"camera motion shoulder slide", camera_motion_shoulder_slide},
         {"camera motion look-follow framing", camera_motion_look_follow_framing},
         {"camera motion knockdown view", camera_motion_knockdown_view},
+        {"parry drag direction", parry_drag_direction},
         {"camera motion jump push", camera_motion_jump_push},
         {"hook health menu immunity and stalled pollInput",
          hook_health_menu_immunity_and_stalled_poll_input},

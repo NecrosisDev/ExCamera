@@ -344,6 +344,12 @@ inline bool trackedHandsWanted() { return vrHandsDrawn.load(std::memory_order_re
 // Requested modes persist independently. The complete optional hook group must
 // be admitted before either can become effective.
 static std::atomic<int> fpManualGuard{0}, tpManualGuard{0};
+// Parry direction (fp::ParryDirection). The input thread publishes the drag's pose (0 none, 20-24) while
+// right mouse is held; the physics thread reads it when the game picks a parry. [Input] ParryDragDeadZone
+// (mouse counts) and ParryDragMirror (swap left/right) are ini-only.
+static std::atomic<int> parryDirectionMode{0}, parryDragPose{0}, parryDragDeadZone{40};
+static std::atomic<bool> parryDragMirror{false}, parryDragHeld{false};
+static std::atomic<unsigned> parryAssisted{0}, parryStrictMatches{0}, parryStrictRefusals{0};
 static std::atomic<bool> manualDefenseReady{false};
 struct GuardRequest {
     fp::InputStamp stamp;
