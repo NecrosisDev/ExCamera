@@ -2,6 +2,7 @@
 
 v0.3.0 (revision 60)
 
+- Alt + left mouse stabs again when Kick or Jump was bound to Alt. The game uses Alt for its thrust, and those keys took it away from the game. Kick and Jump now leave any key the game's Controls use to the game, and Settings refuses such a key for them. If you had Kick on Alt, choose another key for it.
 - Fixed level loading hitches and stuttering: eliminated synchronous shader double-compilation in glShaderSource, gated sector traversals and roster scans during level population, precompiled wound/fire/bake shaders, paused worker disk logging while loading, and generated procedural stone textures asynchronously on a background worker thread.
 - Fixed floor reflection artifacts: corrected Screen-Space Reflection (SSR) dielectric blending so reflected dark objects (such as shields) no longer carve black silhouette hollows into the floor.
 - Fixed procedural wounds and impact feedback: hooked damage and physical impact detours to enable procedural cuts, blunt bruises, bloody weapon drips, directional camera impact kicks, and damage flash vignettes.

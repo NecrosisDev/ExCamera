@@ -35,6 +35,7 @@ public:
     std::function<void(uintptr_t, int)> setContentHeight;
     std::function<int()> scale;
     std::function<bool()> mouseHeld; // active native-slider drag keeps its descriptor stable
+    std::function<bool(int)> gameKey; // the game's own Controls use this key (Kick and Jump refuse it)
     std::function<void()> openNative;
     std::function<void(uintptr_t)> closeNative;
     std::function<bool(uintptr_t)> accepted;

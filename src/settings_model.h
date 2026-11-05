@@ -887,7 +887,8 @@ inline const RowInfo& rowInfo(int row) {
          L"its shadow remains."},
         {setting::kickKey, L"Kick", RowInfo::keyList, &ModSettings::kickKey, nullptr, L"Input", L"KickKey", fp::heldKeyFromText, nullptr,
          L"Plays the game's own kick, which it never uses itself: in the fighting stance, upright, not mid-swing and with "
-         L"most of your stamina. Unbound until you pick a key; the game does not see that key while it is bound here."},
+         L"most of your stamina. Unbound until you pick a key; the game does not see that key while it is bound here, "
+         L"so a key the game's Controls use (Alt makes a thrust) is refused and does not kick."},
         {setting::jumpKey, L"Jump", RowInfo::keyList, &ModSettings::jumpKey, nullptr, L"Input", L"JumpKey", fp::heldKeyFromText, nullptr,
          L"Plays the game's own jump and pushes your body up: upright, not mid-swing and with half your stamina. "
          L"Unbound until you pick a key; the game does not see that key while it is bound here."},
