@@ -4678,7 +4678,7 @@ static void readCondition(ViewRequest& request) {
         health = *(const float*)(root + field::character::health);
         healthMax = *(const float*)(root + field::character::healthMax);
         stamina = *(const float*)(root + field::character::stamina);
-        ceiling = *(const float*)(root + field::character::staminaMax);
+        ceiling = *(const float*)(root + field::character::staminaCeiling);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return;
     }

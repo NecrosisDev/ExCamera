@@ -965,11 +965,11 @@ inline const RowInfo& rowInfo(int row) {
          L"distance use the same shifted eye position. Headwear that blocks the first-person view is hidden; "
          L"its shadow remains."},
         {setting::kickKey, L"Kick", RowInfo::keyList, &ModSettings::kickKey, nullptr, L"Input", L"KickKey", fp::heldKeyFromText, nullptr,
-         L"Plays the game's own kick, which it never uses itself: in the fighting stance, upright, not mid-swing and with "
-         L"most of your stamina. Unbound until you pick a key; the game does not see that key while it is bound here, "
+         L"Plays the game's own kick, which it never uses itself: standing on both feet, not mid-swing, in or out of the "
+         L"fighting stance. Unbound until you pick a key; the game does not see that key while it is bound here, "
          L"so a key the game's Controls use (Alt makes a thrust) is refused and does not kick."},
         {setting::jumpKey, L"Jump", RowInfo::keyList, &ModSettings::jumpKey, nullptr, L"Input", L"JumpKey", fp::heldKeyFromText, nullptr,
-         L"Plays the game's own jump and pushes your body up: upright, not mid-swing and with half your stamina. "
+         L"Plays the game's own jump and pushes your body up: upright and not mid-swing. "
          L"Unbound until you pick a key; the game does not see that key while it is bound here."},
         {setting::rotateHeldKey, L"Rotate held object", RowInfo::keyList, &ModSettings::rotateHeldKey,
          nullptr, L"Input", L"RotateHeldKey", fp::heldKeyFromText, nullptr,
@@ -1143,12 +1143,12 @@ inline const RowInfo& rowInfo(int row) {
          L"Slides the hand along a held weapon's hilt: positive towards the blade, negative towards the pommel.", {-10,10,1,20}},
         {setting::vrKick, L"VR: kick", RowInfo::choice, &ModSettings::vrKick, nullptr, L"VR",
          L"Kick", fp::vrKickFromText, fp::vrKickText,
-         L"Experimental. On: pressing a stick in plays the game's own kick, only in the fighting stance, upright, not mid-swing "
-         L"and with most of your stamina. The game never plays this clip itself, so a hit lands by foot contact only."},
+         L"Experimental. On: pressing a stick in plays the game's own kick, standing on both feet and not mid-swing. "
+         L"The game never plays this clip itself, so a hit lands by foot contact only."},
         {setting::vrJump, L"VR: jump", RowInfo::choice, &ModSettings::vrJump, nullptr, L"VR",
          L"Jump", fp::vrKickFromText, fp::vrKickText,
-         L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright, "
-         L"not mid-swing and with half your stamina. The game never jumps by itself, so landing is its ordinary physics."},
+         L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright and "
+         L"not mid-swing. The game never jumps by itself, so landing is its ordinary physics."},
         {setting::vrWeaponWeight, L"VR: weapon weight", RowInfo::choice, &ModSettings::vrWeaponWeight, nullptr, L"VR",
          L"WeaponWeight", fp::vrKickFromText, fp::vrKickText,
          L"On: a held weapon follows your hands with a lag set by its own heft, so a heavy axe trails a fast swing and a "
@@ -1238,7 +1238,7 @@ inline const RowInfo& rowInfo(int row) {
          L"View", L"ConditionEffects", nullptr, nullptr,
          L"Below half health the view loses colour and darkens at the edges; when out of breath the edges darken "
          L"with each breath, and the eyes take a moment to adjust between light and darkness. Uses the game's own "
-         L"health and stamina."},
+         L"health (the yellow bar) and stamina (the blue bar)."},
         {setting::lightSmoothing, L"Smooth lighting", RowInfo::toggle, nullptr, &ModSettings::lightSmoothing,
          L"View", L"SmoothLighting", nullptr, nullptr,
          L"Reads the game's bounce-light grid smoothly, so strong lights such as the arena's red torches fall off in "

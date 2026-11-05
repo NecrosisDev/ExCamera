@@ -1132,6 +1132,13 @@
       "end_rva": "0x4f74c",
       "pattern": "55 48 89 E5 48 8D 64 24 B0 48 89 5D D0 48 89 75 D8 48 89 4D F8 8B 0D ?? ?? ?? ?? E8",
       "entry_offset": 0
+    },
+    {
+      "name": "hudBars",
+      "rva": "0x13e0f0",
+      "end_rva": "0x13e579",
+      "pattern": "55 48 89 E5 48 8D 64 24 90 48 89 4D F8 C6 45 F4 01 80 3D ?? ?? ?? ?? 00 74 0E 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ??",
+      "entry_offset": 0
     }
   ],
   "fields": [
@@ -1510,8 +1517,8 @@
     {
       "owner": "playerBehavior",
       "width": 4,
-      "provenance": "RDX is the character from behaviour local_10[5]. CVTSS2SD reads float character+10B8; the next scalar read takes character+10BC, which is multiplied by a threshold and compared with this current balance.",
-      "name": "character::stamina",
+      "provenance": "RDX is the character from behaviour local_10[5]. CVTSS2SD reads float character+10B8; the next scalar read takes character+10BC, which is multiplied by a threshold and compared with this current balance. Balance, not stamina: the HUD never draws it; the character update regenerates it to +10BC (169A4C) and plays recover motion 3 below it (169B99).",
+      "name": "character::balance",
       "instruction": "0xc286e",
       "value": "0x10b8",
       "window_offset": 2931,
@@ -1524,7 +1531,7 @@
       "owner": "playerBehavior",
       "width": 4,
       "provenance": "RDX remains the character from behaviour local_10[5]. CVTSS2SD reads float character+10BC directly after current balance +10B8, then native code scales it for the balance threshold comparison.",
-      "name": "character::staminaMax",
+      "name": "character::balanceMax",
       "instruction": "0xc2876",
       "value": "0x10bc",
       "window_offset": 2935,
@@ -2729,9 +2736,9 @@
     {
       "owner": "combatPosture",
       "width": 4,
-      "provenance": "R8 is the character loaded from behaviour+28 at B7560. CVTSS2SD reads float character+D58 before comparison with double 0.01. This is the native posture readiness gate; no more specific physiological interpretation is assumed.",
+      "provenance": "R8 is the character loaded from behaviour+28 at B7560. CVTSS2SD reads float character+D58 and compares it with 0.01. +D58 is the current health: 17A100 interpolates +D70 = lerp(+D6C, +D58) and the HUD (13E0F0 -> 13C880) draws +D70 / +103C as the yellow part of the health bar.",
       "optional_group": "manualDefense",
-      "name": "character::postureReadiness",
+      "name": "character::health",
       "instruction": "0xb7576",
       "value": "0xd58",
       "window_offset": 14,
@@ -4366,7 +4373,7 @@
       "provenance": "Second copy in the same reviewed window: view+E0 receives the 4x4 drawing projection."
     },
     {
-      "name": "character::health",
+      "name": "character::healthRestorable",
       "value": "0xd5c",
       "owner": "healthFraction",
       "instruction": "0x185a17",
@@ -4377,7 +4384,7 @@
       "displacement_offset": 4,
       "displacement_bytes": 4,
       "optional_group": "viewEffects",
-      "provenance": "FUN_100185A00 (RBX = character) divides float health +D5C by its maximum +103C and compares the fraction with a low-health threshold; FUN_10014F180 computes the same fraction. KB: health +D5C, maximum +103C; witnesses identical in the Hellmode build."
+      "provenance": "FUN_100185A00 (RBX = character) divides float +D5C by +103C. The HUD (13E0F0 -> 13C880) draws this fraction as the end of the pale (restorable) part of the health bar; healing (1A0C50) raises it up to +103C. The current health is +D58 (character::health)."
     },
     {
       "name": "character::healthMax",
@@ -4385,7 +4392,7 @@
       "owner": "healthFraction",
       "instruction": "0x185a1f",
       "width": 4,
-      "witness": "character::health",
+      "witness": "character::healthRestorable",
       "native_instruction": "divss xmm0, dword ptr [rbx + 0x103c]",
       "provenance": "The divisor in the same reviewed window: the character's maximum health."
     },
@@ -4627,6 +4634,30 @@
       "native_instruction": "mov eax, dword ptr [rsi + 0x14]",
       "displacement_offset": 6,
       "displacement_bytes": 1
+    },
+    {
+      "name": "character::stamina",
+      "value": "0xd74",
+      "owner": "hudBars",
+      "instruction": "0x13e3b6",
+      "width": 4,
+      "window_offset": 686,
+      "pattern": "48 8B 05 ?? ?? ?? ?? 8B 80 78 0D 00 00 89 44 24 20 48 8B 05 ?? ?? ?? ?? F3 0F 10 98 74 0D 00 00",
+      "native_instruction": "movss xmm3, dword ptr [rax + 0xd74]",
+      "displacement_offset": 28,
+      "displacement_bytes": 4,
+      "optional_group": "viewEffects",
+      "provenance": "The HUD (13E0F0) reads the player (global) and passes float +D74 as the fill of the blue bar to 13C470, which draws it as a 0..1 fraction of the bar width. 17A640 spends stamina against it."
+    },
+    {
+      "name": "character::staminaCeiling",
+      "value": "0xd78",
+      "owner": "hudBars",
+      "instruction": "0x13e3a5",
+      "width": 4,
+      "witness": "character::stamina",
+      "native_instruction": "mov eax, dword ptr [rax + 0xd78]",
+      "provenance": "In the same reviewed window: the blue bar's second mark, how far stamina can refill (0..1)."
     }
   ],
   "references": [

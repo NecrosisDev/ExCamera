@@ -623,10 +623,10 @@ static void trackedTeleportTick(uintptr_t root, const xd::TrackingFrame& tracked
     transform[11] = trackedTeleportNative.z - origin[2];
     for (float f : transform)
         if (!std::isfinite(f)) return;
-    const float stamina = *reinterpret_cast<float*>(root + field::character::stamina); // the move refills it; teleporting is not a rest
+    const float balance = *reinterpret_cast<float*>(root + field::character::balance); // the move refills it; teleporting does not steady you
     trackedTeleportLast = now;
     if (trackedTeleportCall(root, transform)) {
-        if (std::isfinite(stamina)) *reinterpret_cast<float*>(root + field::character::stamina) = stamina;
+        if (std::isfinite(balance)) *reinterpret_cast<float*>(root + field::character::balance) = balance;
         trackedTeleports.fetch_add(1, std::memory_order_relaxed);
     }
 }

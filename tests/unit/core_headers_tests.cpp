@@ -157,23 +157,19 @@ bool input_game_binding_keys() {
 bool input_motion_refusals() {
     using R = fp::MotionRefusal;
     constexpr R play = R::count;
-    // Standing, free, stamina enough, in stance: plays.
-    CHECK(fp::motionGate(false, false, 0, false, 90.f, 100.f, .8f, true, true) == play);
-    CHECK(fp::motionGate(false, false, 8, false, 50.f, 100.f, .5f, false, false) == play);
+    // Standing and free plays, whatever the stamina, balance or stance (the game asks none of them).
+    CHECK(fp::motionGate(false, false, 0, false) == play);
+    CHECK(fp::motionGate(false, false, 8, false) == play);
     // Each reason, in the checks' order.
-    CHECK(fp::motionGate(true, true, 4, true, 0.f, 100.f, .8f, true, false) == R::cursorFree);
-    CHECK(fp::motionGate(false, true, 4, true, 0.f, 100.f, .8f, true, false) == R::busy);
-    CHECK(fp::motionGate(false, false, 4, true, 0.f, 100.f, .8f, true, false) == R::notUpright);
-    CHECK(fp::motionGate(false, false, 0, true, 0.f, 100.f, .8f, true, false) == R::dead);
-    CHECK(fp::motionGate(false, false, 0, false, 79.f, 100.f, .8f, true, true) == R::stamina);
-    CHECK(fp::motionGate(false, false, 0, false, NAN, 100.f, .5f, false, false) == R::stamina);
-    CHECK(fp::motionGate(false, false, 0, false, 90.f, 0.f, .5f, false, false) == R::stamina);
-    CHECK(fp::motionGate(false, false, 0, false, 90.f, 100.f, .8f, true, false) == R::notInStance);
+    CHECK(fp::motionGate(true, true, 4, true) == R::cursorFree);
+    CHECK(fp::motionGate(false, true, 4, true) == R::busy);
+    CHECK(fp::motionGate(false, false, 4, true) == R::notUpright);
+    CHECK(fp::motionGate(false, false, 0, true) == R::dead);
     // The kick wants both feet planted: state 8 (upright, one foot) refuses it, 0 plays.
-    CHECK(fp::motionGate(false, false, 8, false, 90.f, 100.f, .8f, true, true, true) == R::notUpright);
-    CHECK(fp::motionGate(false, false, 0, false, 90.f, 100.f, .8f, true, true, true) == play);
+    CHECK(fp::motionGate(false, false, 8, false, true) == R::notUpright);
+    CHECK(fp::motionGate(false, false, 0, false, true) == play);
     // Notices: something to do for the player's reasons, silence for the others; kick and jump each name theirs.
-    for (R r : {R::busy, R::notUpright, R::stamina, R::notInStance, R::cursorFree, R::gameKey, R::unavailable, R::fault}) {
+    for (R r : {R::busy, R::notUpright, R::cursorFree, R::gameKey, R::unavailable, R::fault}) {
         CHECK(fp::motionRefusalNotice(false, r) != nullptr);
         CHECK(std::wcsncmp(fp::motionRefusalNotice(false, r), L"Kick", 4) == 0);
         CHECK(std::wcsncmp(fp::motionRefusalNotice(true, r), L"Jump", 4) == 0);
