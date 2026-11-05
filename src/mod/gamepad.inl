@@ -51,7 +51,6 @@ static bool padRead(fp::PadState& out) {
 }
 
 static void padTick(uintptr_t root, uintptr_t bh, bool owned) {
-    (void)root;
     (void)bh;
     static fp::PadState last{};
     static bool parryWriting = false;
@@ -62,7 +61,10 @@ static void padTick(uintptr_t root, uintptr_t bh, bool owned) {
     // already down when that starts waits for its next press.
     auto pressed = [&](int button) { return fp::padHeld(button, pad) && !fp::padHeld(button, last); };
     if (owned && bindingContextNow()) {
-        if (pressed(padKickButton.load())) {
+        // The kick only in combat (the game's combat mode, +12FE): out of combat Y, its default, is the
+        // inventory in Steam's layout.
+        const bool combat = root && *reinterpret_cast<const unsigned char*>(root + field::character::combatStance);
+        if (combat && pressed(padKickButton.load())) {
             padKickRequested = true;
             padKicks.fetch_add(1);
         }

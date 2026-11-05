@@ -1306,10 +1306,9 @@ inline const RowInfo& rowInfo(int row) {
          L"chosen when the parry starts. Reach, timing and gear still decide if it works."},
         {setting::padKick, L"Controller: kick", RowInfo::choice, &ModSettings::padKick, nullptr, L"Controller",
          L"Kick", iniPadButton, fp::padButtonText,
-         L"An Xbox-style controller button that plays the game's own kick, as the Kick key does. The mod reads the "
-         L"controller itself, so a button your Steam controller layout also uses still does the game's action "
-         L"too: Y opens the inventory outside combat. Y and the right-stick click do nothing in combat in the "
-         L"game's own layout."},
+         L"In combat, an Xbox-style controller button that plays the game's own kick, as the Kick key does. The "
+         L"mod reads the controller itself, so a button your Steam controller layout also uses still does the "
+         L"game's action too. Y and the right-stick click do nothing in combat in the game's own layout."},
         {setting::padJump, L"Controller: jump", RowInfo::choice, &ModSettings::padJump, nullptr, L"Controller",
          L"Jump", iniPadButton, fp::padButtonText,
          L"An Xbox-style controller button that plays the game's own jump, as the Jump key does. The right-stick "
