@@ -33,7 +33,7 @@ static const char excameraManualPageText[] =
     "- [tcol=FFE399]Hold F7[/tcol]: Cleanly stop and unload ExCamera, returning control to the native overhead camera.\r\n"
     "- [tcol=FFE399]F8[/tcol]: Open [tcol=FFE399]Settings -> Mod Settings[/tcol] (in play or at the title screen) to configure camera framing, controls, combat options, VR, and visual effects.\r\n"
     "- [tcol=FFE399]F9 / F10 / F11[/tcol]: Narrow, widen, or reset the base Field of View.\r\n"
-    "- [tcol=FFE399]Cursor Look[/tcol]: Hold or toggle your native Controls [tcol=FFE399]Cursor Look[/tcol] binding to free the pointer at will. Inventory, containers, corpses, shops, dialogue, and arena menus release the cursor automatically.\r\n"
+    "- [tcol=FFE399]Cursor Look[/tcol]: Hold or toggle your native Controls [tcol=FFE399]Cursor Look[/tcol] binding to free the pointer at will. Inventory, containers, corpses, shops, dialogue, and arena menus release the cursor automatically. After an arena fight you can still look around and loot; press [tcol=FFE399]Cursor Look[/tcol] to click [tcol=FFE399]Next Fight[/tcol].\r\n"
     "- [tcol=FFE399]Middle Mouse[/tcol]: Immediately align your view with the cursor inside the aim oval.\r\n"
     "- [tcol=FFE399]Lean & Crouch[/tcol]: Hold [tcol=FFE399]Alt[/tcol] and move the mouse to lean your upper body around corners or over tables; press your native duck key ([tcol=FFE399]X[/tcol] by default) outside combat to crouch.\r\n\r\n\r\n"
     "[algn=2][tcol=FFE399]COMBAT & AIMING[/tcol]\r\n"

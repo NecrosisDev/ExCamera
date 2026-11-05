@@ -2,6 +2,7 @@
 
 Unreleased
 
+- After an arena fight you can look around again while the result window (Next Fight) is up, so you can walk over and loot your opponent. To click Next Fight or the other result buttons, press Cursor Look (the game's binding, Space by default) to free the pointer, and press it again to look around.
 - Safe start: hold Shift while starting ExCamera.exe (or start it with `--safe`) to play with default settings. Your current settings are copied to `first-person.backup-<date>-<time>.ini` beside them first. If the last session ran into an error, the launcher offers the same, with a note that it may not help.
 - F6 can switch between first and third person only: set Settings > Camera > F6 cycle to "1st/3rd only". Then a tap flips the two views, and holding F6 for half a second shows the game's own camera. The default still steps through all three.
 - New Hit reaction slider (Settings > Camera > First person): how hard the first-person view jolts when you are hit, from 0 (still) to 100 % (as before). Hits now also tilt the view a little, as they were meant to. A VR headset view never jolts.

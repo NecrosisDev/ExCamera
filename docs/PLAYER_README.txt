@@ -20,7 +20,8 @@ F8            Open Settings and free the cursor; press again to close without sa
 F9 / F10      Lower / raise the field of view
 F11           Reset the field of view
 F12           Toggle Live Telemetry & Wound Debug Mode (neon highlight for wounds/blood)
-Cursor Look   The game's own binding (Space by default): free the cursor while exploring
+Cursor Look   The game's own binding (Space by default): free the cursor while exploring.
+              After an arena fight you keep looking around; press it to click Next Fight
 Hold RMB      (In combat) Engage Manual Guard to actively angle your parry against attacks
 Hold RMB      (While dragging an object with LMB) Rotate the held object in 3D pitch and yaw
 Mouse Wheel   In third person, adjust camera distance; while dragging objects, adjust reach

@@ -967,6 +967,27 @@ inline bool heldPointOnPlane(const float* origin, const float* dir, float distan
     }
     return true;
 }
+// The game's own windows that free the pointer by themselves (overlay.inl windowFreeStep), by the form's kind
+// tag (+0xB8): inventory/loot/container, the arena merchant and arsenal, the arena/company screens, and an
+// item description. The arena's post-fight result form (Next Fight) is not one of them, whatever its tag: the
+// player walks over to loot and looks around, and Cursor Look (native slot 8, already admitted on that form)
+// frees the pointer to click its buttons.
+inline constexpr unsigned windowInventory = 0xCE1C2010, windowLoot = 0xCE1C2040, windowContainer = 0xCE1C2013,
+                          windowDescription = 0xCE1C2012, windowShop = 0xCE1C2023,
+                          windowArsenal = 0xCE1C2024; // the arena merchant and its arsenal
+// Native arena forms: 194CD0, 19A370, 198AF0 and 198E40 respectively.
+inline constexpr unsigned windowMatches = 0xCE10AE10, windowCompany = 0xCE10AE20,
+                          windowCompanyRecords = 0xCE10AE21, windowCompanyStatus = 0xCE10AE22;
+inline constexpr unsigned cursorPanelInventory = 1u << 0, cursorPanelCommerce = 1u << 1,
+                          cursorPanelArena = 1u << 2, cursorPanelDescription = 1u << 3;
+inline unsigned cursorPanelOf(unsigned kind, bool arenaResult) {
+    if (arenaResult) return 0;
+    if (kind == windowInventory || kind == windowLoot || kind == windowContainer) return cursorPanelInventory;
+    if (kind == windowShop || kind == windowArsenal) return cursorPanelCommerce;
+    if (kind == windowMatches || kind == windowCompany || kind == windowCompanyRecords || kind == windowCompanyStatus)
+        return cursorPanelArena;
+    return kind == windowDescription ? cursorPanelDescription : 0;
+}
 // F6. The full cycle goes first -> third -> the game's overhead camera (a blend, viewMode 2) and off; any
 // press while the mod is off or the blend has settled toggles it. "First and third only" decides on release:
 // a tap flips the two views, a hold of f6HoldMs (or longer) blends out to the game's camera instead.

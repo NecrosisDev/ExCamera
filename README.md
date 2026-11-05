@@ -37,7 +37,7 @@ To remove it, delete the folder and `Documents\ExCamera`. Your preferences live 
 | **F8** | Open Settings and free the cursor; press again to close without saving |
 | **F9 / F10** | Lower / raise the field of view |
 | **F11** | Reset the field of view to 75° |
-| **Cursor Look** (Space by default) | Free the cursor while exploring |
+| **Cursor Look** (Space by default) | Free the cursor while exploring, or to click Next Fight after an arena fight (you can look around and loot until then) |
 | **Hold right mouse** | In combat: manual guard. While dragging an object: rotate it |
 | **Mouse wheel** | Third-person camera distance, or reach while dragging an object |
 

@@ -134,6 +134,23 @@ bool input_f6_cycle_policy() {
     return true;
 }
 
+bool input_cursor_panels() {
+    CHECK(fp::cursorPanelOf(fp::windowInventory, false) == fp::cursorPanelInventory);
+    CHECK(fp::cursorPanelOf(fp::windowLoot, false) == fp::cursorPanelInventory);
+    CHECK(fp::cursorPanelOf(fp::windowContainer, false) == fp::cursorPanelInventory);
+    CHECK(fp::cursorPanelOf(fp::windowShop, false) == fp::cursorPanelCommerce);
+    CHECK(fp::cursorPanelOf(fp::windowArsenal, false) == fp::cursorPanelCommerce);
+    CHECK(fp::cursorPanelOf(fp::windowMatches, false) == fp::cursorPanelArena);
+    CHECK(fp::cursorPanelOf(fp::windowCompanyStatus, false) == fp::cursorPanelArena);
+    CHECK(fp::cursorPanelOf(fp::windowDescription, false) == fp::cursorPanelDescription);
+    CHECK(fp::cursorPanelOf(0x12345678u, false) == 0u);
+    // The post-fight result form never frees the pointer by itself, whatever kind it carries: look stays.
+    CHECK(fp::cursorPanelOf(fp::windowMatches, true) == 0u);
+    CHECK(fp::cursorPanelOf(fp::windowInventory, true) == 0u);
+    CHECK(fp::cursorPanelOf(0u, true) == 0u);
+    return true;
+}
+
 bool input_combat_cues_cursor_and_ray_helpers() {
     fp::SwingGesture gesture;
     gesture.move(2.5f, 0.f, 1000.f);
@@ -905,6 +922,7 @@ int main() {
         {"input angle wrapping and vrTurningFromText", input_angle_wrapping_and_vr_turning_text},
         {"input combat cues, cursor, and ray helpers", input_combat_cues_cursor_and_ray_helpers},
         {"input F6 cycle policy", input_f6_cycle_policy},
+        {"input cursor panels", input_cursor_panels},
         {"camera motion FOV, AimBox, NearPlane, and eye stabilization",
          camera_motion_fov_aimbox_nearplane_and_eye_stabilization},
         {"camera motion shoulder slide", camera_motion_shoulder_slide},
