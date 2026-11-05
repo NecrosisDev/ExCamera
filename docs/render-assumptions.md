@@ -46,10 +46,10 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 | Hide helmet and hair (`View/Helmet`) — see also "Headwear reads" below | Skinned mesh layout and tags (above); material face ranges; descriptor `material+0x68` (+0x14 indices); `renderer+0x80` configuration (+0xC uniforms, +0x14 sample location) | Mesh offsets PROVEN (0xD9350/0x69520/0x5E340); headwear functions BYTE-EXACT (headwearRender); descriptor `+0x14` and renderer `+0x80/+0xC/+0x14` UNPROVEN in this audit | replay under cueLock, restored raw (not audited per pass) | Mostly PROVEN; the descriptor and renderer-uniform reads are UNPROVEN. Not gated: they are read only inside byte-exact owners whose code is unchanged, and a wrong value fails the draw closed (the native draw runs). Flagged for the audit thread |
 | Helmet view (`View/HelmetView`) | Whether headwear was seen (the headwear path) | as Hide helmet | audit clean | as above |
 | See yourself through walls (`View/PlayerGhost`) | Highlight pass 0x4F1D0 hook; replays native bind 0x73F20, per-node submit `material+0x80`, part draw `part+0x90(part+0x98)` | Pass, camera pass, bind and framebuffer bind BYTE-EXACT (silhouette); `+0x80`/`+0x90` checked at runtime to equal contracted 0x201630/0x6B8B0; cache restore PROVEN (6FC30) | Audit found the blend leak (fixed 478b214); cache restored (7abc04a) | PROVEN |
-| Held item detail (`View/HeldItemDetail`) | Same replay mask; held node `renderTransform`, `sector+0x64` origin; material kind from a readback of unit-0 texture | Replay PROVEN; `sceneNode::renderTransform`, `sector::origin` WITNESSED; material kind is OURS | as above | Core PROVEN. **Light** (light-node `+0x210/+0x21C/+0x224`, sector list `+0x130`, origin `+0x64`): UNPROVEN, **gated off**. **Wear and dirt** (item record: `node+0x180` id, database rows `+0x10/+0x18`, row `+0x8/+0xC`): UNPROVEN, **gated off**. Weapon blood spot source: see Wounds |
-| Armour and clothing detail (`View/ArmourDetail`) | Same as held items, for worn pieces | as above | as above | as above (same gates) |
-| World object detail (`View/ObjectDetail`) | Same, for nearby placed objects | as above | as above | as above (same gates) |
-| Level detail (`View/LevelDetail`) | People within 4 m (`worldObject::characters`); the two nearest lamps (light-node fields) | Roster WITNESSED; lamps UNPROVEN | audit clean | Surface detail PROVEN (image only, OURS). **Lamps gated off** |
+| Held item detail (`View/HeldItemDetail`) — **off: colour material guess** | Same replay mask; held node `renderTransform`, `sector+0x64` origin; material kind from a readback of unit-0 texture | Replay PROVEN; `sceneNode::renderTransform`, `sector::origin` WITNESSED; material kind is OURS | as above | Core PROVEN. **Light** (light-node `+0x210/+0x21C/+0x224`, sector list `+0x130`, origin `+0x64`): UNPROVEN, **gated off**. **Wear and dirt** (item record: `node+0x180` id, database rows `+0x10/+0x18`, row `+0x8/+0xC`): UNPROVEN, **gated off**. Weapon blood spot source: see Wounds |
+| Armour and clothing detail (`View/ArmourDetail`) — **off: colour material guess** | Same as held items, for worn pieces | as above | as above | as above (same gates) |
+| World object detail (`View/ObjectDetail`) — **off: colour material guess** | Same, for nearby placed objects | as above | as above | as above (same gates) |
+| Level detail (`View/LevelDetail`) — **off: colour material guess** | People within 4 m (`worldObject::characters`); the two nearest lamps (light-node fields) | Roster WITNESSED; lamps UNPROVEN | audit clean | Surface detail PROVEN (image only, OURS). **Lamps gated off** |
 | Draw distance (`View/DrawDistance`) | Clears the frustum bits on sector meshes | PROVEN (0x58EFB; see "Witnessed fields re-checked") | no GL | PROVEN |
 | Lights per object (`View/LightsPerObject`) | Writes `lightEntry::active` on per-node light lists and restores at the swap | PROVEN (0x26F420; see "Witnessed fields re-checked") | no GL | PROVEN |
 | Finger poses (`View/FingerPoses`, `FingerPosesOthers`) | Bone register 0xD39B0 and skin arrays | `skin+0x10/+0x18/+0x20`, `node+0x17C` PROVEN in 0xD39B0 | no GL | Data PROVEN; pose choice OURS; animation side for the audit thread |
@@ -122,14 +122,21 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
 
 ## Progress on the gated items
 
-- **Light-node fields (items 1 and 3), still UNPROVEN.**
+- **Light-node fields (items 1 and 3): fields PROVEN, use still UNPROVEN, so still gated.**
   - TLightSource is the class named by the ShortString at 0x2FD048, VMT at 0x2FCF40. Its instance size is 744
-    (0x2E8), which matches the `lightSize` the code checks: PROVEN.
-  - Its copy method 0x51B10 copies `+0x210` as 12 bytes (three floats), `+0x218`, `+0x21C`, `+0x220`,
-    `+0x224` and `+0x22C`, then computes `sqrt(+0x220) * +0x21C` (0x51D09-0x51D15) and `sqrt(+0x220 * +0x21C)`.
-  - That fits a colour at `+0x210`, but it does not show which of `+0x21C`/`+0x220`/`+0x224` is intensity and
-    which is range; the code assumes `+0x21C` intensity and `+0x224` range. Needed next: the routine that hands
-    lights to the shaders (or the uniforms in the shader dump below).
+    (0x2E8), matching `lightSize`.
+  - Its update 0x51EB0 (blood thread's decoding, checked here):
+    - It clamps `+0x220` to at least 1.19e-7 (0x51EB9-0x51ED2).
+    - It converts `+0x210` (sRGB colour, 3 floats) to linear into `+0x278` with 0x269D50, the exact sRGB curve
+      (0.04045, 12.92, 0.055, 1.055, 2.4; 0x269D5D-0x269DA8).
+    - It scales `+0x278` by `sqrt(+0x220) · (+0x21C) · 3` or by `sqrt(+0x220 · +0x21C) · k`, depending on the
+      byte at 0x2AC0D0 (0x51F67-0x51FC5; 0x19260 multiplies a vec3).
+    - It copies `+0x224` (range) to `+0x2A4`, under a threshold on `+0x21C` (0x51FCA-0x5200C).
+  - So `+0x21C` and `+0x220` are both brightness factors, and the code's "+0x21C is intensity" alone is
+    incomplete. When this comes back on, it should read the game's own results, `+0x278` (linear colour ×
+    brightness) and `+0x2A4` (range), so it matches the game by construction.
+  - Still missing: that the renderer hands `+0x278`/`+0x2A4` to the lit shaders, and the falloff they apply.
+    The blood thread is tracing the upload; the shader dump will also show it.
 - **Item wear and dirt (item 2): mostly proven, still gated.**
   - Lookup, PROVEN. 0x103DB0 picks the table by the id's top bits (0x80000000 level `DAT_4EF930`, 0x40000000
     world `DAT_4EF940`, else `DAT_4EF920`). 0x104660 binary-searches `count +8` rows of 16 bytes at `+0x10` by
@@ -196,6 +203,23 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
       2 walks the sector's portals (`+0x268`, 0x58 bytes, neighbour sector at `+0x40`) and draws through those
       into sectors with 1 (0x5B49B-0x5B56E).
     - That is exactly the layout view.inl reads and the meaning it relies on.
+
+## Colour heuristics standing in for game material data
+
+These are the mod's guesses about game materials from a pixel's or texture's colour. They are not game data, so
+under the release rule they are off unless proven (`colourMaterialGuesses = false`, src/mod/wounds.inl):
+
+| Where | Guess | State |
+|---|---|---|
+| Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Off**: the held/worn/object mask replay and the texture readback do not run, so these three detail rows draw nothing |
+| Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Off**: level detail draws nothing |
+| Reflections (`ssrShader`, 478b214) | Floor reflectivity by colour class | **Left as is** pending Hunter's answer on using the game's specular maps (plan: shininess in the alpha channel) |
+| Wound marks (`woundShader`) | A grey, unsaturated surface is metal (smears, no soak) | Blood thread's code; they turned their gear metal-vs-cloth guess off in bc00466 |
+
+Not material guesses, and kept: eye adaptation (the image's brightness, our design), the AO "bright pixels are
+direct light" rule (shading choice), the helmet view (depth within 18 cm of the eye), hurt (proven health).
+To bring the material-based ones back: decode the material type the game itself keeps per material or part
+(it plays different hit sounds per material, so such data likely exists), then flip the flag.
 
 ## Not yet proven, not gated (for the audit thread)
 
