@@ -14,6 +14,11 @@ static std::atomic<float> woundMarks{1.f}; // the Wounds row: 0 off
 // the game code; the effects then use their neutral fallbacks (default light from above, unread condition,
 // no lamps).
 constexpr bool unprovenRenderReads = false;
+// The held, worn, object and level detail choose each surface's material (steel, wood, leather, mail, paint,
+// cloth, plaster, earth, stone) from its colour, a guess that stands in for game material data; the game's own
+// material data for them is not decoded. Off until it is (render-assumptions.md, "Colour heuristics"):
+// those four effects then draw nothing, and their replay and texture readback do not run.
+constexpr bool colourMaterialGuesses = false;
 
 // The runtime's record, shared with ScriptRuntime's character_hits: version 2 (0x78 bytes); a version 1
 // runtime writes the first 0x70 bytes only (no weapon, kind 0 or 3).

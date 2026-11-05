@@ -5513,7 +5513,8 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                     slot.valid = true;
                 }
             }
-            const float material = held && heldBlendColor ? heldMaterialCodeFor(g, e.material, e.slot >= int(s.heldCount)) : 0.f;
+            const float material = colourMaterialGuesses && held && heldBlendColor
+                                       ? heldMaterialCodeFor(g, e.material, e.slot >= int(s.heldCount)) : 0.f;
             // The single path submits (uniforms) then draws. A multi-sample entry is replayed as its
             // first sample only, through the single-sample submit (0x200770, which the dispatcher
             // calls when there is one sample) at sample 0's viewport: one draw instead of one per sample.
@@ -5701,7 +5702,7 @@ static bool worldInDefaultFramebuffer(uintptr_t view);
 // in either view with the held-item detail on (body: false).
 static bool silhouetteWanted(uintptr_t view, bool body = true) {
     const bool consumer = body ? viewMode.load() == 1 && playerGhost.load(std::memory_order_relaxed)
-                               : viewMode.load() < 2 && (heldDetail.load(std::memory_order_relaxed) > 0.f ||
+                               : colourMaterialGuesses && viewMode.load() < 2 && (heldDetail.load(std::memory_order_relaxed) > 0.f ||
                                                          armourDetail.load(std::memory_order_relaxed) > 0.f ||
                                                          objectDetail.load(std::memory_order_relaxed) > 0.f);
     return silhouetteHooked && silhouetteSubmitHooked() && consumer && InterlockedCompareExchange(&active, 0, 0) &&
@@ -5812,6 +5813,7 @@ static void levelDetailFor(ViewRequest& request) {
         InterlockedCompareExchange(&stopping, 0, 0)) return;
     const float wanted = levelDetail.load(std::memory_order_relaxed);
     if (!(wanted > 0.f) || request.eye) return; // desktop view only (a headset's two eyes would double it)
+    if constexpr (!colourMaterialGuesses) return; // material from colour: off until proven (wounds.inl)
     const float period = viewCpuFrameMs.load(std::memory_order_relaxed);
     const float target = period > 0.f ? 1.f - std::clamp((period - 18.f) / 7.f, 0.f, 1.f) : 1.f;
     float scale = levelDetailScale.load(std::memory_order_relaxed);
