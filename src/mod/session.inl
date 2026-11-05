@@ -920,6 +920,8 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("material_id_program_failures", matid::idProgramsFailed.load());
     j.unum("material_id_parts", materialIdParts.load());
     j.unum("material_id_misses", materialIdMisses.load());
+    j.unum("material_id_misses_no_ids", matid::missesNoIds.load());     // the texture has no ids
+    j.unum("material_id_misses_program", matid::missesProgram.load()); // ids, but no mirrored program
     // Texture replacements (texture_replace.inl): files found, uploaded in place, refused (reason of the last).
     j.boolean("texture_replace_hooked", texrep::hooked.load());
     j.unum("texture_replace_files", texrep::files.load());

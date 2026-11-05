@@ -498,6 +498,14 @@ Each ships on its own once proven; the rest stay off.
   reads can depend on it. Such uniforms are now left at their default, and members of uniform blocks (no
   location) are served by the block bindings. No material-id message goes to the game's console; failures go to
   material-id-shader.log only.
+- **Programs no live shader can recover (2026-11-05, Hunter's 22:22 run: first linked 162, programs 87, 89, 90).**
+  Four game builders delete both shaders right after 0x1FA120 (0x1FACF0 at 0x1FAD3C/0x1FAD44, and 0x1FAD60,
+  0x1FA2B0, 0x1FA330), so a program they built before the hook leaves no vertex shader alive (PROVEN). The hook
+  must be in before those links: the launcher now attaches as soon as Exanima.exe and kernel32 are mapped
+  (src/launcher.cpp `ready`), not after the game's GL context and window exist; the mod still waits for both
+  itself (waitForGame). When a program is still missed (the game was started before the launcher), the log line
+  gives the first program the hook saw and every candidate's outcome. `material_id_misses_no_ids` (the part's
+  colour texture has no ids) and `material_id_misses_program` (ids, but no mirrored program) split the misses.
 - **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),
   parts drawn with ids and misses. Parallax (`Mat.TexDsp`) items read ids at the unshifted texcoord.
 

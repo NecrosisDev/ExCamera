@@ -710,11 +710,13 @@ static bool declaresInput(const std::string& text, const std::string& name) {
     }
     return false;
 }
-static std::string recoverVertexSource(gl::Api& g, GLuint game) {
+// Every candidate's outcome is counted, so the log says in one line why a program found no source.
+struct RecoveryTally { unsigned vertex = 0, noPosition = 0, noLink = 0, attributes = 0, uniforms = 0, fits = 0; };
+static std::string recoverVertexSource(gl::Api& g, GLuint game, RecoveryTally& tally) {
     const std::vector<Attribute> wanted = attributesOf(g, game);
     std::string match;
     bool ambiguous = false;
-    for (GLuint name = 1; name < 8192 && !ambiguous; ++name) {
+    for (GLuint name = 1; name < 8192; ++name) {
         if (!extra.isShader(name)) continue;
         GLint type = 0, length = 0;
         extra.getShaderiv(name, 0x8B4F /*SHADER_TYPE*/, &type);
@@ -725,19 +727,31 @@ static std::string recoverVertexSource(gl::Api& g, GLuint game) {
         GLsizei got = 0;
         extra.getShaderSource(name, length, &got, text.data());
         text.resize(size_t(got));
-        if (text == match || text.find("gl_Position") == std::string::npos) continue;
+        ++tally.vertex;
+        if (text == match) continue;
+        if (text.find("gl_Position") == std::string::npos) {
+            ++tally.noPosition;
+            continue;
+        }
         char log[64];
         const GLuint program = linkWithIdFragment(g, text.c_str(), log, sizeof log);
-        if (!program) continue;
+        if (!program) {
+            ++tally.noLink; // no vrTex/vriTex output, or it does not compile on its own
+            continue;
+        }
         // Ours may lose attributes the id fragment does not need (the driver drops unused ones), so: each of ours
         // active in the game's with the same type and location, and each of the game's declared by this text.
-        bool fits = uniformsWithin(program, game);
+        bool attributes = true;
         for (const Attribute& a : attributesOf(g, program))
-            fits = fits && std::find(wanted.begin(), wanted.end(), a) != wanted.end();
+            attributes = attributes && std::find(wanted.begin(), wanted.end(), a) != wanted.end();
         for (const Attribute& a : wanted)
-            fits = fits && declaresInput(text, a.name);
+            attributes = attributes && declaresInput(text, a.name);
+        const bool uniforms = uniformsWithin(program, game);
         g.deleteProgram(program);
-        if (!fits) continue;
+        if (!attributes) ++tally.attributes;
+        else if (!uniforms) ++tally.uniforms;
+        if (!attributes || !uniforms) continue;
+        ++tally.fits;
         if (!match.empty()) ambiguous = true;
         else match = std::move(text);
     }
@@ -761,6 +775,7 @@ struct IdProgram {
 static IdProgram idPrograms[48];
 static unsigned idProgramNext = 0;
 static std::atomic<unsigned> idProgramsBuilt{0}, idProgramsFailed{0};
+static std::atomic<unsigned> missesNoIds{0}, missesProgram{0}; // why a held part drew no ids
 
 static const char* const idFragment[2] = {R"glsl(#version 150
 in vec2 vrTex;
@@ -825,10 +840,19 @@ static const IdProgram* idProgramFor(gl::Api& g, GLuint game) {
     p = IdProgram{context, game, 0, -1, 0, {}, true};
     if (!game || !loadExtra()) return nullptr;
     std::string source = linkedVertexSource(context, game);
-    if (source.empty()) source = recoverVertexSource(g, game);
+    RecoveryTally tally;
+    const bool recovered = source.empty();
+    if (recovered) source = recoverVertexSource(g, game, tally);
     if (source.empty()) {
-        logIdFailure("no vertex source (linked before the hook; none of the live vertex shaders fits it alone)", game,
-                     nullptr);
+        // One line with every reason: how many live vertex shaders there were and why each was not taken.
+        char why[320];
+        snprintf(why, sizeof why,
+                 "linked before the hook (first program it saw: %u). Live vertex shaders %u: without gl_Position %u, "
+                 "no texcoord output or no compile %u, attributes differ %u, uniforms differ %u, fit %u%s. A game "
+                 "builder that deletes both shaders after linking (0x1FACF0, 0x1FAD60, 0x1FA2B0, 0x1FA330) leaves none.",
+                 firstLinkedSeen.load(), tally.vertex, tally.noPosition, tally.noLink, tally.attributes, tally.uniforms,
+                 tally.fits, tally.fits > 1 ? " (ambiguous)" : "");
+        logIdFailure("no vertex source", game, why);
         idProgramsFailed.fetch_add(1, std::memory_order_relaxed);
         return nullptr;
     }
@@ -930,10 +954,16 @@ static bool drawMaterialIds(gl::Api& g, uintptr_t unitCacheAt, void (*draw)(uint
     if (!matid::hooked.load(std::memory_order_relaxed)) return false;
     const uintptr_t colour = *(const uintptr_t*)unitCacheAt; // unit 0's object: the item submit binds set+0x10 there
     const GLuint ids = matid::lookup(colour);
-    if (!ids) return false;
+    if (!ids) { // the part's colour texture was not composed with ids (not an item texture, or before the hook)
+        matid::missesNoIds.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     const GLuint game = *(const GLuint*)gameAt(fp::sig::programCache);
     const matid::IdProgram* p = matid::idProgramFor(g, game);
-    if (!p) return false;
+    if (!p) { // ids exist but the part's program could not be mirrored (material-id-shader.log says why)
+        matid::missesProgram.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     g.useProgram(p->program);
     matid::copyUniforms(*p);
     g.activeTexture(glc::texture0 + matid::ownUnitA);
