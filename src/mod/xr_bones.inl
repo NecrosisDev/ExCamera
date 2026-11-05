@@ -771,11 +771,13 @@ static bool heldItemAxis(uintptr_t root, unsigned side, XrVector3f& axis) {
     return true;
 }
 // The pose of one character's hand for the held-pose driver: what it holds; a dead hand holding
-// nothing falls slack.
+// nothing falls slack. Dead is the game's own test, stateFlags & 0x800: the die routine 156480 writes 0x800
+// (dying, at 1564D6) and 156D20 then 0xA00 (corpse, at 156E48); the game itself tests & 0x800. lifeFlags bit
+// 0x100 is not death: only 17B100 sets it, a 500-700 ms spell-hit stun that TMotileDynamics clears (169B8A).
 static xd::HandPose heldDrivenPose(uintptr_t root, unsigned side) {
     const xd::HandPose held = heldHandPose(root, side);
     if (held == xd::HandPose::open) {
-        if (readable(root, field::character::lifeFlags + 4) && (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100)) return xd::HandPose::limp;
+        if (readable(root, field::character::stateFlags + 4) && (*reinterpret_cast<unsigned*>(root + field::character::stateFlags) & 0x800)) return xd::HandPose::limp;
         return xd::HandPose::open;
     }
     return held;

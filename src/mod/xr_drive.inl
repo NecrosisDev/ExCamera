@@ -673,6 +673,10 @@ static bool trackedTeleportAllowed(uintptr_t root) {
     const int motion = *reinterpret_cast<int*>(root + field::character::motion);
     const unsigned state = *reinterpret_cast<unsigned*>(root + field::character::stateFlags);
     if ((motion >= attackFamilyFirst && motion <= attackFamilyLast) || motion == kickMotion || motion == jumpMotion) return false;
+    // Down or dead never teleports: only states 0 and 8 pass, which excludes the game's dying 0x800 (156480 at
+    // 1564D6), corpse 0xA00 (156D20 at 156E48), on the ground 0x200 and getting up 0x300 (16A6BA, 162C10).
+    // lifeFlags 0x100 is deliberately kept as well, as "down", not death: 17B100 sets it for a 500-700 ms
+    // spell-hit stun that plays motion 3 and drops balance until TMotileDynamics clears it (169B8A).
     if ((state != 0 && state != 8) || (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100)) return false;
     const uintptr_t drag = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::dragManager));
     if (readable(drag, 0x20) && (*reinterpret_cast<const unsigned*>(drag + field::drag::flags) & (0x2000u | 0x4000u | 0x8000u | 0x10000u | 0x80000u))) return false; // holding something through the drag manager
