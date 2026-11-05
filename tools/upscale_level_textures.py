@@ -68,12 +68,27 @@ class Upscaler:
         self.dry = model_path is None
         if self.dry:
             return
+        self.session = None
+        # DirectML (any DirectX 12 GPU, e.g. a GTX 1070 that CUDA 13 no longer covers): the model already converted
+        # to ONNX beside the .pth runs without torch or spandrel (the E: venv holds only onnxruntime-directml).
+        onnx = Path(model_path).with_suffix('.onnx')
+        try:
+            import onnxruntime as ort
+            if 'DmlExecutionProvider' in ort.get_available_providers() and onnx.exists():
+                options = ort.SessionOptions()
+                options.enable_mem_pattern = False
+                options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+                self.session = ort.InferenceSession(str(onnx), options, providers=['DmlExecutionProvider'])
+                self.scale = 4  # RealESRGAN_x4plus
+                print('upscaling on the GPU through DirectML')
+                return
+        except ImportError:
+            pass
         import spandrel
         import torch
         self.torch = torch
         self.model = spandrel.ModelLoader().load_from_file(model_path).eval()
         self.scale = self.model.scale
-        self.session = None
         try:
             import onnxruntime as ort
             if 'CUDAExecutionProvider' in ort.get_available_providers() and not torch.cuda.is_available():
@@ -86,6 +101,8 @@ class Upscaler:
                 self.session = ort.InferenceSession(str(onnx), providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
         except Exception as e:  # torch on CPU still works, slowly
             print('onnxruntime GPU path unavailable:', e)
+        if self.session is not None and self.session.get_providers() == ['CPUExecutionProvider']:
+            self.session = None  # CUDA did not load (no CUDA 13 / cuDNN 9 here): torch on the CPU instead
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.model.to(self.device)
 
