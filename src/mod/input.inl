@@ -674,15 +674,24 @@ static bool cachedWindowClient(HWND w, RECT& client, RECT* screenClip = nullptr,
     return true;
 }
 
-static BOOL CALLBACK findWindow(HWND w, LPARAM out) {
-    DWORD pid = 0;
-    GetWindowThreadProcessId(w, &pid);
-    if (pid == GetCurrentProcessId() && IsWindowVisible(w) && !GetWindow(w, GW_OWNER) &&
-        !consoleWindow(w)) {
-        *reinterpret_cast<HWND*>(out) = w;
-        return FALSE;
+// The game's own window: the one whose DC the game rendered into. The DC global (nativeSwapDC, 0x499610) has one
+// writer, 0x2406C, which stores the DC only after wglMakeCurrent(DC, context 0x499600) succeeded at 0x2403E
+// (0x4988F0 holds GetProcAddress("wglMakeCurrent"), filled at 0x1F344); the window is the one the game made and
+// keeps at 0x499570 (0x2471C), whose stale DC it releases (0x24065) before storing the new one. So a splash or
+// launcher window shown before the game's GL context is current is never taken. A stale global after teardown
+// gives no window (WindowFromDC) or a destroyed one (IsWindow).
+static HWND gameOwnWindow() {
+    if (!base || !layout.rva[fp::sig::nativeSwapDC]) return nullptr;
+    __try {
+        const HDC dc = *reinterpret_cast<const HDC*>(gameAt(fp::sig::nativeSwapDC));
+        const HWND w = dc ? WindowFromDC(dc) : nullptr;
+        if (!w || !IsWindow(w)) return nullptr;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(w, &pid);
+        return pid == GetCurrentProcessId() && !consoleWindow(w) ? w : nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
     }
-    return TRUE;
 }
 
 static bool playerContext(uintptr_t behavior) {

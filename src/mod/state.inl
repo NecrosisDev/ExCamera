@@ -729,7 +729,7 @@ enum class NoticeKind { info, warning, fault };
 static std::atomic<unsigned> notices{0};
 static std::atomic<bool> engineLogAdmitted{false};
 static std::atomic<unsigned> modMessagesShown{0}, modMessagesLogged{0};
-static BOOL CALLBACK findWindow(HWND w, LPARAM out);
+static HWND gameOwnWindow(); // input.inl
 [[maybe_unused]] static bool controlsNoticeSeen() {
     return !settingsPath[0] || GetPrivateProfileIntW(L"Launcher", L"ControlsSeen", 0, settingsPath) != 0;
 }

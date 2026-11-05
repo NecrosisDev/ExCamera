@@ -74,7 +74,8 @@ static bool waitTick() {
 // Ready to attach as soon as the game's own module and kernel32 are mapped: before it creates its GL context and
 // links its first shader programs, which the mod's linker hook must see (mod/material_ids.inl: a program linked
 // before it has no recoverable vertex source when the game deletes both shaders, as 0x1FACF0 and 0x1FAD60 do).
-// The mod itself then waits for opengl32 and the game's window (waitForGame) before anything else.
+// The mod itself then waits for the game's own GL window (waitForGame: its DC global, set once its context is
+// current) before anything else.
 static bool ready(DWORD pid) {
     bool game = false, kernel = false;
     HANDLE s = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
