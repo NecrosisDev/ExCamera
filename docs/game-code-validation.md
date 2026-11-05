@@ -48,6 +48,8 @@ Date: 2026-11-05.
 | Weapon +F0/+120 gate | Lifted on render (272a386). Render's own witness is part step 89330 (8956A–89597). |
 | lifeFlags 0x100 used as dead | Fixed on render (8d7e359) and VR xr_bones.inl (4dc1497, now `stateFlags & 0x800`). VR xr_drive.inl keeps 0x100 on purpose as "stunned, no teleport", which is correct. Still to fix: feature (camera, combat, input, motions, game_structs.h:41 comment), render overlay.inl:903, blood wounds.inl:540. |
 | Damage-hook labels, cut/crush guess, limb list | Fixed or removed on blood (ae0f0a1), waiting for the feature thread to merge. |
+| Render dead check / crouch overlay / headwear | Render 73315b9: dead = (DF4 & 0x800) != 0, overlay crouch 0x100 test removed. Headwear index data (6B8B0) and head matrix upload (200770 at 200B73–200B81) proven by render; the unproven "which sample" uniform is switched off. |
+| Swing checks using gripFlags | Feature: `wide = gripFlags != 0` and `grip & 0x80` to be corrected (see the grip row). |
 | Knocked-down mask | Feature to switch to `(DF4 & 0xA00) != 0`. |
 
 ## How proof works here
@@ -142,8 +144,17 @@ recoverable term) + 0.5 × another impact term). So heavy hits push extra damage
 the permanent part saturates. Impact energy before that: motion 0xC multiplies it by 1.5 (159C68). Thrusts (motion
 0xB) scale by (0.5 + weapon +28 + weapon +18) × 0.3. Other attacks use pow(E, 1 − 0.5 × weapon +28) × (weapon +28 +
 0.3) × 1.1, where "weapon" is the weapon data from 1531E0 (part +6E0, walking up to the root part). If a global
-callback G4F0900 is installed, the game hands it the hit record instead of applying damage (15C679–15C6FD). The
-**slash / pierce / crush split** sits upstream of x and is still **UNPROVEN**.
+callback G4F0900 is installed, the game hands it the hit record instead of applying damage (15C679–15C6FD). 
+
+**Slash / crush / pierce: PROVEN.** The item stats screen (10C0E0–10C1B8) labels the item record's per-grip bytes +37,
++38 and +39 as "Slash", "Crush" and "Pierce" (strings at 0x311780 / 0x3117A8 / 0x3117C8, each shown as byte × 0.05).
+The weapon-data builder 165AD0 (called from TMotileDynamics, TCharacterView and TLoadoutForm) turns those three
+bytes into the part's weapon data (+6E0): **+2C = slash, +30 = crush, +34 = pierce**, each 0.5 × (byte/100)^0.7
+(165BEA–165CDD). It picks one of two 6-byte grip rows by the part's +780 byte. physicalImpact 159A60 reads that same
+weapon data (from 1531E0) and scales all three by one hit factor into its slash / crush / pierce locals (15A794–15A7D1).
+Those then go through the armour code and are summed (15C2DB) before bodyDamage. So a wound's kind can be taken from
+the striking weapon's +2C / +30 / +34 for its current grip. That's the game's own weapon split, before armour.
+Which type survived the armour isn't visible outside 159A60's locals; that would need a hook inside it.
 
 **Weapon +F0 / +120 (render vs blood): PROVEN.** These are the rigid body's four points and their previous-step
 copy. heldItemAttach 155C20 writes the attached item's points to +F0 and copies them into +120 and +150 (155D72–155D9F).
@@ -625,8 +636,6 @@ plumbing, where a wrong meaning breaks the mod visibly rather than quietly chang
 - Meaning of the remaining states 0x600 / 0x20 / 0xC0 / 1 / 2 / 8 / 0x8000 / 0x10000 / 0x10004.
 - Motion clip identities (0xD kick, 0x12 jump, 3 recover, 0x11, 0x21), the attack-family range and the swing timing
   thresholds.
-- The game's damage-type split (slash / pierce / crush / impact) inside impact 159A60, which would replace the
-  wounds' guessed cut/crush rule.
 - Material classes for metal vs cloth, lamp detection, and the blood skin offsets (blood thread).
 - Render-side details (render thread is producing docs/render-assumptions.md and will be folded in once pushed).
 - VR (xr_*), which isn't in the flat-screen test build.
