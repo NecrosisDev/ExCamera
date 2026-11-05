@@ -20,8 +20,7 @@ Date: 2026-11-05.
 - **Balance is real and PROVEN.** It's a hidden value at +10B8 with its maximum at +10BC. Hits and force spells knock
   it down and it refills a little every physics step. The kick's balance gate uses the same threshold the game does.
 - **Everything else is UNPROVEN until decoded.** Some of it is camera and render plumbing where the game routine is
-  identified but not re-decoded. Some is game-rule claims nobody has checked (combat stance, knockdown states,
-  attack timing, the kick clip's identity, cut/thrust/crush). Recommended removals are listed under Decisions.
+  identified but not re-decoded. Some is game-rule claims nobody has checked (  attack timing, the kick clip's identity, cut/thrust/crush). Recommended removals are listed under Decisions.
 
 ## Decisions for Hunter (all in one place)
 
@@ -33,8 +32,8 @@ Date: 2026-11-05.
    hasn't been re-decoded line by line. Recommended: keep the plumbing (removing it removes the mod) and remove or
    disable only the **game-rule** claims marked UNPROVEN until each one is decoded. Say if you'd rather pull
    everything unproven.
-4. **The knocked-down camera (first and third person) depends on unproven state values.** Recommended: keep it only
-   for proven death (0x800) until the knockdown states are decoded.
+4. **The knocked-down camera is now mostly proven.** Its state check matches the game's on-the-ground, getting-up
+   and dead states. Only its use of the spell-stun bit as "dead" is wrong (fix #2 covers it). Recommended: keep it.
 5. **The game's own vocabulary.** The game's loading tips say "Impact mainly deals stamina damage" (exe text at
    0x316F00), so the developer seems to call recoverable health loss "stamina damage". The mod should use your terms
    (current / restorable / lost health) and never call the blue bar stamina. No action is needed unless you want the
@@ -62,14 +61,14 @@ Date: 2026-11-05.
 | Blue bar (`stamina`, `staminaCeiling`) | +D74 / +D78 | Spent only by 17A640, which only spell classes call: TForceBlastEffect, TForceWaveEffect, TForceTorrentEffect, TForceBarrierEffect, TPwrForceKinesis_S, TPwrDispVanish_I, TPwrDispLongDoor_I, TPwrEnergyShock_I. Refilled by 17A6B0. The AI spell picker B7E20 compares +D74×200 with spell cost. +D78 is read only by the HUD, the refill, init and copy routines. | **PROVEN = MAGIC**. "Stamina" label **WRONG** | **Winded** screen effect (view_effects.inl:5712–5736): **WRONG**. Its "low-stamina idle" claim has no game code. |
 | Balance (`balance`, `balanceMax`) | +10B8 / +10BC | 169A4C adds 0.005 per physics step. Impacts multiply it down (1587E0, from 159A60/157FF0). Force spells lower it (231710, 2393A0, 23C5C0, 23D680, 242A00). Below max − 0.05, TMotileDynamics plays the recover motion (169B99 → 179810). Death timing uses (1.2 − balance)×300 (156504). | **PROVEN** (hidden balance, not on the HUD) | Kick gate "balance ≥ max − 0.05" (combat.inl:141, input.inl:1515), the same threshold the game uses |
 | "Dead" bit (`lifeFlags & 0x100`) | +DF8 bit 0x100 | Set only by 17B100 (from spell effects TTendrilEmitter 1A2CE0, 1A1550 and 28F4F0). 17B100 deals damage, sets a 500–700 ms timer (+11B4), and plays motion 3. TMotileDynamics clears it when the timer runs out (169B8A) and meanwhile plays motion 0x21 and sets balance to max − 0.5. | **WRONG**: it's a short spell-hit stun, not death | camera.inl:113 (opponent alive), combat.inl:12, input.inl:695, input.inl:1513, motions.inl:25 and :88, overlay.inl:891, camera.inl:406/665 and camera_motion.h:474 (knockdown follow) |
-| Death | +DF4 == 0x800 | The die routine 156480 writes 0x800 (1564D6). It's called from bodyDamage and bleed when health < 0.01, and 167ED0 also writes it. | **PROVEN** | Not used by the mod yet (it should be) |
-| State (`stateFlags`) | +DF4 | A **state value**, not a bit set. The game writes 0, 1, 2, 8, 0x20, 0xC0, 0x100, 0x200, 0x300, 0x600, 0x800, 0xA00, 0x8000, 0x10000 and 0x10004. Only 0x800 = dead is decoded. 0xA00 clears combat stance (1568E0). | 0x800 **PROVEN**. Mod masks 0xAC0 / 0x40204 / 0xA00 and "== 0x20 means right mouse is the game's" are **UNPROVEN**. Bit 0x40000 is never written by the game. | Knockdown camera, "upright" gate, kick gates, attack cue |
+| Death | +DF4 == 0x800 (dying) or 0xA00 (corpse) | The die routine 156480 writes 0x800 (1564D6). It's called from bodyDamage and bleed when health < 0.01, and 167ED0 also writes it. While the state is 0x800, 167ED0 runs every step and fades +590 by 0.003. Once that drops under 0.25 it switches the body's physics off (+4C8 = 0) and 156D20 sets 0xA00. 1568E0 then clears combat stance for the corpse. Low health alone doesn't knock you down: between 0.01 and 0.05, 158A10 only plays a warning for the player every 60 s (13D700). | **PROVEN** | Not used by the mod yet (it should be) |
+| State (`stateFlags`) | +DF4 | The game uses it both as values and as bit masks: it tests &0xAC0, &0xA00, &0x200, &0x40 and &0x10203. Decoded so far: 0x200 = **on the ground** (16A6BA sets it when uprightness +12B0 < 0.3 and +1038 < 25; 156A90 also sets it and clears gait). 0x300 = **getting up** (162C10 picks get-up motion 0xE or 0xF by facing, and 169A20 refills balance faster). 0x800 = **dying**, 0xA00 = **corpse**. 0xAC0 is the game's own "don't interrupt" mask: low balance resets the state to 0 unless state&0xAC0 or state == 2 (169BE6). | 0x200 / 0x300 / 0x800 / 0xA00 **PROVEN**. The mod's mask 0xAC0 is the game's own mask (**PROVEN**). Bit 0x40000 in 0x40204 is never written by the game (dead code). Bit 0x4 and "== 0x20 means right mouse is the game's" are **UNPROVEN**. | Knockdown camera, "upright" gate, kick gates, attack cue |
 | Bleeding rate | +10DC | 168410 (TMotileDynamics step) adds 0.03×inflow(+10D4), caps at 20, drains current health by 4e-5×rate and, above 1, restorable by (0.002×rate)², decays 0.1/step without inflow, and kills at health < 0. | **PROVEN**. Comment "drains health and balance" is **WRONG**: it drains current and restorable health. | Wounds / blood |
 | Crouch (`duckAmount`) | +100C | Written by TPlayerBehaviour (C25B9). TMotileDynamics lowers it by 0.02 per step (1698E3). | **PROVEN** location and decay; "the game's crouch" **UNPROVEN** (no key handler traced) | Toggle crouch (input.inl:1437, combat.inl:253) |
-| Combat stance (`combatStance`) | +12FE (byte) | TPlayerBehaviour's tick branches on it (C2028). The HUD 13E9C0 draws a red marker (colour 0x2B92F0) when it's set. F0170 sets it, and 1568E0 clears it in state 0xA00. | **UNPROVEN** as "TAB combat mode" (TAB handler not traced). It's a real player flag the HUD shows. | Almost every combat/camera decision |
+| Combat stance (`combatStance`) | +12FE (byte) | The key handler 120AA0 compares the pressed key with the game's binding slot 0x2B7390 (default VK 9 = TAB) and calls the combat toggle 11FED0 with the opposite of the current state (120C6A–120C80). 11FED0 stores the new state and writes player +12FE (1200EC). TPlayerBehaviour's tick branches on it (C2028), and the HUD 13E9C0 draws a red marker when it's set. | **PROVEN** = TAB combat mode | Almost every combat/camera decision |
 | Current motion (`motion`) | +9B8 | Compared by motionPlay 179EE0. 179EE0 treats 5–12 specially (cancels active defense via 162E80). | Location **PROVEN**. "5–12 = attack families" **PLAUSIBLE, UNPROVEN** | Attack cue, swing gates |
 | Motion progress (`motionProgress`) | +A28 | Reset to 0 by 179EE0 and advanced by pose routines. | "Hit lands past 0.30" **UNPROVEN** | Wind-up arc timing |
-| Kick clip | motion 0xD | No game code starts motion 0xD with a constant. Nothing decoded shows that it's a kick. | **UNPROVEN** ("unused kick clip" is a claim from notes) | Kick (Animated and Classic) |
+| Kick clip | motion 0xD | No game code starts 0xD with a constant. The game does handle it specially in two places. In the dynamics step (16B06F), when +590 ≥ 0.85, it sets state 0x8000, doubles +DC8 and re-grips through 152930. In the leg-support routine (1612C9), it skips the normal support check the same way state 0x4000 does. Nothing decoded names it a kick. | "Kick clip" **UNPROVEN**. "Unused" is **WRONG** (the game has code for it) | Kick (Animated and Classic) |
 | Jump | motion 0x12 + rigid push 89240 | 89240 is the rigid-body push that force spells and cloth also use. Motion 0x12 also has no direct starter. | Push **PROVEN**. 0x12 = "jump clip" **UNPROVEN** | Jump |
 | Selected opponent (`aimOpponent`) | +E38 | Written by combatAttention BEAC0 (TPlayerBehaviour) and cleared by AI/behaviour routines. | Location **PROVEN**, meaning **PLAUSIBLE** | Camera framing, aim |
 | Walking (`walking`) | +12EA | Set by explore BFEA0 / player tick, cleared by motionPlay and the spell stun. | **UNPROVEN** meaning | Spine-follow, gait |
@@ -110,8 +109,8 @@ depends on the camera hooks in section 4, whose game classes are identified ther
 | View heading, Auto-center camera on cursor, Aim oval width/height (FP/TP), Aim oval edge softness | cursorAim BF680, aimPoint AE2E0 (TPlayerBehaviour) | Camera/aim-only |
 | Spine follows aim | pose builder 1760F0, +12EA walking | "Walking" meaning **UNPROVEN** |
 | Third person: distance / shoulder / height / tight spaces / camera lag / in the way / follow look angle / Swap shoulder | level rays 1430F0/1431C0, camera fade 90C00 | Camera-only |
-| Third person: combat framing, Third person: aiming mode | combatStance +12FE, aimOpponent +E38 | Combat stance **UNPROVEN** |
-| Third person: knocked down, First person: knocked down | stateFlags masks 0xAC0 / 0x40204 / 0xA00 and lifeFlags 0x100 | **WRONG** (0x100 isn't death) / **UNPROVEN** (state masks) |
+| Third person: combat framing, Third person: aiming mode | combatStance +12FE (**PROVEN**, TAB), aimOpponent +E38 | Stance **PROVEN** |
+| Third person: knocked down, First person: knocked down | stateFlags masks 0xAC0 / 0x40204 / 0xA00 and lifeFlags 0x100 | The state part **PROVEN** (it catches on-the-ground, getting-up, dying and corpse). The lifeFlags 0x100 part is **WRONG**: it's a spell stun, not death. |
 | F6 cycle | camera mode switching, reads lifeFlags 0x100 as dead | **WRONG** dead check |
 | Hit reaction | bodyDamage arguments | **PROVEN** inputs (labels wrong) |
 | Grab range, Rotate held object | drag manager, heldQuery 117AA0, dragRotate 118920 | Plumbing, **UNPROVEN** meaning not re-decoded |
@@ -564,9 +563,7 @@ plumbing, where a wrong meaning breaks the mod visibly rather than quietly chang
 
 ## 6. Not covered yet (honest list)
 
-- Meaning of the 0xA00 / 0x200 / 0x300 / 0x600 / 0x20 / 0xC0 states (knockdown, getting up, and so on). Needed
-  before the knocked-down camera can be trusted.
-- The TAB combat-mode handler, to prove +12FE.
+- Meaning of the remaining states 0x600 / 0x20 / 0xC0 / 1 / 2 / 8 / 0x8000 / 0x10000 / 0x10004.
 - Motion clip identities (0xD kick, 0x12 jump, 3 recover, 0x11, 0x21), the attack-family range and the swing timing
   thresholds.
 - Grip-table and weapon-class values in +1068, and kickGripClass 155250.
