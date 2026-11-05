@@ -999,8 +999,10 @@ static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(M
 // (count) when the clip may play.
 // The gates (decoded in docs/GAME-FIELDS-AUDIT.md). busyMotion: character+9B8 is an attack the game's own starts
 // play (5 + n at 157240, 8 + n at 157700, 0xB at 157DC0, 0xC at 157BF0), the kick (0xD) or the jump (0x12).
-// state: character+DF4, a value: & 0x800 is dead (0x800 or 0xA00, the game's own test); anything but the base 0 is one of the game's
-// own reactions (8 while defending or in motion 4, 16B168/16B1B1; 0x8000 while motion 0xD plays, 16B09C).
+// state: character+DF4, a value: & 0x800 is dead (0x800 or 0xA00, the game's own test); 0 is standing; the other
+// standing values are the game busy with something of its own: 2 active defense (166604), 8 a reactive defense
+// motion (16B168/16B1B1), 0x20 a power/command motion (179E40, 16B2D6), 1 a settle step (16B470), 0x100 a stumble
+// recover (16B05C), 0x8000 motion 0xD, 0x10000/0x10004 motion 0x1F; down and stagger values are reactions.
 // balance: below balanceMax - 0.05 the game itself starts its recover motion (169B99 -> 179810), so a kick or jump
 // would be cut at once. No health, magic or stance requirement.
 inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, float balance, float balanceMax) {
@@ -1019,8 +1021,8 @@ inline const wchar_t* motionRefusalNotice(bool jump, MotionRefusal r) {
         return jump ? L"Jump: not while you are attacking, kicking or already jumping."
                     : L"Kick: not while you are attacking, jumping or already kicking.";
     case MotionRefusal::otherState:
-        return jump ? L"Jump: not while the game has you recovering, defending or in another reaction."
-                    : L"Kick: not while the game has you recovering, defending or in another reaction.";
+        return jump ? L"Jump: not while you are defending, casting, recovering or down."
+                    : L"Kick: not while you are defending, casting, recovering or down.";
     case MotionRefusal::balance:
         return jump ? L"Jump: wait until you've got your balance back." : L"Kick: wait until you've got your balance back.";
     case MotionRefusal::cursorFree:

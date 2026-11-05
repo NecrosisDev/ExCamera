@@ -42,8 +42,11 @@ inline constexpr size_t healthRestorable = 0xD5C; // float: how far health can s
 inline constexpr size_t magic = 0xD74, magicCeiling = 0xD78; // floats 0..1: the blue bar
 inline constexpr size_t healthMax = 0x103C;      // float: the whole health bar
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
-inline constexpr size_t stateFlags =
-    0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
+// The character's state, a value (docs/GAME-FIELDS-AUDIT.md): 0 standing; 1 settle step (16B470); 2 active defense
+// (166604); 8 reactive defense motion (16B168/16B1B1); 0x20 a power/command motion in progress (179E40; 16B2D6 for
+// motions 0x22-0x28); 0xC0 standing spell-hit stagger (17B0E1); 0x100 stumble recover (16B05C); 0x200 on the
+// ground; 0x300 getting up; 0x600 scripted lay-down; 0x800/0xA00 dead; 0x8000 motion 0xD; 0x10000/0x10004 motion 0x1F.
+inline constexpr size_t stateFlags = 0xDF4;
 inline constexpr size_t lifeFlags = 0xDF8; // 0x100: a spell-hit stun (17B100 sets, 169B8A clears); NOT death
 inline constexpr size_t aimOpponent = 0xE38; // native selected combat opponent
 inline constexpr size_t contextualTarget = 0xE50;
