@@ -1,7 +1,10 @@
-// OFF by default (unprovenRenderReads): which of the body material's texture slots 0/1/2 is the diffuse,
-// specular and normal map, the _SKIN layout below (+218 skin, its bone and bind arrays, +290 faces, +2F8 tags)
-// and the Injuries addon's severed-bit table are read here without game code that shows them; until they
-// are proven the marks stay with the screen pass and severed limbs are not cut.
+// OFF by default (unprovenRenderReads). Proven and witnessed (headwearRender group): node +218 is a
+// TSkinController2 (+8 node, +10 bone count, +18 bone nodes, +20 48-byte inverse binds; skinController::boneLoop),
+// +290 the faces (three dword vertex indices; meshNode::faces), +2F8 one dword per face (meshNode::faceValues).
+// Still not shown by game code: that face value 0 is body skin, that UVs are attribute 0x10 in format 0xF20010,
+// and which texture unit the skin program samples for each map at draw time (the binder 0x20112B-0x2012AB hands
+// out units in the order DifTex, OpcTex, EmiTex, SpcTex, NrmTex, GlsTex, DspTex, EnvMap to the maps present;
+// names at .rdata 0x335218/0x335238/0x335258, table .data 0x2E9F70), and the Injuries addon's severed bits.
 // Wound skins: cuts and bruises baked into a copy of the struck character's own body texture, the way
 // the game bakes an undead character's decay into its skin (textures.flb chardecomp_*, set up by
 // 0x208140). Baked marks sit in the skin, follow every fold and are covered by clothes and armour.
@@ -1113,7 +1116,132 @@ static bool woundSkinDrawGuarded(uintptr_t node, uintptr_t material, bool bind) 
     catch (const std::exception&) { woundSkinFaults.fetch_add(1, std::memory_order_relaxed); return false; }
 }
 // true: the draw was made here (the baked skin where the body shows, the rest native).
+#if FP_DEV_TOOLS
+// Dev builds with [Dev] RenderAudit=1: once, on the first body draw of a skinned (_SKIN) mesh whose material
+// is already bound, the facts the wound skin bake still lacks proof of, read from the game's own GL state and
+// mesh, into the render-audit log. Read only; nothing it finds turns anything on.
+//  - The skin program's DifTex, SpcTex and NrmTex sampler units and the texture bound on each, against the
+//    material set the bake copies (stoneSkinOriginals: set +10/+18/+20).
+//  - The program's active attributes, and for each the array the game pointed it at (size, type, stride,
+//    offset), against the mesh's attribute 0x10 record (format, stream) the bake takes as UVs.
+//  - The distinct per-face values (+2F8) among the material's faces, with counts (the bake takes 0 as body).
+//  - The +218 controller's VMT and class name (TSkinController2 is the proven one).
+static void woundSkinDiagnose(uintptr_t node, uintptr_t material, bool bind) {
+    static bool done = false;
+    if (done || bind || !renderAuditOn() || !readable(node, 0x300) || strncmp(nodeName(node), "_SKIN", 5)) return;
+    done = true;
+    using GetUniformLocation = GLint(WINAPI*)(GLuint, const char*);
+    using GetUniformiv = void(WINAPI*)(GLuint, GLint, GLint*);
+    using GetProgramiv = void(WINAPI*)(GLuint, GLenum, GLint*);
+    using GetActiveAttrib = void(WINAPI*)(GLuint, GLuint, GLsizei, GLsizei*, GLint*, GLenum*, char*);
+    using GetAttribLocation = GLint(WINAPI*)(GLuint, const char*);
+    using GetVertexAttribiv = void(WINAPI*)(GLuint, GLenum, GLint*);
+    using GetVertexAttribPointerv = void(WINAPI*)(GLuint, GLenum, void**);
+    using ActiveTexture = void(WINAPI*)(GLenum);
+    const auto uniformLocation = (GetUniformLocation)wglGetProcAddress("glGetUniformLocation");
+    const auto uniformiv = (GetUniformiv)wglGetProcAddress("glGetUniformiv");
+    const auto programiv = (GetProgramiv)wglGetProcAddress("glGetProgramiv");
+    const auto activeAttrib = (GetActiveAttrib)wglGetProcAddress("glGetActiveAttrib");
+    const auto attribLocation = (GetAttribLocation)wglGetProcAddress("glGetAttribLocation");
+    const auto vertexAttribiv = (GetVertexAttribiv)wglGetProcAddress("glGetVertexAttribiv");
+    const auto vertexAttribPointerv = (GetVertexAttribPointerv)wglGetProcAddress("glGetVertexAttribPointerv");
+    const auto activeTexture = (ActiveTexture)wglGetProcAddress("glActiveTexture");
+    GLint program = 0, priorUnit = 0;
+    glGetIntegerv(0x8B8D /* CURRENT_PROGRAM */, &program);
+    renderAuditLog("skin witness: node %p material %p program %d", (void*)node, (void*)material, program);
+    GLuint originals[3]{};
+    const bool set = stoneSkinOriginals(material, originals);
+    renderAuditLog("skin witness: material set +10/+18/+20 = %u %u %u%s", originals[0], originals[1], originals[2],
+                   set ? "" : " (unreadable)");
+    if (program > 0 && uniformLocation && uniformiv && activeTexture) {
+        glGetIntegerv(0x84E0 /* ACTIVE_TEXTURE */, &priorUnit);
+        const char* const names[3] = {"DifTex", "SpcTex", "NrmTex"};
+        for (int k = 0; k < 3; ++k) {
+            const GLint location = uniformLocation(GLuint(program), names[k]);
+            GLint unit = -1, bound = 0;
+            if (location >= 0) {
+                uniformiv(GLuint(program), location, &unit);
+                if (unit >= 0 && unit < 32) {
+                    activeTexture(glc::texture0 + GLenum(unit));
+                    glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
+                }
+            }
+            renderAuditLog("skin witness: %s location %d unit %d texture %d; set[%d] %u: %s", names[k], location, unit,
+                           bound, k, originals[k], location < 0 ? "no such sampler"
+                                                   : unit == k && GLuint(bound) == originals[k] ? "match"
+                                                                                                : "MISMATCH");
+        }
+        activeTexture(GLenum(priorUnit));
+    }
+    if (program > 0 && programiv && activeAttrib && attribLocation && vertexAttribiv && vertexAttribPointerv) {
+        GLint count = 0;
+        programiv(GLuint(program), 0x8B89 /* ACTIVE_ATTRIBUTES */, &count);
+        for (GLint i = 0; i < count && i < 16; ++i) {
+            char name[64]{};
+            GLint size = 0;
+            GLenum type = 0;
+            activeAttrib(GLuint(program), GLuint(i), sizeof name, nullptr, &size, &type, name);
+            const GLint location = attribLocation(GLuint(program), name);
+            GLint enabled = 0, components = 0, arrayType = 0, stride = 0, normalized = 0;
+            void* offset = nullptr;
+            if (location >= 0) {
+                vertexAttribiv(GLuint(location), 0x8622 /* ENABLED */, &enabled);
+                vertexAttribiv(GLuint(location), 0x8623 /* SIZE */, &components);
+                vertexAttribiv(GLuint(location), 0x8625 /* TYPE */, &arrayType);
+                vertexAttribiv(GLuint(location), 0x8624 /* STRIDE */, &stride);
+                vertexAttribiv(GLuint(location), 0x886A /* NORMALIZED */, &normalized);
+                vertexAttribPointerv(GLuint(location), 0x8645 /* POINTER */, &offset);
+            }
+            renderAuditLog("skin witness: attribute %s (GLSL type 0x%X) location %d: enabled %d, %d x 0x%X%s, stride %d, offset %p",
+                           name, type, location, enabled, components, arrayType, normalized ? " normalized" : "", stride,
+                           offset);
+        }
+    }
+    WearAttribute uv{};
+    if (wearAttribute(node, 0x10, uv))
+        renderAuditLog("skin witness: mesh attribute 0x10: format 0x%X (the bake assumes 0xF20010), stream %u, count %u",
+                       uv.format, uv.stream, uv.count);
+    else
+        renderAuditLog("skin witness: mesh attribute 0x10 not found");
+    const int lastFace = *(int*)(node + 0x268), lastVertex = *(int*)(node + 0x288);
+    WearPlan plan{};
+    const uintptr_t values = *(uintptr_t*)(node + 0x2f8);
+    if (lastFace >= 0 && lastFace < int(fp::wear::maxFaces) && lastVertex >= 0 && lastVertex < int(fp::wear::maxVertices) &&
+        wearMeshFormat(node, material, lastFace, lastVertex, plan) && readable(values, (size_t(plan.first) + plan.count) * 4)) {
+        unsigned seen[8]{}, counts[8]{}, distinct = 0, other = 0;
+        for (unsigned f = 0; f < plan.count; ++f) {
+            const unsigned v = *(unsigned*)(values + (size_t(plan.first) + f) * 4);
+            unsigned k = 0;
+            while (k < distinct && seen[k] != v) ++k;
+            if (k == distinct && distinct < 8) seen[distinct++] = v;
+            if (k < distinct) ++counts[k]; else ++other;
+        }
+        for (unsigned k = 0; k < distinct; ++k)
+            renderAuditLog("skin witness: material faces %u..%u: +2F8 value %u on %u faces", plan.first,
+                           plan.first + plan.count - 1, seen[k], counts[k]);
+        if (other) renderAuditLog("skin witness: %u faces with further values", other);
+    } else {
+        renderAuditLog("skin witness: material face range or +2F8 unreadable");
+    }
+    const uintptr_t controller = *(uintptr_t*)(node + 0x218);
+    if (controller && readable(controller, 0x18)) {
+        const uintptr_t vmt = *(uintptr_t*)controller, game = uintptr_t(GetModuleHandleW(nullptr));
+        const uintptr_t nameAt = readable(vmt, 0x20) ? *(uintptr_t*)(vmt + 0x18) : 0;
+        char className[64]{};
+        if (nameAt && readable(nameAt, 1)) {
+            const unsigned length = (std::min)(unsigned(*(unsigned char*)nameAt), 63u);
+            if (readable(nameAt, length + 1)) memcpy(className, (const void*)(nameAt + 1), length);
+        }
+        renderAuditLog("skin witness: +218 controller %p, VMT RVA 0x%llX (TSkinController2 is 0x30CF50), class %s, +8 is node: %s",
+                       (void*)controller, (unsigned long long)(vmt - game), className,
+                       *(uintptr_t*)(controller + 8) == node ? "yes" : "no");
+    }
+}
+#endif
 static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind) {
+#if FP_DEV_TOOLS
+    __try { woundSkinDiagnose(node, material, bind); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+#endif
     if (woundSkinBroken || !wearScope.colourPass) return false;
     bool drawn = false;
     __try {

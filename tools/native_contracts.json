@@ -1183,6 +1183,20 @@
       "end_rva": "0x1568dc",
       "entry_offset": 0,
       "pattern": "55 48 89 E5 48 8D 64 24 90 66 0F 7F 75 C0 48 89 4D F8 48 C7 45 E0 00 00 00 00 48 C7 45 E8 00 00 00 00 90 48 8B 45 F8 8B 80 F4 0D 00 00 25 00 08 00 00"
+    },
+    {
+      "name": "weaponDataBuild",
+      "rva": "0x165ad0",
+      "end_rva": "0x165fd4",
+      "entry_offset": 0,
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 D0 66 0F 7F 74 24 20 49 89 CD 49 89 D4 49 83 BD E0 06 00 00 00 75 1E 49 8D 8D E0 06 00 00 BA 70 00 00 00 E8 ?? ?? ?? ??"
+    },
+    {
+      "name": "weaponDataOf",
+      "rva": "0x1531e0",
+      "end_rva": "0x15320d",
+      "entry_offset": 0,
+      "pattern": "48 8B 81 E0 06 00 00 EB 1E 0F 1F 80 00 00 00 00 48 8B 89 28 04 00 00 48 3B 89 28 04 00 00 74 0C 48 8B 81 E0 06 00 00 48 85 C0 74 E4 C3"
     }
   ],
   "fields": [
@@ -5846,6 +5860,46 @@
       "pattern": "48 8B 45 F8 8B 80 F4 0D 00 00 25 00 08 00 00 0F 87 10 04 00 00 48 8B 55 F8 83 A2 F8 0D 00 00 DF 90 48 8B 4D F8 BA 02 00 00 00 E8 ?? ?? ?? ?? 48 8B 45 F8 C7 80 F4 0D 00 00 00 08 00 00",
       "provenance": "The character death routine 0x156480 (called by the damage routine 0x159700 at 0x1598C3 once +D58 falls below 0.01 and the blow may kill, and by the bleed tick 0x168410): it returns at once when character::stateFlags (+DF4) already has 0x800, otherwise clears bit 0x20 of +DF8 and writes +DF4 = 0x800 (0x1564D6). A character is dead while +DF4 has 0x800, the routine's own test.",
       "optional_group": "wounds"
+    },
+    {
+      "name": "weaponDataBuild::damageTypes",
+      "owner": "weaponDataBuild",
+      "window_offset": 282,
+      "pattern": "41 80 7C 04 37 00 76 3D 89 D8 48 6B C0 06 41 0F B6 44 04 37 F2 0F 2A C0 F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? F2 0F 5A C0 F3 0F 11 46 2C EB 09 8B 05 ?? ?? ?? ?? 89 46 2C 89 D8 48 6B C0 06 41 80 7C 04 38 00 76 3D 89 D8 48 6B C0 06 41 0F B6 44 04 38 F2 0F 2A C0 F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? F2 0F 5A C0 F3 0F 11 46 30 EB 09 8B 05 ?? ?? ?? ?? 89 46 30 89 D8 48 6B C0 06 41 80 7C 04 39 00 76 3D 89 D8 48 6B C0 06 41 0F B6 44 04 39 F2 0F 2A C0 F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? F2 0F 5A C0 F3 0F 11 46 34 EB 09 8B 05 ?? ?? ?? ?? 89 46 34",
+      "provenance": "The weapon-data builder 0x165AD0 fills a part's weapon data (part +6E0, created at 0x165AF2) from its item record (rdx): for the grip row chosen by part +780 (six bytes a row), item bytes +37, +38 and +39 become floats +2C, +30 and +34 (0x165BEA-0x165CDD). The item stats sheet 0x10C0E0-0x10C1B8 labels the same three bytes Slash, Crush and Pierce (AnsiStrings 0x311780, 0x3117A8, 0x3117C8). So weapon data +2C is slash, +30 crush, +34 pierce. physicalImpact 0x159A60 scales all three by the hit (0x15A794-0x15A7D1), reduces them by armour (0x15B2BE-0x15B7BD) and sums them (0x15C2DB) before the damage routine (0x15C735): these are the PRE-armour values; the post-armour split lives only on that routine's stack.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "weaponDataOf::walk",
+      "owner": "weaponDataOf",
+      "window_offset": 0,
+      "pattern": "48 8B 81 E0 06 00 00 EB 1E 0F 1F 80 00 00 00 00 48 8B 89 28 04 00 00 48 3B 89 28 04 00 00 74 0C 48 8B 81 E0 06 00 00 48 85 C0 74 E4 C3",
+      "provenance": "0x1531E0, called by physicalImpact (0x159C37) on the impact weapon: returns part +6E0 (weapon data), or walks parent links (+428, stopping where a part is its own parent) until one has it.",
+      "optional_group": "wounds"
+    },
+    {
+      "name": "skinController::boneLoop",
+      "owner": "headwearNative_d2a40",
+      "window_offset": 356,
+      "pattern": "48 8B 94 24 B8 00 00 00 8B 42 10 67 8D 58 FF 85 DB 0F 8C 31 01 00 00 B8 FF FF FF FF 48 89 84 24 D0 00 00 00 48 83 84 24 D0 00 00 00 01 48 8B 84 24 B8 00 00 00 48 8B 50 18 48 63 84 24 D0 00 00 00 4C 8B 04 C2 48 8B 84 24 B8 00 00 00 48 8B 50 20 48 63 84 24 D0 00 00 00 48 6B C0 30 48 01 C2 48 8B 84 24 B8 00 00 00 48 8B 48 28 48 63 84 24 D0 00 00 00 48 6B C0 30 48 01 C1 E8 ?? ?? ?? ??",
+      "provenance": "A mesh node's +218 is a TSkinController2 (VMT .rdata 0x30CF50, its class name at VMT+18; instance 0x88 bytes), created by 0xBE80 at 0xD3903, 0xD972A and 0xD9A28, each storing the node at +8 and the object at node +218. The skinning step 0xD2A40 loops i below +10 (bone count) over bone nodes +18[i] (8-byte pointers) and inverse binds +20 + i*30h (48 bytes), writing +28 + i*30h through 0x18B60 (0xD2BAC-0xD2C24). The wound skin bake reads +8, +10, +18 and +20.",
+      "optional_group": "headwearRender"
+    },
+    {
+      "name": "meshNode::faces",
+      "owner": "headwearNative_69520",
+      "window_offset": 1339,
+      "pattern": "48 8B 90 90 02 00 00 44 89 E8 48 6B C0 0C 8B 04 02 48 8B 95 20 FE FF FF 89 02 48 8B 85 70 FE FF FF 48 8B 90 90 02 00 00 44 89 E8 48 6B C0 0C 8B 44 02 04 48 8B 95 20 FE FF FF 89 42 04 48 8B 85 70 FE FF FF 48 8B 90 90 02 00 00 44 89 E8",
+      "provenance": "A mesh node's faces: +290, 12 bytes a face, three dword vertex indices at +0/+4/+8 (0x69A5B-0x69AA9); arrays sized +268 + 1 (the last face index), +288 the last vertex index.",
+      "optional_group": "headwearRender"
+    },
+    {
+      "name": "meshNode::faceValues",
+      "owner": "headwearNative_d9350",
+      "window_offset": 608,
+      "pattern": "48 83 BB F8 02 00 00 00 0F 84 6A 00 00 00 48 63 83 68 02 00 00 48 8D 50 01 48 C1 E2 02 48 8D 4C 24 38 E8 ?? ?? ?? ?? 44 8B 8B 68 02 00 00 45 85 C9 7C 2D BE FF FF FF FF 83 C6 01 4C 8B 44 24 38 48 8B 54 24 28 89 F0 8B 0C 82 48 8B 93 F8 02 00 00 89 F0 8B 04 82",
+      "provenance": "A mesh node's +2F8: one dword per face (sized (+268 + 1) * 4, copied by face index at 0xD95FA; also 0x6A4EF). What the values mean (the bake takes 0 for body skin) is not shown here.",
+      "optional_group": "headwearRender"
     }
   ],
   "closures": {

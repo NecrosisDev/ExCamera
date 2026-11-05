@@ -273,11 +273,8 @@ static void outOfPose(const float* pose, const float* local, bool origin, float*
 static void addWound(const CharacterHitRecord& h) {
     const float permanent = std::isfinite(h.permanent) ? h.permanent : 0.f;
     const float recoverable = std::isfinite(h.recoverable) ? h.recoverable : 0.f;
-    // Two kinds only, both from the game: a thrust where the striker's motion is the one the impact routine
-    // measures along the weapon (woundThrustMotion, set by recordNativeHit), an open wound otherwise. Telling a
-    // cut from a crushing blow by the ratio of the routine's two arguments was a guess (it lapsed unratified
-    // on 2026-11-05) and is gone; a blunt blow that does damage now shows as an open wound too.
-    const uint8_t kind = h.kind == woundThrust ? woundThrust : woundCut;
+    // The kind recordNativeHit read from the game (woundKindOfHit): a gash, a bruise or a puncture.
+    const uint8_t kind = h.kind >= woundCut && h.kind <= woundThrust ? uint8_t(h.kind) : woundCut;
     if (permanent < 1e-3f && recoverable < 1e-3f) return; // nothing got through: the routine took nothing
     Wound w;
     w.part = uintptr_t(h.part);
@@ -551,6 +548,7 @@ static void takeHits() {
             memcpy(&hit, raw + size_t(k) * stride, stride);
             if (hit.size != stride) return;
             woundSerial = hit.serial; // oldest first
+            hit.kind = woundCut; // the runtime's own kind is not shown by game code: one open wound
             addWound(hit);
             addWeaponBlood(hit);
         }
@@ -635,9 +633,12 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         // A bruise over a bone Injuries reports broken is a fracture (and back to a bruise once it heals).
         if (w.kind == woundCrush) {
             bool fracture = false;
-            const int bit = woundBoneBit(w.partIndex);
-            for (int k = 0; ownerNode && bit >= 0 && k < brokenCount; ++k)
-                if (brokenNodes[k] == ownerNode) fracture = ((brokenBits[k] >> bit) & 1) != 0;
+            // Which part index is which bone in Injuries' bits is not shown by game code: no fractures until it is.
+            if constexpr (unprovenRenderReads) {
+                const int bit = woundBoneBit(w.partIndex);
+                for (int k = 0; ownerNode && bit >= 0 && k < brokenCount; ++k)
+                    if (brokenNodes[k] == ownerNode) fracture = ((brokenBits[k] >> bit) & 1) != 0;
+            }
             if (fracture != w.fracture) {
                 w.fracture = fracture;
                 if (w.mapped) ++woundSkinVersion;
@@ -1030,6 +1031,38 @@ static void emitImpactSpatter(const CharacterHitRecord& r, const float* sectorOr
     }
 }
 
+// The kind of wound a hit leaves, from the game's own numbers. A thrust: the striker's motion is the one
+// physicalImpact (0x159B28) measures along the weapon's own axis (witness physicalImpact::thrustMotion), so a
+// puncture. Otherwise the striking weapon's largest damage type: its weapon data (part +6E0, found as 0x1531E0
+// finds it, walking parent links +428; witness weaponDataOf::walk) holds slash +2C, crush +30 and pierce +34,
+// which the builder 0x165AD0 makes from the item bytes the stats sheet labels Slash, Crush and Pierce for the
+// current grip (witness weaponDataBuild::damageTypes). Slash makes a gash, crush a bruise, pierce a puncture.
+// These are the weapon's values before armour; the split after armour exists only on physicalImpact's stack.
+constexpr size_t woundWeaponData = 0x6E0, woundPartParent = 0x428;
+constexpr size_t woundSlash = 0x2C, woundCrushValue = 0x30, woundPierce = 0x34;
+static uint8_t woundKindOfHit(uintptr_t attacker, uintptr_t weapon) {
+    if (readable(attacker + field::character::motion, sizeof(uint32_t)) &&
+        *reinterpret_cast<const uint32_t*>(attacker + field::character::motion) == woundThrustMotion)
+        return woundThrust;
+    uintptr_t part = weapon, data = 0;
+    for (int step = 0; part && step < 16; ++step) { // 0x1531E0's walk, bounded
+        if (!readable(part, woundPartParent + 8) || !readable(part, woundWeaponData + 8)) return woundCut;
+        data = *reinterpret_cast<const uintptr_t*>(part + woundWeaponData);
+        if (data) break;
+        const uintptr_t parent = *reinterpret_cast<const uintptr_t*>(part + woundPartParent);
+        if (parent == part) break;
+        part = parent;
+    }
+    if (!data || !readable(data, woundPierce + 4)) return woundCut;
+    const float slash = *reinterpret_cast<const float*>(data + woundSlash);
+    const float crush = *reinterpret_cast<const float*>(data + woundCrushValue);
+    const float pierce = *reinterpret_cast<const float*>(data + woundPierce);
+    if (!std::isfinite(slash + crush + pierce)) return woundCut;
+    if (crush > slash && crush >= pierce) return woundCrush;
+    if (pierce > slash && pierce > crush) return woundThrust;
+    return woundCut;
+}
+
 static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float permanent, float recoverable) {
     if (!attacker || !victim) return;
     if (woundMarks.load(std::memory_order_relaxed) <= 0.f) return;
@@ -1072,12 +1105,7 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float permanen
     }
     r.weapon = weapon;
 
-    // A thrust: the motion physicalImpact (0x159B28) measures along the weapon's own axis, a point-first
-    // attack (witness physicalImpact::thrustMotion, wounds group). Anything else is an open wound.
-    r.kind = woundCut;
-    if (readable(attacker + field::character::motion, sizeof(uint32_t)) &&
-        *reinterpret_cast<const uint32_t*>(attacker + field::character::motion) == woundThrustMotion)
-        r.kind = woundThrust;
+    r.kind = woundKindOfHit(attacker, weapon);
 
     float sectorOrigin[3]{};
     if (part && readable(part + field::bodyPart::meshNode, sizeof(uintptr_t))) {
