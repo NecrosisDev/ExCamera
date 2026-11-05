@@ -437,6 +437,12 @@ static void addWound(const CharacterHitRecord& h, const float* types = nullptr) 
 // spot is kept in that weapon mesh's own frame (its sampled pose, +A0), the frame the held-item
 // surface paints in; the held-item pass looks it up by mesh node.
 constexpr unsigned bloodWeaponLimit = 16, bloodSpotsPerWeapon = 4;
+// Blood on a blade as a mass budget (Hunter's design): each spot's amount is its blood (0..1). Above a thin
+// residue that stays as a dried film, the liquid runs down the blade with gravity (along the item's long axis,
+// toward whichever end is lower now) and drips off: drops at a rate in proportion to the liquid left, each one
+// taking weaponDropMass, so the blade bleeds only as long as its blood lasts and the top of the wet run recedes
+// as it drains. A swing's cast-off takes its share too. Our own pacing, not game data.
+constexpr float weaponResidue = 0.15f, weaponDropMass = 0.04f, weaponDropsPerMass = 3.f, weaponRunSpeed = 6.f;
 struct WeaponBlood {
     uintptr_t node = 0;
     float local[bloodSpotsPerWeapon][3]{};
@@ -887,32 +893,38 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
 
+        // The blade's long axis (item z) in the world, and how far down it points: + when the +z end is lower.
+        const float axisLength = std::sqrt(wpose[6] * wpose[6] + wpose[7] * wpose[7] + wpose[8] * wpose[8]);
+        const float downAlong = axisLength > 1e-4f ? -wpose[7] / axisLength : 0.f;
         for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) {
             if (wb.amount[k] > maxWeaponSaturation) maxWeaponSaturation = wb.amount[k];
-            if (wb.amount[k] <= 0.35f) continue;
+            const float liquid = wb.amount[k] - weaponResidue;
+            if (liquid <= 0.f) continue;
             const float age = float(now - wb.born[k]) / 1000.f;
-            if (age >= 120.f) continue;
-            const float wet = 1.f - age / 120.f;
-            if (wet <= 0.15f) continue;
-            if (fadeDt > 0.f) {
-                wb.drip[k] += fadeDt * wb.amount[k] * wet * 0.8f;
-                if (wb.drip[k] >= 1.f) {
-                    wb.drip[k] -= 1.f;
-                    float world[3];
-                    outOfPose(wpose, wb.local[k], true, world);
-                    WoundDrip& d = woundDrips[woundDripNext];
-                    woundDripNext = (woundDripNext + 1) % woundDripLimit;
-                    const unsigned salt = unsigned(now) * 2654435761u + k * 131071u + woundDripNext * 524287u;
-                    d.from[0] = world[0] + float(int(salt % 7) - 3);
-                    d.from[1] = world[1];
-                    d.from[2] = world[2] + float(int((salt >> 8) % 7) - 3);
-                    memcpy(d.sectorOrigin, wSector, sizeof d.sectorOrigin);
-                    d.radius = 1.0f + float((salt >> 16) % 18) / 10.f;
-                    d.born = now;
-                    memcpy(d.start, d.from, sizeof d.start);
-                    d.flight = 0.f;
-                    queueSplat(d.from, wSector, nullptr, d.radius, d.radius, 0.5f, float(salt % 1000) / 1000.f, 0);
-                }
+            const float wet = 1.f - (std::min)(age / 120.f, 1.f);
+            if (wet <= 0.15f || fadeDt <= 0.f) continue; // dried where it is
+            // It runs toward the lower end (the upper edge of the wet run recedes), faster the steeper the blade
+            // and the more there is, within the reach a hit point is read in (weaponLocal: -30..160 cm).
+            wb.local[k][2] = std::clamp(wb.local[k][2] + downAlong * weaponRunSpeed * liquid * wet * fadeDt, -30.f, 160.f);
+            // Drops leave from it in proportion to the liquid left, more when the blade is steep.
+            wb.drip[k] += fadeDt * liquid * weaponDropsPerMass * (0.3f + 0.7f * std::fabs(downAlong));
+            if (wb.drip[k] >= 1.f) {
+                wb.drip[k] -= 1.f;
+                wb.amount[k] = (std::max)(wb.amount[k] - weaponDropMass, weaponResidue);
+                float world[3];
+                outOfPose(wpose, wb.local[k], true, world);
+                WoundDrip& d = woundDrips[woundDripNext];
+                woundDripNext = (woundDripNext + 1) % woundDripLimit;
+                const unsigned salt = unsigned(now) * 2654435761u + k * 131071u + woundDripNext * 524287u;
+                d.from[0] = world[0] + float(int(salt % 7) - 3);
+                d.from[1] = world[1];
+                d.from[2] = world[2] + float(int((salt >> 8) % 7) - 3);
+                memcpy(d.sectorOrigin, wSector, sizeof d.sectorOrigin);
+                d.radius = 1.0f + float((salt >> 16) % 18) / 10.f;
+                d.born = now;
+                memcpy(d.start, d.from, sizeof d.start);
+                d.flight = 0.f;
+                queueSplat(d.from, wSector, nullptr, d.radius, d.radius, 0.5f, float(salt % 1000) / 1000.f, 0);
             }
         }
         // Cast-off: a fast swing flings wet blood off the blade, in the swing's direction, as a line of
@@ -940,9 +952,9 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                 }
                 if (attacking && std::isfinite(speed) && speed > 380.f && flat > 150.f && wb.castCooldown <= 0.f) {
                     for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) {
-                        if (wb.amount[k] <= 0.45f) continue;
+                        if (wb.amount[k] - weaponResidue < 0.1f) continue; // only liquid flies, not the dried film
                         const float age = float(now - wb.born[k]) / 1000.f;
-                        if (age >= 40.f) continue; // only still-liquid blood flies
+                        if (age >= 40.f) continue;
                         float from[3];
                         outOfPose(wpose, wb.local[k], true, from);
                         const float dir[3] = {v[0] / flat, 0.f, v[2] / flat};
@@ -965,7 +977,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                             d.flight = 0.2f + 0.15f * h;
                             d.born = now;
                         }
-                        wb.amount[k] = (std::max)(wb.amount[k] - 0.12f, 0.f);
+                        wb.amount[k] = (std::max)(wb.amount[k] - weaponDropMass * float(drops), weaponResidue);
                         wb.castCooldown = 0.15f;
                     }
                 }
