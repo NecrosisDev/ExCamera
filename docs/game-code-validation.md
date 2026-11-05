@@ -116,6 +116,19 @@ bodyDamage 159700(character, A in xmm1, B in xmm2, K in r9b) returns whether the
 | Metal vs cloth heuristics | **UNPROVEN**. Lead: the exe has material classes (`TClothBasic`, `TClothPadded1`, `TCopperAlloy`, …) that could prove it |
 | "Lamp" = scene flags & 0xFFF == 5 | **UNPROVEN** |
 
+**Blood thread update (ae0f0a1, spot-checked here):** the arguments are renamed recoverable / permanent / mayKill,
+and wound severity = 0.35 + 0.65 × (0.1A + 0.2B) / max health (**PROVEN** arithmetic). Thrust is **PROVEN** from the
+game: physicalImpact 159A60 checks the striker's motion against 0xB at 159B28 and, for that motion, measures speed
+along the weapon's axis (+C38 → +2AC, ×2, 159B59–159B9A) instead of total speed. The cut/crush guess, the limb
+spurt list (parts 1/4/11/14) and fracture bruises are **removed**. Lamp highlights, skin bake and severed limbs are
+**off** behind one unproven flag. Metal vs cloth stays on, labelled as a screen-colour heuristic (**UNPROVEN**, kept
+by choice). Still open: the slash/pierce/crush split (lead: 159A60 calls 1531E0 on the weapon).
+
+**Weapon +F0 / +120 (render vs blood): PROVEN.** These are the rigid body's four points and their previous-step
+copy. heldItemAttach 155C20 writes the attached item's points to +F0 and copies them into +120 and +150 (155D72–155D9F).
+TTetraRBD's own integrate method 88D30 (listed in the TTetraRBD class table) runs its Verlet step over +F0 / +120 /
++150. A held weapon is that same rigid body, so render's gate on these reads is over-cautious and can be lifted.
+
 ## 3. Every F8 setting
 
 "Camera-only" means the setting changes only the mod's own camera maths. It makes no claim about game rules. It
