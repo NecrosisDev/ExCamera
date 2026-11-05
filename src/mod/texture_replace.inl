@@ -210,7 +210,16 @@ static bool admitTextureReplaceEntries(const fp::ImageView& file) {
     return true;
 }
 
+// Off until the block format is taken from the game's own format table. 0x72790 matches the whole format word
+// against the table 0x766F0 fills from 0x2AE290..., and the second byte alone does not decide it: 0x813BE601
+// (byte 0xE6) is GL_COMPRESSED_RGBA_S3TC_DXT1 (BC1, 8-byte blocks) while 0x817BE608 / 0x827BE608 (also 0xE6)
+// are DXT5 (BC3, 16). blockFormatFor would ask a BC3 file for the first and the game would upload it as BC1.
+inline constexpr bool textureFormatsFromTable = false;
 static void createTextureReplaceHook() {
+    if constexpr (!textureFormatsFromTable) {
+        texrep::hooked = false;
+        return;
+    }
     texrep::hooked = texrep::admitted &&
                      MH_CreateHook((void*)gameAt(fp::sig::textureUpload), (void*)texrep::upload,
                                    (void**)&texrep::originalUpload) == MH_OK;
