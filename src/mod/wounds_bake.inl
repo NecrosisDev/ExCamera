@@ -1,7 +1,10 @@
-// OFF by default (unprovenRenderReads): which of the body material's texture slots 0/1/2 is the diffuse,
-// specular and normal map, the _SKIN layout below (+218 skin, its bone and bind arrays, +290 faces, +2F8 tags)
-// and the Injuries addon's severed-bit table are read here without game code that shows them; until they
-// are proven the marks stay with the screen pass and severed limbs are not cut.
+// OFF by default (unprovenRenderReads). Proven and witnessed (headwearRender group): node +218 is a
+// TSkinController2 (+8 node, +10 bone count, +18 bone nodes, +20 48-byte inverse binds; skinController::boneLoop),
+// +290 the faces (three dword vertex indices; meshNode::faces), +2F8 one dword per face (meshNode::faceValues).
+// Still not shown by game code: that face value 0 is body skin, that UVs are attribute 0x10 in format 0xF20010,
+// and which texture unit the skin program samples for each map at draw time (the binder 0x20112B-0x2012AB hands
+// out units in the order DifTex, OpcTex, EmiTex, SpcTex, NrmTex, GlsTex, DspTex, EnvMap to the maps present;
+// names at .rdata 0x335218/0x335238/0x335258, table .data 0x2E9F70), and the Injuries addon's severed bits.
 // Wound skins: cuts and bruises baked into a copy of the struck character's own body texture, the way
 // the game bakes an undead character's decay into its skin (textures.flb chardecomp_*, set up by
 // 0x208140). Baked marks sit in the skin, follow every fold and are covered by clothes and armour.
