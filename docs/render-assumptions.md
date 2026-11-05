@@ -166,12 +166,15 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
     shading.flb share one pack format. Each body is dword-rotated by the key stream of 0x1FA4D0 (called from
     0x1FA6F0, seed 0x2BCBE389). The main lit shader `shading_f` samples `DifTex`, `SpcTex`, `NrmTex`, `GlsTex`
     and so on.
-  - Units: after linking, 0x2010C0 gives the samplers consecutive units in this order, each only if the
-    permutation flags at `renderer+8` have it: DifTex 0x20000, OpcTex 0x480000, EmiTex 0x80000, SpcTex
-    0x40000, NrmTex 0x200000, GlsTex 0x1000000, then DspTex, DrtTex, EnvMap, VoxelGI.
-  - So units 0/1/2 are diffuse/specular/normal exactly when the flags have those three and neither an opacity
-    nor an emissive map. `stoneSkinOriginals` (stone_skin.inl) now checks that on the live flags and leaves
-    any other material to the game's own draw. Wound skins and stone skin go through it.
+  - Units: when 0x200770 links a program for the renderer, 0x200C40 calls 0x2010C0(renderer, config), which
+    reads the texture flags at `renderer+8` (0x20112E) and gives the samplers consecutive units with
+    glUniform1i in this order: DifTex (0x20000), else OpcTex when `(flags & 0x480000) == 0x400000`; then EmiTex
+    0x80000, SpcTex 0x40000, NrmTex 0x200000, GlsTex 0x1000000; then DspTex, DrtTex, EnvMap, VoxelGI. (The
+    cached program is looked up by the key at `renderer+0x10`; the texture flags are the ones at `+8`.)
+  - So units 0/1/2 are diffuse/specular/normal exactly when the flags have those three and no emissive map.
+    `stoneSkinOriginals` (stone_skin.inl) checks that on the live flags at `renderer+8`, refusing the opacity
+    bits too (more than needed), and leaves any other material to the game's own draw. Wound skins and stone
+    skin go through it. (Correction from the feature thread, 0b3f255: OpcTex takes a unit only without DifTex.)
 - **Headwear reads (e).**
   - **Descriptor: PROVEN.** The native part draw 0x6B8B0 reads `+0x68` as the descriptor:
     - `[+0]` is the element buffer, bound to 0x8893 when nonzero;
