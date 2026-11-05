@@ -365,7 +365,12 @@ static bool otherHooksCheckView(const fp::ImageView& file) {
     fp::sig::Target found[8];
     unsigned n = fp::patchedEntries(
         file, layout,
-        [](uint32_t rva, uint8_t* out) { return memcpy(out, reinterpret_cast<const void*>(base + rva), 16), true; }, found,
+        [](uint32_t rva, uint8_t* out) {
+            // The linker hook went in before this scan (installLinkHookEarly): its patch is the mod's own.
+            if (matid::linkHooked.load() && rva == layout.rva[fp::sig::programLink])
+                return memcpy(out, programLinkEntry, 16), true;
+            return memcpy(out, reinterpret_cast<const void*>(base + rva), 16), true;
+        }, found,
         8);
     const fp::sig::Target slots[3][2] = {{fp::sig::navSlot, fp::sig::navSampler},
                                          {fp::sig::behaviorSlot, fp::sig::playerBehavior},
@@ -895,6 +900,9 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("material_id_other_context", matid::otherContext.load());
     j.boolean("material_id_link_hooked", matid::linkHooked.load());
     j.unum("material_id_sources_kept", matid::sourcesKept.load());
+    j.unum("material_id_first_linked", matid::firstLinkedSeen.load());
+    j.unum("material_id_sources_recovered", matid::sourcesRecovered.load());
+    j.unum("material_id_sources_ambiguous", matid::sourcesAmbiguous.load());
     j.unum("material_id_programs", matid::idProgramsBuilt.load());
     j.unum("material_id_program_failures", matid::idProgramsFailed.load());
     j.unum("material_id_parts", materialIdParts.load());
@@ -1295,6 +1303,9 @@ static DWORD runSession() {
         if (!fp::attackSideKeyValid(attackSideKey)) attackSideKey = 0; // never a mouse button
     } else
         settingsPath[0] = 0;
+    // Before the game's first program link: the material-id linker hook (material_ids.inl).
+    base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    installLinkHookEarly(startupFile);
     if (!waitForGame()) {
         reportFault("game_not_ready", "not_installed", "not_required");
         return 2;
@@ -1316,7 +1327,7 @@ static DWORD runSession() {
         reportFault("dispatch_conflict", "not_installed", "not_required");
         return 2;
     }
-    if (MH_Initialize() != MH_OK) {
+    if (const MH_STATUS init = MH_Initialize(); init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) {
         reportFault("hook_initialization_failed", "not_installed", "not_required");
         return 2;
     }
