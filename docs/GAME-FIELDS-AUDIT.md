@@ -72,5 +72,27 @@ game has you recovering, defending or in another reaction", "…wait until you'v
 * **Finger poses / skin** (render and VR code): layout PROVEN by the register routine 0xD39B0 (0xD39C0–0xD3AEF): skin
   +8 back-pointer, +0x10 count, +0x18 node array, +0x20 inverse binds, +0x28 floats, node id at +0x17C; skin build
   0xD9940. The _SKIN name and the vertex formats are NOT PROVEN; they are bounds-checked and skip on mismatch.
+* **Parry pick (combat.inl, Parry direction setting): PROVEN.** defenseReactive 0x163880 calls defenseMotion
+  0x1636E0 with the opponent (+E38) at 0x163AB1. 0x1636E0 takes the opponent's motion (+9B8, or +D30 when the
+  opponent's +1018 has 0x10000, 0x1636FC–0x163711). It answers -1 without picking when the defender's +EB0 is
+  20–24 (a parry) and that motion equals +F5C (0x163717–0x16372D). Otherwise it stores the motion at +F5C, calls
+  defenseMotionSelect 0x156FB0, and stores and returns its answer (+F60, 0x163734–0x16374E). Back in 0x163880, an
+  answer >= 0 that differs from +EB0 is stored in +EB0. An own attack 5–12 becomes motion 4, and motionPlay
+  0x179EE0 plays +EB0 (0x163B30–0x163B85). So it is one pick per incoming attack motion while a parry plays (keyed
+  by the motion number, not by a swing instance). The motion names 20–24 come from the motion-set table.
+* **Skin texture units (stone_skin.inl, wound and stone skin swap): PROVEN.**
+  - headwearSubmit 0x201630 passes the renderer [0x5B1E10] to 0x200770 (or 0x1FFBA0). 0x200770 binds the
+    material set's +10/+18/+20 on units 0/1/2 through 0x6FC30 (glActiveTexture 0x84C0+unit, then bind),
+    0x2008D4 onward, whatever the flags.
+  - When it links a program it calls 0x200C40, which calls 0x2010C0 with the same renderer.
+  - 0x2010C0 gives the samplers consecutive units with glGetUniformLocation/glUniform1i (pointers named by the
+    loader at 0x1ECD5/0x1EDF2), in this order:
+    - DifTex if flags +8 & 0x20000, else OpcTex if (flags & 0x480000) == 0x400000;
+    - EmiTex 0x80000, SpcTex 0x40000, NrmTex 0x200000, GlsTex 0x1000000;
+    - then DspTex, DrtTex, with EnvMap, VoxelGI and the rest on fixed units.
+  - So units 0/1/2 are DifTex/SpcTex/NrmTex exactly when the flags have 0x20000, 0x40000 and 0x200000 and not
+    0x80000. The mod's check is that, plus refusing the opacity bits (stricter than needed).
+  - Caveat: the game caches programs by renderer +0x10 in the list at +0x78, not by +8, so the game itself
+    relies on +8 matching its cached program; the mod reads the same +8 during the same submit.
 * Still unproven, nothing named by them: any "bounce"/"block" meaning of the swing bits 0x2/0x4.
 * Not audited here: camera, picking, held-item, wound, blood, render and VR fields (the master checklist).

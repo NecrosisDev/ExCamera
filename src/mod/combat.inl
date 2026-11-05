@@ -185,8 +185,11 @@ struct DefenseUpdate {
     bool reactiveSeen = false;
 };
 static thread_local DefenseUpdate* defenseUpdate = nullptr;
-// Parry direction. 163880 picks its parry through 1636E0 -> 156FB0, stores it in +EB0 and plays it
-// with motionPlay (163AB1-163B85); 1636E0 keeps one pick per incoming swing (163717-16372D). Only the
+// Parry direction. 163880 picks its parry through 1636E0 -> 156FB0 (opponent +E38) and, when the answer is
+// >= 0 and not already +EB0, stores it in +EB0 and plays it with motionPlay (163AB1-163B85). 1636E0 does not
+// pick again (answers -1) while +EB0 is a parry (20-24) and the opponent's motion (+9B8, or +D30 when its
+// +1018 has 0x10000) equals the one it stored at +F5C (163717-16372D); otherwise it stores that motion and
+// 156FB0's answer (+F60). So one pick per incoming attack motion while a parry plays. Only the
 // pick's answer changes here: the gates, the +12F3 defense flag, the motion-4 swap and the weapon
 // constraint 162F80 (which never reads the pick) stay the game's. A strict refusal withdraws through the
 // native cleanup, since an answer of -1 alone would leave +12F3 and the constraint up with no pose.
