@@ -83,12 +83,14 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
     clamping health to its minimum (0x15988C-0x15989D), and by 0x167ED0. 0xA00 (= 0x800 | 0x200) is written
     by 0xF1220 (0xF12C4), 0x156D20 (0x156E48) and 0x1A0970 (0x1A0A95).
   - Among all written values, `& 0x800` holds for exactly 0x800 and 0xA00, and it is the test the game itself
-    uses 32 times. **So dead is `(+0xDF4 & 0x800) != 0`**, that is, the state is 0x800 or 0xA00. Equality with
-    0x800 alone would miss 0xA00. Which of the two is "dying" and which is "dead and down" is UNPROVEN; both
-    carry the bit the game tests.
+    uses 32 times. **So dead is `+0xDF4 == 0x800 || +0xDF4 == 0xA00`** (the same as `& 0x800` over the stored
+    values; written as two comparisons to match the other branches). Equality with 0x800 alone would miss
+    0xA00. The audit thread reads 0x800 as dying (still ragdolling) and 0xA00 as a settled corpse (physics
+    off); that split is UNPROVEN here. Of the 0xA00 writers I only looked at 0x156D20, which calls 0x162E80
+    first (it clears `+0x12F3` and calls 0x179D50); that is not enough to name the state.
   - Life flag `+0xDF8 | 0x100` is set in one place only, 0x17B248 in 0x17B100, which also zeroes `+0xDF4` and
     plays motion 3; its callers include TTendrilEmitter (0x1A2CE0), 0x1A1550 and 0x28F4F0. It is not death.
-  - Fixed in render code: wound healing tests `+0xDF4 & 0x800` (wounds.inl).
+  - Fixed in render code: wound healing tests `+0xDF4 == 0x800 || == 0xA00` (wounds.inl).
   - overlay.inl's crouch gate masks the state with `0xAC0 | 0x40204 | 0xA00`. Those are masks the game itself
     applies to `+0xDF4` (`and 0xAC0` at 0x16388A and 6 more, `and 0x40204` at 0xBFF90, `and 0xA00` at 0xAB3E7
     and 11 more), and the union covers both dead values. I left its extra 0x100 life-flag test in place,
@@ -96,6 +98,9 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
   - Other uses of `lifeFlags & 0x100` as "dead", outside render, are for the audit thread: camera.inl ~113
     and ~635, camera_motion.h ~480-482 (knockdown follow), combat.inl ~12, input.inl ~650 and ~1466,
     motions.inl ~22, xr_bones.inl ~765, xr_drive.inl ~545.
+
+- **Knockdown.** Low health alone does not knock a character down (audit thread); the knocked-down state is
+  still being traced. No render logic depends on it.
 
 ## Gated off by this audit (`unprovenRenderReads = false`, src/mod/wounds.inl)
 
