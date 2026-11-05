@@ -300,7 +300,10 @@ static fp::OtherHooks otherHooksSetting(const std::wstring& directory) {
         docs.empty() ? L"" : docs + L"\\ExaniMate\\first-person.ini",
         fallbackDocs.empty() ? L"" : fallbackDocs + L"\\ExaniMate\\first-person.ini",
     };
+    // A test copy with portable.txt beside it keeps its settings beside it (as the DLL does, session.inl).
+    const bool portable = GetFileAttributesW((directory + L"portable.txt").c_str()) != INVALID_FILE_ATTRIBUTES;
     for (const std::wstring& user : candidates) {
+        if (portable) break;
         if (!user.empty() && GetFileAttributesW(user.c_str()) != INVALID_FILE_ATTRIBUTES) {
             ini = user;
             break;
