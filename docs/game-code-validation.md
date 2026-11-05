@@ -40,6 +40,16 @@ Date: 2026-11-05.
    (current / restorable / lost health) and never call the blue bar stamina. No action is needed unless you want the
    game's term used.
 
+## Fix status (as of 2026-11-05 09:30 UTC)
+
+| Finding | Status |
+|---|---|
+| Winded reads the magic bar | Removed on render (abkkik). Hurt now reads +D58. |
+| Weapon +F0/+120 gate | Lifted on render (272a386). Render's own witness is part step 89330 (8956A–89597). |
+| lifeFlags 0x100 used as dead | Fixed on render (8d7e359) and VR xr_bones.inl (4dc1497, now `stateFlags & 0x800`). VR xr_drive.inl keeps 0x100 on purpose as "stunned, no teleport", which is correct. Still to fix: feature (camera, combat, input, motions, game_structs.h:41 comment), render overlay.inl:903, blood wounds.inl:540. |
+| Damage-hook labels, cut/crush guess, limb list | Fixed or removed on blood (ae0f0a1), waiting for the feature thread to merge. |
+| Knocked-down mask | Feature to switch to `(DF4 & 0xA00) != 0`. |
+
 ## How proof works here
 
 - **PROVEN**: the game routine was disassembled and does what the mod assumes. The routine address and what it does
