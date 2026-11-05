@@ -255,9 +255,23 @@ void main() {
     if (raw >= skyDepth) return;
     vec3 p = viewPosition(uv, raw);
     vec3 n = viewNormal(uv, p);
-    // Floors, steps and tabletops only. A slope test, not a material mask.
+    // Floors, steps and tabletops only: the slope test.
     float surface = smoothstep(0.7, 0.92, dot(n, worldUp.xyz));
     if (surface <= 0.0) return;
+    // And by what the floor is, told from its colour as the level detail tells it (finishShader
+    // levelSurface): no buffer of the game's specular maps exists at this point, and a slope alone made
+    // every floor a mirror (bare wood and packed earth reflect almost nothing; dressed stone a little;
+    // metal plates most).
+    vec3 own = toLight(texture2D(sceneTex, uv).rgb);
+    float ownHi = max(own.r, max(own.g, own.b));
+    float ownSaturation = ownHi > 1e-4 ? (ownHi - min(own.r, min(own.g, own.b))) / ownHi : 0.0;
+    float ownStored = dot(toStored(own), vec3(0.2126, 0.7152, 0.0722));
+    bool warm = own.r > own.b * 1.2 && own.g > own.r * 0.45;
+    float reflectivity = warm && ownSaturation > 0.15 ? 0.12                                   // wood, earth
+                       : ownSaturation < 0.12 && own.b >= own.r * 0.95 && ownStored < 0.3 ? 1.0 // metal
+                       : ownSaturation < 0.12 && ownStored > 0.45 ? 0.2                         // plaster
+                       : 0.4;                                                                    // stone
+    surface *= reflectivity;
     vec3 toEye = normalize(-p);
     vec3 ray = reflect(-toEye, n);
     vec3 origin = p + n;
@@ -2696,6 +2710,7 @@ struct RenderAuditState {
     GLint active = 0, program = 0, drawFbo = 0, readFbo = 0, viewport[4]{}, scissorBox[4]{}, depthFunc = 0;
     GLint texture2D[renderAuditUnits]{};
     GLboolean scissor = 0, depthTest = 0, depthMask = 0, blend = 0, colorMask[4]{};
+    GLint blendFunc[6]{};
     int cacheActive = -1;
     unsigned char cache[renderAuditUnits * 16]{};
     bool cacheRead = false;
@@ -2712,6 +2727,11 @@ static void renderAuditCapture(gl::Api& g, RenderAuditState& s) {
     s.scissor = glIsEnabled(GL_SCISSOR_TEST);
     s.depthTest = glIsEnabled(GL_DEPTH_TEST);
     s.blend = glIsEnabled(GL_BLEND);
+    {
+        const GLenum queries[6] = {glc::blendSrcRgb, glc::blendDstRgb, glc::blendSrcAlpha, glc::blendDstAlpha,
+                                   glc::blendEquationRgb, glc::blendEquationAlpha};
+        for (int i = 0; i < 6; ++i) glGetIntegerv(queries[i], &s.blendFunc[i]);
+    }
     glGetBooleanv(glc::depthWritemask, &s.depthMask);
     glGetBooleanv(GL_COLOR_WRITEMASK, s.colorMask);
     for (unsigned u = 0; u < renderAuditUnits; ++u) {
@@ -2740,7 +2760,7 @@ static unsigned renderAuditCacheCheck(const RenderAuditState& s, const char* whe
         const unsigned target = *(const unsigned*)(s.cache + u * 16 + 8);
         if (!object || target != GL_TEXTURE_2D || !readable(object, field::texture::glName + 4)) continue;
         const GLuint name = *(const GLuint*)(object + field::texture::glName);
-        if (GLint(name) != s.texture2D[u]) {
+        if (name && GLint(name) != s.texture2D[u]) { // name 0: the game released it; its next bind rebinds
             renderAuditLog("%s: unit %u game cache texture %u (object %p), GL has %d", where, u, name, (void*)object,
                            s.texture2D[u]);
             ++desyncs;
@@ -2779,6 +2799,7 @@ static void renderAuditEnd(gl::Api& g, const RenderAuditState& before, const cha
     differs("depth mask", before.depthMask, after.depthMask);
     differs("depth func", before.depthFunc, after.depthFunc);
     differs("blend", before.blend, after.blend);
+    for (int i = 0; i < 6; ++i) differs("blend function/equation", before.blendFunc[i], after.blendFunc[i]);
     for (int i = 0; i < 4; ++i) differs("colour mask", before.colorMask[i], after.colorMask[i]);
     for (unsigned u = 0; u < renderAuditUnits; ++u) {
         if (before.texture2D[u] == after.texture2D[u]) continue;
@@ -4581,6 +4602,12 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
         for (unsigned i = 0; i < 6; ++i) glGetIntegerv(blendQueries[i], &values[i]);
     };
     readBlend(blending, blend);
+    // What the finally restores. blending/blend below are a working copy the loop re-reads after each
+    // material's bind; restoring those left the last replayed material's blending on for the game's
+    // next draws (translucent held items and gear, changing with what lies behind them).
+    const GLboolean savedBlending = blending;
+    GLint savedBlend[6];
+    memcpy(savedBlend, blend, sizeof savedBlend);
     if (glGetError() != GL_NO_ERROR) return false;
     const auto bind = (MaterialBind)gameAt(fp::sig::materialBind);
     const auto single = (SingleSubmit)gameAt(fp::sig::silhouetteSingleSubmit);
@@ -4788,9 +4815,9 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
         if (heldBlendColor) heldBlendColor(blendColor[0], blendColor[1], blendColor[2], blendColor[3]);
         g.bindFramebuffer(glc::framebuffer, GLuint(expected)); // the scene's own target (0, or the sampling target)
         setViewport(g, viewport[0], viewport[1], viewport[2], viewport[3]);
-        (blending ? glEnable : glDisable)(GL_BLEND);
-        g.blendEquationSeparate(GLenum(blend[4]), GLenum(blend[5]));
-        g.blendFuncSeparate(GLenum(blend[0]), GLenum(blend[1]), GLenum(blend[2]), GLenum(blend[3]));
+        (savedBlending ? glEnable : glDisable)(GL_BLEND);
+        g.blendEquationSeparate(GLenum(savedBlend[4]), GLenum(savedBlend[5]));
+        g.blendFuncSeparate(GLenum(savedBlend[0]), GLenum(savedBlend[1]), GLenum(savedBlend[2]), GLenum(savedBlend[3]));
         glDepthFunc(GLenum(depthFunc));
         glDepthMask(depthMask);
         (depthTest ? glEnable : glDisable)(GL_DEPTH_TEST);
