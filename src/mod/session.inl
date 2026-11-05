@@ -864,6 +864,11 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("wound_skin_bakes", woundSkinBakes.load());
     j.unum("wound_skin_draws", woundSkinDraws.load());
     j.unum("wound_skin_faults", woundSkinFaults.load());
+    // Blood lighting (wounds.inl MeshLights): lights copied at material draws, copies refused because the state
+    // was packed for another node (state +A0 != node +130), and lights in use the last frame.
+    j.unum("mesh_lights_captured", meshLightsCaptured.load());
+    j.unum("mesh_lights_mismatched", meshLightsMismatched.load());
+    j.unum("blood_game_lights", gameLightsUsed.load());
     j.boolean("wound_hits_linked", characterHits.load() != nullptr);
     // The game's material ids (material_ids.inl): textures composed and replayed, parts drawn with ids.
     j.boolean("material_ids_hooked", matid::hooked.load());

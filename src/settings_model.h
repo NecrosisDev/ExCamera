@@ -1264,9 +1264,10 @@ inline const RowInfo& rowInfo(int row) {
          L"View", L"Wounds", nullptr, nullptr,
          L"Where a blow does damage, the character keeps a mark that moves with the limb: a gash, a bruise or "
          L"a puncture, by the striking weapon's slash, crush and pierce values (its stats sheet; a thrust always "
-         L"punctures), sized by how much the blow took, with blood running from it while it bleeds. A blow that "
+         L"punctures), sized by how much the blow took, with blood running from it while it bleeds. Someone who goes down bleeding keeps "
+         L"bleeding for up to 45 seconds, slowing to a stop (ExCamera's own after-bleed, not a game value). A blow that "
          L"does no damage leaves nothing. On skin the game marks as skin the wound is drawn into the character's "
-         L"own skin textures; on armour and clothing it shows as a plain stain."},
+         L"own skin textures; on armour, clothing and carried weapons it takes the game's own material at each point: cloth soaks it up, leather and wood darken, metal beads and runs, anything else shows a plain stain."},
         {setting::woundDebug, L"Wound debug highlight", RowInfo::toggle, nullptr, &ModSettings::woundDebug,
          L"View", L"WoundDebug", nullptr, nullptr,
          L"Highlights all procedural wounds, blade blood, and floor spatters in vibrant neon colors (cyan for cuts and blades, "

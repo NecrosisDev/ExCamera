@@ -11,9 +11,9 @@ static std::atomic<float> woundMarks{1.f}; // the Wounds row: 0 off
 #include "../settings_model.h" // panel::materialDataDecoded (the F8 rows it greys)
 // Game reads the render code makes on layouts no game code has yet been shown to read that way
 // (docs/render-assumptions.md, "UNPROVEN"): the held items' light from the light-node fields, their wear
-// and dirt from the item database record, and the level's two nearest lamps. Off until each is proven from
-// the game code; the effects then use their neutral fallbacks (default light from above, unread condition,
-// no lamps).
+// and dirt from the item database record. Off until each is proven from the game code; the effects then use
+// their neutral fallbacks (default light from above, unread condition). Blood is lit from the lights the game
+// itself drew the nearby meshes with (MeshLights, below), not from light nodes.
 constexpr bool unprovenRenderReads = false;
 // The held, worn, object and level detail choose each surface's material (steel, wood, leather, mail, paint,
 // cloth, plaster, earth, stone) from its colour, a guess that stands in for game material data; the game's own
@@ -63,7 +63,39 @@ inline int woundBoneBit(int part) {
     default: return -1;
     }
 }
-constexpr float woundBleedFull = 6.f, woundFreshSeconds = 10.f, woundDrySeconds = 60.f, woundBruiseSeconds = 90.f;
+constexpr float woundBleedFull = 6.f, woundDrySeconds = 60.f, woundBruiseSeconds = 90.f;
+// ExCamera's own after-bleed, by Hunter's design decision (2026-11-05), NOT game data and the one approved
+// assumption in the blood: the game stops its bleed tick for anyone down or dead (+DF4 & 0xA00), but a body on
+// the floor should go on pooling and dripping for a short while. From the moment a character is first seen down,
+// its blood runs at the last rate the game gave it while up (+10DC), falling on our own clock as
+// rate x (1 - t / woundAfterBleedSeconds)^2 (eases out to nothing at the end). Someone not bleeding when they
+// went down never starts; up again, the game's own rate takes over.
+constexpr float woundAfterBleedSeconds = 45.f;
+struct WoundAfterBleed { uintptr_t owner = 0; float rate = 0.f; ULONGLONG downSince = 0; };
+static WoundAfterBleed woundAfterBleeds[64];
+static unsigned woundAfterBleedNext = 0;
+// The bleed rate to show for a character: the game's while it bleeds them, else the after-bleed above.
+static float woundShownBleed(uintptr_t owner, float bleed, unsigned state) {
+    WoundAfterBleed* slot = nullptr;
+    for (WoundAfterBleed& a : woundAfterBleeds) if (a.owner == owner) slot = &a;
+    if (!(state & 0xA00)) {
+        if (!slot && bleed > 0.f) {
+            slot = &woundAfterBleeds[woundAfterBleedNext];
+            woundAfterBleedNext = (woundAfterBleedNext + 1) % 64;
+            *slot = {};
+            slot->owner = owner;
+        }
+        if (slot) { slot->rate = bleed; slot->downSince = 0; }
+        return bleed;
+    }
+    if (!slot || !(slot->rate > 0.f)) return 0.f;
+    const ULONGLONG now = GetTickCount64();
+    if (!slot->downSince) slot->downSince = now;
+    const float t = float(now - slot->downSince) / 1000.f;
+    if (t >= woundAfterBleedSeconds) return 0.f;
+    const float left = 1.f - t / woundAfterBleedSeconds;
+    return slot->rate * left * left;
+}
 // A struck body part's character is its body's root (bodyPart::rootPart): the game's weapon impact
 // (0x159A60) reads its victim there and hands the same pointer to the damage applier, so it equals the
 // record's victim.
@@ -278,11 +310,15 @@ static void outOfPose(const float* pose, const float* local, bool origin, float*
         out[i] = (origin ? pose[9 + i] : 0.f) + local[0] * pose[i] + local[1] * pose[3 + i] + local[2] * pose[6 + i];
 }
 
-static void addWound(const CharacterHitRecord& h) {
+static void addWound(const CharacterHitRecord& h, const float* types = nullptr) {
     const float permanent = std::isfinite(h.permanent) ? h.permanent : 0.f;
     const float recoverable = std::isfinite(h.recoverable) ? h.recoverable : 0.f;
-    // The kind recordNativeHit read from the game (woundKindOfHit): a gash, a bruise or a puncture.
-    const uint8_t kind = h.kind >= woundCut && h.kind <= woundThrust ? uint8_t(h.kind) : woundCut;
+    // The kind recordNativeHit read from the game (woundKindOfHit): a gash, a bruise or a puncture. But the damage
+    // routine 0x159700 takes its two arguments apart: recoverable damage (0.1 x A) only off current health +D58,
+    // permanent damage (0.2 x B) off the restorable ceiling +D5C (0x159783-0x1597C5). A blow that took nothing
+    // permanent (B == 0: the routine leaves +D5C as it was) broke nothing open: a bruise, whatever the weapon.
+    const uint8_t kind = h.permanent < 1e-3f ? woundCrush
+                       : h.kind >= woundCut && h.kind <= woundThrust ? uint8_t(h.kind) : woundCut;
     if (permanent < 1e-3f && recoverable < 1e-3f) return; // nothing got through: the routine took nothing
     Wound w;
     w.part = uintptr_t(h.part);
@@ -355,6 +391,19 @@ static void addWound(const CharacterHitRecord& h) {
     case woundThrust: w.halfLength = 1.f + 0.8f * w.severity; w.halfWidth = 0.6f + 0.4f * w.severity; break;
     default: w.halfLength = 3.f + 4.f * w.severity; w.halfWidth = 0.f; break;
     }
+    // And by the striking weapon's own value for that kind (weapon data +2C slash, +30 crush, +34 pierce, each
+    // 0.5 x (item byte / 100)^0.7 from 0x165AD0, so a byte of 100 gives 0.5): a gash's length, a puncture's width,
+    // a bruise's spread scale from 0.85 at nothing to 1 at a byte of 100 and at most 1.09 (byte 255), so wounds
+    // stay within the calibration above. Unread (a script-runtime hit): unchanged.
+    if (types) {
+        const float value = types[kind == woundCut ? 0 : kind == woundCrush ? 1 : 2];
+        if (value >= 0.f && std::isfinite(value)) {
+            const float scale = 0.85f + 0.15f * std::clamp(value / 0.5f, 0.f, 1.6f);
+            if (kind == woundCut) w.halfLength *= scale;
+            else if (kind == woundThrust) w.halfWidth *= scale;
+            else w.halfLength *= scale; // a bruise's radius
+        }
+    }
     // A blow landing on a mark of the same kind deepens it; a part keeps its newest few marks.
     unsigned onPart = 0, oldest = woundLimit;
     for (unsigned i = 0; i < woundLimit; ++i) {
@@ -397,6 +446,7 @@ struct WeaponBlood {
     float lastAt[3]{};        // the mesh origin at the last reading, for the swing's speed (cast-off)
     ULONGLONG lastTick = 0;
     float castCooldown = 0.f;
+    uintptr_t holder = 0;     // the character whose attack put the blood there (physicalImpact's attacker)
 };
 static WeaponBlood weaponBlood[bloodWeaponLimit];
 static unsigned weaponBloodNext = 0;
@@ -498,6 +548,7 @@ static void addWeaponBlood(const CharacterHitRecord& h) {
         weaponBloodNext = (weaponBloodNext + 1) % bloodWeaponLimit;
         *entry = {};
         entry->node = node;
+        entry->holder = currentImpactAttacker;
     }
     const ULONGLONG now = GetTickCount64();
     // A new spot near an old one adds to it; else it takes the weakest slot.
@@ -597,6 +648,18 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
     out.burning = woundBurnCount > 0 || woundBurnScarCount > 0;
     const float fadeDt = woundFadeTick ? (std::min)(float(now - woundFadeTick) / 1000.f, 0.5f) : 0.f;
     woundFadeTick = now;
+    // Each bleeding character's open wounds share its output by their depth (severity): the game keeps one bleed
+    // rate per character (character::bleed), not one per wound.
+    struct BleedShare { uintptr_t owner; float total; };
+    BleedShare shares[woundLimit];
+    unsigned shareCount = 0;
+    for (const Wound& w : woundStore) {
+        if (!w.part || w.kind == woundCrush || w.scar > 0.3f) continue;
+        unsigned k = 0;
+        while (k < shareCount && shares[k].owner != w.owner) ++k;
+        if (k == shareCount) shares[shareCount++] = {w.owner, 0.f};
+        shares[k].total += w.severity;
+    }
     for (unsigned i = 0; i < woundLimit; ++i) {
         Wound& w = woundStore[i];
         if (!w.part) continue;
@@ -672,20 +735,29 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                 continue;
             }
         }
-        float flow = 0.f;
+        float flow = 0.f, share = 0.f;
         if (w.kind != woundCrush && fadeDt > 0.f) {
-            // Blood runs while the game says this character bleeds (and for the first seconds after any
-            // cut), then dries. The dead keep bleeding out of their cuts for a few minutes, slower and slower.
+            // Blood runs exactly while the game bleeds the character: the bleed tick 0x168410 raises
+            // character::bleed (+10DC) by 0.03 x the tick's wound inflow (+10D4, which TMotilePart's method
+            // 0x1683E0 adds to and 0x168716 clears each tick) up to 20, drains health with it, and lowers it by
+            // 0.1 a tick once no inflow comes. It returns at once while +DF4 & 0xA00 (down, dying or a corpse,
+            // 0x168426-0x168431), and the frozen value is not output: there ExCamera's own after-bleed
+            // (woundShownBleed, Hunter's design, not game data) runs instead. The flow is that rate over 6
+            // (woundBleedFull), the same scale as before; each open wound gives its depth's share of what runs out.
             float bleed = 0.f;
-            __try { bleed = *(const float*)(owner + field::character::bleed); }
-            __except (EXCEPTION_EXECUTE_HANDLER) { bleed = 0.f; }
+            unsigned state = 0;
+            __try {
+                bleed = *(const float*)(owner + field::character::bleed);
+                state = *(const unsigned*)(owner + field::character::stateFlags);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) { bleed = 0.f; state = 0xA00; }
             if (!std::isfinite(bleed)) bleed = 0.f;
-            const float age = float(now - w.born) / 1000.f;
-            flow = w.scar > 0.3f ? 0.f // a closing cut has stopped bleeding
-                 : (std::max)(std::clamp(bleed / woundBleedFull, 0.f, 1.f), age < woundFreshSeconds ? 0.6f : 0.f);
-            if (!alive && w.severity > 0.2f) flow = (std::max)(flow, (0.3f + 0.5f * w.severity) * (std::max)(1.f - age / 180.f, 0.f));
+            bleed = woundShownBleed(owner, bleed, state);
+            flow = w.scar > 0.3f ? 0.f : std::clamp(bleed / woundBleedFull, 0.f, 1.f); // a closing cut has stopped
+            for (unsigned k = 0; k < shareCount; ++k)
+                if (shares[k].owner == w.owner && shares[k].total > 0.f) share = w.severity / shares[k].total;
             if (flow > 0.02f) w.run = (std::min)(w.run + fadeDt * (0.4f + 1.6f * flow), 4.f + 14.f * w.severity);
-            if (flow > 0.15f) w.drip += fadeDt * flow * 2.f; // up to two drops a second while it pours
+            if (flow > 0.15f) w.drip += fadeDt * flow * 2.f * share; // up to two drops a second while it pours
             w.wet = flow >= w.wet ? flow : (std::max)(w.wet - fadeDt / woundDrySeconds, flow);
         }
         float world[3], path[3];
@@ -694,7 +766,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         if (flow > 0.1f && fadeDt > 0.f) {
             // What runs out gathers below: a pool mark every so often, wider the more has run out (a lying
             // body's pool spreads; a standing one's gathers at its feet), thin so the layer builds it up.
-            w.pool += fadeDt * flow * (0.4f + 0.6f * w.severity);
+            w.pool += fadeDt * flow * share * (0.4f + 0.6f * w.severity);
             w.poolTick -= fadeDt;
             if (w.poolTick <= 0.f) {
                 w.poolTick = 0.45f;
@@ -703,7 +775,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                            w.seed + float(i) * 0.37f + w.pool, 2);
             }
         }
-        if (w.spurts && alive && fadeDt > 0.f) {
+        if (w.spurts && alive && flow > 0.02f && fadeDt > 0.f) { // while it bleeds, down too, never once dead
             // An opened artery: with each heartbeat a jet of drops lands in a line a metre or so out, the
             // same way each time (the vessel's direction), each drop a teardrop pointing the way it flew.
             w.spurt -= fadeDt;
@@ -712,7 +784,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                 --w.spurts;
                 const float turn = w.seed * 6.2831853f;
                 const float dir[3] = {std::cos(turn), 0.f, std::sin(turn)};
-                const float strength = 0.4f + 0.6f * float(w.spurts) / 8.f;
+                const float strength = (0.4f + 0.6f * float(w.spurts) / 8.f) * (0.5f + 0.5f * flow);
                 for (int k = 0; k < 6; ++k) {
                     const float hash = std::fmod(w.seed * 131.f + float(k) * 17.17f + float(w.spurts) * 3.3f, 1.f);
                     const float reach = (30.f + 130.f * strength) * (0.35f + 0.65f * float(k) / 5.f) * (0.85f + 0.3f * hash);
@@ -856,7 +928,17 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
                 for (float& c : v) c /= dt;
                 const float speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
                 const float flat = std::sqrt(v[0] * v[0] + v[2] * v[2]);
-                if (std::isfinite(speed) && speed > 380.f && flat > 150.f && wb.castCooldown <= 0.f) {
+                // Only in the holder's own attack, past the point where the game lets the blow land: motions 5-12
+                // (the attack chooser 0xAE9D0's swings, 11 the stab), progress (+A28) at least 0.3, 0.4 for the stab,
+                // where 0x1674FA stops ramping a stab's impact. Waving a bloody blade about flings nothing.
+                bool attacking = false;
+                if (wb.holder && readable(wb.holder, field::character::motionProgress + 4) &&
+                    readable(wb.holder, field::character::motion + 4)) {
+                    const uint32_t motion = *(const uint32_t*)(wb.holder + field::character::motion);
+                    const float progress = *(const float*)(wb.holder + field::character::motionProgress);
+                    attacking = motion >= 5 && motion <= 12 && progress >= (motion == woundThrustMotion ? 0.4f : 0.3f);
+                }
+                if (attacking && std::isfinite(speed) && speed > 380.f && flat > 150.f && wb.castCooldown <= 0.f) {
                     for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) {
                         if (wb.amount[k] <= 0.45f) continue;
                         const float age = float(now - wb.born[k]) / 1000.f;
@@ -1050,24 +1132,26 @@ static void emitImpactSpatter(const CharacterHitRecord& r, const float* sectorOr
 // These are the weapon's values before armour; the split after armour exists only on physicalImpact's stack.
 constexpr size_t woundWeaponData = 0x6E0, woundPartParent = 0x428;
 constexpr size_t woundSlash = 0x2C, woundCrushValue = 0x30, woundPierce = 0x34;
-static uint8_t woundKindOfHit(uintptr_t attacker, uintptr_t weapon) {
-    if (readable(attacker + field::character::motion, sizeof(uint32_t)) &&
-        *reinterpret_cast<const uint32_t*>(attacker + field::character::motion) == woundThrustMotion)
-        return woundThrust;
+static uint8_t woundKindOfHit(uintptr_t attacker, uintptr_t weapon, float* types) {
+    types[0] = types[1] = types[2] = -1.f; // slash, crush, pierce: unread
+    const bool thrust = readable(attacker + field::character::motion, sizeof(uint32_t)) &&
+                        *reinterpret_cast<const uint32_t*>(attacker + field::character::motion) == woundThrustMotion;
     uintptr_t part = weapon, data = 0;
     for (int step = 0; part && step < 16; ++step) { // 0x1531E0's walk, bounded
-        if (!readable(part, woundPartParent + 8) || !readable(part, woundWeaponData + 8)) return woundCut;
+        if (!readable(part, woundPartParent + 8) || !readable(part, woundWeaponData + 8)) return thrust ? woundThrust : woundCut;
         data = *reinterpret_cast<const uintptr_t*>(part + woundWeaponData);
         if (data) break;
         const uintptr_t parent = *reinterpret_cast<const uintptr_t*>(part + woundPartParent);
         if (parent == part) break;
         part = parent;
     }
-    if (!data || !readable(data, woundPierce + 4)) return woundCut;
+    if (!data || !readable(data, woundPierce + 4)) return thrust ? woundThrust : woundCut;
     const float slash = *reinterpret_cast<const float*>(data + woundSlash);
     const float crush = *reinterpret_cast<const float*>(data + woundCrushValue);
     const float pierce = *reinterpret_cast<const float*>(data + woundPierce);
-    if (!std::isfinite(slash + crush + pierce)) return woundCut;
+    if (!std::isfinite(slash + crush + pierce)) return thrust ? woundThrust : woundCut;
+    types[0] = slash; types[1] = crush; types[2] = pierce;
+    if (thrust) return woundThrust;
     if (crush > slash && crush >= pierce) return woundCrush;
     if (pierce > slash && pierce > crush) return woundThrust;
     return woundCut;
@@ -1115,7 +1199,8 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float permanen
     }
     r.weapon = weapon;
 
-    r.kind = woundKindOfHit(attacker, weapon);
+    float types[3];
+    r.kind = woundKindOfHit(attacker, weapon, types);
 
     float sectorOrigin[3]{};
     if (part && readable(part + field::bodyPart::meshNode, sizeof(uintptr_t))) {
@@ -1130,7 +1215,7 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float permanen
 
     AcquireSRWLockExclusive(&woundLock);
     r.serial = ++woundSerial;
-    addWound(r);
+    addWound(r, types);
     addWeaponBlood(r);
     emitImpactSpatter(r, sectorOrigin);
     ReleaseSRWLockExclusive(&woundLock);
@@ -1213,6 +1298,29 @@ static bool woundSkinMaterial(uintptr_t material) {
     ReleaseSRWLockShared(&woundSkinSetLock);
     return skin;
 }
+
+// The lights the game drew a mesh with, copied at its material draw (wounds_bake.inl captureMeshLights, render
+// thread). The submit 0x200770 writes [node+130] to renderer state +A0 (0x20078D), then packs the node's lights
+// (0x1FF430 at 0x2007AD) into the state: per slot i, +B0+16i the light, +B8+16i its tag (0x200 when the light's
+// +C & 0x300 is 0, else 0x100; 0x1FF76C/0x1FF776), count +A8, and three vec4 at +170+30i (A, B, C; uploaded at
+// 0x200BBD). The shaders' Light[i].Direct is the template callback 0x1FB040: slot tag & 0x300 == 0x200.
+// Each capture keeps [state+A0] and is used only when it equals the drawn node's +130 (else it counts a mismatch).
+struct MeshLights {
+    uintptr_t node = 0;
+    ULONGLONG tick = 0;
+    unsigned count = 0;
+    uintptr_t source[6]{}; // the light in each slot
+    bool direct[6]{};      // the slot is a Direct light (A.xyz a direction, no range falloff or shaping)
+    float light[18][4]{};  // A, B, C per slot, as the game packed them
+    float origin[3]{};     // the node's drawn origin (render transform row 3), to choose the space reading
+    float sector[3]{};     // its sector's origin
+    bool sectorKnown = false;
+};
+constexpr unsigned meshLightsLimit = 16;
+static MeshLights meshLights[meshLightsLimit];
+static unsigned meshLightsNext = 0;
+static SRWLOCK meshLightsLock = SRWLOCK_INIT;
+static std::atomic<unsigned> meshLightsCaptured{0}, meshLightsMismatched{0}, gameLightsUsed{0};
 
 static void createWoundHooks() {
     if (!layout.optionalGroupAvailable("wounds")) return;

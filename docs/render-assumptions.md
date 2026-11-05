@@ -321,6 +321,44 @@ procedural ID. That is the next step to bring the four detail rows back with the
     `payload[0x50+ch]`. The condition bytes the gated read uses are the same chunk's `+0x14..+0x16`
     (`payload+0xC..+0xE`), which feed the factory.
 
+## Per-light uniform layout, decoded (blood thread, 0.9.5.2g; shader text not reproduced here)
+
+The lights pass (`lights`, included by `shading_f`) loops over `Lights` and reads `Light[3i]`, `[3i+1]`, `[3i+2]`;
+the packer is 0x1FF740-0x1FF9D8 (called from the submit 0x200770 at 0x2007AD as 0x1FF430(state, node) when the
+node has a light list, `node+0x1DC` >= 0, and state `+8 & 6`), uploaded by glUniform4fv(count 3 x state `+0xA8`,
+state `+0x170`) at 0x1FFFD8 / 0x200BBD. Each component, shader use against packer source:
+
+| vec4 | comp. | Shader use (lights / shading_f) | Packer source (0x1FF740-0x1FF9D8) | Status |
+|---|---|---|---|---|
+| A `[3i]` | xyz | point light: light position (world, compared with the fragment's world position); "Direct" light: the light direction | `+0x170` = 12 bytes from a table at `+0x40`, index light `+0x288` (0x1FF784-0x1FF7A1) | PROVEN position (point lights) |
+| A | w | point: shadow depth scale (`length × A.w`, the same product the shadow-map shader writes as depth with `LPos.w`); Direct: scales the shading term | `+0x17C`: type 2 = `[[+0x1C8]+0x2C0]+0x180`, else (k + `[+0x1C8]+0x238`) / (light `+0x2C` × node `+0x228`) (0x1FF82E-0x1FF8DB) | PROVEN use; source fields' names UNPROVEN |
+| B `[3i+1]` | xyz | the light's colour (`lCol` in the Lighting function: diffuse += lCol × w × N·L, specular += lCol × GGX × w) | raw `+0x210` colour × 1/state `+0x3B8` (0x19240) × (1 − `[+0x1C8]+0x234`) × state `+0x5B4` (0x19260) | PROVEN colour (not the linear `+0x278`) |
+| B | w | inverse range: attenuation = max(1 − distance × B.w, 0)^4 | light `+0x230` (0x1FF816) | PROVEN 1/range |
+| C `[3i+2]` | x | shadow sample spread (offset of the rotated shadow taps) | from `+0x238` (0x1FF834 / 0x1FF890) | PROVEN use |
+| C | y, z, w | a shaping factor on the light direction's y: f = max((2^((dir.y + (1 − dir.y) × C.y) × C.z) − 1) × C.w, 0), multiplied into the light | type 0x200: `[+0x1C8]+0x24C`, `+0x250`, `+0x248` (0x1FF901-0x1FF954); else three constants | PROVEN formula; meaning (spot or vertical falloff) UNPROVEN |
+
+- Lighting function (`shading_f`): Gloss = 1 − MatSpc.w (× the gloss map's r when it has one), so it is a
+  roughness; a2 = Gloss⁴ (Gloss², squared again), D = a2 / (N·H²(a2 − 1) + 1)² (no 1/π), Smith-Schlick with
+  k = (Gloss + 1)² / 8 on N·L (gh) and N·V (gv), d = gv / max(4 N·V, 0.001); specular += lCol × D × gh × d × w,
+  diffuse += lCol × w × N·L. Later: (Σ diffuse + ambient) × MatDif × diffuse map, plus specular × MatSpc.xyz ×
+  the spec map × spf, spf = 0.5 + 0.5 × 2^((−5.55473 N·V − 6.98316) N·V).
+- Which lights are Direct (PROVEN): the template property "Direct" (name at .rdata 0x335C48, registered with its
+  callback in the same entry, 0x1FB34E-0x1FB373) is 0x1FB040: slot i < count +A8 and the slot tag
+  [state + B8 + 16i] & 0x300 == 0x200. The packer writes the tag 0x200 when the light's +C & 0x300 is 0, else 0x100
+  (0x1FF761-0x1FF776), with the light pointer at [state + B0 + 16i]. "Sky" (0x335C60, callback 0x1FB070) is slot 0.
+- Which node the state was packed for (PROVEN): the submit writes [node+130] to state +A0 (0x200785-0x20078D)
+  before calling the packer for that node; the capture keeps a copy only when the two agree and counts the rest
+  (`mesh_lights_mismatched` in first-person-status.json, and the dev audit's "mesh lights" line).
+- Shadows: Direct lights sample `Shadow{i}` at `vrSdw = SdwMat × world position` (vertex shader); point lights
+  sample a cube `Shadow{i}` along −light direction, depth `length × A.w`, with `SdwSmps` rotated taps of
+  radius C.x.
+- Ambient: `ambient` samples the `VoxelGI` 3D texture at `world × VXGIScl.xyz + VXGIPos`, around the normal,
+  `w` occlusion scaled by `VXGIScl.w`.
+- Capture for later use (blood thread): the pack is per drawn node, so state `+0xA8` and `+0x170` hold the
+  lights of the node being drawn at its material draw; the blood branch copies them there (dev audit line), and
+  nothing reads them yet.
+
+## The game's own shading, as decoded (for the reflections and AO work)
 ## Plan: rebuilding the four detail rows from game material data (2026-11-05)
 
 Goal: Held item, Armour and clothing, World object and Level detail pick each pixel's material from the
@@ -456,3 +494,23 @@ Each ships on its own once proven; the rest stay off.
 ## Not yet proven, not gated (for the audit thread)
 
 - Unit roles of the skin texture set (0 diffuse, 1 specular, 2 normal): from the shader review, not re-derived.
+
+## Blood lighting from the game's lights (blood thread, WIP: not in the test build until Hunter's go)
+
+The wet blood terms (pools, marks, runs and gear stains, drops in the air, a severed limb's cut, blade blood)
+take their highlight, and the cut and the drops their diffuse share, from `gameLighting` (view_effects.inl), the
+game's lights loop and Lighting function above applied to each captured light. What is the game's and what is ours:
+
+| Part | Source | Status |
+|---|---|---|
+| Per-light colour, range falloff (1 − d·B.w)⁴, C.yzw factor on the world-y of the direction, Direct vs point | the packed lights as captured, the shader's formulas | PROVEN (formulas and Direct as above) |
+| GGX, k, d | the game's Lighting function | PROVEN formula; the blood's Gloss (0.07 pools and drops, 0.08 blades, 0.07-0.14 cuts) is ours |
+| Which lights | the union of the lights packed for the meshes drawn in the last 250 ms that pass the material-draw hook (characters and their gear), each light once, the six that bring most light to the mesh they were packed for | APPROXIMATION: the game lights each mesh with its own list; a pool on the floor takes the lights of the bodies near it, not the floor mesh's list |
+| Space | both readings (raw, + the mesh's sector origin) tried: the mesh's by the camera's reach, each point light's by nearness to its mesh | APPROXIMATION, as for held items; the audit counts which reading won |
+| Absolute level | the brightness the game already drew at the spot; the lights give the share (divided by the sum of luma × w) | APPROXIMATION: the game's absolute light units are not mapped to the picture |
+| Shadows | not sampled: every light counts as unshadowed (A.w and C.x unused) | NOT DONE (cube maps per light) |
+| Ambient | a fixed 0.3 floor on the cut and the drops; pools keep the drawn picture | NOT DONE: the VoxelGI texture and VXGIScl/VXGIPos are not in the captured state |
+| Fresnel | the liquid's own Schlick (F0 0.02) in place of MatSpc × spf | ours (the blood's material) |
+
+With no lights captured in the last 250 ms the terms use the fixed light from above. The old kind-5 light-node path
+(levelLightsFor, lampsInView) is removed; level detail keeps its fixed light.
