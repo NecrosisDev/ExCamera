@@ -281,8 +281,12 @@ static void outOfPose(const float* pose, const float* local, bool origin, float*
 static void addWound(const CharacterHitRecord& h) {
     const float permanent = std::isfinite(h.permanent) ? h.permanent : 0.f;
     const float recoverable = std::isfinite(h.recoverable) ? h.recoverable : 0.f;
-    // The kind recordNativeHit read from the game (woundKindOfHit): a gash, a bruise or a puncture.
-    const uint8_t kind = h.kind >= woundCut && h.kind <= woundThrust ? uint8_t(h.kind) : woundCut;
+    // The kind recordNativeHit read from the game (woundKindOfHit): a gash, a bruise or a puncture. But the damage
+    // routine 0x159700 takes its two arguments apart: recoverable damage (0.1 x A) only off current health +D58,
+    // permanent damage (0.2 x B) off the restorable ceiling +D5C (0x159783-0x1597C5). A blow that took nothing
+    // permanent (B == 0: the routine leaves +D5C as it was) broke nothing open: a bruise, whatever the weapon.
+    const uint8_t kind = h.permanent < 1e-3f ? woundCrush
+                       : h.kind >= woundCut && h.kind <= woundThrust ? uint8_t(h.kind) : woundCut;
     if (permanent < 1e-3f && recoverable < 1e-3f) return; // nothing got through: the routine took nothing
     Wound w;
     w.part = uintptr_t(h.part);
