@@ -467,6 +467,16 @@ Each ships on its own once proven; the rest stay off.
   - So Level detail could not pick wood, stone or plaster from game data. It is removed (Hunter, 2026-11-05). What the game does have
     per pixel for level surfaces is its specular and gloss data (`MatSpc` x `SpcTex`, `GlsTex`), which says how
     shiny a surface is, not what it is made of.
+- **Fix (2026-11-05, Hunter's playtest: `material_id_programs` 0, `_program_failures` 4, `_parts` 0).** The id
+  program had attached the game program's own vertex shader object, found with glGetAttachedShaders. The game's
+  linker 0x1FA120 detaches every shader right after glLinkProgram (glDetachShader, loaded from the name at
+  0x1EBF1 into DAT_100498D20, called at 0x1FA246, 0x1FA251 and 0x1FA260), so a game program has none and every id
+  program failed before any GL link was tried (PROVEN). Now 0x1FA120 is hooked (`programLink`, materialIds group,
+  whole-body contract): before it runs, the vertex shader's source is read with glGetShaderSource while still
+  attached, and kept by the program it returns. idProgramFor compiles that exact text again with the id fragment.
+  Failures log the driver's info log once (`material-id-shader.log` beside first-person.ini, and a modMessage);
+  `material_id_link_hooked` and `material_id_sources_kept` report the hook. tools/check_shaders.py `--dump
+  shader-dump.glsl` links the id fragments against every textured game vertex shader in a dev build's dump.
 - **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),
   parts drawn with ids and misses. Parallax (`Mat.TexDsp`) items read ids at the unshifted texcoord.
 

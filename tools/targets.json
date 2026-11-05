@@ -760,6 +760,12 @@
       "rva": "0x72790",
       "note": "FUN_100072790(format word): the index of the game's texture format table entry for an image format word: words with (word & 0x80100000) == 0x100000 match the table entry's word under mask 0x800CFFFF, others exactly; -1 when none. 0x73580 stores it at texture+0x44 and uploads with the entry's GL formats",
       "optionalGroup": "textureReplace"
+    },
+    "programLink": {
+      "rva": "0x1fa120",
+      "note": "FUN_1001FA120(vertex shader, fragment shader, geometry shader or 0): creates a program, binds the attribute locations (vPos 0, vTex 1, vNrm 2, vCol 3, vTx2 4, vTng 6, by the vertex-stream flags DAT_10049B510), links (0x1FA23B), then detaches every shader (glDetachShader at 0x1FA246, 0x1FA251, 0x1FA260); returns the program, or 0 (deleted) when the link failed. Hooked: the vertex shader's source is read before the call, while it is still attached, and kept by the program it returns, for the material-id program (mod/material_ids.inl)",
+      "optionalGroup": "materialIds",
+      "hook": true
     }
   },
   "returns": {
@@ -1566,7 +1572,8 @@
     "textureUpload",
     "textureFormatIndex",
     "textureFormatTable",
-    "textureFormatLast"
+    "textureFormatLast",
+    "programLink"
   ],
   "reviewed_signatures": [
     {
@@ -11237,6 +11244,28 @@
       "addend": 0,
       "known_rva": "0x2ae0b0",
       "pattern": "B8 FF FF FF FF 89 CA 81 E2 00 00 10 80 81 FA 00 00 10 00 75 54 44 8B 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "programLink",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1fa120",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 D0 89 CB 89 D6 44 89 C7 45 31 ED FF 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "programLink",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1fa120",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? D0 89 ?? 89 ?? ?? 89 ?? ?? 31 ?? FF ?? ?? ?? ?? ??"
     }
   ]
 }

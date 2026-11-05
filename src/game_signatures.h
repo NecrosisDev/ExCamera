@@ -284,6 +284,7 @@ enum Target : uint16_t {
     textureFormatIndex,
     textureFormatTable,
     textureFormatLast,
+    programLink,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -565,6 +566,7 @@ inline constexpr const char* targetNames[targetCount] = {
     "textureFormatIndex",
     "textureFormatTable",
     "textureFormatLast",
+    "programLink",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -846,6 +848,7 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "textureReplace",
     "textureReplace",
     "textureReplace",
+    "materialIds",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
 // reference to a global or a vtable, or a call to the function).
@@ -1740,6 +1743,8 @@ inline constexpr Signature signatures[] = {
     {textureFormatIndex, Kind::Code, false, true, 0, 0, 0, 0x72790, "B8 FF FF FF FF 89 ?? 81 ?? 00 00 10 80 81 ?? 00 00 10 00 75 54 ?? 8B ?? ?? ?? ?? ??"},
     {textureFormatTable, Kind::Relative, false, false, 54, 58, 0, 0x49B5D0, "B8 FF FF FF FF 89 CA 81 E2 00 00 10 80 81 FA 00 00 10 00 75 54 44 8B 15 ?? ?? ?? ?? 45 85 D2 0F 8C ?? ?? ?? ?? BA FF FF FF FF 66 0F 1F 44 00 00 83 C2 01 4C 8B 0D ?? ?? ?? ??"},
     {textureFormatLast, Kind::Relative, false, false, 24, 28, 0, 0x2AE0B0, "B8 FF FF FF FF 89 CA 81 E2 00 00 10 80 81 FA 00 00 10 00 75 54 44 8B 15 ?? ?? ?? ??"},
+    {programLink, Kind::Code, true, true, 0, 0, 0, 0x1FA120, "53 57 56 41 54 41 55 48 8D 64 24 D0 89 CB 89 D6 44 89 C7 45 31 ED FF 15 ?? ?? ?? ??"},
+    {programLink, Kind::Code, true, true, 0, 0, 0, 0x1FA120, "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? D0 89 ?? 89 ?? ?? 89 ?? ?? 31 ?? FF ?? ?? ?? ?? ??"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {

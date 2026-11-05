@@ -239,6 +239,9 @@ def reversed_smoothsteps(sources: dict[str, str]) -> list[str]:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('-v', '--verbose', action='store_true', help='print driver warnings for programs that pass')
+    parser.add_argument('--dump', action='append', default=[],
+                        help="a dev build's shader-dump.glsl ([Dev] ShaderDump=1): link the material-id fragments against "
+                             "every game vertex shader in it, as the mod rebuilds them (mod/material_ids.inl)")
     args = parser.parse_args(argv)
     sources = collect_sources()
     gl = Gl()
@@ -259,6 +262,28 @@ def main(argv=None) -> int:
         for m in _RAW.finditer(text, start, text.find('};', start)) if start >= 0 else ():
             varying = 'vriTex' if 'in vec2 vriTex' in m.group('body') else 'vrTex'
             jobs.append((f'material ids: id at {varying}', [ID_VERTEX[varying]], [m.group('body')]))
+        # The game's own vertex shaders, exactly as it handed them to the driver (a dev build's dump): each must
+        # compile again and link with the id fragment for the output it declares, as idProgramFor does in game.
+        fragments = {('vriTex' if 'in vec2 vriTex' in m.group('body') else 'vrTex'): m.group('body')
+                     for m in (_RAW.finditer(text, start, text.find('};', start)) if start >= 0 else ())}
+        dumped = 0
+        for dump in args.dump:
+            parts = re.split(r'\r?\n// ==== shader \d+ \(GL name \d+, \d+ parts\) ====\r?\n',
+                             Path(dump).read_text(encoding='latin1'))
+            for k, part in enumerate(parts):
+                if 'gl_Position' not in part or 'ObjMat' not in part:
+                    continue
+                varying = 'vriTex' if re.search(r'\bout\s+vec2\s+vriTex\b', part) else 'vrTex'
+                if not re.search(r'\bout\s+vec2\s+' + varying + r'\b', part):
+                    continue  # no texcoord output: not a textured mesh shader, idProgramFor never meets it
+                jobs.append((f'material ids: game vertex shader {k} ({Path(dump).name}) + id at {varying}', [part],
+                             [fragments[varying]]))
+                dumped += 1
+        if args.dump and not dumped:
+            print('[warn] no textured game vertex shader found in the dump(s)')
+        if not args.dump:
+            print('[note] material ids: linked against a stand-in only; pass --dump shader-dump.glsl to link against '
+                  "the game's own vertex shaders")
     failed = 0
     for name, vertexParts, fragmentParts in jobs:
         vertex, vlog = gl.compile(GL_VERTEX_SHADER, vertexParts)

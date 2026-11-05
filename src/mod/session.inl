@@ -893,6 +893,8 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("material_id_faults", matid::faults.load());
     j.unum("material_id_dropped", matid::dropped.load());
     j.unum("material_id_other_context", matid::otherContext.load());
+    j.boolean("material_id_link_hooked", matid::linkHooked.load());
+    j.unum("material_id_sources_kept", matid::sourcesKept.load());
     j.unum("material_id_programs", matid::idProgramsBuilt.load());
     j.unum("material_id_program_failures", matid::idProgramsFailed.load());
     j.unum("material_id_parts", materialIdParts.load());
