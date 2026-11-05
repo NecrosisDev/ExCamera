@@ -120,6 +120,9 @@ static BOOL WINAPI swapProfileBody(HDC dc) {
     }
     if (!ownedNativeSwap(dc)) return fp::profile::invoke<fp::profile::Hook::swapNative>(originalSwap, dc);
     devFrame();
+    // Mod messages into the engine's log (state.inl modMessage), from the thread the game logs from.
+    const LONG gameThread = InterlockedCompareExchange(&navThread, 0, 0);
+    if (!gameThread || DWORD(gameThread) == GetCurrentThreadId()) deliverModMessages();
     fp::profile::engine.present(InterlockedCompareExchange(&cameraReady, 0, 0) && InterlockedCompareExchange(&active, 0, 0) ? unsigned(viewMode.load()) : 3u);
     fp::CueSide cueSideNow = fp::CueSide::none;
     LONG cueX = 0, cueY = 0;

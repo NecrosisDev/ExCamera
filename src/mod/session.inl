@@ -221,7 +221,11 @@ static void stopKeyTick() {
     const fp::StopKey step = fp::stopKeyStep(press, release, GetTickCount64(), gameWindow() != nullptr);
     if (step == fp::StopKey::idle) return;
     if (step == fp::StopKey::holding) {
-        if (!noticeWindow || noticeSource != stopHoldHint) showNotice(stopHoldHint, 3000);
+        static ULONGLONG hintedPress = 0; // once per hold
+        if (hintedPress != press) {
+            hintedPress = press;
+            modMessage(NoticeKind::info, stopHoldHint);
+        }
         return;
     }
     if (!stopPress.compare_exchange_strong(press, 0)) return; // A new press arrived: decide it next tick.
@@ -233,10 +237,9 @@ static void stopKeyTick() {
     }
     if (step == fp::StopKey::tap) {
         ++stopTaps;
-        showNotice(L"F7 ignored. Hold F7 for one second to stop " FP_SHOWN_NAME L".", 4000);
+        modMessage(NoticeKind::info, L"F7 ignored. Hold F7 for one second to stop " FP_SHOWN_NAME L".");
         return;
     }
-    if (noticeWindow && noticeSource == stopHoldHint) closeNotice(); // cancel: focus lost
 }
 // Stopped cleanly: the window procedure is gone, so F6 is read from the key
 // state, only while a window of the game is frontmost. A key already held at
@@ -330,7 +333,23 @@ static bool slotTaken(fp::sig::Target slot, fp::sig::Target original) {
 } // no longer the game's own function
 // True to go on: nothing else hooked, or chaining is allowed. The function entries are compared with the
 // game's file; the slots with the game's own functions.
+// The engine log path for mod messages (modMessage): data and a call only, no hook. Withheld (the
+// messages go to the file) when its code differs from the reviewed bytes, in the file or loaded.
+static bool admitEngineLogEntries(const fp::ImageView& file) {
+    bool admitted = false;
+    __try {
+        admitted = layout.optionalGroupAvailable("engineLog") && loadedOptionalContractsImpl(file, "engineLog");
+    } __except (EXCEPTION_EXECUTE_HANDLER) { admitted = false; }
+    if (!admitted)
+        for (unsigned t = 0; t < fp::sig::targetCount; ++t) {
+            const char* group = fp::sig::targetOptionalGroups[t];
+            if (group && !strcmp(group, "engineLog")) layout.rva[t] = 0;
+        }
+    engineLogAdmitted.store(admitted, std::memory_order_release);
+    return true;
+}
 static bool otherHooksCheckView(const fp::ImageView& file) {
+    admitEngineLogEntries(file);
     if (!admitManualDefenseEntries(file) ||
         !admitAttackVariantsEntries(file) ||
         !admitHeldThrowEntries(file) ||
@@ -904,6 +923,9 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("gui_pointer_native_fallbacks", guiPointerNativeFallbacks.load(std::memory_order_relaxed));
     j.num("pick_camera", pickCamera.load());
     j.unum("notices", notices.load());
+    j.boolean("messages_in_game_log", engineLogAdmitted.load(std::memory_order_relaxed));
+    j.unum("messages_shown", modMessagesShown.load());
+    j.unum("messages_to_file", modMessagesLogged.load());
     j.str("state", InterlockedCompareExchange(&parkedNow, 0, 0)
                        ? "parked"
                        : (holdingNow.load() ? "holding" : (rearms.load() ? "rearmed" : "running")));
@@ -1340,11 +1362,10 @@ static DWORD runSession() {
                            heldThrowHooksCreated &&
                            headwearHooksCreated;
     if (chained)
-        showNotice(otherHooksNotice, 12000);
+        modMessage(NoticeKind::warning, otherHooksNotice);
     else if (!verifiedBuild && !closureVerifiedBuild)
-        showNotice(FP_SHOWN_NAME L": untested Exanima version. Compatible game functions resolved; hold F7 if "
-                                 L"anything looks wrong.",
-                   12000);
+        modMessage(NoticeKind::warning, FP_SHOWN_NAME L": untested Exanima version. Compatible game functions resolved; hold F7 if "
+                                 L"anything looks wrong.");
     profileInitialize(); // Publish only after this instance owns successfully armed hooks.
     bool viewFaultNoticed = false;
     for (;;) {
@@ -1358,7 +1379,7 @@ static DWORD runSession() {
             saveFov();
             if (!viewFaultNoticed && viewFault.load()) {
                 viewFaultNoticed = true;
-                showNotice(
+                modMessage(NoticeKind::warning,
                     FP_SHOWN_NAME L": view feature error. Helmet handling stopped; first person continues.");
             }
             stopKeyTick();
@@ -1390,7 +1411,7 @@ static DWORD runSession() {
                     swapWatch, samples.load(), static_cast<unsigned>(InterlockedCompareExchange(&swapCalls, 0, 0)),
                     InterlockedCompareExchange(&active, 0, 0) != 0);
                 if (starvedNow)
-                    showNotice(
+                    modMessage(NoticeKind::warning,
                         FP_SHOWN_NAME L": another program took over the game's frame hook (an overlay?). "
                                       L"Park, re-arm and F7 may not work; restart Exanima without it.");
             }
@@ -1505,7 +1526,7 @@ static DWORD runSession() {
         }
         // Keep the instance guard and all callback code mapped until process exit.
         if (!rearmable) return 0;
-        showNotice(FP_SHOWN_NAME L" stopped (F7). Overhead restored. Press F6 to turn it back on.");
+        modMessage(NoticeKind::info, FP_SHOWN_NAME L" stopped (F7). Overhead restored. Press F6 to turn it back on.");
         waitForRearmKey();
         if (!rearm(executable)) return 10;
     }
@@ -1527,7 +1548,6 @@ static void finishSessionWorker(bool (*noticePump)() = pumpNotice) {
 }
 static DWORD WINAPI run(void*) {
     AddVectoredExceptionHandler(1, recordFault); // never removed: the DLL stays mapped
-    noticeOwnerThread.store(GetCurrentThreadId(), std::memory_order_release); // the banner's only owner
     const DWORD result = runSession();
     profileStop("session_ended");
     profilePulse(false);

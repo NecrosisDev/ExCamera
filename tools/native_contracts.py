@@ -34,6 +34,7 @@ ALLOWED_OPTIONAL_GROUPS = (
     'inventoryReach',
     'headwearRender',
     'silhouette',
+    'engineLog',
 )
 
 # Fixed C++ struct ABIs static_asserted in native_widgets.h / game_structs.h:
