@@ -111,6 +111,65 @@ bool input_angle_wrapping_and_vr_turning_text() {
     return true;
 }
 
+bool input_f6_cycle_policy() {
+    using fp::F6Step;
+    // The full cycle acts on the press, as before: first -> third -> overhead blend, then off once it settles.
+    CHECK(fp::f6PressStep(false, true, 0, 9999) == F6Step::toThird);
+    CHECK(fp::f6PressStep(false, true, 1, 9999) == F6Step::toOverhead);
+    CHECK(fp::f6PressStep(false, true, 2, 100) == F6Step::none);
+    CHECK(fp::f6PressStep(false, true, 2, fp::f6BlendSettleMs) == F6Step::toggle);
+    CHECK(fp::f6PressStep(false, false, 0, 0) == F6Step::toggle);
+    // Two-way: first and third wait for the release; off and the blend behave as in the full cycle.
+    CHECK(fp::f6PressStep(true, true, 0, 9999) == F6Step::holdPending);
+    CHECK(fp::f6PressStep(true, true, 1, 9999) == F6Step::holdPending);
+    CHECK(fp::f6PressStep(true, true, 2, 100) == F6Step::none);
+    CHECK(fp::f6PressStep(true, false, 1, 0) == F6Step::toggle);
+    // A tap flips the two views; a hold of f6HoldMs or longer goes to the game's camera; never from the blend.
+    CHECK(fp::f6ReleaseStep(120, 0) == F6Step::toThird);
+    CHECK(fp::f6ReleaseStep(120, 1) == F6Step::toFirst);
+    CHECK(fp::f6ReleaseStep(fp::f6HoldMs - 1, 1) == F6Step::toFirst);
+    CHECK(fp::f6ReleaseStep(fp::f6HoldMs, 0) == F6Step::toOverhead);
+    CHECK(fp::f6ReleaseStep(5000, 1) == F6Step::toOverhead);
+    CHECK(fp::f6ReleaseStep(120, 2) == F6Step::none);
+    return true;
+}
+
+bool input_game_binding_keys() {
+    // Modifier families: Alt, Ctrl and Shift match their left/right codes both ways; other keys only themselves.
+    CHECK(fp::sameKey(VK_MENU, VK_MENU));
+    CHECK(fp::sameKey(VK_MENU, VK_LMENU) && fp::sameKey(VK_RMENU, VK_MENU));
+    CHECK(fp::sameKey(VK_CONTROL, VK_RCONTROL) && fp::sameKey(VK_LSHIFT, VK_SHIFT));
+    CHECK(!fp::sameKey(VK_LMENU, VK_RMENU)); // two physical keys
+    CHECK(!fp::sameKey(VK_MENU, VK_CONTROL));
+    CHECK(!fp::sameKey(0, 0) && !fp::sameKey(VK_MENU, 0) && !fp::sameKey(300, 300));
+    // Hunter's case: the game's alternate attack (the thrust modifier) is Alt, and Kick was bound to Alt.
+    const unsigned bindings[10] = {'W', 'A', 'S', 'D', VK_SHIFT, 'X', VK_LMENU, 'C', VK_SPACE, 'E'};
+    CHECK(fp::gameUsesKey(VK_MENU, bindings));
+    CHECK(fp::gameUsesKey(VK_SPACE, bindings));
+    CHECK(fp::gameUsesKey(VK_RSHIFT, bindings));
+    CHECK(!fp::gameUsesKey(VK_CONTROL, bindings));
+    CHECK(!fp::gameUsesKey('G', bindings));
+    CHECK(!fp::gameUsesKey(0, bindings));
+    return true;
+}
+
+bool input_cursor_panels() {
+    CHECK(fp::cursorPanelOf(fp::windowInventory, false) == fp::cursorPanelInventory);
+    CHECK(fp::cursorPanelOf(fp::windowLoot, false) == fp::cursorPanelInventory);
+    CHECK(fp::cursorPanelOf(fp::windowContainer, false) == fp::cursorPanelInventory);
+    CHECK(fp::cursorPanelOf(fp::windowShop, false) == fp::cursorPanelCommerce);
+    CHECK(fp::cursorPanelOf(fp::windowArsenal, false) == fp::cursorPanelCommerce);
+    CHECK(fp::cursorPanelOf(fp::windowMatches, false) == fp::cursorPanelArena);
+    CHECK(fp::cursorPanelOf(fp::windowCompanyStatus, false) == fp::cursorPanelArena);
+    CHECK(fp::cursorPanelOf(fp::windowDescription, false) == fp::cursorPanelDescription);
+    CHECK(fp::cursorPanelOf(0x12345678u, false) == 0u);
+    // The post-fight result form never frees the pointer by itself, whatever kind it carries: look stays.
+    CHECK(fp::cursorPanelOf(fp::windowMatches, true) == 0u);
+    CHECK(fp::cursorPanelOf(fp::windowInventory, true) == 0u);
+    CHECK(fp::cursorPanelOf(0u, true) == 0u);
+    return true;
+}
+
 bool input_combat_cues_cursor_and_ray_helpers() {
     fp::SwingGesture gesture;
     gesture.move(2.5f, 0.f, 1000.f);
@@ -233,6 +292,129 @@ bool camera_motion_fov_aimbox_nearplane_and_eye_stabilization() {
     CHECK(fp::blockersFromText(L" hide ") == fp::blockersHide);
     CHECK(fp::blockersFromText(L"PUSH") == fp::blockersPush);
     CHECK(fp::blockersFromText(L"smart") == fp::blockersSmart);
+    return true;
+}
+
+bool camera_motion_shoulder_slide() {
+    // The pure slide: eased, finished after shoulderSlideSeconds, never past its target.
+    float left = fp::shoulderSlideSeconds;
+    const float first = fp::shoulderSlide(1.f, -1.f, left, 0.016f);
+    CHECK(first < 1.f && first > 0.95f);
+    const float half = fp::shoulderSlide(1.f, -1.f, left, fp::shoulderSlideSeconds / 2.f - 0.016f);
+    CHECK(near_equal(half, 0.f, 1e-3f));
+    CHECK(near_equal(fp::shoulderSlide(1.f, -1.f, left, 1.f), -1.f));
+    CHECK(left == 0.f);
+    CHECK(near_equal(fp::shoulderSlide(1.f, -1.f, left, NAN), -1.f));
+
+    // ThirdPerson: a change of the chosen side slides the camera across in both modes, where it used to jump.
+    auto open = [](const float*, const float*, float length) { return length; };
+    for (bool tight : {false, true}) {
+        fp::ThirdPerson tp;
+        const float eye[3] = {0.f, 100.f, 0.f};
+        float pose[12]{};
+        for (int i = 0; i < 30; ++i) tp.update(eye, 0.f, 0.f, 250.f, 40.f, 0.f, 0.016f, open, pose, tight);
+        const float before = pose[9];
+        CHECK(std::fabs(before) > 30.f);
+        tp.update(eye, 0.f, 0.f, 250.f, -40.f, 0.f, 0.016f, open, pose, tight);
+        CHECK(std::fabs(pose[9] - before) < 0.1f * std::fabs(before)); // one frame in: barely moved
+        for (int i = 0; i < 30; ++i) tp.update(eye, 0.f, 0.f, 250.f, -40.f, 0.f, 0.016f, open, pose, tight);
+        CHECK(near_equal(pose[9], -before, 1.f)); // across, mirrored (the boom length itself eases)
+        if (tight) CHECK(tp.swapHold > 0.f || tp.side == -1.f);
+    }
+    // A fresh camera starts on its side at once.
+    fp::ThirdPerson fresh;
+    const float eye[3] = {0.f, 100.f, 0.f};
+    float pose[12]{};
+    fresh.update(eye, 0.f, 0.f, 250.f, -40.f, 0.f, 0.016f, open, pose, false);
+    CHECK(pose[9] > 30.f);
+    return true;
+}
+
+bool camera_motion_look_follow_framing() {
+    // Pitch is positive looking up: down gives a positive look, saturating at the full angle.
+    CHECK(near_equal(fp::lookFollowTarget(0.f), 0.f));
+    CHECK(near_equal(fp::lookFollowTarget(-fp::lookFollowFullPitch), 1.f));
+    CHECK(near_equal(fp::lookFollowTarget(-3.f), 1.f));
+    CHECK(near_equal(fp::lookFollowTarget(fp::lookFollowFullPitch / 2.f), -0.5f));
+    CHECK(near_equal(fp::lookFollowTarget(NAN), 0.f));
+    float scale = 0.f, height = 0.f;
+    fp::lookFollowFraming(0.f, scale, height);
+    CHECK(near_equal(scale, 1.f) && near_equal(height, 0.f));
+    fp::lookFollowFraming(1.f, scale, height); // full down: a quarter farther, 30 cm up
+    CHECK(near_equal(scale, 1.25f) && near_equal(height, 30.f));
+    fp::lookFollowFraming(-1.f, scale, height); // full up: a fifth closer, lower
+    CHECK(near_equal(scale, 0.8f) && height < 0.f);
+    fp::lookFollowFraming(5.f, scale, height);
+    CHECK(near_equal(scale, 1.25f));
+    fp::lookFollowFraming(NAN, scale, height);
+    CHECK(near_equal(scale, 1.f) && near_equal(height, 0.f));
+    // Continuous through level: no jump between a little up and a little down.
+    float up = 0.f, down = 0.f, hu = 0.f, hd = 0.f;
+    fp::lookFollowFraming(-1e-4f, up, hu);
+    fp::lookFollowFraming(1e-4f, down, hd);
+    CHECK(near_equal(up, down, 1e-3f) && near_equal(hu, hd, 1e-2f));
+
+    // A camera pinned by a wall keeps its distance while the wanted length grows: no pumping.
+    auto wall = [](const float*, const float*, float length) { return std::fmin(length, 120.f); };
+    fp::ThirdPerson tp;
+    const float eye[3] = {0.f, 100.f, 0.f};
+    float pose[12]{};
+    for (int i = 0; i < 60; ++i) tp.update(eye, 0.f, 0.f, 250.f, 0.f, 0.f, 0.016f, wall, pose);
+    const float pinned = tp.distance;
+    for (int i = 0; i < 60; ++i) tp.update(eye, 0.f, 0.f, 250.f * 1.25f, 0.f, 0.f, 0.016f, wall, pose);
+    CHECK(near_equal(tp.distance, pinned, 0.5f));
+    return true;
+}
+
+bool camera_motion_knockdown_view() {
+    using Step = fp::KnockdownViewStep;
+    const unsigned knocked = 0x40, dead = fp::deadLifeBit;
+    // Down in first person: third person at once, first person again after the settle, not before.
+    fp::KnockdownView k;
+    CHECK(fp::knockdownViewStep(k, true, 0, 0, 0, 0, 1000) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 0, knocked, 0, 0, 1100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(k, true, 1, knocked, 0, 0, 1200) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2000) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, knocked, 0, 0, 2100) == Step::none); // down again: no flicker
+    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2200) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2200 + fp::knockdownViewSettleMs - 1) == Step::none);
+    CHECK(fp::knockdownViewStep(k, true, 1, 0, 0, 0, 2200 + fp::knockdownViewSettleMs) == Step::toFirst);
+    CHECK(fp::knockdownViewStep(k, true, 0, 0, 0, 0, 5000) == Step::none);
+
+    // Off, or already in third person: nothing.
+    fp::KnockdownView off;
+    CHECK(fp::knockdownViewStep(off, false, 0, knocked, 0, 0, 100) == Step::none);
+    fp::KnockdownView third;
+    CHECK(fp::knockdownViewStep(third, true, 1, knocked, 0, 0, 100) == Step::none);
+    CHECK(fp::knockdownViewStep(third, true, 1, 0, 0, 0, 1000) == Step::none);
+    CHECK(fp::knockdownViewStep(third, true, 1, 0, 0, 0, 2000) == Step::none);
+
+    // F6 during the knockdown is the player's choice: no switch back, and no switch again.
+    fp::KnockdownView manual;
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 4, 100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 200) == Step::none); // F6 back to first
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 300) == Step::none);
+    CHECK(fp::knockdownViewStep(manual, true, 0, 0, 0, 5, 400) == Step::none);
+    CHECK(fp::knockdownViewStep(manual, true, 0, 0, 0, 5, 2000) == Step::none);
+    CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 3000) == Step::toThird); // a new knockdown
+
+    // Death never switches to third person.
+    fp::KnockdownView death;
+    CHECK(fp::knockdownViewStep(death, true, 0, knocked, dead, 0, 100) == Step::none);
+    CHECK(fp::knockdownViewStep(death, true, 0, knocked, dead, 0, 200) == Step::none);
+    // A death after the switch goes back to first person at once (the next life must not start in third),
+    // and only once.
+    fp::KnockdownView fell;
+    CHECK(fp::knockdownViewStep(fell, true, 0, knocked, 0, 0, 100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(fell, true, 1, knocked, dead, 0, 200) == Step::toFirst);
+    CHECK(fp::knockdownViewStep(fell, true, 0, knocked, dead, 0, 300) == Step::none);
+    CHECK(fp::knockdownViewStep(fell, true, 0, 0, 0, 0, 2000) == Step::none);
+    // ...but not when the player chose third person with F6 during the knockdown.
+    fp::KnockdownView chose;
+    CHECK(fp::knockdownViewStep(chose, true, 0, knocked, 0, 0, 100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(chose, true, 0, knocked, 0, 1, 150) == Step::none); // F6 to first
+    CHECK(fp::knockdownViewStep(chose, true, 1, knocked, 0, 2, 180) == Step::none); // F6 to third
+    CHECK(fp::knockdownViewStep(chose, true, 1, knocked, dead, 2, 200) == Step::none);
     return true;
 }
 
@@ -758,8 +940,14 @@ int main() {
         {"input ButtonHandoff and RawLook", input_button_handoff_and_raw_look},
         {"input angle wrapping and vrTurningFromText", input_angle_wrapping_and_vr_turning_text},
         {"input combat cues, cursor, and ray helpers", input_combat_cues_cursor_and_ray_helpers},
+        {"input F6 cycle policy", input_f6_cycle_policy},
+        {"input cursor panels", input_cursor_panels},
+        {"input game binding keys", input_game_binding_keys},
         {"camera motion FOV, AimBox, NearPlane, and eye stabilization",
          camera_motion_fov_aimbox_nearplane_and_eye_stabilization},
+        {"camera motion shoulder slide", camera_motion_shoulder_slide},
+        {"camera motion look-follow framing", camera_motion_look_follow_framing},
+        {"camera motion knockdown view", camera_motion_knockdown_view},
         {"hook health menu immunity and stalled pollInput",
          hook_health_menu_immunity_and_stalled_poll_input},
         {"PointerSet and JsonOut formatting", pointer_set_and_status_json_formatting},

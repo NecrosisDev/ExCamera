@@ -967,6 +967,62 @@ inline bool heldPointOnPlane(const float* origin, const float* dir, float distan
     }
     return true;
 }
+// Two virtual keys name the same key: equal, or one is a modifier's generic code (VK_MENU 0x12, VK_CONTROL 0x11,
+// VK_SHIFT 0x10) and the other its left or right code.
+inline bool sameKey(unsigned a, unsigned b) {
+    if (!a || a >= 256 || !b || b >= 256) return false;
+    if (a == b) return true;
+    constexpr unsigned modifiers[][3] = {{0x12, 0xA4, 0xA5}, {0x11, 0xA2, 0xA3}, {0x10, 0xA0, 0xA1}};
+    for (const auto& family : modifiers)
+        if ((a == family[0] && (b == family[1] || b == family[2])) || (b == family[0] && (a == family[1] || a == family[2])))
+            return true;
+    return false;
+}
+// A key the game's own Controls use (its binding table: movement, run, crouch, the alternate attack that makes a
+// thrust, Cursor Look, interact...). The mod's Kick, Jump and Swap shoulder keys take their key from the game
+// altogether, so they never take one of these: Alt as Kick swallowed Alt + left mouse, the game's stab.
+template <size_t N>
+inline bool gameUsesKey(unsigned key, const unsigned (&bindings)[N]) {
+    for (unsigned bound : bindings)
+        if (sameKey(key, bound)) return true;
+    return false;
+}
+// The game's own windows that free the pointer by themselves (overlay.inl windowFreeStep), by the form's kind
+// tag (+0xB8): inventory/loot/container, the arena merchant and arsenal, the arena/company screens, and an
+// item description. The arena's post-fight result form (Next Fight) is not one of them, whatever its tag: the
+// player walks over to loot and looks around, and Cursor Look (native slot 8, already admitted on that form)
+// frees the pointer to click its buttons.
+inline constexpr unsigned windowInventory = 0xCE1C2010, windowLoot = 0xCE1C2040, windowContainer = 0xCE1C2013,
+                          windowDescription = 0xCE1C2012, windowShop = 0xCE1C2023,
+                          windowArsenal = 0xCE1C2024; // the arena merchant and its arsenal
+// Native arena forms: 194CD0, 19A370, 198AF0 and 198E40 respectively.
+inline constexpr unsigned windowMatches = 0xCE10AE10, windowCompany = 0xCE10AE20,
+                          windowCompanyRecords = 0xCE10AE21, windowCompanyStatus = 0xCE10AE22;
+inline constexpr unsigned cursorPanelInventory = 1u << 0, cursorPanelCommerce = 1u << 1,
+                          cursorPanelArena = 1u << 2, cursorPanelDescription = 1u << 3;
+inline unsigned cursorPanelOf(unsigned kind, bool arenaResult) {
+    if (arenaResult) return 0;
+    if (kind == windowInventory || kind == windowLoot || kind == windowContainer) return cursorPanelInventory;
+    if (kind == windowShop || kind == windowArsenal) return cursorPanelCommerce;
+    if (kind == windowMatches || kind == windowCompany || kind == windowCompanyRecords || kind == windowCompanyStatus)
+        return cursorPanelArena;
+    return kind == windowDescription ? cursorPanelDescription : 0;
+}
+// F6. The full cycle goes first -> third -> the game's overhead camera (a blend, viewMode 2) and off; any
+// press while the mod is off or the blend has settled toggles it. "First and third only" decides on release:
+// a tap flips the two views, a hold of f6HoldMs (or longer) blends out to the game's camera instead.
+inline constexpr uint64_t f6HoldMs = 500, f6BlendSettleMs = 600;
+enum class F6Step { none, holdPending, toThird, toFirst, toOverhead, toggle };
+inline F6Step f6PressStep(bool twoWay, bool running, int mode, uint64_t blendAgeMs) {
+    if (!running) return F6Step::toggle;
+    if (mode == 0) return twoWay ? F6Step::holdPending : F6Step::toThird;
+    if (mode == 1) return twoWay ? F6Step::holdPending : F6Step::toOverhead;
+    return blendAgeMs < f6BlendSettleMs ? F6Step::none : F6Step::toggle;
+}
+inline F6Step f6ReleaseStep(uint64_t heldMs, int mode) {
+    if (mode != 0 && mode != 1) return F6Step::none;
+    return heldMs >= f6HoldMs ? F6Step::toOverhead : mode == 0 ? F6Step::toThird : F6Step::toFirst;
+}
 // the F6 press that re-armed the mod (polled) may still
 // arrive as WM_KEYDOWN after the window procedure is back; ignore F6 that soon.
 inline constexpr uint64_t rearmF6GuardMs = 250;

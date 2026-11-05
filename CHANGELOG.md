@@ -1,5 +1,18 @@
 # Changelog
 
+Unreleased
+
+- Alt + left mouse stabs again when Kick or Jump was bound to Alt. The game uses Alt for its thrust, and those keys took it away from the game. Kick, Jump and Swap shoulder now leave any key the game's Controls use to the game, and Settings refuses such a key for them. If you had Kick on Alt, choose another key for it.
+- After an arena fight you can look around again while the result window (Next Fight) is up, so you can walk over and loot your opponent. To click Next Fight or the other result buttons, press Cursor Look (the game's binding, Space by default) to free the pointer, and press it again to look around.
+- Portable copy: put an empty portable.txt beside ExCamera.exe and the DLL, and that copy keeps its settings in first-person.ini beside it instead of Documents\ExCamera (for testing without touching your own settings). Safe start in such a copy backs up and resets that file.
+- Safe start: hold Shift while starting ExCamera.exe (or start it with `--safe`) to play with default settings. Your current settings are copied to `first-person.backup-<date>-<time>.ini` beside them first. If the last session ran into an error, the launcher offers the same, with a note that it may not help.
+- F6 can switch between first and third person only: set Settings > Camera > F6 cycle to "1st/3rd only". Then a tap flips the two views, and holding F6 for half a second shows the game's own camera. The default still steps through all three.
+- New Hit reaction slider (Settings > Camera > First person): how hard the first-person view jolts when you are hit, from 0 (still) to 100 % (as before). Hits now also tilt the view a little, as they were meant to. A VR headset view never jolts.
+- New Swap shoulder key (Settings > Controls > Keys, unbound by default): in third person it slides the camera over your other shoulder and remembers the side. Changing the Shoulder setting's side slides too, instead of jumping. It can't share a key with Rotate, Kick, Jump or Recenter, and a hand-edited ini that binds one key to two of these keeps only the first.
+- A greyed-out setting now says why in its help line: "Not available on this game version." when this Exanima build lacks what it needs (for example far rooms or finger poses on Hellmode, screen effects or manual defense where the game code differs), or "Turned off after an error. Restart the game to retry." when the feature stopped itself after a fault.
+- Third person follows your look angle out of combat: looking down raises the camera and moves it back a little so you see the ground ahead, looking up brings it closer and lower. It eases in and out and walls still pull the camera in. Turn it off with Third person: follow look angle.
+- Knocked down in first person, the view now switches to third person so you can see where you fell, and back to first person a moment after you are up. Pressing F6 meanwhile keeps your choice. Dying never switches to third person, and if a knockdown had switched you, dying, the next round or a new scene puts you back in first person. Settings > Camera > Switching views > Knocked down can keep you in first person instead.
+
 v0.3.0 (revision 60)
 
 - Fixed level loading hitches and stuttering: eliminated synchronous shader double-compilation in glShaderSource, gated sector traversals and roster scans during level population, precompiled wound/fire/bake shaders, paused worker disk logging while loading, and generated procedural stone textures asynchronously on a background worker thread.

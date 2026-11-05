@@ -225,6 +225,7 @@ struct NavPassKey {
     bool tight = false;
     bool combat = false;
     bool down = false;
+    bool lookFollow = false;
 };
 
 inline NavPassKey captureNavPassKey(int mode) noexcept {
@@ -240,6 +241,7 @@ inline NavPassKey captureNavPassKey(int mode) noexcept {
     key.tight = tpTight.load(std::memory_order_relaxed);
     key.combat = tpCombat.load(std::memory_order_relaxed);
     key.down = tpDown.load(std::memory_order_relaxed);
+    key.lookFollow = tpLookFollow.load(std::memory_order_relaxed);
     return key;
 }
 
@@ -247,7 +249,7 @@ inline bool sameNavPassKey(const NavPassKey& a, const NavPassKey& b) noexcept {
     return a.mode == b.mode && a.distance == b.distance && a.shoulder == b.shoulder &&
            a.height == b.height && a.blockers == b.blockers && a.lag == b.lag &&
            a.nearTenths == b.nearTenths && a.eyeBack == b.eyeBack &&
-           a.tight == b.tight && a.combat == b.combat && a.down == b.down;
+           a.tight == b.tight && a.combat == b.combat && a.down == b.down && a.lookFollow == b.lookFollow;
 }
 
 struct NavSolvedPass {
@@ -388,6 +390,28 @@ inline uintptr_t navLocked(void* self, float offset) {
     if (!scene) return reject(5);
     const uintptr_t worldScene = *(uintptr_t*)gameAt(fp::sig::currentScene);
     if (viewMode.load() < 2 && updateCameraEntry(root, head, worldScene, scene)) wasLive = false;
+    { // Knocked down in first person: ask the worker for third person, and back after getting up.
+        // A new character (a respawn, the next arena round) or a new scene ends any knockdown in progress: if
+        // the switch put the view in third person, go back to first.
+        static fp::KnockdownView knockdownView;
+        static uintptr_t knockdownRoot = 0, knockdownScene = 0;
+        if (knockdownRoot != root || knockdownScene != worldScene) {
+            if (knockdownOwnsView.load()) knockdownViewRequest = 2;
+            knockdownView = fp::KnockdownView{};
+            knockdownView.presses = f6Presses.load();
+            knockdownRoot = root;
+            knockdownScene = worldScene;
+        }
+        const int shown = viewMode.load();
+        if (shown < 2 && readable(root + field::character::stateFlags, 4) && readable(root + field::character::lifeFlags, 4)) {
+            const auto step = fp::knockdownViewStep(knockdownView, fpKnockdown.load() == 1, shown,
+                                                    *(unsigned*)(root + field::character::stateFlags),
+                                                    *(unsigned*)(root + field::character::lifeFlags), f6Presses.load(),
+                                                    GetTickCount64());
+            if (step != fp::KnockdownViewStep::none)
+                knockdownViewRequest = step == fp::KnockdownViewStep::toThird ? 1 : 2;
+        }
+    }
     const int mode = viewMode.load();
     const LONG serial = InterlockedCompareExchange(&swapCalls, 0, 0);
     const bool sameLifetime = filterRoot == root && filterHead == head &&
@@ -557,6 +581,12 @@ inline uintptr_t navLocked(void* self, float offset) {
             fp::basis(totalYaw, totalPitch, nudge);
             fp::composeView(evaluatedPose, nudge, evaluatedPose);
         }
+        // The hit's roll, scaled with the rest at its source: right and up turn about the view axis.
+        if (const float roll = cameraImpactRoll.load(std::memory_order_relaxed); std::abs(roll) > 1e-5f) {
+            const float c = std::cos(roll), s = std::sin(roll);
+            const float tilt[12] = {-c, s, 0.f, s, c, 0.f, 0.f, 0.f, -1.f, 0.f, 0.f, 0.f};
+            fp::composeView(evaluatedPose, tilt, evaluatedPose);
+        }
         evaluatedPose[10] += breatheVertical;
     };
 
@@ -639,8 +669,21 @@ inline uintptr_t navLocked(void* self, float offset) {
                         state.third.downPoint[i] = 0.5f * (target[i] + body[i]) + (i == 1 ? 40.f : 0.f);
                 state.third.down = downNow;
             }
-            state.third.update(target, yaw, pitch, static_cast<float>(passKey.distance) * (1.f - 0.2f * state.combat),
-                               static_cast<float>(passKey.shoulder) * (1.f - 0.7f * state.combat), static_cast<float>(passKey.height), dt,
+            // Follow the look angle (fp::lookFollowFraming): out of combat and on your feet only, eased in and out
+            // so the boom glides, and a wall that pins the camera still decides how far back it gets.
+            {
+                const float wanted = passKey.lookFollow && state.combat < 0.1f && !state.third.down
+                                         ? fp::lookFollowTarget(pitch) : 0.f;
+                const bool fresh = !state.third.valid || !std::isfinite(dt) || dt < 0.f || dt > 0.5f;
+                state.third.look = fresh ? wanted
+                                         : state.third.look + (wanted - state.third.look) *
+                                                                  (1.f - std::exp(-dt / fp::lookFollowEaseSeconds));
+            }
+            float lookScale = 1.f, lookHeight = 0.f;
+            fp::lookFollowFraming(state.third.look, lookScale, lookHeight);
+            state.third.update(target, yaw, pitch, static_cast<float>(passKey.distance) * (1.f - 0.2f * state.combat) * lookScale,
+                               static_cast<float>(passKey.shoulder) * (1.f - 0.7f * state.combat),
+                               static_cast<float>(passKey.height) + lookHeight, dt,
                                clear, evaluatedPose, passKey.tight,
                                cameraFrame.tracked ? trackedFacing : nullptr);
         } else {

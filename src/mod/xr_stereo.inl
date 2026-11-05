@@ -20,7 +20,6 @@ static std::atomic<unsigned> stereoRuntimeLosses{0};
 static bool stereoOriginSavePending = false; // a recenter happened; write the new origin once the next frame has it
 static uintptr_t stereoView = 0, stereoCamera = 0, stereoRoot = 0, stereoScene = 0, stereoController = 0, stereoVolume = 0;
 static DWORD stereoThread = 0;
-static std::atomic<bool> stereoLive{false};
 static std::unique_ptr<fp::xr::Transaction> stereoUnion;
 static std::atomic<unsigned> stereoFrames{0}, stereoEyes{0}, stereoRejected{0}, stereoFaults{0};
 static std::atomic<const char*> stereoReason{"disabled"};

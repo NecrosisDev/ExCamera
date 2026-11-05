@@ -266,7 +266,8 @@ static void addWound(const CharacterHitRecord& h) {
         dirWorld[1] *= invLen;
         dirWorld[2] *= invLen;
 
-        const float impulse = std::clamp(health * 0.20f + balance * 0.10f, 0.02f, 0.08f);
+        const float reaction = stereoLive.load() ? 0.f : float(std::clamp(hitReactionPercent.load(), 0, 100)) / 100.f;
+        const float impulse = std::clamp(health * 0.20f + balance * 0.10f, 0.02f, 0.08f) * reaction;
         const float kickPitch = (-dirWorld[1] * 0.6f + dirWorld[2] * 0.4f) * impulse;
         const float kickYaw = dirWorld[0] * impulse * 0.8f;
         const float kickRoll = -dirWorld[0] * impulse * 0.35f;

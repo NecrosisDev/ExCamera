@@ -124,6 +124,11 @@ enum : int {
     objectLights,
     lightSmoothing,
     farRooms,
+    f6Cycle,
+    hitReaction,
+    swapShoulderKey,
+    tpLookFollow,
+    fpKnockdown,
     count
 };
 }
@@ -139,6 +144,30 @@ inline bool fixedSetting(int row) {
     case setting::tpBlockers:
         return true;
     default: return false;
+    }
+}
+
+// Features this game build or a fault can take away, for rows that would otherwise look live and do nothing.
+// ModSettings::unavailable and ::faulted carry them at runtime (never saved).
+enum : unsigned {
+    capFingers = 1u << 0, capFarRooms = 1u << 1, capViewEffects = 1u << 2, capWounds = 1u << 3,
+    capBlades = 1u << 4, capKick = 1u << 5, capJump = 1u << 6, capManualDefense = 1u << 7,
+};
+inline unsigned rowCapability(int row) {
+    switch (row) {
+    case setting::fingerPoses: case setting::fingerPosesOthers: return capFingers;
+    case setting::farRooms: return capFarRooms;
+    case setting::ambientOcclusion: case setting::depthOfField: case setting::screenSpaceReflections:
+    case setting::edgeSmoothing: case setting::helmetVisor: case setting::playerGhost:
+    case setting::conditionEffects: case setting::lightSmoothing: case setting::heldDetail:
+    case setting::armourDetail: case setting::objectDetail: case setting::levelDetail:
+        return capViewEffects;
+    case setting::woundMarks: return capWounds;
+    case setting::bladeDrag: case setting::stabSink: case setting::bladeGain: return capBlades;
+    case setting::kickKey: return capKick;
+    case setting::jumpKey: return capJump;
+    case setting::fpDefense: case setting::tpDefense: return capManualDefense;
+    default: return 0;
     }
 }
 
@@ -166,6 +195,9 @@ struct ModSettings {
     int levelDetail = 30; // walls, floors and ceilings within about 3 m, percent; light by default, drops first when slow
     bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
     bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
+    int hitReaction = 100; // percent of the first-person view's kick when a hit lands; 100 as before
+    int f6Cycle = 0;
+    int fpKnockdown = 1; // 1: knocked down in first person shows third person until you are up; 0 stays first // 0: F6 steps first, third, the game's camera; 1: first and third, the game's camera held
     bool woundMarks = true; // cuts, bruises and running blood where weapons got through; on by default (owner's request)
     bool woundDebug = false; // neon debug highlight for wounds, blade blood and spatters
     bool tracking = false;
@@ -189,6 +221,7 @@ struct ModSettings {
     int fpDefense = 0, tpDefense = 0;               // automatic default, manual holds RMB
     int fpSwingSelection = 1, tpSwingSelection = 1; // mouse direction, or native facing
     bool manualDefenseAvailable = false;            // runtime capability, not a saved row
+    unsigned unavailable = 0, faulted = 0; // runtime: cap* features missing on this game build, or off after a fault
     bool scriptRuntimeAvailable = false;            // runtime capability: ScriptRuntime.dll is loaded
     bool idleCrosshairAlways = false; // normal exploration crosshair; the aim marker is separate
     int spineFollow = 60; // how far the spine bends with the look (forward looking down, back looking up)
@@ -228,6 +261,7 @@ struct ModSettings {
         50; // the crosshair while the head catches up; how much a flick's lead is eased // how much head wobble on each axis stiffens the neck (0 = not at all)
     int tpLag = 40;
     bool tpDown = true;
+    bool tpLookFollow = true; // third person: the camera rises and backs off looking down, comes in looking up
     int tpBlockers =
         fp::blockersSmart; // what is in the way: hide / push in / smart (characters and placed objects pull in)
     bool tpCombatAimFree = true;
@@ -239,6 +273,7 @@ struct ModSettings {
     int edgeSoftness = fp::defaultAimEdgeSoftness; // percent of oval radius used to feather camera turning
     int leanKey = 0x12; // held, the mouse leans the upper body (virtual-key code; 0 unbound)
     int kickKey = 0, jumpKey = 0; // the game's unused kick and jump clips (virtual-key codes; 0 unbound, the default)
+    int swapShoulderKey = 0; // third person: puts the camera over the other shoulder (virtual-key code; 0 unbound)
     int rotateHeldKey =
         0x02; // the key that turns a held object (virtual-key code; 0 unbound) // in combat the crosshair moves inside a box; the view turns at its edge // camera lag, hide what is in the way, knockdown follow // closer and centred in combat; third person's own field of view (0 = as first person)
     bool operator==(const ModSettings& o) const; // every row's value
@@ -278,6 +313,8 @@ struct ModSettings {
         case setting::woundDebug: woundDebug = !woundDebug; break;
         case setting::drawDistance: drawDistance = std::clamp(drawDistance + delta * 10, 0, 200); break;
         case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
+        case setting::f6Cycle: f6Cycle = f6Cycle ? 0 : 1; break;
+        case setting::fpKnockdown: fpKnockdown = fpKnockdown ? 0 : 1; break;
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -319,6 +356,9 @@ struct ModSettings {
             break;
         case setting::jumpKey:
             jumpKey = nextKey(jumpKey, delta);
+            break;
+        case setting::swapShoulderKey:
+            swapShoulderKey = nextKey(swapShoulderKey, delta);
             break;
         case setting::leanKey:
             leanKey = nextKey(leanKey, delta);
@@ -455,6 +495,10 @@ struct ModSettings {
         case setting::levelDetail: return levelDetail ? std::to_wstring(levelDetail) + L"%" : L"Off";
         case setting::drawDistance: return drawDistance ? std::to_wstring(drawDistance) + L" m" : L"Off";
         case setting::objectLights: return objectLights >= 6 ? std::wstring(L"6 (game)") : std::to_wstring(objectLights);
+        case setting::hitReaction:
+            return hitReaction ? std::to_wstring(hitReaction) + L"%" : std::wstring(L"off");
+        case setting::f6Cycle:
+            return f6Cycle ? L"first and third; hold F6 for the game's camera" : L"first, third and the game's camera";
         case setting::tracking:
             return !tracking ? L"Off" : trackingStatus == 3 ? L"Unavailable (UDP port in use?)"
                                     : trackingStatus == 2 ? L"OpenTrack UDP - receiving"
@@ -522,6 +566,8 @@ struct ModSettings {
             return fp::heldKeyName(kickKey);
         case setting::jumpKey:
             return fp::heldKeyName(jumpKey);
+        case setting::swapShoulderKey:
+            return fp::heldKeyName(swapShoulderKey);
         case setting::leanKey:
             return fp::heldKeyName(leanKey);
         case setting::holdHeading:
@@ -533,6 +579,10 @@ struct ModSettings {
                                      : std::to_wstring(edgeSoftness) + L"% of oval radius";
         case setting::tpDown:
             return tpDown ? L"follow the body" : L"follow the head";
+        case setting::tpLookFollow:
+            return tpLookFollow ? L"on" : L"off";
+        case setting::fpKnockdown:
+            return fpKnockdown ? L"Show third person" : L"Stay in first person";
         case setting::attackCue:
             return attackCue ? L"shown while a swing winds up" : L"off";
         case setting::cueSize:
@@ -641,6 +691,10 @@ struct ModSettings {
     // Dependency hints are shown beside disabled controls; settings for the other
     // perspective remain configurable so players can prepare either control set.
     const wchar_t* inactiveReason(int row) const {
+        if (const unsigned cap = rowCapability(row)) {
+            if (faulted & cap) return L"Turned off after an error. Restart the game to retry.";
+            if (unavailable & cap) return L"Not available on this game version.";
+        }
         if ((row == setting::tpDeadzoneX || row == setting::tpDeadzoneY) && !tpCombatAimFree)
             return L"Choose Aim oval above to use this setting.";
         if ((row == setting::headRoll || row == setting::headPitch || row == setting::headYaw ||
@@ -698,6 +752,18 @@ inline int iniFree(const wchar_t* t) {
 }
 inline const wchar_t* iniFreeText(int v) {
     return v ? L"free" : L"centre";
+}
+inline int iniF6Cycle(const wchar_t* text) {
+    return iniIs(text, L"two") ? 1 : iniIs(text, L"three") ? 0 : badText;
+}
+inline const wchar_t* iniF6CycleText(int mode) {
+    return mode ? L"two" : L"three";
+}
+inline int iniKnockdownView(const wchar_t* text) {
+    return iniIs(text, L"third") ? 1 : iniIs(text, L"first") ? 0 : badText;
+}
+inline const wchar_t* iniKnockdownViewText(int mode) {
+    return mode ? L"third" : L"first";
 }
 inline int iniSwingSelection(const wchar_t* text) {
     return iniIs(text, L"mouse") ? 1 : iniIs(text, L"native") ? 0 : badText;
@@ -887,7 +953,8 @@ inline const RowInfo& rowInfo(int row) {
          L"its shadow remains."},
         {setting::kickKey, L"Kick", RowInfo::keyList, &ModSettings::kickKey, nullptr, L"Input", L"KickKey", fp::heldKeyFromText, nullptr,
          L"Plays the game's own kick, which it never uses itself: in the fighting stance, upright, not mid-swing and with "
-         L"most of your stamina. Unbound until you pick a key; the game does not see that key while it is bound here."},
+         L"most of your stamina. Unbound until you pick a key; the game does not see that key while it is bound here, "
+         L"so a key the game's Controls use (Alt makes a thrust) is refused and does not kick."},
         {setting::jumpKey, L"Jump", RowInfo::keyList, &ModSettings::jumpKey, nullptr, L"Input", L"JumpKey", fp::heldKeyFromText, nullptr,
          L"Plays the game's own jump and pushes your body up: upright, not mid-swing and with half your stamina. "
          L"Unbound until you pick a key; the game does not see that key while it is bound here."},
@@ -1177,6 +1244,30 @@ inline const RowInfo& rowInfo(int row) {
          L"The game only draws rooms next to the one you're in, built for its overhead camera. This draws one "
          L"more room through doorways, so a far doorway doesn't show solid black. Turn off if it costs too much "
          L"frame rate."},
+        {setting::f6Cycle, L"F6 cycle", RowInfo::choice, &ModSettings::f6Cycle, nullptr, L"Camera", L"F6Cycle",
+         iniF6Cycle, iniF6CycleText,
+         L"What F6 switches between. First, third, game camera: each press moves on to the next view. First and "
+         L"third only: a press flips between first and third person, and holding F6 for half a second hands the "
+         L"view to the game's own camera. Hold F7 still stops the mod."},
+        {setting::hitReaction, L"Hit reaction", RowInfo::number, &ModSettings::hitReaction, nullptr, L"Camera",
+         L"HitReaction", nullptr, nullptr,
+         L"First person only. How hard the view jolts and tilts when a blow lands on you. Zero keeps the view "
+         L"still; the damage flash stays. Never in a VR headset.", {0,100,10,10}},
+        {setting::swapShoulderKey, L"Swap shoulder", RowInfo::keyList, &ModSettings::swapShoulderKey, nullptr, L"Input",
+         L"SwapShoulderKey", fp::heldKeyFromText, nullptr,
+         L"In third person, moves the camera over your other shoulder with a short slide, and keeps it there "
+         L"(Third person: shoulder changes side). Does nothing with the camera centred. Unbound until you pick a "
+         L"key; the game does not see that key in third person while it is bound here."},
+        {setting::tpLookFollow, L"Third person: follow look angle", RowInfo::toggle, nullptr, &ModSettings::tpLookFollow,
+         L"ThirdPerson", L"FollowLookAngle", nullptr, nullptr,
+         L"Out of combat, looking down raises the camera and moves it back a little (up to a quarter farther and "
+         L"30 cm higher) so the ground ahead shows; looking up brings it closer and lower. It eases in and out, "
+         L"and walls still pull the camera in. The field of view does not change."},
+        {setting::fpKnockdown, L"First person: knocked down", RowInfo::choice, &ModSettings::fpKnockdown, nullptr,
+         L"FirstPerson", L"Knockdown", iniKnockdownView, iniKnockdownViewText,
+         L"Show third person: when you are knocked down in first person, the view goes to third person so you see "
+         L"where you fell, and back to first person a moment after you are up. Pressing F6 meanwhile keeps your "
+         L"choice; death never switches. Stay in first person keeps the view in your eyes."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
@@ -1225,13 +1316,22 @@ inline void ModSettings::normalize() {
     if (!validSettingBinding(setting::rotateHeldKey, rotateHeldKey)) rotateHeldKey = 0;
     if (!validSettingBinding(setting::kickKey, kickKey)) kickKey = 0;
     if (!validSettingBinding(setting::jumpKey, jumpKey)) jumpKey = 0;
+    if (!validSettingBinding(setting::swapShoulderKey, swapShoulderKey)) swapShoulderKey = 0;
     if (!validSettingBinding(setting::leanKey, leanKey)) leanKey = 0;
     if (!validSettingBinding(setting::leanLeftKey, leanLeftKey)) leanLeftKey = 0;
     if (!validSettingBinding(setting::leanRightKey, leanRightKey)) leanRightKey = 0;
+    // One key, one of the mod's actions (Settings refuses a taken key; an ini can hold anything): a later
+    // duplicate in this order is unbound.
+    int* const keys[] = {&rotateHeldKey, &kickKey, &jumpKey, &swapShoulderKey, &trackingKey, &leanLeftKey, &leanRightKey};
+    for (size_t i = 1; i < std::size(keys); ++i)
+        for (size_t j = 0; j < i; ++j)
+            if (*keys[i] && *keys[i] == *keys[j]) *keys[i] = 0;
     if (fpDefense != 1) fpDefense = 0;
     if (tpDefense != 1) tpDefense = 0;
     if (fpSwingSelection != 0) fpSwingSelection = 1;
     if (tpSwingSelection != 0) tpSwingSelection = 1;
+    if (f6Cycle != 1) f6Cycle = 0;
+    if (fpKnockdown != 0) fpKnockdown = 1;
     const ModSettings defaults;
     for (int r = 0; r < setting::count; ++r) {
         const RowInfo& i = rowInfo(r);

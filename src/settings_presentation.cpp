@@ -99,6 +99,8 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return keyName(settings.kickKey);
     case setting::jumpKey:
         return keyName(settings.jumpKey);
+    case setting::swapShoulderKey:
+        return keyName(settings.swapShoulderKey);
     case setting::leanKey:
         return keyName(settings.leanKey);
     case setting::holdHeading:
@@ -231,6 +233,14 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return L"";
     case setting::farRooms:
         return L"";
+    case setting::hitReaction:
+        return settings.hitReaction ? std::to_wstring(settings.hitReaction) + L"%" : L"Off";
+    case setting::tpLookFollow:
+        return L"";
+    case setting::fpKnockdown:
+        return settings.fpKnockdown ? L"Show third" : L"Stay first";
+    case setting::f6Cycle:
+        return settings.f6Cycle ? L"1st/3rd only" : L"1st/3rd/game";
     default: return L"";
     }
 }
@@ -275,6 +285,9 @@ const wchar_t* settingLabel(int id) {
     case setting::rotateHeldKey: return L"Turn item";
     case setting::kickKey: return L"Kick";
     case setting::jumpKey: return L"Jump";
+    case setting::swapShoulderKey: return L"Swap shoulder";
+    case setting::tpLookFollow: return L"Follow look angle";
+    case setting::fpKnockdown: return L"Knocked down";
     case setting::leanKey: return L"Lean";
     case setting::holdHeading: return L"Heading correction";
     case setting::autoRecenter: return L"Auto-center";
@@ -338,6 +351,8 @@ const wchar_t* settingLabel(int id) {
     case setting::objectLights: return L"Object lights";
     case setting::lightSmoothing: return L"Smooth light";
     case setting::farRooms: return L"Far rooms";
+    case setting::f6Cycle: return L"F6 cycle";
+    case setting::hitReaction: return L"Hit reaction";
     default: return L"";
     }
 }
@@ -380,8 +395,11 @@ const wchar_t* settingTip(int id) {
     case setting::tpCombatAim: return L"Third person. Oval: the cursor moves freely and the view turns at its edge. Centre: the view turns directly.";
     case setting::eyeSetback: return L"Moves the first-person view back toward the middle of the head. Third-person framing and interaction distance use the same shifted eye position. Headwear that blocks the first-person view is hidden; its shadow remains.";
     case setting::rotateHeldKey: return L"Hold and move the mouse to turn what you're holding. The view stays still meanwhile. Delete clears the key.";
-    case setting::kickKey: return L"Plays the game's unused kick. Fighting stance, upright, needs most of your stamina. Delete clears the key.";
-    case setting::jumpKey: return L"Plays the game's unused jump. Upright, needs half your stamina. Delete clears the key.";
+    case setting::kickKey: return L"Plays the game's unused kick. Fighting stance, upright, needs most of your stamina. Not a key the game uses (Alt is its thrust). Delete clears the key.";
+    case setting::jumpKey: return L"Plays the game's unused jump. Upright, needs half your stamina. Not a key the game uses. Delete clears the key.";
+    case setting::fpKnockdown: return L"Show third: knocked down in first person, the view goes to third person and back a moment after you are up. F6 meanwhile keeps your choice; death never switches.";
+    case setting::tpLookFollow: return L"Out of combat, looking down lifts the camera and moves it back so the ground ahead shows; looking up brings it closer and lower. Walls still pull it in.";
+    case setting::swapShoulderKey: return L"Third person: slides the camera over your other shoulder and keeps it there. Does nothing with the camera centred. Delete clears the key.";
     case setting::leanKey: return L"Hold it and move the mouse to lean your upper body: left and right, forward and back. The view stays where it points and goes with your head. Let go to straighten up. In combat, the game's alternate-attack binding takes priority over lean. Any key can be set in first-person.ini ([Input] LeanKey).";
     case setting::holdHeading: return L"Looking up or down, the game's head turns a few degrees off where you aim, so the view slid sideways. This corrects the physics head heading, and the view follows it. A bigger difference, the head still catching up with a fast turn, is left as it is.";
     case setting::autoRecenter: return L"Optional: steadily turn the view toward the cursor inside the aim oval without moving the world-space aim target. Middle-click immediately requests the same recenter, even when off. Only active while gameplay owns look input; suspended for menus, leaning and held-object rotation. First person follows the physical head, so the head may take time to achieve the new aim.";
@@ -445,6 +463,8 @@ const wchar_t* settingTip(int id) {
     case setting::objectLights: return L"Lights each object takes. The game uses six; fewer runs faster and keeps the strongest.";
     case setting::lightSmoothing: return L"Strong lights fall off in round gradients instead of squares. From the next level load.";
     case setting::farRooms: return L"Draws one more room through doorways, so far doorways don't show solid black. Off if it costs too much frame rate.";
+    case setting::hitReaction: return L"First person. How hard the view jolts and tilts when a blow lands on you. 0 keeps it still; the damage flash stays. Never in VR.";
+    case setting::f6Cycle: return L"What F6 switches between. 1st/3rd/game: each press moves on. 1st/3rd only: a press flips first and third person; hold F6 half a second for the game's camera.";
     default: return L"";
     }
 }

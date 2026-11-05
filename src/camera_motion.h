@@ -493,6 +493,55 @@ inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned life
     }
     return k.down;
 }
+// First person while knocked down ("Show third person"): the view goes to third person as a knockdown starts and
+// back to first once the character has been up for knockdownViewSettleMs. Never for a death, and a death that
+// follows such a switch goes back to first person at once, so the next life does not start in third. Never
+// against the player: an F6 during the knockdown keeps the view it chose.
+// f6Presses is a counter of F6 view changes; the caller applies the returned step.
+inline constexpr unsigned long long knockdownViewSettleMs = 400;
+struct KnockdownView {
+    bool down = false, switched = false, manual = false;
+    unsigned long long upSince = 0;
+    unsigned presses = 0;
+};
+enum class KnockdownViewStep { none, toThird, toFirst };
+inline KnockdownViewStep knockdownViewStep(KnockdownView& k, bool enabled, int mode, unsigned stateFlags,
+                                           unsigned lifeFlags, unsigned f6Presses, unsigned long long ms) {
+    const bool pressed = f6Presses != k.presses;
+    k.presses = f6Presses;
+    if (lifeFlags & deadLifeBit) {
+        const bool back = k.switched && !pressed && mode == 1;
+        k = KnockdownView{};
+        k.presses = f6Presses;
+        return back ? KnockdownViewStep::toFirst : KnockdownViewStep::none;
+    }
+    if (stateFlags & knockdownStateBits) {
+        k.upSince = 0;
+        if (!k.down) {
+            k.down = true;
+            k.switched = k.manual = false;
+        } else if (pressed) {
+            k.manual = true;
+            k.switched = false;
+        }
+        if (enabled && !k.manual && !k.switched && mode == 0) {
+            k.switched = true;
+            return KnockdownViewStep::toThird;
+        }
+        return KnockdownViewStep::none;
+    }
+    if (!k.down) return KnockdownViewStep::none;
+    if (pressed) {
+        k.manual = true;
+        k.switched = false;
+    }
+    if (!k.upSince) k.upSince = ms ? ms : 1;
+    if (ms - k.upSince < knockdownViewSettleMs) return KnockdownViewStep::none;
+    const bool back = k.switched && mode == 1;
+    k = KnockdownView{};
+    k.presses = f6Presses;
+    return back ? KnockdownViewStep::toFirst : KnockdownViewStep::none;
+}
 // The half-size of the box the camera is kept clear by (cm): bigger than the near plane's own rectangle, so
 // a wall beside the view never comes inside the near plane and shows through.
 inline constexpr float tpCameraRadius = 12.f;
@@ -507,6 +556,28 @@ inline float tpCast(Clear& clear, const float* origin, const float* dir, float l
         a = clear(origin, dir, length);
     return std::isfinite(a) && a < length ? a : length;
 }
+// Third person follows the look angle outside combat: looking down lifts the camera and pulls it back so the
+// ground ahead shows, looking up brings it closer and lower so the ceiling does not fill the view. look runs
+// from -1 (full up) through 0 (level) to 1 (full down), lookFollowFullPitch and beyond counting as full; the
+// caller eases it, so the boom never jumps with the mouse.
+inline constexpr float lookFollowFullPitch = 1.05f; // about 60 degrees
+inline float lookFollowTarget(float pitch) {
+    return std::isfinite(pitch) ? std::clamp(-pitch / lookFollowFullPitch, -1.f, 1.f) : 0.f;
+}
+inline void lookFollowFraming(float look, float& distanceScale, float& heightCm) {
+    look = std::isfinite(look) ? std::clamp(look, -1.f, 1.f) : 0.f;
+    distanceScale = 1.f + (look >= 0.f ? 0.25f : 0.20f) * look; // +25 % down, -20 % up
+    heightCm = (look >= 0.f ? 30.f : 15.f) * look;               // +30 cm down, -15 cm up
+}
+inline constexpr float lookFollowEaseSeconds = 0.4f;
+// A change of the chosen shoulder (the setting or the swap key) slides the camera across over this long, eased
+// in and out, instead of jumping. `left` counts down from shoulderSlideSeconds; the return is the side now.
+inline constexpr float shoulderSlideSeconds = 0.35f;
+inline float shoulderSlide(float from, float to, float& left, float seconds) {
+    left = std::fmax(0.f, left - (std::isfinite(seconds) && seconds > 0.f ? seconds : 0.f));
+    const float t = 1.f - left / shoulderSlideSeconds, s = t * t * (3.f - 2.f * t);
+    return from + (to - from) * s;
+}
 struct ThirdPerson {
     bool valid = false;
     float pivot[3]{}, distance = -1.f, anchor[3]{};
@@ -514,6 +585,8 @@ struct ThirdPerson {
     // (eased, held 1 s before swapping back) and the framing goes closer to centre and a little higher,
     // easing back as the room opens.
     float side = 0.f, sideNow = 0.f, pinned = 0.f, swapHold = 0.f, lastSign = 0.f;
+    float slideFrom = 0.f, slideLeft = 0.f; // a chosen-side change in progress (shoulderSlide)
+    float look = 0.f; // the eased look-angle framing, -1 up .. 1 down (lookFollowFraming); the caller owns it
     unsigned swaps = 0;
     // feel: lag 0..100 slows the pivot's follow and leads it toward where the eye travels (up to 0.4 s ahead,
     // 50 cm at most). Knockdown: while down, the pivot follows the given body point with 0.3 s.
@@ -538,6 +611,8 @@ struct ThirdPerson {
         sideNow = 0.f;
         pinned = 0.f;
         swapHold = 0.f;
+        slideLeft = 0.f;
+        look = 0.f;
         haveEye = false;
         down = false;
         knock = {};
@@ -578,23 +653,34 @@ struct ThirdPerson {
         const bool fresh = !valid || !std::isfinite(seconds) || seconds < 0.f || seconds > 0.5f;
         const float ease = fresh ? 1.f : 1.f - std::exp(-seconds / 0.35f);
         const float chosen = shoulder < 0.f ? -1.f : 1.f;
+        // The chosen side changed (the setting or the swap key): slide across, in both modes. Tight spaces then
+        // hold the new side for a second before their own swap could take it straight back.
+        const bool chosenChanged = side != 0.f && lastSign != 0.f && lastSign != chosen && shoulder != 0.f;
+        if (chosenChanged && !fresh) {
+            slideFrom = sideNow;
+            slideLeft = shoulderSlideSeconds;
+        } else if (fresh)
+            slideLeft = 0.f;
+        lastSign = chosen;
         if (!tight || shoulder == 0.f) {
             side = chosen;
-            sideNow = side;
-            lastSign = chosen;
             pinned = 0.f;
             swapHold = 0.f;
         } else {
-            if (side == 0.f || lastSign != chosen) {
+            if (side == 0.f || chosenChanged) {
                 side = chosen;
-                sideNow = side;
-                lastSign = chosen;
-            } // the setting changed: start on it
-            if (swapHold > 0.f && std::isfinite(seconds)) swapHold -= seconds;
-            sideNow += (side - sideNow) * ease;
+                swapHold = 1.f;
+            } // the setting changed: go to it
+            else if (swapHold > 0.f && std::isfinite(seconds)) swapHold -= seconds;
         }
+        if (slideLeft > 0.f)
+            sideNow = shoulderSlide(slideFrom, side, slideLeft, seconds);
+        else if (tight && shoulder != 0.f && sideNow != 0.f && !fresh)
+            sideNow += (side - sideNow) * ease; // tight spaces' own swaps ease as before
+        else
+            sideNow = side;
         const float mag = std::fabs(shoulder) * (tight ? 1.f - 0.5f * pinned : 1.f);
-        shoulder = tight ? mag * sideNow : shoulder;
+        shoulder = mag * sideNow;
         height += tight ? 18.f * pinned : 0.f;
         // The pivot rises above the eye only as far as the level allows: a pivot inside a low ceiling starts
         // every pull-in ray in the ceiling and the camera collapses onto it. The height the ceiling takes away

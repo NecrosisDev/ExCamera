@@ -22,6 +22,8 @@
 2. Run `ExCamera.exe` each time you play. It starts Exanima through Steam, or attaches if the game is already running.
 3. A short message in game confirms it started.
 
+Hold **Shift** while starting `ExCamera.exe` to start with default settings; your current ones are kept as a backup beside them.
+
 To remove it, delete the folder and `Documents\ExCamera`. Your preferences live in `Documents\ExCamera\first-person.ini` and carry over when you update.
 
 **Works with Exanima 0.9.5.2g** on Windows x64 (Steam build 25803178, standard and Hellmode). On any other game version it warns you or refuses to start, and changes nothing.
@@ -30,12 +32,12 @@ To remove it, delete the folder and `Documents\ExCamera`. Your preferences live 
 
 | Key | What it does |
 | --- | --- |
-| **F6** | Cycle first person, third person and the game's camera |
+| **F6** | Cycle first person, third person and the game's camera. With F6 cycle set to first and third only, a tap flips the two and holding F6 shows the game's camera |
 | **F7** (hold 1 s) | Stop the mod |
 | **F8** | Open Settings and free the cursor; press again to close without saving |
 | **F9 / F10** | Lower / raise the field of view |
 | **F11** | Reset the field of view to 75° |
-| **Cursor Look** (Space by default) | Free the cursor while exploring |
+| **Cursor Look** (Space by default) | Free the cursor while exploring, or to click Next Fight after an arena fight (you can look around and loot until then) |
 | **Hold right mouse** | In combat: manual guard. While dragging an object: rotate it |
 | **Mouse wheel** | Third-person camera distance, or reach while dragging an object |
 

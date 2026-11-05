@@ -175,6 +175,7 @@ static void configureNativeSettings() {
         return value;
     };
     nativeSettings.mouseHeld = [] { return (GetAsyncKeyState(VK_LBUTTON)&0x8000) != 0; };
+    nativeSettings.gameKey = [](int key) { return key > 0 && gameBindingKey(unsigned(key)); };
 
     nativeSettings.openNative = [] {
         if (InterlockedCompareExchange(&stopping, 0, 0)) return;

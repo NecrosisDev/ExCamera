@@ -2,6 +2,7 @@
 // Part of first_person.cpp (one translation unit): included there, in order.
 #include "held_throw_admission.inl"
 static void loadSettings(const wchar_t* path); // mod/settings.inl: every F8 setting from first-person.ini
+static void applySafeReset(const wchar_t* path); // mod/settings.inl: the launcher's safe start, worker only
 #include "../raw_registration.h"
 static void rawReconcile();
 // Stage a predecessor before the switch: a callback may arrive immediately.
@@ -445,6 +446,7 @@ static void hookHealthTick() {
 static bool rearm(const wchar_t* executable) {
     setActivationPhase(fp::ActivationPhase::starting);
     viewMode = 0;                 // a fresh session starts in first person
+    knockdownOwnsView = false;
     rearmedAt = GetTickCount64(); // before the window procedure returns (a queued F6 must not toggle)
     if (!otherHooksCheck(executable)) {
         reportFault("rearm_native_conflict", "removed", "not_required",
@@ -1136,12 +1138,17 @@ static DWORD runSession() {
         {
             wchar_t profile[MAX_PATH]{};
             const DWORD n = GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH);
+            // A test copy with portable.txt beside its DLL keeps its settings beside it, so it never
+            // touches the player's own Documents\ExCamera settings.
+            const std::wstring folder(settingsPath, settingsSlash + 1);
+            const bool portable = GetFileAttributesW((folder + L"portable.txt").c_str()) != INVALID_FILE_ATTRIBUTES;
             const std::wstring user =
-                userSettingsFile(settingsPath, n && n < MAX_PATH ? userSettingsDir(profile, userDocumentsDir())
-                                                               : std::wstring());
+                userSettingsFile(settingsPath, !portable && n && n < MAX_PATH ? userSettingsDir(profile, userDocumentsDir())
+                                                                              : std::wstring());
             if (user.size() < MAX_PATH) wcscpy_s(settingsPath, user.c_str());
         }
         loadSettings(settingsPath);
+        if (GetPrivateProfileIntW(L"Safe", L"Reset", 0, settingsPath)) applySafeReset(settingsPath);
         persistedFov = selectedFov.load();
         attackSideKey = GetPrivateProfileIntW(L"Input", L"AttackSideKey", 0, settingsPath);
         {
@@ -1359,6 +1366,20 @@ static DWORD runSession() {
                     FP_SHOWN_NAME L": view feature error. Helmet handling stopped; first person continues.");
             }
             stopKeyTick();
+            { // a two-way F6 still held at f6HoldMs: the game's camera, without waiting for the key-up
+                ULONGLONG start = f6HoldStart.load();
+                if (start && GetTickCount64() - start >= fp::f6HoldMs && f6HoldStart.compare_exchange_strong(start, 0))
+                    applyF6Step(fp::f6ReleaseStep(GetTickCount64() - start, viewMode.load()));
+            }
+            // The camera's knockdown switch, applied here like F6 (input released) but not counted as one.
+            if (const int want = knockdownViewRequest.exchange(0)) {
+                if (f6Running() && viewMode.load() == (want == 1 ? 0 : 1)) {
+                    viewMode = want == 1 ? 1 : 0;
+                    releaseInput();
+                    knockdownOwnsView = want == 1;
+                } else if (want == 2)
+                    knockdownOwnsView = false; // already left third person some other way
+            }
             hookHealthTick();
             if (i % 10 == 0) {
                 static unsigned stepsBefore = 0;

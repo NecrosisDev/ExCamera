@@ -772,16 +772,12 @@ static void presentCue(fp::CueSide side, LONG x, LONG y, float fill, float alpha
 // The game's own windows: a top-level form of a GUI task is open while
 // its visible byte (+0x79) is set and its closing byte (+0x11B) is not; +0xB8 is the game's tag for the kind
 // (the test 0x29030 makes). The end-of-match menu is the form at base+0x4F01B0.
-static constexpr unsigned windowInventory = 0xCE1C2010, windowLoot = 0xCE1C2040, windowContainer = 0xCE1C2013,
-                          windowDescription = 0xCE1C2012;
-static constexpr unsigned windowShop = 0xCE1C2023,
-                          windowArsenal = 0xCE1C2024; // the arena merchant and its arsenal
-// Native arena forms: 194CD0, 19A370, 198AF0 and 198E40 respectively.
-// Their visible lifetime, not the hovered child row, owns the free cursor.
-static constexpr unsigned windowMatches = 0xCE10AE10, windowCompany = 0xCE10AE20,
-                          windowCompanyRecords = 0xCE10AE21, windowCompanyStatus = 0xCE10AE22;
-static constexpr unsigned cursorPanelInventory = 1u << 0, cursorPanelCommerce = 1u << 1,
-                          cursorPanelArena = 1u << 2, cursorPanelDescription = 1u << 3;
+// The kinds and which of them free the pointer: fp::cursorPanelOf (input_policy.h). A form's visible lifetime,
+// not the hovered child row, owns the free cursor.
+using fp::cursorPanelInventory;
+using fp::cursorPanelCommerce;
+using fp::cursorPanelArena;
+using fp::cursorPanelDescription;
 // dialogueActive: a u8 flag; dialogueChoices: the choices form (both sit on the game's view, not in a window list).
 static bool formShown(uintptr_t f) {
     return readable(f, 0x120) && *reinterpret_cast<unsigned char*>(f + field::form::visible) &&
@@ -806,19 +802,11 @@ static unsigned taskShowsWindow(uintptr_t task) {
     if (n <= 0 || n > 64 || !readable(forms, static_cast<size_t>(n) * 8)) return 0;
     unsigned shown = 0;
     MEMORY_BASIC_INFORMATION region{};
+    const uintptr_t arenaResult = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::endMatchMenu));
     for (int i = 0; i < n; ++i) {
         const uintptr_t f = *reinterpret_cast<uintptr_t*>(forms + static_cast<size_t>(i) * 8);
         if (!formShown(f, region)) continue;
-        const unsigned kind = *reinterpret_cast<unsigned*>(f + field::form::kind);
-        if (kind == windowInventory || kind == windowLoot || kind == windowContainer)
-            shown |= cursorPanelInventory;
-        else if (kind == windowShop || kind == windowArsenal)
-            shown |= cursorPanelCommerce;
-        else if (kind == windowMatches || kind == windowCompany || kind == windowCompanyRecords ||
-                 kind == windowCompanyStatus)
-            shown |= cursorPanelArena;
-        else if (kind == windowDescription)
-            shown |= cursorPanelDescription;
+        shown |= fp::cursorPanelOf(*reinterpret_cast<unsigned*>(f + field::form::kind), f && f == arenaResult);
     }
     return shown;
 }
@@ -832,8 +820,7 @@ static unsigned gameWindowOpen() {
     // recapture at a form's empty margins as native hover returns to the world.
     if (desktop != inGame) shown |= taskShowsWindow(desktop);
     if (activeTask != inGame && activeTask != desktop) shown |= taskShowsWindow(activeTask);
-    const uintptr_t endMenu = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::endMatchMenu));
-    if (endMenu && formShown(endMenu)) shown |= cursorPanelArena;
+    // The post-fight result form keeps look and movement (fp::cursorPanelOf); Cursor Look reaches its buttons.
     return shown;
 }
 // An item carried by the cursor with the button still held (the manager's capture +0x48 and drag format +0x70).
