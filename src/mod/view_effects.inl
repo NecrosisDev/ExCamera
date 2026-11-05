@@ -353,9 +353,16 @@ void main() {
     }
     now = clamp(now, low, high);
     gl_FragColor = now;
+    // Held items, worn gear and objects in the mask take no occlusion or reflection from these passes. They
+    // were kept out of the blend over frames (they move with the camera, so their history trails), which left
+    // them this frame's raw result: a few taps whose noise turns every frame (frameOffset), so the item's
+    // surface and the blood on it flickered. The held-item detail shades them itself.
     if (silhouetteOn > 0.5) {
         float maskCode = floor(texture2D(silhouette, uv).g * 255.0 + 0.5) - 1.0;
-        if (maskCode >= 0.0 && maskCode < 240.0) return;
+        if (maskCode >= 0.0 && maskCode < 240.0) {
+            gl_FragColor = vec4(0.0);
+            return;
+        }
     }
     float raw = texture2D(depthTex, uv).r;
     if (raw >= skyDepth || historyWeight <= 0.0) return;
