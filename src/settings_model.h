@@ -119,9 +119,11 @@ enum : int {
     objectDetail,
     levelDetail,
     woundMarks,
+    woundDebug,
     drawDistance,
     objectLights,
     lightSmoothing,
+    farRooms,
     count
 };
 }
@@ -158,12 +160,14 @@ struct ModSettings {
     bool conditionEffects = false; // optional: the view reacts to wounds and breathlessness
     int heldDetail = 50; // procedural surface detail on held items, percent; half (the old Subtle) by default (owner's request)
     int armourDetail = 35; // the same on worn armour and clothing, percent; 35 by default (frame cost)
-    int objectDetail = 35; // the same on loose items and placed objects near you, percent; 35 by default (frame cost)
+    int objectDetail = 0; // the same on loose items and placed objects near you, percent; off by default: thin dark lines on furniture
     int drawDistance = 60; // metres beyond which small props and far characters are not drawn; 0 draws everything
     int objectLights = 4;  // lights each mesh takes of the game's six; the strongest are kept
     int levelDetail = 30; // walls, floors and ceilings within about 3 m, percent; light by default, drops first when slow
     bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
+    bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
     bool woundMarks = true; // cuts, bruises and running blood where weapons got through; on by default (owner's request)
+    bool woundDebug = false; // neon debug highlight for wounds, blade blood and spatters
     bool tracking = false;
     int trackingKey = 0;
     int trackingStatus = 0; // runtime only: off/waiting/receiving/unavailable
@@ -185,6 +189,7 @@ struct ModSettings {
     int fpDefense = 0, tpDefense = 0;               // automatic default, manual holds RMB
     int fpSwingSelection = 1, tpSwingSelection = 1; // mouse direction, or native facing
     bool manualDefenseAvailable = false;            // runtime capability, not a saved row
+    bool scriptRuntimeAvailable = false;            // runtime capability: ScriptRuntime.dll is loaded
     bool idleCrosshairAlways = false; // normal exploration crosshair; the aim marker is separate
     int spineFollow = 60; // how far the spine bends with the look (forward looking down, back looking up)
     int crouchMode = 2; // 2=toggle crouch (checkbox on), 1=hold crouch (off); legacy 0 maps to hold
@@ -270,6 +275,7 @@ struct ModSettings {
         case setting::armourDetail: armourDetail = std::clamp(armourDetail + delta * 10, 0, 100); break;
         case setting::objectDetail: objectDetail = std::clamp(objectDetail + delta * 10, 0, 100); break;
         case setting::levelDetail: levelDetail = std::clamp(levelDetail + delta * 10, 0, 100); break;
+        case setting::woundDebug: woundDebug = !woundDebug; break;
         case setting::drawDistance: drawDistance = std::clamp(drawDistance + delta * 10, 0, 200); break;
         case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
         case setting::trackingKey:
@@ -435,79 +441,6 @@ struct ModSettings {
         return !(*this == before);
     }
     static constexpr int rows = setting::count;
-    // The Settings pages: every row belongs to exactly one (test_controls checks it). A page may have no rows.
-    struct Group {
-        const char* name;
-        int rows[32];
-        int count;
-    };
-    // Rows a tab shows; the rest keep their saved values and defaults but have no row. 0..2 and 4 are
-    // the Camera, Controls, Combat and Graphics (effects) tabs, 3 the VR tab.
-    static constexpr int groupCount = 5, savesGroup = -1;
-    static const Group& group(int g) {
-        static const Group groups[groupCount] = {
-            {"Camera",
-             {setting::fov, setting::hideHelmet, setting::helmetVisor,
-              setting::tpFov, setting::tpDistance, setting::tpShoulder, setting::tpHeight, setting::tpLag,
-              setting::tpTight, setting::tpDown}, 10},
-            {"Controls",
-             {setting::rotateHeldKey, setting::kickKey, setting::jumpKey, setting::sensitivity,
-                            setting::invertY, setting::rawMouse, setting::crouchMode}, 7},
-            {"Combat",
-             {setting::fpDefense, setting::fpSwingSelection, setting::indicator, setting::tpCombat, setting::tpCombatAim,
-              setting::attackCue, setting::cueSize, setting::cueOpacity, setting::cueThrust,
-              setting::bladeDrag, setting::stabSink}, 11},
-            {"VR",
-             {setting::vrHeadset, setting::vrIpd, setting::vrScale, setting::vrRenderMode, setting::vrHands, setting::vrPosture,
-              setting::vrTurning, setting::vrEffects, setting::vrGripAngle, setting::vrHaptics, setting::vrPanelWidth,
-              setting::vrPanelDistance, setting::vrComfort, setting::vrBody, setting::vrHeight, setting::vrGrabTurn, setting::vrEyeScale, setting::vrGripSlide, setting::vrKick, setting::vrJump, setting::vrWeaponWeight, setting::vrTeleport, setting::vrHandPanel, setting::vrPouch, setting::vrFingerBones, setting::tracking, setting::trackingKey}, 26},
-            {"Graphics",
-             {setting::ambientOcclusion, setting::screenSpaceReflections, setting::depthOfField, setting::heldDetail,
-              setting::armourDetail, setting::objectDetail, setting::levelDetail, setting::woundMarks,
-              setting::lightSmoothing, setting::edgeSmoothing, setting::conditionEffects, setting::fingerPoses,
-              setting::playerGhost}, 13},
-        };
-        return groups[g < 0 || g >= groupCount ? 0 : g];
-    }
-    static const char* groupDescription(int g) {
-        static constexpr const char* descriptions[groupCount] = {
-            "Field of view, headwear and the third-person camera.",
-            "Mouse, keys, cursor and interaction. Explicit leaning is disabled.",
-            "Defense, attack indicators and blades.",
-            "Headset, hands, comfort and head tracking.",
-            "View effects, held-item detail and finger poses.",
-        };
-        return descriptions[g < 0 || g >= groupCount ? 0 : g];
-    }
-    // Sections are presentation only; every real row retains its setting ID and owner.
-    static const wchar_t* sectionStart(int row) {
-        switch (row) {
-        case setting::fov:
-            return L"FIRST PERSON";
-        case setting::tpDistance:
-            return L"THIRD PERSON";
-        case setting::vrIpd:
-            return L"VR";
-        case setting::headSteady:
-            return L"HEAD AND BODY";
-        case setting::sensitivity:
-            return L"MOUSE AND KEYS";
-        case setting::grabRange:
-            return L"INTERACTION";
-        case setting::swingCrosshair:
-            return L"CROSSHAIRS";
-        case setting::autoRecenter:
-            return L"VIEW RECENTERING";
-        case setting::attackCue:
-            return L"ATTACK CUES";
-        case setting::fpDefense:
-            return L"DEFENSE";
-        case setting::fpSwingSelection:
-            return L"SWING SELECTION";
-        default:
-            return nullptr;
-        }
-    }
     std::wstring value(int row) const {
         switch (row) {
         case setting::invertY: return invertY ? L"On" : L"Off";
@@ -704,8 +637,6 @@ struct ModSettings {
         }
     }
     static const wchar_t* label(int row);
-    static bool
-    isNumber(int row); // a number (or a list to step through): - and +; otherwise one Switch button
     static const wchar_t* tip(int row); // the tooltip, for rows whose effect is not plain from the label
     // Dependency hints are shown beside disabled controls; settings for the other
     // perspective remain configurable so players can prepare either control set.
@@ -723,24 +654,17 @@ struct ModSettings {
             return L"Enable Attack wind-up arc to use this setting.";
         return nullptr;
     }
-    // The page's "Reset page" button: its rows back to their defaults. True if anything changed.
-    static constexpr int resetControl = 99;
-    bool resetGroup(int g);
     // Every value in its range (an ini can hold anything): numbers clamped as their - and + do, unknown choices
     // back to the default.
     void normalize();
-    // A click on a Settings control: a row's step, or the page reset.
-    bool click(int control, int delta, int g) {
-        return control == resetControl ? resetGroup(g) : step(control, delta);
-    }
 };
 
 // The ini words of the rows that are not plain integers.
 inline constexpr int badText = INT_MIN;
 inline bool iniIs(const wchar_t* t, const wchar_t* w) {
-    while (*t == L' ') ++t;
+    if (!t || !w) return false; while (*t == L' ') ++t;
     for (; *w; ++t, ++w)
-        if ((*t | 0x20) != *w) return false;
+        if (!*t || (*t | 0x20) != *w) return false;
     while (*t == L' ') ++t;
     return !*t;
 }
@@ -898,7 +822,7 @@ inline const RowInfo& rowInfo(int row) {
         {setting::bladeGain, L"Blade draw gain", RowInfo::number, &ModSettings::bladeGainPercent, nullptr, L"Combat",
          L"BladeDrawGainPercent", nullptr, nullptr,
          L"How hard a drawn or sinking blade is taken to move for the game's impact rules: 100 is the true speed. Raise it "
-         L"if slow cuts do nothing, lower it if they cut too deep.", {10,400,10,18}},
+         L"if slow cuts do nothing, lower it if they cut too deep.", {10,400,10,39}},
         {setting::cueSize, L"Wind-up arc: size", RowInfo::number, &ModSettings::cueSize, nullptr, L"View",
          L"CueSize", nullptr, nullptr, nullptr, {50,200,10,15}},
         {setting::cueOpacity, L"Wind-up arc: opacity", RowInfo::number, &ModSettings::cueOpacity, nullptr,
@@ -963,7 +887,8 @@ inline const RowInfo& rowInfo(int row) {
          L"its shadow remains."},
         {setting::kickKey, L"Kick", RowInfo::keyList, &ModSettings::kickKey, nullptr, L"Input", L"KickKey", fp::heldKeyFromText, nullptr,
          L"Plays the game's own kick, which it never uses itself: in the fighting stance, upright, not mid-swing and with "
-         L"most of your stamina. Unbound until you pick a key; the game does not see that key while it is bound here."},
+         L"most of your stamina. Unbound until you pick a key; the game does not see that key while it is bound here, "
+         L"so a key the game's Controls use (Alt makes a thrust) is refused and does not kick."},
         {setting::jumpKey, L"Jump", RowInfo::keyList, &ModSettings::jumpKey, nullptr, L"Input", L"JumpKey", fp::heldKeyFromText, nullptr,
          L"Plays the game's own jump and pushes your body up: upright, not mid-swing and with half your stamina. "
          L"Unbound until you pick a key; the game does not see that key while it is bound here."},
@@ -1053,7 +978,7 @@ inline const RowInfo& rowInfo(int row) {
         {setting::edgeSoftness, L"Aim oval: edge softness", RowInfo::number, &ModSettings::edgeSoftness,
          nullptr, L"Input", L"AimEdgeSoftness", nullptr, nullptr,
          L"Gradually shares outward mouse movement with camera turning across the outer portion of the "
-         L"aim oval. 25% is the default; 0% restores the original hard boundary. "
+         L"aim oval. 100% is the default; 0% restores the original hard boundary. "
          L"The cursor still slides along the rim, inward motion is immediate, and the camera does not "
          L"keep drifting after mouse release. Applies in first and third-person Aim oval mode."},
         {setting::tracking, L"Head / eye tracking (OpenTrack UDP)", RowInfo::toggle,
@@ -1243,7 +1168,16 @@ inline const RowInfo& rowInfo(int row) {
          L"View", L"Wounds", nullptr, nullptr,
          L"Where a weapon gets through, the character keeps the mark and it moves with the limb: a gash along the "
          L"blade's path for a cut, a deep hole for a thrust, a bruise for a blunt blow, with blood running down "
-         L"from fresh cuts. Blows the armour stops leave nothing. Needs the Lua script runtime."},
+         L"from fresh cuts. Blows the armour stops leave nothing."},
+        {setting::woundDebug, L"Wound debug highlight", RowInfo::toggle, nullptr, &ModSettings::woundDebug,
+         L"View", L"WoundDebug", nullptr, nullptr,
+         L"Highlights all procedural wounds, blade blood, and floor spatters in vibrant neon colors (cyan for cuts and blades, "
+         L"magenta for bruises, green for droplets) so they stand out distinctly from vanilla textures. Toggleable with F12."},
+        {setting::farRooms, L"Draw far rooms", RowInfo::toggle, nullptr, &ModSettings::farRooms,
+         L"View", L"FarRooms", nullptr, nullptr,
+         L"The game only draws rooms next to the one you're in, built for its overhead camera. This draws one "
+         L"more room through doorways, so a far doorway doesn't show solid black. Turn off if it costs too much "
+         L"frame rate."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
@@ -1275,10 +1209,6 @@ inline bool stepSchema(ModSettings& settings,int row,int delta) {
 inline const wchar_t* ModSettings::label(int row) {
     return rowInfo(row).label;
 }
-inline bool ModSettings::isNumber(int row) {
-    const RowInfo::Kind k = rowInfo(row).kind;
-    return k == RowInfo::number || k == RowInfo::keyList;
-}
 inline const wchar_t* ModSettings::tip(int row) {
     return rowInfo(row).tip;
 }
@@ -1288,7 +1218,7 @@ inline bool sameRow(int row, const ModSettings& a, const ModSettings& b) {
 }
 // Shared by interactive capture and INI normalization for active bindings.
 inline bool validSettingBinding(int row, int key) {
-    return key >= 0 && key <= 255 && !(key >= VK_F6 && key <= VK_F11) &&
+    return key >= 0 && key <= 255 && key != VK_LBUTTON && !(key >= VK_F6 && key <= VK_F11) &&
         !(row == setting::trackingKey && key > 0 && key < 8);
 }
 inline void ModSettings::normalize() {
@@ -1296,6 +1226,9 @@ inline void ModSettings::normalize() {
     if (!validSettingBinding(setting::rotateHeldKey, rotateHeldKey)) rotateHeldKey = 0;
     if (!validSettingBinding(setting::kickKey, kickKey)) kickKey = 0;
     if (!validSettingBinding(setting::jumpKey, jumpKey)) jumpKey = 0;
+    if (!validSettingBinding(setting::leanKey, leanKey)) leanKey = 0;
+    if (!validSettingBinding(setting::leanLeftKey, leanLeftKey)) leanLeftKey = 0;
+    if (!validSettingBinding(setting::leanRightKey, leanRightKey)) leanRightKey = 0;
     if (fpDefense != 1) fpDefense = 0;
     if (tpDefense != 1) tpDefense = 0;
     if (fpSwingSelection != 0) fpSwingSelection = 1;
@@ -1309,12 +1242,12 @@ inline void ModSettings::normalize() {
             // An effect strength in percent; the old Subtle and Strong (1 and 2) are 50 and 100.
             int& v = this->*i.value;
             v = v == 1 ? 50 : v == 2 ? 100 : std::clamp(v, 0, 100);
-        } else if (i.kind == RowInfo::choice && (this->*i.value < 0 || this->*i.value > 2))
+        } else if (i.kind == RowInfo::choice && (this->*i.value < 0 || this->*i.value > (r == setting::vrTurning ? 3 : 2)))
             this->*i.value = defaults.*i.value;
     }
     headSteady = headRoll = headPitch = headYaw = headBob = fp::fixedHeadStabilization;
     fpDeadzoneX = fpDeadzoneY = tpDeadzoneX = tpDeadzoneY = fp::fixedAimHalfExtent;
-    edgeSoftness = 100;
+    edgeSoftness = fp::defaultAimEdgeSoftness;
     autoRecenter = true;
     eyeSetback = fixedEyeSetbackCm;
     nearClip = fixedNearClipTenths;
@@ -1335,19 +1268,4 @@ inline bool ModSettings::operator==(const ModSettings& o) const {
         if (!sameRow(r, *this, o)) return false;
     return true;
 }
-inline bool ModSettings::resetGroup(int g) {
-    const ModSettings defaults, before = *this;
-    const Group& page = group(g);
-    for (int k = 0; k < page.count; ++k) {
-        const RowInfo& i = rowInfo(page.rows[k]);
-        if (i.value) this->*i.value = defaults.*i.value;
-        if (i.flag) this->*i.flag = defaults.*i.flag;
-    }
-    return !(*this == before);
-}
-
-struct SettingsChange {
-    ModSettings settings;
-    bool changed = false, rawUnavailable = false, saved = true;
-};
 } // namespace panel

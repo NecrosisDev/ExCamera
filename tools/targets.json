@@ -252,7 +252,8 @@
     },
     "guiCheckboxHandler": {
       "rva": "0x33020",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "renderViewport": {
       "rva": "0x4bab0",
@@ -272,59 +273,73 @@
     "guiMaintenance": {
       "rva": "0x32180",
       "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
-      "hook": true
+      "hook": true,
+      "optionalGroup": "nativeSettings"
     },
     "guiFormElements": {
       "rva": "0x2b200",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiFormClose": {
       "rva": "0x2c410",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiElementsCopy": {
       "rva": "0x32860",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiElementsFree": {
       "rva": "0x2aa90",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiSettingsTab": {
       "rva": "0xa7fc0",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiControlsTab": {
       "rva": "0xa7ff0",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiFormInvalidate": {
       "rva": "0x2e760",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiOptionsOpen": {
       "rva": "0xa94d0",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiFormShow": {
       "rva": "0x2c8f0",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiFormGeometry": {
       "rva": "0x2bcc0",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiOptionsApply": {
       "rva": "0xa6770",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiOptionsCancel": {
       "rva": "0xa8390",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiOptionsDefaults": {
       "rva": "0xa8af0",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "meshQueue": {
       "rva": "0x26f230",
@@ -339,30 +354,36 @@
     "inventoryAdmission": {
       "rva": "0x119ab0",
       "hook": true,
-      "note": "Native viewport drag admission callback installed by119180 at viewport+2A0/context+2A8; FB01 pre-admission can queue119970 and set drag pending0x1000. Return mask0x1 accepts only a present object; veto before original leaves native cancellation intact."
+      "note": "Native viewport drag admission callback installed by119180 at viewport+2A0/context+2A8; FB01 pre-admission can queue119970 and set drag pending0x1000. Return mask0x1 accepts only a present object; veto before original leaves native cancellation intact.",
+      "optionalGroup": "inventoryReach"
     },
     "resourceQueue": {
       "rva": "0x99bd0",
       "note": "Reviewed native inventory/resource callback; preserves native loader, completion, commit and disposal behavior. Source executable and Ghidra function 0x100099bd0 verified.",
-      "hook": true
+      "hook": true,
+      "optionalGroup": "inventoryReach"
     },
     "inventoryLoader": {
       "rva": "0x11cf50",
-      "note": "Reviewed native inventory/resource callback; preserves native loader, completion, commit and disposal behavior. Source executable and Ghidra function 0x10011cf50 verified."
+      "note": "Reviewed native inventory/resource callback; preserves native loader, completion, commit and disposal behavior. Source executable and Ghidra function 0x10011cf50 verified.",
+      "optionalGroup": "inventoryReach"
     },
     "inventoryComplete": {
       "rva": "0x11d1d0",
       "note": "Reviewed native inventory/resource callback; preserves native loader, completion, commit and disposal behavior. Source executable and Ghidra function 0x10011d1d0 verified.",
-      "hook": true
+      "hook": true,
+      "optionalGroup": "inventoryReach"
     },
     "inventoryCommit": {
       "rva": "0x119f10",
       "note": "Reviewed native inventory/resource callback; preserves native loader, completion, commit and disposal behavior. Source executable and Ghidra function 0x100119f10 verified.",
-      "hook": true
+      "hook": true,
+      "optionalGroup": "inventoryReach"
     },
     "inventorySourceFinish": {
       "rva": "0x137800",
-      "note": "Reviewed native inventory/resource callback; preserves native loader, completion, commit and disposal behavior. Source executable and Ghidra function 0x100137800 verified."
+      "note": "Reviewed native inventory/resource callback; preserves native loader, completion, commit and disposal behavior. Source executable and Ghidra function 0x100137800 verified.",
+      "optionalGroup": "inventoryReach"
     },
     "attackFamilyA": {
       "rva": "0x157240",
@@ -577,6 +598,78 @@
     "shadowSchedule": {
       "rva": "0x4f4a0",
       "hook": true
+    },
+    "bodyDamage": {
+      "rva": "0x159700",
+      "optionalGroup": "wounds",
+      "note": "Native character hit/wound application; optional persistent combat wounds",
+      "hook": true
+    },
+    "woundImpact": {
+      "rva": "0x159a60",
+      "optionalGroup": "wounds",
+      "note": "Native physical impact attacker scope for optional combat wounds",
+      "hook": true
+    },
+    "roomClassify": {
+      "rva": "0x143c20",
+      "optionalGroup": "farRooms",
+      "note": "Native room portal/neighbour visibility classifier",
+      "hook": true
+    },
+    "nodeMove": {
+      "rva": "0x5c030",
+      "optionalGroup": "nodeMove",
+      "note": "Native scene-tree reparenting routine; replaced with heap-backed worklist",
+      "hook": true
+    },
+    "nodeVecSub": {
+      "rva": "0x19170",
+      "optionalGroup": "nodeMove",
+      "note": "Native 3D vector difference helper called by nodeMove"
+    },
+    "nodeVecAddTo": {
+      "rva": "0x19100",
+      "optionalGroup": "nodeMove",
+      "note": "Native 3D vector offset helper called by nodeMove"
+    },
+    "nodeMoveAttach": {
+      "rva": "0x50170",
+      "optionalGroup": "nodeMove",
+      "note": "Native scene-tree attach helper called by nodeMove"
+    },
+    "nodeRegisterDynamic": {
+      "rva": "0x55fa0",
+      "optionalGroup": "nodeMove",
+      "note": "Native dynamic-node registration helper called by nodeMove"
+    },
+    "loadRpkStream": {
+      "rva": "0x6f710",
+      "optionalGroup": "manual",
+      "note": "Native RPK stream loader; appends in-game ExCamera manual entry",
+      "hook": true
+    },
+    "xrStereoWorldDraw": {
+      "rva": "0x4f750",
+      "optionalGroup": "xrStereo",
+      "note": "Native single-camera world draw replayed per eye in OpenXR",
+      "hook": true
+    },
+    "xrStereoFrustum": {
+      "rva": "0x9f500",
+      "optionalGroup": "xrStereo",
+      "note": "Native camera frustum builder hooked for OpenXR union frustum",
+      "hook": true
+    },
+    "xrStereoRebuildPlanes": {
+      "rva": "0x78050",
+      "optionalGroup": "xrStereo",
+      "note": "Native frustum plane rebuild called during OpenXR eye replay"
+    },
+    "xrStereoFlushBindings": {
+      "rva": "0x1ff3c0",
+      "optionalGroup": "xrStereo",
+      "note": "Native shader matrix cache invalidation after OpenXR replay"
     }
   },
   "returns": {
@@ -662,11 +755,13 @@
     },
     "inventoryStartReturn": {
       "rva": "0x118527",
-      "note": "Bounded close-view native held-body placement only"
+      "note": "Bounded close-view native held-body placement only",
+      "optionalGroup": "inventoryReach"
     },
     "inventoryChildStartReturn": {
       "rva": "0x1187ce",
-      "note": "Bounded close-view native held-body placement only"
+      "note": "Bounded close-view native held-body placement only",
+      "optionalGroup": "inventoryReach"
     },
     "heldSweepReturn": {
       "rva": "0x11834b",
@@ -674,7 +769,8 @@
     },
     "inventorySweepReturn": {
       "rva": "0x11885c",
-      "note": "Bounded close-view native held-body placement only"
+      "note": "Bounded close-view native held-body placement only",
+      "optionalGroup": "inventoryReach"
     },
     "fadeVerticalBoundsReturn": {
       "rva": "0x90928",
@@ -877,23 +973,28 @@
     },
     "guiOptionsForm": {
       "rva": "0x49cd50",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiOptionsElements": {
       "rva": "0x2b2af0",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiControlsElements": {
       "rva": "0x2b1700",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiControllerElements": {
       "rva": "0x2b28e0",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "guiUiScale": {
       "rva": "0x2ad3f0",
-      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256."
+      "note": "Recovered from the reviewed shipping signature table; verified against source_sha256.",
+      "optionalGroup": "nativeSettings"
     },
     "nativePhysicsThread": {
       "rva": "0x49c250",
@@ -982,6 +1083,36 @@
       "rva": "0x2fc850",
       "optionalGroup": "fingerBones",
       "note": "T3DNode class table (Free Pascal VMT, 0x1C8 bytes), the first argument of nodeCtor; referenced at 502DF by the game's node copy. Used only by the finger bones."
+    },
+    "xrStereoDepthCallback": {
+      "rva": "0x49b260",
+      "optionalGroup": "xrStereo",
+      "note": "Native depth pass callback inspected before OpenXR replay"
+    },
+    "xrStereoNativeTarget": {
+      "rva": "0x49a4a0",
+      "optionalGroup": "xrStereo",
+      "note": "Native render target descriptor snapshotted around OpenXR replay"
+    },
+    "xrStereoShaderManager": {
+      "rva": "0x5b1e10",
+      "optionalGroup": "xrStereo",
+      "note": "Native shader binding manager snapshotted and flushed in OpenXR replay"
+    },
+    "xrStereoFogState": {
+      "rva": "0x2ae3f0",
+      "optionalGroup": "xrStereo",
+      "note": "Native fog state block snapshotted around OpenXR replay"
+    },
+    "xrStereoBatchFlag": {
+      "rva": "0x2eefc0",
+      "optionalGroup": "xrStereo",
+      "note": "Native batching state flag snapshotted around OpenXR replay"
+    },
+    "xrStereoBatchQueue": {
+      "rva": "0x5b7480",
+      "optionalGroup": "xrStereo",
+      "note": "Native draw batch queue snapshotted around OpenXR replay"
     }
   },
   "slots": {
@@ -1010,12 +1141,14 @@
     "guiSettingsTabSlot": {
       "vtable": "0x2b2af0",
       "offset": "0x28",
-      "holds": "guiSettingsTab"
+      "holds": "guiSettingsTab",
+      "optionalGroup": "nativeSettings"
     },
     "guiControlsTabSlot": {
       "vtable": "0x2b2af0",
       "offset": "0x90",
-      "holds": "guiControlsTab"
+      "holds": "guiControlsTab",
+      "optionalGroup": "nativeSettings"
     }
   },
   "source_sha256": "af9033c7857565ddf2e842a486b0a158b32375a8f95e18b69f4e171b919b6f70",
@@ -1253,7 +1386,26 @@
     "itemDatabase",
     "levelItemDatabase",
     "worldItemDatabase",
-    "skinBuild"
+    "skinBuild",
+    "bodyDamage",
+    "woundImpact",
+    "roomClassify",
+    "nodeMove",
+    "nodeVecSub",
+    "nodeVecAddTo",
+    "nodeMoveAttach",
+    "nodeRegisterDynamic",
+    "loadRpkStream",
+    "xrStereoWorldDraw",
+    "xrStereoFrustum",
+    "xrStereoRebuildPlanes",
+    "xrStereoFlushBindings",
+    "xrStereoDepthCallback",
+    "xrStereoNativeTarget",
+    "xrStereoShaderManager",
+    "xrStereoFogState",
+    "xrStereoBatchFlag",
+    "xrStereoBatchQueue"
   ],
   "reviewed_signatures": [
     {
@@ -9648,6 +9800,842 @@
       "addend": 0,
       "known_rva": "0x4f4a0",
       "pattern": "53 48 8D 64 24 E0 48 89 CB E8 ?? ?? ?? ?? 48 89 D9 E8 0A FC FF FF 90 48 8D 64 24 20"
+    },
+    {
+      "target": "bodyDamage",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x159700",
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 40 30 F6 8B 05 ?? ?? ?? ?? 89 83 10 10 00 00"
+    },
+    {
+      "target": "bodyDamage",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x159700",
+      "pattern": "53 56 ?? 8D ?? ?? D8 ?? 89 ?? ?? 30 ?? 8B ?? ?? ?? ?? ?? 89 ?? 10 10 00 00"
+    },
+    {
+      "target": "bodyDamage",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x159700",
+      "pattern": "E8 ?? ?? ?? ?? F3 0F 10 15 ?? ?? ?? ?? 41 0F 28 C9 F3 0F 59 0D ?? ?? ?? ??"
+    },
+    {
+      "target": "bodyDamage",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x159700",
+      "pattern": "E8 ?? ?? ?? ?? F3 0F 10 ?? ?? ?? ?? ?? ?? 0F 28 ?? F3 0F 59 ?? ?? ?? ?? ?? ?? 89 ?? E8 ?? ?? ?? ??"
+    },
+    {
+      "target": "woundImpact",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x159a60",
+      "pattern": "55 48 89 E5 48 8D A4 24 90 FE FF FF 48 89 9D C0 FE FF FF 66 0F 7F B5 E0 FE FF FF"
+    },
+    {
+      "target": "woundImpact",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x159a60",
+      "pattern": "55 ?? 89 ?? ?? 8D ?? ?? 90 FE FF FF ?? 89 ?? C0 FE FF FF 66 0F 7F ?? E0 FE FF FF"
+    },
+    {
+      "target": "woundImpact",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x159a60",
+      "pattern": "E8 ?? ?? ?? ?? C7 83 18 0C 00 00 00 00 00 00 90 8B 83 D8 12 00 00 89 83 D4 12 00 00"
+    },
+    {
+      "target": "woundImpact",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x159a60",
+      "pattern": "E8 ?? ?? ?? ?? C7 ?? 18 0C 00 00 00 00 00 00 90 8B ?? D8 12 00 00 89 ?? D4 12 00 00"
+    },
+    {
+      "target": "roomClassify",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x143c20",
+      "pattern": "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 90 48 89 4C 24 20 49 89 D7"
+    },
+    {
+      "target": "roomClassify",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x143c20",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 56 ?? 57 ?? 8D ?? ?? 90 ?? 89 ?? ?? 20 ?? 89 ??"
+    },
+    {
+      "target": "roomClassify",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x143c20",
+      "pattern": "E8 ?? ?? ?? ?? 83 05 ?? ?? ?? ?? 01 8B 05 ?? ?? ?? ?? 3B 05 ?? ?? ?? ??"
+    },
+    {
+      "target": "roomClassify",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x143c20",
+      "pattern": "E8 ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 01 8B ?? ?? ?? ?? ?? 3B ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "nodeMove",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x5c030",
+      "pattern": "53 57 56 41 54 48 8D A4 24 C8 FE FF FF 48 89 4C 24 20 48 89 D3 48 8B 44 24 20"
+    },
+    {
+      "target": "nodeMove",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x5c030",
+      "pattern": "53 57 56 ?? 54 ?? 8D ?? ?? C8 FE FF FF ?? 89 ?? ?? 20 ?? 89 ?? ?? 8B ?? ?? 20"
+    },
+    {
+      "target": "nodeMove",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x5c030",
+      "pattern": "E8 ?? ?? ?? ?? 90 48 89 FE 48 89 F0 90 48 8D 64 24 20 5E 5F 5B C3 00 00"
+    },
+    {
+      "target": "nodeMove",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x5c030",
+      "pattern": "E8 ?? ?? ?? ?? 90 ?? 89 ?? ?? 89 ?? 90 ?? 8D ?? ?? 20 5E 5F 5B C3 00 ??"
+    },
+    {
+      "target": "nodeVecSub",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x19170",
+      "pattern": "F3 0F 7E 02 F3 0F 10 4A 08 0F 16 C1 F3 41 0F 7E 08 F3 41 0F 10 50 08 0F 16 CA 0F 5C C1 0F 12 C8"
+    },
+    {
+      "target": "nodeVecSub",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x19170",
+      "pattern": "F3 0F 7E ?? F3 0F 10 ?? 08 0F 16 ?? F3 ?? 0F 7E ?? F3 ?? 0F 10 ?? 08 0F 16 ?? 0F 5C ?? 0F 12 ??"
+    },
+    {
+      "target": "nodeVecSub",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x19170",
+      "pattern": "E8 ?? ?? ?? ?? 48 8D 8B 88 00 00 00 E8 ?? ?? ?? ?? 48 8D 4B 70 48 8D 93 88 00 00 00"
+    },
+    {
+      "target": "nodeVecSub",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x19170",
+      "pattern": "E8 ?? ?? ?? ?? ?? 8D ?? 88 00 00 00 E8 ?? ?? ?? ?? ?? 8D ?? 70 ?? 8D ?? 88 00 00 00"
+    },
+    {
+      "target": "nodeVecAddTo",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x19100",
+      "pattern": "F3 0F 7E 01 F3 0F 10 49 08 0F 16 C1 F3 0F 7E 0A F3 0F 10 52 08 0F 16 CA 0F 58 C1 0F 12 C8 66 0F D6 01"
+    },
+    {
+      "target": "nodeVecAddTo",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x19100",
+      "pattern": "F3 0F 7E ?? F3 0F 10 ?? 08 0F 16 ?? F3 0F 7E ?? F3 0F 10 ?? 08 0F 16 ?? 0F 58 ?? 0F 12 ?? 66 0F D6 ??"
+    },
+    {
+      "target": "nodeVecAddTo",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x19100",
+      "pattern": "E8 ?? ?? ?? ?? 90 48 8D 64 24 20 5B C3 00 00 00 00 00 00 00 00 00 00 00 53 48 8D 64 24 E0 48 89 C8 F3 0F 10 80 20 02 00 00"
+    },
+    {
+      "target": "nodeVecAddTo",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x19100",
+      "pattern": "E8 ?? ?? ?? ?? 90 ?? 8D ?? ?? 20 5B C3 00 ?? 00 ?? 00 ?? 00 ?? 00 ?? 00 ?? 48 8D ?? ?? E0 ?? 89 ?? F3 0F 10 ?? 20 02 00 00"
+    },
+    {
+      "target": "nodeMoveAttach",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x50170",
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 48 89 D6 48 8B 86 28 01 00 00 48 3B 05 ?? ?? ?? ??"
+    },
+    {
+      "target": "nodeMoveAttach",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x50170",
+      "pattern": "53 56 ?? 8D ?? ?? D8 ?? 89 ?? ?? 89 ?? ?? 8B ?? 28 01 00 00 ?? 3B ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "nodeMoveAttach",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x50170",
+      "pattern": "E8 ?? ?? ?? ?? 48 8B 44 24 20 8B 40 08 25 00 00 04 00 76 12 48 8D 54 24 20"
+    },
+    {
+      "target": "nodeMoveAttach",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x50170",
+      "pattern": "E8 ?? ?? ?? ?? ?? 8B ?? ?? 20 8B ?? 08 25 00 00 04 00 76 12 ?? 8D ?? ?? 20"
+    },
+    {
+      "target": "nodeRegisterDynamic",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x55fa0",
+      "pattern": "53 57 56 41 54 41 55 48 8D 64 24 E0 48 89 CB 48 89 D6 44 89 C7 8B 43 0C"
+    },
+    {
+      "target": "nodeRegisterDynamic",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x55fa0",
+      "pattern": "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? E0 ?? 89 ?? ?? 89 ?? ?? 89 ?? 8B ?? 0C"
+    },
+    {
+      "target": "nodeRegisterDynamic",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x55fa0",
+      "pattern": "E8 ?? ?? ?? ?? 90 48 8B 55 E8 48 8B 82 C8 03 00 00 48 83 C0 08 48 89 82 08 02 00 00"
+    },
+    {
+      "target": "nodeRegisterDynamic",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x55fa0",
+      "pattern": "E8 ?? ?? ?? ?? 90 ?? 8B ?? E8 ?? 8B ?? C8 03 00 00 ?? 83 ?? 08 ?? 89 ?? 08 02 00 00"
+    },
+    {
+      "target": "loadRpkStream",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x6f710",
+      "pattern": "55 48 89 E5 48 8D 64 24 B0 48 89 5D D8 48 89 7D E0 48 89 75 E8 4C 89 65 F0 48 89 CB 48 89 D6 48 C7 45 F8 00 00 00 00 90 4C 8B 26 4C 89 E7 49 83 C4 08 81 3F 01 0C BF AF"
+    },
+    {
+      "target": "loadRpkStream",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x6f710",
+      "pattern": "55 ?? 89 ?? ?? 8D ?? ?? B0 ?? 89 ?? D8 ?? 89 ?? E0 ?? 89 ?? E8 ?? 89 ?? F0 ?? 89 ?? ?? 89 ?? ?? C7 ?? F8 00 00 00 00 90 ?? 8B ?? ?? 89 ?? ?? 83 ?? 08 81 ?? 01 0C BF AF"
+    },
+    {
+      "target": "loadRpkStream",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x6f710",
+      "pattern": "E8 ?? ?? ?? ?? 48 8D 4D E8 31 D2 E8 ?? ?? ?? ?? 4C 8B 05 ?? ?? ?? ?? BA 01 00 00 00"
+    },
+    {
+      "target": "loadRpkStream",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x6f710",
+      "pattern": "E8 ?? ?? ?? ?? ?? 8D ?? E8 31 ?? E8 ?? ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? BA 01 00 00 00"
+    },
+    {
+      "target": "xrStereoWorldDraw",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x4f750",
+      "pattern": "53 57 56 48 8D 64 24 B0 66 0F 7F 74 24 40 48 89 CB 48 8B 8B 18 01 00 00"
+    },
+    {
+      "target": "xrStereoWorldDraw",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x4f750",
+      "pattern": "53 57 56 ?? 8D ?? ?? B0 66 0F 7F ?? ?? 40 ?? 89 ?? ?? 8B ?? 18 01 00 00"
+    },
+    {
+      "target": "xrStereoWorldDraw",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x4f750",
+      "pattern": "E8 ?? ?? ?? ?? 90 48 8D 64 24 20 5B C3 00 00 48 8D 64 24 D8 BA 01 00 00 00"
+    },
+    {
+      "target": "xrStereoWorldDraw",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x4f750",
+      "pattern": "E8 ?? ?? ?? ?? 90 ?? 8D ?? ?? 20 5B C3 00 ?? ?? 8D ?? ?? D8 BA 01 00 00 00"
+    },
+    {
+      "target": "xrStereoFrustum",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x9f500",
+      "pattern": "53 57 56 48 8D 64 24 80 48 89 CB 48 8B 43 50 F3 0F 10 80 CC 01 00 00 F3 0F 5E 83 A0 00 00 00"
+    },
+    {
+      "target": "xrStereoFrustum",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x9f500",
+      "pattern": "53 57 56 ?? 8D ?? ?? 80 ?? 89 ?? ?? 8B ?? 50 F3 0F 10 ?? CC 01 00 00 F3 0F 5E ?? A0 00 00 00"
+    },
+    {
+      "target": "xrStereoFrustum",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x9f500",
+      "pattern": "E8 ?? ?? ?? ?? 48 8B 86 30 01 00 00 48 8B 90 30 02 00 00 48 63 86 C0 01 00 00"
+    },
+    {
+      "target": "xrStereoFrustum",
+      "kind": "Relative",
+      "hook": true,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x9f500",
+      "pattern": "E8 ?? ?? ?? ?? ?? 8B ?? 30 01 00 00 ?? 8B ?? 30 02 00 00 ?? 63 ?? C0 01 00 00 ?? 8B ?? 40 01 00 00 ?? 89 ?? ?? ?? 8B ?? 30 01 00 00"
+    },
+    {
+      "target": "xrStereoRebuildPlanes",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x78050",
+      "pattern": "53 57 56 41 54 48 8D 64 24 C8 48 89 CB 8B 7B 08 85 FF 0F 8C ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoRebuildPlanes",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x78050",
+      "pattern": "53 57 56 ?? 54 ?? 8D ?? ?? C8 ?? 89 ?? 8B ?? 08 85 ?? 0F 8C ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoRebuildPlanes",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x78050",
+      "pattern": "E8 ?? ?? ?? ?? C6 45 DC 01 EB 06 E8 ?? ?? ?? ?? 90 48 8B 4D B8 E8 ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoRebuildPlanes",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x78050",
+      "pattern": "E8 ?? ?? ?? ?? C6 ?? DC 01 EB 06 E8 ?? ?? ?? ?? 90 ?? 8B ?? B8 E8 ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoFlushBindings",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1ff3c0",
+      "pattern": "8B 41 20 25 FF 00 00 00 89 41 14 B8 FF FF FF FF 83 C0 01 89 C2 48 C1 E2 04"
+    },
+    {
+      "target": "xrStereoFlushBindings",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1ff3c0",
+      "pattern": "8B ?? 20 25 FF 00 00 00 89 ?? 14 B8 FF FF FF FF 83 ?? 01 89 ?? ?? C1 ?? 04"
+    },
+    {
+      "target": "xrStereoFlushBindings",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x1ff3c0",
+      "pattern": "E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? 00 74 27 48 8B 43 50 48 8D 50 40 48 8D 8C 24 D4 00 00 00 E8 ?? ?? ?? ?? 48 8D 4B 60 48 8D 94 24 D4 00 00 00 E8 ?? ?? ?? ?? 90 90 48 8D A4 24 18 01 00 00 41 5C 5E 5F 5B C3 00 00 00 00 00 53 57 56 41 54 48 8D A4 24 E8 FE FF FF"
+    },
+    {
+      "target": "xrStereoFlushBindings",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 1,
+      "insn_end": 5,
+      "addend": 0,
+      "known_rva": "0x1ff3c0",
+      "pattern": "E8 ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 00 74 27 ?? 8B ?? 50 ?? 8D ?? 40 ?? 8D ?? ?? D4 00 00 00 E8 ?? ?? ?? ?? ?? 8D ?? 60 ?? 8D ?? ?? D4 00 00 00 E8 ?? ?? ?? ?? 90 90 ?? 8D ?? ?? 18 01 00 00 ?? 5C 5E 5F 5B C3 00 ?? 00 ?? 00 ?? 57 56 ?? 54 ?? 8D ?? ?? E8 FE FF FF"
+    },
+    {
+      "target": "xrStereoDepthCallback",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 8,
+      "addend": 0,
+      "known_rva": "0x49b260",
+      "pattern": "48 83 3D ?? ?? ?? ?? 00 74 09 48 89 D9 FF 15 ?? ?? ?? ?? 80 3D ?? ?? ?? ?? 00"
+    },
+    {
+      "target": "xrStereoDepthCallback",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 8,
+      "addend": 0,
+      "known_rva": "0x49b260",
+      "pattern": "?? 83 ?? ?? ?? ?? ?? 00 74 09 ?? 89 ?? FF ?? ?? ?? ?? ?? 80 ?? ?? ?? ?? ?? 00"
+    },
+    {
+      "target": "xrStereoDepthCallback",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 2,
+      "insn_end": 6,
+      "addend": 0,
+      "known_rva": "0x49b260",
+      "pattern": "FF 15 ?? ?? ?? ?? 80 3D ?? ?? ?? ?? 00 74 0B B9 9D 80 00 00 FF 15 ?? ?? ?? ?? 8B 8B 90 00 00 00"
+    },
+    {
+      "target": "xrStereoDepthCallback",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 2,
+      "insn_end": 6,
+      "addend": 0,
+      "known_rva": "0x49b260",
+      "pattern": "FF ?? ?? ?? ?? ?? 80 ?? ?? ?? ?? ?? 00 74 0B B9 9D 80 00 00 FF ?? ?? ?? ?? ?? 8B ?? 90 00 00 00"
+    },
+    {
+      "target": "xrStereoNativeTarget",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x49a4a0",
+      "pattern": "48 3B 1D ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 8B 43 08 3B 05 ?? ?? ?? ?? 74 19"
+    },
+    {
+      "target": "xrStereoNativeTarget",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x49a4a0",
+      "pattern": "?? 3B ?? ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 8B ?? 08 3B ?? ?? ?? ?? ?? 74 19"
+    },
+    {
+      "target": "xrStereoNativeTarget",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x49a4a0",
+      "pattern": "48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 40 88 C6 80 BB CC 01 00 00 00 74 54"
+    },
+    {
+      "target": "xrStereoNativeTarget",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x49a4a0",
+      "pattern": "?? 8B ?? ?? ?? ?? ?? E8 ?? ?? ?? ?? ?? 88 ?? 80 ?? CC 01 00 00 00 74 54"
+    },
+    {
+      "target": "xrStereoShaderManager",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x5b1e10",
+      "pattern": "48 8B 15 ?? ?? ?? ?? 8B 80 84 01 00 00 89 82 B4 05 00 00 48 8B 83 A8 01 00 00"
+    },
+    {
+      "target": "xrStereoShaderManager",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x5b1e10",
+      "pattern": "?? 8B ?? ?? ?? ?? ?? 8B ?? 84 01 00 00 89 ?? B4 05 00 00 ?? 8B ?? A8 01 00 00"
+    },
+    {
+      "target": "xrStereoShaderManager",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x5b1e10",
+      "pattern": "48 8B 05 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 89 90 B4 05 00 00 48 8D 0D ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoShaderManager",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x5b1e10",
+      "pattern": "?? 8B ?? ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? 89 ?? B4 05 00 00 ?? 8D ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoFogState",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x2ae3f0",
+      "pattern": "48 8D 0D ?? ?? ?? ?? F3 0F 10 15 ?? ?? ?? ?? F3 0F 59 15 ?? ?? ?? ?? E8 ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoFogState",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x2ae3f0",
+      "pattern": "?? 8D ?? ?? ?? ?? ?? F3 0F 10 ?? ?? ?? ?? ?? F3 0F 59 ?? ?? ?? ?? ?? E8 ?? ?? ?? ?? EB 1B ?? 8D ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoFogState",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x2ae3f0",
+      "pattern": "48 8D 0D ?? ?? ?? ?? F3 0F 10 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 48 8D 64 24 38"
+    },
+    {
+      "target": "xrStereoFogState",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x2ae3f0",
+      "pattern": "?? 8D ?? ?? ?? ?? ?? F3 0F 10 ?? ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 ?? 8D ?? ?? 38 C3 ?? 8D ?? ?? C8"
+    },
+    {
+      "target": "xrStereoBatchFlag",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x2eefc0",
+      "pattern": "44 3B 25 ?? ?? ?? ?? 75 48 C7 05 ?? ?? ?? ?? FF FF FF FF 48 8D 05 ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoBatchFlag",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x2eefc0",
+      "pattern": "?? 3B ?? ?? ?? ?? ?? 75 ?? C7 ?? ?? ?? ?? ?? FF FF FF FF ?? 8D ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoBatchFlag",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 2,
+      "insn_end": 10,
+      "addend": 0,
+      "known_rva": "0x2eefc0",
+      "pattern": "C7 05 ?? ?? ?? ?? FF FF FF FF 48 8D 05 ?? ?? ?? ?? 89 D1 4C 6B C1 18 48 8B 08"
+    },
+    {
+      "target": "xrStereoBatchFlag",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 2,
+      "insn_end": 10,
+      "addend": 0,
+      "known_rva": "0x2eefc0",
+      "pattern": "C7 ?? ?? ?? ?? ?? FF FF FF FF ?? 8D ?? ?? ?? ?? ?? 89 ?? ?? 6B ?? 18 ?? 8B ??"
+    },
+    {
+      "target": "xrStereoBatchQueue",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 2,
+      "insn_end": 10,
+      "addend": 0,
+      "known_rva": "0x5b7480",
+      "pattern": "81 3D ?? ?? ?? ?? FF 03 00 00 7C 08 E8 ?? ?? ?? ?? 0F 1F 00 8B 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoBatchQueue",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 2,
+      "insn_end": 10,
+      "addend": 0,
+      "known_rva": "0x5b7480",
+      "pattern": "81 ?? ?? ?? ?? ?? FF 03 00 00 7C 08 E8 ?? ?? ?? ?? 0F 1F ?? 8B ?? ?? ?? ?? ??"
+    },
+    {
+      "target": "xrStereoBatchQueue",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 2,
+      "insn_end": 6,
+      "addend": 0,
+      "known_rva": "0x5b7480",
+      "pattern": "8B 15 ?? ?? ?? ?? 83 05 ?? ?? ?? ?? 01 83 3D ?? ?? ?? ?? 01 75 1B 89 D0"
+    },
+    {
+      "target": "xrStereoBatchQueue",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 2,
+      "insn_end": 6,
+      "addend": 0,
+      "known_rva": "0x5b7480",
+      "pattern": "8B ?? ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 01 83 ?? ?? ?? ?? ?? 01 75 1B 89 ??"
     }
   ]
 }

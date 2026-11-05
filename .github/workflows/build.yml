@@ -5,18 +5,24 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'tests/**'
       - 'build.py'
+      - 'manifest.toml'
+      - 'docs/PLAYER_README.txt'
       - 'tools/**'
       - 'LICENSE'
-      - '.github/workflows/build.yml'
+      - '.github/workflows/**'
   pull_request:
     branches: [main]
     paths:
       - 'src/**'
+      - 'tests/**'
       - 'build.py'
+      - 'manifest.toml'
+      - 'docs/PLAYER_README.txt'
       - 'tools/**'
       - 'LICENSE'
-      - '.github/workflows/build.yml'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
@@ -33,12 +39,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           architecture: x64
@@ -47,20 +53,65 @@ jobs:
         shell: pwsh
         run: python tools/check_generated.py
 
-      # build.py initializes x64 MSVC and checks DLL exports.
-      # The CI checks need only source and Python, never a game executable.
-      - name: Build and package
+      - name: Run Python unit tests
         shell: pwsh
-        run: python build.py --package
+        run: python -m unittest discover -s tools/tests -v
+
+      - name: Run C++ header unit tests
+        shell: pwsh
+        run: python tools/run_cpp_tests.py
+
+      - name: Build dev runtime with warnings as errors
+        shell: pwsh
+        run: python build.py --dev --wx
+
+      # build.py initializes x64 MSVC, enforces /WX, and checks DLL exports.
+      # The CI checks need only source and Python, never a game executable.
+      - name: Build and package release runtime
+        shell: pwsh
+        run: python build.py --package --wx
 
       - name: Verify runtime ZIP
         shell: pwsh
         run: python tools/release.py verify --local
 
       - name: Upload release ZIP
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           path: build/ExCamera-*-minimal.zip
-          archive: false
+          name: ExCamera-minimal
           if-no-files-found: error
           retention-days: 14
+
+  # The OpenXR integration is compiled out of the minimal package, so the job above never compiles it.
+  # Build it here so it cannot silently stop compiling. Nothing is uploaded.
+  openxr:
+    name: Windows x64 (OpenXR)
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      OPENXR_SDK_TAG: release-1.1.43
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      # Headers only: the runtime loads openxr_loader.dll itself, so no loader library is linked.
+      - name: Fetch OpenXR SDK headers
+        uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/OpenXR-SDK
+          ref: ${{ env.OPENXR_SDK_TAG }}
+          path: openxr-sdk
+          persist-credentials: false
+
+      - name: Build OpenXR variant with warnings as errors
+        shell: pwsh
+        run: python build.py --openxr-sdk openxr-sdk --wx

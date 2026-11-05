@@ -35,6 +35,7 @@ public:
     std::function<void(uintptr_t, int)> setContentHeight;
     std::function<int()> scale;
     std::function<bool()> mouseHeld; // active native-slider drag keeps its descriptor stable
+    std::function<bool(int)> gameKey; // the game's own Controls use this key (Kick and Jump refuse it)
     std::function<void()> openNative;
     std::function<void(uintptr_t)> closeNative;
     std::function<bool(uintptr_t)> accepted;
@@ -67,9 +68,14 @@ public:
     // Restore the game's Settings table after a refusal only if its current
     // form and root table are still verifiably owned by ExCamera.
     bool recoverFault();
-    uintptr_t faultAt = 0;            // return address of the first fail(), 0 while healthy
-    unsigned dispatches = 0, steps = 0, refusedFlags = 0; // ...and the kind<<24 | flags of the last refused one // ExCamera row callbacks reached, value-button steps taken
+    uintptr_t faultAt = 0; // return address of the first fail(), 0 while healthy
+    // ExCamera row callbacks reached, value-button steps taken, ownership/action refusals, and the kind<<24 | flags
+    // of the last refused control.
+    unsigned dispatches = 0, steps = 0, refusals = 0, refusedFlags = 0;
     int selectedPage() const;
+#if FP_DEV_TOOLS
+    void devSelectPage(int value) { pendingDevPage.store(value, std::memory_order_release); }
+#endif
     bool widenedFrame() const; // the Settings form currently carries the five-tab width
     bool vrTab = true; // false in a build without the headset code: the VR tab is not shown, its page never reached
     const std::array<Frame, 4>& seenFrames() const; // root, Graphics, Controls, Controller as last read at adoption
@@ -109,8 +115,15 @@ private:
     bool widened = false;
     DWORD thread = 0;
     bool fault = false, dirty = false, controlsOwned = false, wanted = false, openedFromKey = false,
-         closing = false, applyQueued = false, deferUntilMouseRelease = false, updating = false, valueRedraw = false;
+         closing = false, applyQueued = false, deferUntilMouseRelease = false, updating = false, valueRedraw = false,
+         devPageOverride = false;
     unsigned callbackDepth = 0, handlerDepth = 0;
+    std::atomic<int> pendingDevPage{none}, publishedPage{0};
+    std::atomic<bool> publishedFailed{false}, publishedApplyQueued{false};
+    std::atomic<uintptr_t> publishedRoot{0};
+    void setPage(int value) { page = value; publishedPage.store(value, std::memory_order_release); }
+    void setRoot(uintptr_t value) { root = value; publishedRoot.store(value, std::memory_order_release); }
+    void setApplyQueued(bool value) { applyQueued = value; publishedApplyQueued.store(value, std::memory_order_release); }
     std::atomic<uint64_t> correctedReleases{0}, zeroScrollReleases{0}, rejectedCoordinates{0}, nativeActions{0};
     ModSettings acceptedInitial, acceptedValue;
     int page = 0, captureRow = none, rootCount = 0, controlCount = 0, baseCount = 44,

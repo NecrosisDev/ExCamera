@@ -9,7 +9,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TAG_RE = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
-EXPECTED_FILES = {'ExCamera.exe', 'ExanimaFirstPerson.dll', 'manifest.toml', 'LICENSE.txt', 'LICENSE-MinHook.txt'}
+EXPECTED_FILES = {'ExCamera.exe', 'ExanimaFirstPerson.dll', 'manifest.toml', 'README.txt', 'LICENSE.txt', 'LICENSE-MinHook.txt'}
 
 
 def version_from_tag(tag):
@@ -25,10 +25,15 @@ def git(*args):
 
 
 def release_context():
-    tag = os.environ.get('GITHUB_REF_NAME', '')
-    version = version_from_tag(tag)
-    if os.environ.get('GITHUB_REF') != 'refs/tags/' + tag:
-        raise ValueError('Release requires a tag push')
+    input_tag = os.environ.get('INPUT_TAG', '').strip()
+    if input_tag:
+        tag = input_tag
+        version = version_from_tag(tag)
+    else:
+        tag = os.environ.get('GITHUB_REF_NAME', '')
+        version = version_from_tag(tag)
+        if os.environ.get('GITHUB_REF') != 'refs/tags/' + tag:
+            raise ValueError('Release requires a tag push or workflow_dispatch tag input')
     if git('rev-parse', 'HEAD') != git('rev-parse', '--verify', 'refs/tags/' + tag + '^{commit}'):
         raise ValueError('Checked-out commit does not match the release tag')
     return tag, version
@@ -49,11 +54,12 @@ def prepare():
     print(f'Prepared {tag}; FP_REVISION is unchanged')
 
 
-def verify_package(version):
+def verify_package(version, build_dir=None):
     if not re.fullmatch(r'[\w.-]+', version, flags=re.ASCII):
         raise ValueError('Unsafe package version')
-    packages = list((ROOT / 'build').glob('ExCamera-*-minimal.zip'))
-    expected = ROOT / 'build' / f'ExCamera-{version}-minimal.zip'
+    out_dir = ROOT / 'build' if build_dir is None else Path(build_dir)
+    packages = list(out_dir.glob('ExCamera-*-minimal.zip'))
+    expected = out_dir / f'ExCamera-{version}-minimal.zip'
     if packages != [expected]:
         raise ValueError(f'Expected only {expected.name}, found {[p.name for p in packages]}')
     with zipfile.ZipFile(expected) as archive:
@@ -64,6 +70,10 @@ def verify_package(version):
         for name in EXPECTED_FILES:
             if not archive.getinfo(name).file_size:
                 raise ValueError(f'Empty release file: {name}')
+        manifest_text = archive.read('manifest.toml').decode('utf-8')
+        manifest_versions = re.findall(r'^version = "([^"\r\n]+)"$', manifest_text, re.M)
+        if manifest_versions != [version]:
+            raise ValueError(f'Release ZIP manifest.toml version {manifest_versions!r} does not match {version!r}')
     print(f'Ready: {expected}')
 
 
@@ -103,7 +113,7 @@ def notes(path):
     records = git('log', '--reverse', '--format=%H%x09%s', revision_range, '--').splitlines()
     url = 'https://github.com/' + repository
     lines = [f'# ExCamera {tag}', '',
-             'Windows x64 runtime. Extract the ZIP and keep the launcher, DLL, and license files together.', '',
+             'Windows x64 runtime. Extract the ZIP and keep its files together.', '',
              '## Commit changelog', '',
              f'Commit subjects since {previous} (including direct commits and merges):' if previous else
              'Commit subjects from the initial history (including direct commits and merges):', '']

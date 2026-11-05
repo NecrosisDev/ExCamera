@@ -29,15 +29,18 @@ static constexpr DevPrologue devPrologues[] = {
 
 enum class DevLoad { none, waiting, loading, inLevel, failed };
 static std::atomic<DevLoad> devLoad{DevLoad::none};
+static SRWLOCK devStateLock = SRWLOCK_INIT;
 static std::wstring devReadyPath;
 static char devSlotName[32], devReason[64];
 static int devSlotMode = 0, devSlotNumber = 0;
 static ULONGLONG devLoadStarted = 0;
-static unsigned devCharacters;
+static std::atomic<unsigned> devCharacters{0}, devFaults{0};
 
 static void devFail(const char* reason) {
+    AcquireSRWLockExclusive(&devStateLock);
     strncpy_s(devReason, reason, _TRUNCATE);
-    devLoad = DevLoad::failed;
+    ReleaseSRWLockExclusive(&devStateLock);
+    devLoad.store(DevLoad::failed, std::memory_order_release);
 }
 
 static bool devProloguesMatch() {
@@ -102,7 +105,7 @@ static bool devStartLoadGuarded(const char** reason) {
     __try {
         *reason = devStartLoad();
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&devFaults)) {
         return false;
     }
 }
@@ -138,25 +141,83 @@ static bool devInLevel() {
     __try {
         const bool in = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) &&
                         InterlockedCompareExchange(&cameraReady, 0, 0) && InterlockedCompareExchange(&active, 0, 0);
-        devCharacters = in ? devCharacterCount() : 0;
+        devCharacters.store(in ? devCharacterCount() : 0u, std::memory_order_relaxed);
         return in;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&devFaults)) {
         return false;
     }
 }
 
+static void devSelectSettingsPage(int page); // panel.inl
+static void devWriteSettings(fp::JsonOut& j); // panel.inl
+
 static void devWriteReady(FILE* f) {
     fp::JsonOut j(f);
-    const DevLoad state = devLoad.load();
+    const DevLoad state = devLoad.load(std::memory_order_acquire);
     j.str("state", state == DevLoad::inLevel ? "in_level" : state == DevLoad::failed ? "failed" : "loading");
     j.unum("pid", GetCurrentProcessId());
-    if (state == DevLoad::failed) j.str("reason", devReason);
+    devWriteSettings(j);
+    if (state == DevLoad::failed) {
+        char reason[64]{};
+        AcquireSRWLockShared(&devStateLock);
+        strncpy_s(reason, devReason, _TRUNCATE);
+        ReleaseSRWLockShared(&devStateLock);
+        j.str("reason", reason);
+    }
     if (state == DevLoad::inLevel) {
         j.str("level", "");
         j.str("character", devSlotName);
-        j.unum("characters", devCharacters);
+        j.unum("characters", devCharacters.load(std::memory_order_relaxed));
     }
     j.finish();
+}
+
+// dev-rooms.txt beside the DLL, rewritten each second: the level's rooms as the render walk sees them.
+static void devWriteRooms(const std::wstring& path) {
+    FILE* f = nullptr;
+    __try {
+        const uintptr_t level = levelGrid();
+        if (!level || !readable(level, 0x64) || _wfopen_s(&f, path.c_str(), L"w") || !f) return;
+        const int count = *reinterpret_cast<const int*>(level + 0x1c);
+        const uintptr_t entries = *reinterpret_cast<const uintptr_t*>(level + 0x20),
+                        indices = *reinterpret_cast<const uintptr_t*>(level + 0x28);
+        if (count < 0 || count > 4096 || (count > 0 && (!entries || !readable(entries, size_t(count) * 0x54)))) {
+            fclose(f);
+            f = nullptr;
+            return;
+        }
+        std::fprintf(f, "rooms=%d active=%d opened=%u\n", count, *reinterpret_cast<const int*>(level + 0x60),
+                     roomViewOpened.load());
+        for (int room = 0; room < count && room < 4096; ++room) {
+            const uintptr_t e = entries + size_t(room) * 0x54;
+            if (!readable(e, 0x54)) break;
+            const uintptr_t s = *reinterpret_cast<const uintptr_t*>(e + 0x34);
+            std::fprintf(f, "%d state=%d load=%d sector=%llx", room, *reinterpret_cast<const int*>(e + 0x30),
+                         *reinterpret_cast<const int*>(e + 0x10), static_cast<unsigned long long>(s));
+            if (s && readable(s, 0x31c)) {
+                const float* origin = reinterpret_cast<const float*>(s + field::sector::origin);
+                std::fprintf(f, " type=%d flags=%x meshes=%d portals=%d at=%.0f,%.0f",
+                             *reinterpret_cast<const int*>(s + 0x318), *reinterpret_cast<const unsigned*>(s + 8),
+                             *reinterpret_cast<const int*>(s + field::sector::lastMesh) + 1,
+                             *reinterpret_cast<const int*>(s + 0x260), origin[0], origin[2]);
+            }
+            const int edges = *reinterpret_cast<const int*>(e + 0x18);
+            const uintptr_t pairs = *reinterpret_cast<const uintptr_t*>(e + 0x1c);
+            std::fprintf(f, " next=");
+            const int edgeCap = edges > 0 ? (edges < 32 ? edges : 32) : 0;
+            if (edgeCap > 0 && pairs && indices && readable(pairs, size_t(edgeCap) * 8)) {
+                for (int k = 0; k < edgeCap; ++k) {
+                    const int edge = *reinterpret_cast<const int*>(pairs + size_t(k) * 8 + 4);
+                    if (edge < 0 || edge > 65535) continue;
+                    const uintptr_t indexAddr = indices + size_t(edge) * 4;
+                    if (!readable(indexAddr, sizeof(int))) continue;
+                    std::fprintf(f, "%d,", *reinterpret_cast<const int*>(indexAddr));
+                }
+            }
+            std::fprintf(f, "\n");
+        }
+    } __except (countFaultAndHandle(&devFaults)) {}
+    if (f) fclose(f);
 }
 
 // Worker thread, every loop pass.
@@ -171,6 +232,16 @@ static void devPulse() {
     const ULONGLONG now = GetTickCount64();
     if (now < next) return;
     next = now + 1000;
+    // dev-page.txt beside the DLL: the Settings page to show (5 is Mod Settings); read once, then deleted.
+    const std::wstring pageFile = devReadyPath.substr(0, devReadyPath.find_last_of(L'\\') + 1) + L"dev-page.txt";
+    if (FILE* f = nullptr; !_wfopen_s(&f, pageFile.c_str(), L"r") && f) {
+        int page = -1;
+        const int read = fscanf_s(f, "%d", &page);
+        fclose(f);
+        DeleteFileW(pageFile.c_str());
+        if (read == 1 && page >= 0) devSelectSettingsPage(page);
+    }
+    devWriteRooms(devReadyPath.substr(0, devReadyPath.find_last_of(L'\\') + 1) + L"dev-rooms.txt");
     if (devLoad.load() == DevLoad::loading) {
         if (devInLevel()) devLoad = DevLoad::inLevel;
         else if (now - devLoadStarted > 180000) devFail("timeout");

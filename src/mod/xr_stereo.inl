@@ -241,7 +241,7 @@ static void stereoFrustum(uintptr_t view) {
                         vrRecenterOriginValid = true;
                         wchar_t text[160];
                         swprintf_s(text, L"%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f", o[0], o[1], o[2], o[3], o[4], o[5], o[6]);
-                        saveSetting(L"VR", L"RecenterOrigin", text);
+                        queueRecenterOriginSave(text);
                     }
                 }
             }
@@ -278,7 +278,7 @@ static void stereoFrustum(uintptr_t view) {
 static bool stereoCallbacksAdmitted(uintptr_t view, uintptr_t renderer) {
     if (!readable(renderer, 0x170) || *reinterpret_cast<uintptr_t*>(renderer + 0x158) || *reinterpret_cast<uintptr_t*>(view + 0x1C8)) return false;
     const bool coversSuppressed = coversHiddenInFirstPerson.load(std::memory_order_relaxed) && supersampleRenderScope.owned;
-    const auto depthCallback = *reinterpret_cast<uintptr_t*>(base + 0x49B260);
+    const auto depthCallback = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::xrStereoDepthCallback));
     if (depthCallback && (depthCallback != gameAt(fp::sig::coverDepth) || !coversSuppressed)) return false;
     const auto environment = *reinterpret_cast<uintptr_t*>(renderer + 0x118);
     if (!readable(environment, 0x330) || *reinterpret_cast<uintptr_t*>(environment + 0x2D8)) return false;
@@ -330,17 +330,17 @@ static void stereoApplyEye(const fp::xr::Eye& eye, const std::vector<StereoMesh>
     memcpy(reinterpret_cast<void*>(stereoView + 0xA0), eye.projection.data(), 64);
     memcpy(reinterpret_cast<void*>(stereoView + 0xE0), eye.projection.data(), 64);
     // The lower draw owner consumes these published matrices and does not resample nav.
-    memcpy(reinterpret_cast<void*>(base + 0x49AD10), eye.projection.data(), 64);
-    memcpy(reinterpret_cast<void*>(base + 0x49AE10), view.data(), 64);
-    memcpy(reinterpret_cast<void*>(base + 0x49AF10), combined.data(), 64);
-    *reinterpret_cast<int*>(base + 0x49ACB0) = 0;
+    memcpy(reinterpret_cast<void*>(gameAt(fp::sig::sampleProjections)), eye.projection.data(), 64);
+    memcpy(reinterpret_cast<void*>(gameAt(fp::sig::sampleViews)), view.data(), 64);
+    memcpy(reinterpret_cast<void*>(gameAt(fp::sig::sampleViewProjections)), combined.data(), 64);
+    *reinterpret_cast<int*>(gameAt(fp::sig::sampleLast)) = 0;
     memcpy(reinterpret_cast<void*>(stereoScene + 0x1C38), eye.pose.data() + 9, 12);
     memcpy(reinterpret_cast<void*>(stereoScene + 0x1C44), view.data() + 8, 12);
     stereoWriteVolume(stereoView, fp::xr::corners(eye, stereoFrame.nearPlane, stereoFrame.farPlane));
     // Sector rectangles were projected for the desktop camera; the eye frustum and GPU
     // clipping replace that screen-space optimisation for the replay.
     for (auto sector : sectors) *(unsigned char*)(sector + 0x3A0) = 0;
-    const auto nativeTarget = *reinterpret_cast<uintptr_t*>(base + 0x49A4A0);
+    const auto nativeTarget = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::xrStereoNativeTarget));
     *(unsigned char*)(nativeTarget + 0x1CC) = 0;
     const auto frustum = fp::xr::planes(fp::xr::corners(eye, stereoFrame.nearPlane, stereoFrame.farPlane));
     for (const auto& mesh : meshes) {
@@ -355,13 +355,13 @@ static void stereoCaptureState(fp::xr::Transaction& undo, uintptr_t renderer) {
     stereoVolumeSnapshot(undo, stereoView);
     undo.capture(stereoScene + 0x1C38, 24);
     undo.capture(stereoScene + 0x1DAC, 4);
-    undo.capture(base + 0x49ACB0, 0xC10);
-    undo.capture(base + 0x2AE3F0, 0x58);
-    undo.capture(base + 0x2EEFC0, 4);
-    undo.capture(base + 0x5B7480, 0x6018);
-    const auto target = *reinterpret_cast<uintptr_t*>(base + 0x49A4A0);
+    undo.capture(gameAt(fp::sig::sampleLast), 0xC10);
+    undo.capture(gameAt(fp::sig::xrStereoFogState), 0x58);
+    undo.capture(gameAt(fp::sig::xrStereoBatchFlag), 4);
+    undo.capture(gameAt(fp::sig::xrStereoBatchQueue), 0x6018);
+    const auto target = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::xrStereoNativeTarget));
     undo.capture(target + 0x1BC, 0x11);
-    const auto manager = *reinterpret_cast<uintptr_t*>(base + 0x5B1E10);
+    const auto manager = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::xrStereoShaderManager));
     undo.capture(manager + 0x18, 4);
     undo.capture(renderer + 8, 4);
     const auto environment = *reinterpret_cast<uintptr_t*>(renderer + 0x118);
@@ -384,7 +384,7 @@ static void stereoReplay(uintptr_t renderer, float exposureSeed, bool leftDrawnN
     struct Scope { Scope() { stereoReplaying = true; } ~Scope() { stereoReplaying = false; } } scope;
     fp::xr::Transaction undo(readable);
     stereoCaptureState(undo, renderer);
-    const auto manager = *reinterpret_cast<uintptr_t*>(base + 0x5B1E10);
+    const auto manager = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::xrStereoShaderManager));
     const auto environment = *reinterpret_cast<uintptr_t*>(renderer + 0x118);
     std::vector<uintptr_t> sectors;
     const auto meshes = stereoMeshes(undo, sectors);
@@ -438,7 +438,7 @@ static void stereoReconstruct(uintptr_t renderer, float exposureSeed) {
     struct Scope { Scope() { stereoReplaying = true; } ~Scope() { stereoReplaying = false; } } scope;
     fp::xr::Transaction undo(readable);
     stereoCaptureState(undo, renderer);
-    const auto manager = *reinterpret_cast<uintptr_t*>(base + 0x5B1E10);
+    const auto manager = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::xrStereoShaderManager));
     const auto environment = *reinterpret_cast<uintptr_t*>(renderer + 0x118);
     std::vector<uintptr_t> sectors;
     const auto meshes = stereoMeshes(undo, sectors);
@@ -494,8 +494,8 @@ static void stereoWorldDraw(uintptr_t renderer) {
     if (seedValid && vrMirrorLeft.load(std::memory_order_relaxed) && !stereoReconstructing() && !stereoDrawn && GetCurrentThreadId() == stereoThread &&
         TryAcquireSRWLockExclusive(&cameraLock)) {
         try {
-            if (stereoIdentity() && *reinterpret_cast<uintptr_t*>(base + 0x49C9E0) == stereoView && readable(renderer, 0x170) && *reinterpret_cast<uintptr_t*>(renderer + 0x10) == stereoScene &&
-                *reinterpret_cast<int*>(base + 0x49ACB0) == 0 && stereoPassesAdmitted(stereoView) && stereoCallbacksAdmitted(stereoView, renderer)) {
+            if (stereoIdentity() && *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::renderView)) == stereoView && readable(renderer, 0x170) && *reinterpret_cast<uintptr_t*>(renderer + 0x10) == stereoScene &&
+                *reinterpret_cast<int*>(gameAt(fp::sig::sampleLast)) == 0 && stereoPassesAdmitted(stereoView) && stereoCallbacksAdmitted(stereoView, renderer)) {
                 mirrorUndo.reset(new fp::xr::Transaction(readable));
                 stereoCaptureState(*mirrorUndo, renderer);
                 stereoApplyEye(stereoFrame.eyes[0], {}, {});
@@ -528,10 +528,10 @@ static void stereoWorldDraw(uintptr_t renderer) {
     if (!stereoRenderContext() || !stereoPrepared || stereoDrawn || stereoReplaying || GetCurrentThreadId() != stereoThread ||
         !TryAcquireSRWLockExclusive(&cameraLock)) return;
     try {
-        if (!stereoIdentity() || *reinterpret_cast<uintptr_t*>(base + 0x49C9E0) != stereoView || !readable(renderer, 0x170) || *reinterpret_cast<uintptr_t*>(renderer + 0x10) != stereoScene) {
+        if (!stereoIdentity() || *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::renderView)) != stereoView || !readable(renderer, 0x170) || *reinterpret_cast<uintptr_t*>(renderer + 0x10) != stereoScene) {
             stereoReason = "foreign_or_stale_world_draw";
             ++stereoRejected;
-        } else if (!seedValid || *reinterpret_cast<int*>(base + 0x49ACB0) != 0 || !stereoPassesAdmitted(stereoView) || !stereoCallbacksAdmitted(stereoView, renderer)) {
+        } else if (!seedValid || *reinterpret_cast<int*>(gameAt(fp::sig::sampleLast)) != 0 || !stereoPassesAdmitted(stereoView) || !stereoCallbacksAdmitted(stereoView, renderer)) {
             stereoReason = "unsupported_pass_or_mutable_callback";
             ++stereoRejected;
         } else {
@@ -668,14 +668,14 @@ static bool createStereoHooks() {
     stereoBackend = fp::xr::emulatedBackend();
     // Admission rests on the whole-function byte contracts of every owner the replay touches;
     // a patched executable with those owners intact is admitted and reported as compatible.
-    if (!fp::xr::admitted(base, readable)) { stereoReason = "native_contract_mismatch"; return true; }
+    if (!layout.optionalGroupAvailable("xrStereo") || !fp::xr::admitted(base, readable)) { stereoReason = "native_contract_mismatch"; return true; }
     trackedItemRelease = layout.rva[fp::sig::heldItemRelease] ? reinterpret_cast<TrackedItemRelease>(gameAt(fp::sig::heldItemRelease)) : nullptr;
-    stereoRebuildPlanes = reinterpret_cast<Behavior>(base + 0x78050);
-    stereoFlushBindings = reinterpret_cast<Behavior>(base + 0x1FF3C0);
-    if (MH_CreateHook(reinterpret_cast<void*>(base + 0x4F750), reinterpret_cast<void*>(stereoWorldDraw), reinterpret_cast<void**>(&originalStereoDraw)) != MH_OK) return false;
+    stereoRebuildPlanes = reinterpret_cast<Behavior>(gameAt(fp::sig::xrStereoRebuildPlanes));
+    stereoFlushBindings = reinterpret_cast<Behavior>(gameAt(fp::sig::xrStereoFlushBindings));
+    if (MH_CreateHook(reinterpret_cast<void*>(gameAt(fp::sig::xrStereoWorldDraw)), reinterpret_cast<void*>(stereoWorldDraw), reinterpret_cast<void**>(&originalStereoDraw)) != MH_OK) return false;
     stereoHooks[0] = true;
-    if (MH_CreateHook(reinterpret_cast<void*>(base + 0x9F500), reinterpret_cast<void*>(stereoFrustum), reinterpret_cast<void**>(&originalStereoFrustum)) != MH_OK) {
-        MH_RemoveHook(reinterpret_cast<void*>(base + 0x4F750));
+    if (MH_CreateHook(reinterpret_cast<void*>(gameAt(fp::sig::xrStereoFrustum)), reinterpret_cast<void*>(stereoFrustum), reinterpret_cast<void**>(&originalStereoFrustum)) != MH_OK) {
+        MH_RemoveHook(reinterpret_cast<void*>(gameAt(fp::sig::xrStereoWorldDraw)));
         stereoHooks[0] = false;
         return false;
     }
@@ -686,10 +686,11 @@ static bool createStereoHooks() {
 }
 static MH_STATUS disableStereoHooks() {
     MH_STATUS result = disableTrackedDriveHooks();
-    const uintptr_t rvas[2] = {0x4F750, 0x9F500};
+    const fp::sig::Target targets[2] = {fp::sig::xrStereoWorldDraw, fp::sig::xrStereoFrustum};
     for (unsigned i = 0; i < 2; ++i)
         if (stereoHooks[i]) {
-            const auto status = nativeDisableHook(reinterpret_cast<void*>(base + rvas[i]));
+            const uintptr_t entry = optionalGameAt(targets[i]);
+            const auto status = entry ? nativeDisableHook(reinterpret_cast<void*>(entry)) : MH_OK;
             awaitNativeHookRecovery();
             if (status != MH_OK && status != MH_ERROR_DISABLED) result = status;
         }

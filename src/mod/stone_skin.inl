@@ -6,6 +6,7 @@
 // shadows shade the plates. No native memory is written. The marks come from
 // ScriptRuntime.dll's character_mark_nodes export (marks version 1); without it nothing changes.
 #include "../stone_skin.h"
+#include "../gl_procs.h"
 
 static constexpr const char* stoneSkinMark = "stoneskin.look";
 static constexpr unsigned stoneSkinMaxMarked = 64;
@@ -18,25 +19,31 @@ using StoneTextureSubImage = void (APIENTRY*)(GLuint, GLint, GLint, GLint, GLsiz
 using StoneTextureParameter = void (APIENTRY*)(GLuint, GLenum, GLint);
 
 static std::atomic<StoneMarkNodes> stoneMarkNodes{nullptr};
-static std::atomic<ULONGLONG> stoneMarkProbed{0};
+static std::atomic<int> stoneMarkState{0}; // 0 unprobed, 1 ready, -1 absent
 static std::atomic<unsigned> stoneSkinDraws{0}, stoneSkinFallbacks{0}, stoneSkinFaults{0};
 
 struct StoneScope { uintptr_t actors[stoneSkinMaxMarked]{}; unsigned count = 0; };
 static thread_local StoneScope stoneScope;
 
-// The runtime's export, looked up again at most every two seconds until found. The module is
-// pinned once found, so the cached entry stays valid for the life of the process.
+// The runtime's export, looked up once. The module is pinned once found, so the cached entry stays
+// valid for the life of the process.
 static StoneMarkNodes stoneMarkExport() {
-    if (auto fn = stoneMarkNodes.load(std::memory_order_acquire)) return fn;
-    const ULONGLONG now = GetTickCount64();
-    if (now - stoneMarkProbed.load(std::memory_order_relaxed) < 2000) return nullptr;
-    stoneMarkProbed.store(now, std::memory_order_relaxed);
+    const int state = stoneMarkState.load(std::memory_order_acquire);
+    if (state < 0) return nullptr;
+    if (state > 0) return stoneMarkNodes.load(std::memory_order_relaxed);
     HMODULE runtime = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) return nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) {
+        stoneMarkState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
     const auto version = reinterpret_cast<StoneMarksVersion>(GetProcAddress(runtime, "character_marks_version"));
     const auto fn = reinterpret_cast<StoneMarkNodes>(GetProcAddress(runtime, "character_mark_nodes"));
-    if (!version || !fn || version() != 1) return nullptr;
-    stoneMarkNodes.store(fn, std::memory_order_release);
+    if (!version || !fn || version() != 1) {
+        stoneMarkState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
+    stoneMarkNodes.store(fn, std::memory_order_relaxed);
+    stoneMarkState.store(1, std::memory_order_release);
     return fn;
 }
 
@@ -77,11 +84,14 @@ struct StoneGl {
     StoneTextureStorage storage = nullptr;
     StoneTextureSubImage upload = nullptr;
     StoneTextureParameter parameter = nullptr;
+    WearBindBuffer bindBuffer = nullptr;
 };
 static bool loadStoneGl(StoneGl& s) {
-    return loadGl(s.bind, "glBindTextures") && loadGl(s.create, "glCreateTextures") &&
-           loadGl(s.storage, "glTextureStorage2D") && loadGl(s.upload, "glTextureSubImage2D") &&
-           loadGl(s.parameter, "glTextureParameteri");
+    return fp::glproc::loadForCurrentContext(s, [](StoneGl& out) {
+        return loadGl(out.bind, "glBindTextures") && loadGl(out.create, "glCreateTextures") &&
+               loadGl(out.storage, "glTextureStorage2D") && loadGl(out.upload, "glTextureSubImage2D") &&
+               loadGl(out.parameter, "glTextureParameteri") && loadGl(out.bindBuffer, "glBindBuffer");
+    });
 }
 
 // The maps (about 4 MB) are made once on a pool thread (about a quarter second), never on the
@@ -110,6 +120,10 @@ static const fp::stone::Maps* stoneSkinMaps() {
     return nullptr;
 }
 
+static void stoneSkinWarmup() {
+    stoneSkinMaps();
+}
+
 // Direct-state uploads, so no unit's binding or the active unit changes; cueLock held.
 static bool stoneSkinTextures(fp::CueResources& r, const StoneGl& s) {
     if (r.stoneTex[0] && r.stoneTex[1] && r.stoneTex[2]) return true;
@@ -121,9 +135,16 @@ static bool stoneSkinTextures(fp::CueResources& r, const StoneGl& s) {
     glGetIntegerv(0x821C, &minor);
     if (major < 4 || (major == 4 && minor < 5)) return false;
     s.create(0x0DE1, 3, r.stoneTex);
+    GLint prevUnpack = 0;
+    glGetIntegerv(0x88EF /* GL_PIXEL_UNPACK_BUFFER_BINDING */, &prevUnpack);
+    if (prevUnpack != 0 && s.bindBuffer) s.bindBuffer(0x88EC /* GL_PIXEL_UNPACK_BUFFER */, 0);
+    bool ok = true;
     const std::vector<uint8_t>* data[3] = {&maps->diffuse, &maps->specular, &maps->normal};
     for (unsigned t = 0; t < 3; ++t) {
-        if (!r.stoneTex[t]) return false;
+        if (!r.stoneTex[t]) {
+            ok = false;
+            break;
+        }
         s.storage(r.stoneTex[t], GLsizei(fp::stone::levels), 0x8058 /* RGBA8 */, GLsizei(fp::stone::size), GLsizei(fp::stone::size));
         for (unsigned l = 0, w = fp::stone::size; l < fp::stone::levels; ++l, w = w > 1 ? w / 2 : 1)
             s.upload(r.stoneTex[t], GLint(l), 0, 0, GLsizei(w), GLsizei(w), 0x1908 /* RGBA */, GL_UNSIGNED_BYTE,
@@ -133,7 +154,8 @@ static bool stoneSkinTextures(fp::CueResources& r, const StoneGl& s) {
         s.parameter(r.stoneTex[t], 0x2802 /* WRAP_S */, 0x2901 /* REPEAT */);
         s.parameter(r.stoneTex[t], 0x2803 /* WRAP_T */, 0x2901);
     }
-    return true;
+    if (prevUnpack != 0 && s.bindBuffer) s.bindBuffer(0x88EC /* GL_PIXEL_UNPACK_BUFFER */, GLuint(prevUnpack));
+    return ok;
 }
 
 // The material's own diffuse/specular/normal, as the submit bound them on units 0..2.
@@ -164,14 +186,13 @@ static bool skinFacesEmit(const WearPlan& plan, bool bind, const unsigned char* 
         if (cueDeletesInFlight || cueRetiring.load() || cueBindingFailed.load() ||
             InterlockedCompareExchange(&stopping, 0, 0) || !ownedNativeSwap(cueCurrentDC())) return false;
         StoneGl s{};
-        WearBindBuffer bindBuffer = nullptr;
-        if (!loadStoneGl(s) || (bind && !loadGl(bindBuffer, "glBindBuffer"))) return false;
+        if (!loadStoneGl(s)) return false;
         auto* owner = prepareCue();
         const GLuint* replacement = owner ? prepare(owner->resources, s, context) : nullptr;
         if (!replacement) return false;
         if (bind) {
             wearBind(plan.material + 8);
-            bindBuffer(0x8893, plan.buffer);
+            s.bindBuffer(0x8893, plan.buffer);
         }
         bool swapped = false;
         __try {

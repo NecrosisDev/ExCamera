@@ -49,7 +49,7 @@ struct Gl {
     using Blit = void(APIENTRY*)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
     Gen gen = procedure<Gen>("glGenFramebuffers"), genBuffer = procedure<Gen>("glGenRenderbuffers");
     Delete remove = procedure<Delete>("glDeleteFramebuffers"), removeBuffer = procedure<Delete>("glDeleteRenderbuffers");
-    Bind bind = procedure<Bind>("glBindFramebuffer"), bindBuffer = procedure<Bind>("glBindRenderbuffer"), arrayBuffer = procedure<Bind>("glBindBuffer");
+    Bind bind = procedure<Bind>("glBindFramebuffer"), bindBuffer = procedure<Bind>("glBindRenderbuffer"), bindArrayBuffer = procedure<Bind>("glBindBuffer");
     One vao = procedure<One>("glBindVertexArray"), program = procedure<One>("glUseProgram");
     Attach attach = procedure<Attach>("glFramebufferTexture2D");
     AttachBuffer attachBuffer = procedure<AttachBuffer>("glFramebufferRenderbuffer");
@@ -69,6 +69,11 @@ struct Target {
     bool pushed = false, backed = false;
     explicit Target(Gl& api) : gl(api) {}
     ~Target() {
+        if (wglGetCurrentContext() == nullptr) {
+            backed = false;
+            pushed = false;
+            return;
+        }
         restore();
         if (backup) gl.remove(1, &backup);
         if (eyeFbo) gl.remove(1, &eyeFbo);
@@ -100,8 +105,8 @@ struct Target {
         glReadBuffer(GLenum(savedReadBuffer));
         gl.program(GLuint(savedProgram));
         gl.vao(GLuint(savedVao));
-        gl.arrayBuffer(arrayBuffer, GLuint(savedArray));
-        gl.arrayBuffer(elementArrayBuffer, GLuint(savedElement));
+        gl.bindArrayBuffer(arrayBuffer, GLuint(savedArray));
+        gl.bindArrayBuffer(elementArrayBuffer, GLuint(savedElement));
         gl.bindBuffer(renderbuffer, GLuint(savedRenderbuffer));
         pushed = false;
         glMatrixMode(GL_PROJECTION);
@@ -190,6 +195,7 @@ struct Capture {
     int width = 0, height = 0;
     explicit Capture(Gl& api) : gl(api) {}
     ~Capture() {
+        if (wglGetCurrentContext() == nullptr) return;
         if (fbo) gl.remove(1, &fbo);
         if (colorTexture) glDeleteTextures(1, &colorTexture);
         if (depthTexture) glDeleteTextures(1, &depthTexture);
@@ -262,7 +268,13 @@ Options options() {
     return out;
 }
 std::atomic<uint64_t> trackingGeneration{0};
-std::string reconstructionReason = "geometry";
+SRWLOCK reconstructionReasonLock = SRWLOCK_INIT;
+char reconstructionReason[128] = "geometry";
+void setReconstructionReason(const char* text) {
+    AcquireSRWLockExclusive(&reconstructionReasonLock);
+    strncpy_s(reconstructionReason, sizeof(reconstructionReason), text ? text : "", _TRUNCATE);
+    ReleaseSRWLockExclusive(&reconstructionReasonLock);
+}
 struct Host {
     HGLRC context = wglGetCurrentContext();
     DWORD thread = GetCurrentThreadId();
@@ -289,13 +301,17 @@ struct Host {
     // otherwise a small reticle straight ahead. Both are quad layers the compositor places at a
     // fixed distance, so text stays readable and the eyes stay the head.
     EyeChain uiChain{}, reticleChain{}, statusChain{};
-    bool uiOpenNow = false, reticleDrawn = false, handsDrawnNow = false, statusDrawn = false, uiInWorldNow = false;
+    bool uiOpenNow = false, handsDrawnNow = false, uiInWorldNow = false;
     int statusFramesLeft = 0;
-    double frameMs = 0, frameMsPrevious = 0; // smoothed time between frame begins, from the performance counter
+    double frameMs = 0; // smoothed time between frame begins, from the performance counter
     long long lastBeginCounter = 0;
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
     static constexpr float reticleDistance = 2.f, reticleWidth = .03f;
     ~Host() {
+        if (wglGetCurrentContext() == nullptr) {
+            api.skipUnload = true;
+            return;
+        }
         client.destroyChain(uiChain);
         client.destroyChain(reticleChain);
         client.destroyChain(statusChain);
@@ -477,9 +493,9 @@ struct Host {
         ensureOverlays();
         if (!beamChain.chain) return nullptr;
         const XrVector3f span = sub(beamTo, beamFrom);
-        const float length = fp::xr::length(span);
-        if (!(length > .02f)) return nullptr;
-        const XrVector3f dir = scale(span, 1 / length);
+        const float spanLength = fp::xr::length(span);
+        if (!(spanLength > .02f)) return nullptr;
+        const XrVector3f dir = scale(span, 1 / spanLength);
         XrQuaternionf q = directionRotation({0, 1, 0}, dir); // the strip's up runs along the beam
         const XrVector3f toHead = sub(lastHead.position, beamFrom);
         const XrVector3f facing = sub(toHead, scale(dir, dot(toHead, dir))); // the part of the head direction across the beam
@@ -500,7 +516,7 @@ struct Host {
         beamQuad.subImage.swapchain = beamChain.chain;
         beamQuad.subImage.imageRect.extent = {beamWidthPixels, beamLengthPixels};
         beamQuad.pose = {q, add(beamFrom, scale(span, .5f))};
-        beamQuad.size = {pointerBeamWidth, length};
+        beamQuad.size = {pointerBeamWidth, spanLength};
         return reinterpret_cast<const XrCompositionLayerBaseHeader*>(&beamQuad);
     }
     const XrCompositionLayerBaseHeader* wristLayer() {
@@ -697,23 +713,30 @@ struct Host {
                 const auto motion = reinterpret_cast<Configure>(GetProcAddress(runtime, "excameraMockSetLocomotion"));
                 require(motion && motion(1), "emulator locomotion scenario configuration failed");
             }
-            const auto configure = reinterpret_cast<Configure>(GetProcAddress(runtime, "excameraMockSetContinuous"));
-            require(configure && configure(1), "matching continuous emulation runtime required");
+            const auto setContinuous = reinterpret_cast<Configure>(GetProcAddress(runtime, "excameraMockSetContinuous"));
+            require(setContinuous && setContinuous(1), "matching continuous emulation runtime required");
         }
     }
     // The CPU reference warp is evidence-grade only; a hardware session without an external host
     // keeps geometry stereo rather than pretending the approximation is the product.
-    void configure(EyeLayout eyes, RenderMode mode) {
+    void configure(EyeLayout eyes, RenderMode renderMode) {
         hands.gripAngleDegrees = eyes.gripAngleDegrees;
         hands.relaxedGrab = eyes.relaxedGrab;
         if (eyes.plausible()) config.layout = eyes;
-        if (mode == RenderMode::geometryStereo) { config.mode = mode; reconstructionReason = "geometry"; return; }
+        if (renderMode == RenderMode::geometryStereo) { config.mode = renderMode; setReconstructionReason("geometry"); return; }
         std::string reason;
         try {
             if (!reconstructor) reconstructor = std::make_unique<GpuReconstructor>();
         } catch (const std::exception& e) { reason = e.what(); }
-        if (reconstructor && reconstructor->prepare(reason)) { config.mode = mode; reconstructor->fill = mode == RenderMode::centerReconstructionFilled; reconstructionReason = reconstructor->name(); }
-        else { config.mode = RenderMode::geometryStereo; reconstructionReason = "unavailable: " + reason; }
+        if (reconstructor && reconstructor->prepare(reason)) {
+            config.mode = renderMode;
+            reconstructor->fill = renderMode == RenderMode::centerReconstructionFilled;
+            setReconstructionReason(reconstructor->name());
+        } else {
+            config.mode = RenderMode::geometryStereo;
+            const std::string detail = "unavailable: " + reason;
+            setReconstructionReason(detail.c_str());
+        }
     }
     bool owner() const { return context == wglGetCurrentContext() && thread == GetCurrentThreadId(); }
     void finish(bool accepted) {
@@ -975,10 +998,10 @@ bool begin(uint64_t serial, const NativePose& anchor, float clipNear, float clip
     return host->begin(serial, anchor, clipNear, clipFar, frame);
 }
 RenderMode mode() { return host ? host->config.mode : RenderMode::geometryStereo; }
-void configure(EyeLayout eyes, RenderMode mode) {
+void configure(EyeLayout eyes, RenderMode renderMode) {
     pendingLayout = eyes;
-    pendingMode = mode;
-    if (host && host->owner()) host->configure(eyes, mode);
+    pendingMode = renderMode;
+    if (host && host->owner()) host->configure(eyes, renderMode);
 }
 bool save(int w, int h) { return host && host->owner() && host->target.save(w, h); }
 void eyeRect(int w, int h) { if (host && host->owner()) { host->target.copyWidth = w; host->target.copyHeight = h; } }
@@ -996,8 +1019,18 @@ bool comfort(float strength) { return host && host->owner() && host->comfort(str
 void finish(bool accepted) { if (host && host->owner()) host->finish(accepted); }
 bool retire() {
     if (!host) return true;
+    if (wglGetCurrentContext() == nullptr && host->thread == GetCurrentThreadId()) {
+        host->api.skipUnload = true;
+        host.reset();
+        return true;
+    }
     if (!host->owner()) return false;
-    host->finish(false);
+    try {
+        host->finish(false);
+    } catch (...) {
+        host.reset();
+        throw;
+    }
     host.reset();
     return true;
 }
@@ -1007,12 +1040,30 @@ bool restoreOrigin(const XrPosef& stageOrigin) { return host && host->owner() &&
 void wrist(bool shown, const XrPosef& pose, const char* const* lines, unsigned count, int highlight) { if (host && host->owner()) host->wrist(shown, pose, lines, count, highlight); }
 void beam(bool shown, const XrVector3f& from, const XrVector3f& to, float u, float v) { if (host && host->owner()) host->beam(shown, from, to, u, v); }
 }
+void shutdown() {
+    if (!host) return;
+    if (host->owner()) {
+        try { host->finish(false); } catch (...) {}
+    } else if (wglGetCurrentContext() == nullptr) {
+        host->api.skipUnload = true;
+    } else {
+        return;
+    }
+    host.reset();
+}
 bool trackingFrame(TrackingFrame& out) {
     if (!host || !host->owner() || !host->config.upperBody) return false;
     out = host->tracking;
     if (!out.enabled || GetTickCount64() - out.tick > 100) { out.sample.focused = false; out.rig = {}; out.enabled = true; }
     return true;
 }
-const char* reconstructionStatus() { return reconstructionReason.c_str(); }
+const char* reconstructionStatus() {
+    thread_local char buf[128]{};
+    AcquireSRWLockShared(&reconstructionReasonLock);
+    std::memcpy(buf, reconstructionReason, sizeof(buf));
+    ReleaseSRWLockShared(&reconstructionReasonLock);
+    buf[sizeof(buf) - 1] = '\0';
+    return buf;
+}
 Backend emulatedBackend() { return {configure, begin, mode, save, prepare, copy, reconstruct, restore, overlay, recenter, comfort, haptic, finish, retire, lost, originInStage, restoreOrigin, wrist, beam, eyeRect}; }
 }

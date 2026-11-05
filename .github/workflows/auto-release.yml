@@ -1,13 +1,20 @@
 name: Auto release
 
-# A push to main whose FP_BUILD (src/build_identity.h) has no v<FP_BUILD> tag yet creates that tag and starts the
-# Release workflow on it; later pushes with the same FP_BUILD publish nothing. Bump FP_BUILD to release again.
+# When src/build_identity.h changes on main to a new SemVer FP_BUILD (matching manifest.toml)
+# with no v<FP_BUILD> release yet, create the tag if needed and dispatch release.yml.
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/build_identity.h'
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: excamera-auto-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   tag:
@@ -18,15 +25,60 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out source
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Tag a new FP_BUILD and start its release
+
+      - name: Validate FP_BUILD, tag if absent, and dispatch Release
+        shell: bash
         run: |
-          version=$(tr -d '\r' < src/build_identity.h | sed -nE 's/^#define FP_BUILD "([^"]+)"$/\1/p' | head -n1)
+          set -euo pipefail
+          version=$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import build
+          from tools import release
+
+          ver = build.read_define(Path('src/build_identity.h'), 'FP_BUILD')
+          semver_re = r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if not re.fullmatch(semver_re, ver):
+              raise SystemExit(f'Invalid SemVer FP_BUILD in src/build_identity.h: {ver!r}')
+          release.version_from_tag('v' + ver)
+          build.validate_manifest(Path('manifest.toml'), expected_version=ver)
+          print(ver)
+          PY
+          )
           tag="v$version"
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" > /dev/null 2>&1; then
-            echo "$tag already exists"; exit 0
+
+          set +e
+          ref_resp=$(gh api -i "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" 2>&1)
+          ref_rc=$?
+          set -e
+          ref_status=$(printf '%s\n' "$ref_resp" | sed -nE '1s/^HTTP\/[0-9.]+ ([0-9]{3}).*/\1/p')
+          if [ "$ref_rc" -eq 0 ] && [ "$ref_status" = "200" ]; then
+            echo "Tag $tag already exists; checking whether its GitHub Release exists."
+          elif [ "$ref_status" = "404" ]; then
+            echo "Creating tag $tag for commit $GITHUB_SHA"
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+          else
+            echo "Failed checking tag ref $tag (exit $ref_rc, HTTP ${ref_status:-unknown}):" >&2
+            printf '%s\n' "$ref_resp" >&2
+            exit 1
           fi
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
-          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$tag"
+
+          set +e
+          view_out=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" 2>&1)
+          view_rc=$?
+          set -e
+          if [ "$view_rc" -eq 0 ]; then
+            echo "GitHub Release for $tag already exists; skipping dispatch."
+            exit 0
+          elif ! printf '%s\n' "$view_out" | grep -qiE 'release not found|HTTP 404'; then
+            echo "Failed checking GitHub Release for $tag (exit $view_rc):" >&2
+            printf '%s\n' "$view_out" >&2
+            exit 1
+          fi
+
+          echo "Dispatching release.yml for $tag"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$tag" -f tag="$tag"

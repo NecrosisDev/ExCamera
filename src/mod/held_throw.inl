@@ -153,7 +153,7 @@ static QueuedFling captureQueuedFling(uintptr_t payload, uintptr_t body, const H
         release.hold = intent.hold; release.cancellation = intent.cancellation;
         release.generation = intent.generation; release.mode = viewMode.load();
         release.queuedAt = now;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { release = {}; }
+    } __except (countFaultAndHandle(&cursorFaults)) { release = {}; }
     return release;
 }
 static uintptr_t queueWorkFor(uintptr_t caller, uintptr_t queue, uintptr_t callback, uintptr_t payload) {
@@ -171,7 +171,7 @@ static uintptr_t queueWorkFor(uintptr_t caller, uintptr_t queue, uintptr_t callb
         __try {
             if (withPose && readable(payload, field::heldRelease::body + sizeof(uintptr_t)))
                 body = *(uintptr_t*)(payload + field::heldRelease::body);
-        } __except (EXCEPTION_EXECUTE_HANDLER) { body = 0; }
+        } __except (countFaultAndHandle(&cursorFaults)) { body = 0; }
         const HeldThrowIntent intent = withPose ? takeHeldThrow() : HeldThrowIntent{};
         const QueuedFling release = withPose ? captureQueuedFling(payload, body, intent) : QueuedFling{};
         AcquireSRWLockExclusive(&heldThrowLock);
@@ -192,7 +192,7 @@ static uintptr_t queueWorkFor(uintptr_t caller, uintptr_t queue, uintptr_t callb
                         break; // A full table loses only this optional throw, never a native job.
                     }
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) { }
+        } __except (countFaultAndHandle(&cursorFaults)) { }
         publishQueuedFlingsLocked();
         ReleaseSRWLockExclusive(&heldThrowLock);
     }
@@ -213,7 +213,7 @@ static uintptr_t applyHeldRelease(uintptr_t payload) {
                 *(uintptr_t*)(payload + field::heldRelease::body) == entry.body) {
                 serial = entry.sequence; entry.phase = FlingPhase::nativeRelease;
             } else entry = {};
-        } __except (EXCEPTION_EXECUTE_HANDLER) { entry = {}; }
+        } __except (countFaultAndHandle(&cursorFaults)) { entry = {}; }
         break;
     }
     publishQueuedFlingsLocked();
@@ -236,7 +236,7 @@ static uintptr_t applyHeldRelease(uintptr_t payload) {
                     entry->payload = 0; entry->expectedSettling = 8;
                     entry->phase = FlingPhase::settling;
                 } else *entry = {};
-            } __except (EXCEPTION_EXECUTE_HANDLER) { *entry = {}; }
+            } __except (countFaultAndHandle(&cursorFaults)) { *entry = {}; }
         }
         publishQueuedFlingsLocked();
         ReleaseSRWLockExclusive(&heldThrowLock);
@@ -268,7 +268,7 @@ static void heldBodyIntegrateProfileBody(uintptr_t body) {
                     entry = {};
                     if (applied) ++flings;
                 }
-            } __except (EXCEPTION_EXECUTE_HANDLER) { entry = {}; }
+            } __except (countFaultAndHandle(&cursorFaults)) { entry = {}; }
             publishQueuedFlingsLocked();
             break;
         }

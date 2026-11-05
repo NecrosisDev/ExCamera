@@ -54,14 +54,16 @@ struct RawLook {
     bool relative = false;
     void reset() { dx = dy = 0; }
     void event(bool absolute, long x, long y, bool owns) {
-        // Never carry relative counts across an absolute-device/cursor fallback.
-        // Reset before adding the first fresh relative packet on a handoff.
-        if (relative == absolute) reset();
-        relative = !absolute;
-        if (!absolute && owns) {
-            dx += x;
-            dy += y;
+        // Ignore synthetic absolute WM_INPUT packets (overlays, touchpads, background devices)
+        // so they never wipe accumulated relative counts; discard stale motion when unowned.
+        if (absolute) return;
+        if (!owns) {
+            reset();
+            return;
         }
+        relative = true;
+        dx += x;
+        dy += y;
     }
     bool take(long& x, long& y) {
         if (!relative) return false;
@@ -78,10 +80,12 @@ struct RawLook {
 // The approved optional held binding inverts that natural choice. Returns the
 // aim heading to present to the classifier for this one press.
 inline float wrapHeading(float a) {
+    if (!std::isfinite(a)) return 0.f;
     const float pi = 3.14159265f;
-    while (a > pi) a -= 2 * pi;
-    while (a < -pi) a += 2 * pi;
-    return a;
+    if (a >= -pi && a <= pi) return a;
+    if (a > pi && a <= 3.f * pi) return a - 2.f * pi;
+    if (a < -pi && a >= -3.f * pi) return a + 2.f * pi;
+    return std::remainder(a, 6.28318530718f);
 }
 inline bool oppositeSide(float aim, float body, bool wideThreshold) {
     // Match native 1C8C0: float subtraction, double pi bounds, one float wrap.
@@ -388,7 +392,7 @@ inline int vrRenderModeFromText(const wchar_t* t) {
     const wchar_t* a = t;
     while (*a && *w && ((*a | 32) == (*w | 32))) { ++a; ++w; }
     if (*w) return 0;
-    return !*a ? 1 : (*a | 32) == '-' || (*a | 32) == '_' ? 2 : 0; // reconstruction-filled
+    return !*a ? 1 : *a == L'-' || *a == L'_' ? 2 : 0; // reconstruction-filled
 }
 inline const wchar_t* vrRenderModeText(int m) { return m == 2 ? L"reconstruction-filled" : m == 1 ? L"reconstruction" : L"geometry"; }
 inline int vrHandsFromText(const wchar_t* t) {
@@ -403,7 +407,7 @@ inline const wchar_t* vrHeadsetText(int m) { return m ? L"on" : L"off"; }
 inline int vrTurningFromText(const wchar_t* t) {
     if (!t) return 1;
     if ((t[0] | 32) == 's' && (t[1] | 32) == 'm') return 3;
-    if ((t[0] | 32) == 's' && (t[1] | 32) == 'n') return t[4] == '4' ? 2 : 1; // snap30 / snap45
+    if ((t[0] | 32) == 's' && (t[1] | 32) == 'n') return t[2] && t[3] && t[4] == '4' ? 2 : 1; // snap30 / snap45
     if ((t[0] | 32) == 'o' && (t[1] | 32) == 'f') return 0;
     return t[0] >= '0' && t[0] <= '3' && !t[1] ? t[0] - '0' : 1;
 }
@@ -800,10 +804,12 @@ inline HeadAngles gazeAngles(const float* g) {
     return a;
 }
 inline float angleDelta(float now, float before) {
-    float d = now - before;
-    while (d > 180.f) d -= 360.f;
-    while (d < -180.f) d += 360.f;
-    return d;
+    const float d = now - before;
+    if (!std::isfinite(d)) return 0.f;
+    if (d >= -180.f && d <= 180.f) return d;
+    if (d > 180.f && d <= 540.f) return d - 360.f;
+    if (d < -180.f && d >= -540.f) return d + 360.f;
+    return std::remainder(d, 360.f);
 }
 constexpr float wobbleComfortDegrees = 0.1f, wobbleFullDegrees = 1.5f,
                 axisCapAtFull = 0.15f; // per physics tick
@@ -960,6 +966,26 @@ inline bool heldPointOnPlane(const float* origin, const float* dir, float distan
         if (!std::isfinite(out[i])) return false;
     }
     return true;
+}
+// Two virtual keys name the same key: equal, or one is a modifier's generic code (VK_MENU 0x12, VK_CONTROL 0x11,
+// VK_SHIFT 0x10) and the other its left or right code.
+inline bool sameKey(unsigned a, unsigned b) {
+    if (!a || a >= 256 || !b || b >= 256) return false;
+    if (a == b) return true;
+    constexpr unsigned modifiers[][3] = {{0x12, 0xA4, 0xA5}, {0x11, 0xA2, 0xA3}, {0x10, 0xA0, 0xA1}};
+    for (const auto& family : modifiers)
+        if ((a == family[0] && (b == family[1] || b == family[2])) || (b == family[0] && (a == family[1] || a == family[2])))
+            return true;
+    return false;
+}
+// A key the game's own Controls use (its binding table: movement, run, crouch, the alternate attack that makes a
+// thrust, Cursor Look, interact...). The mod's Kick, Jump and Swap shoulder keys take their key from the game
+// altogether, so they never take one of these: Alt as Kick swallowed Alt + left mouse, the game's stab.
+template <size_t N>
+inline bool gameUsesKey(unsigned key, const unsigned (&bindings)[N]) {
+    for (unsigned bound : bindings)
+        if (sameKey(key, bound)) return true;
+    return false;
 }
 // the F6 press that re-armed the mod (polled) may still
 // arrive as WM_KEYDOWN after the window procedure is back; ignore F6 that soon.

@@ -1,6 +1,35 @@
 # Changelog
 
-Unreleased
+v0.3.0 (revision 60)
+
+- Alt + left mouse stabs again when Kick or Jump was bound to Alt. The game uses Alt for its thrust, and those keys took it away from the game. Kick and Jump now leave any key the game's Controls use to the game, and Settings refuses such a key for them. If you had Kick on Alt, choose another key for it.
+- Fixed level loading hitches and stuttering: eliminated synchronous shader double-compilation in glShaderSource, gated sector traversals and roster scans during level population, precompiled wound/fire/bake shaders, paused worker disk logging while loading, and generated procedural stone textures asynchronously on a background worker thread.
+- Fixed floor reflection artifacts: corrected Screen-Space Reflection (SSR) dielectric blending so reflected dark objects (such as shields) no longer carve black silhouette hollows into the floor.
+- Fixed procedural wounds and impact feedback: hooked damage and physical impact detours to enable procedural cuts, blunt bruises, bloody weapon drips, directional camera impact kicks, and damage flash vignettes.
+- Fixed finger posing and sector transfers: activated dynamic stack node movement hook to prevent native stack overflow crashes and enable full finger bone physics drive.
+- Added live telemetry toast and wound debug mode (F12) to inspect real-time active wounds, drips, blade blood saturation, and finger poses with vibrant neon highlights.
+- Enabled native in-game Manual First Person page hook on the main menu.
+- Added native in-game Manual page: "First Person" guide page dynamically injected into the main menu MANUAL tab, complete with rich-text formatting, keybindings, combat guidance, and object manipulation tips without modifying on-disk archives.
+- Fixed character movement and turning jitter/rubberbanding by propagating head stabilization deltas into the physical history buffer so integration velocities remain continuous.
+- Fixed visual artifacts and ghosting/black rings in perspective post-processing effects (SSAO, SSR, and contact shadows) at full native resolution with all graphics settings enabled.
+- Fixed container and inventory item drops to the ground: items dragged out of open containers or bags can now be dropped directly onto the floor or level surfaces freely.
+- Polished 3D object manipulation: holding RMB while dragging an item rotates it freely along pitch and yaw in true 3D space.
+- Fresh installs no longer lose the Mod Settings tab. The default third-person FOV now says "Same", which fits its slider; any other value too long for it is just shortened.
+- Dropping an item from your inventory next to a wall tries a closer spot on the same line, instead of cancelling. If there's no clear spot, the item stays in your inventory.
+- Items dropped while looking down no longer fail because of the height check, but only when your view starts above the drop height.
+- Aim oval: a mouse move splits the same way on a slow frame as on fast ones, and resizing the window keeps your aim instead of recentring it.
+- Clicking away while binding a key no longer binds the left mouse button.
+- Rotate, Kick, Jump and Recenter can no longer share a key. F8 in the overhead view no longer opens Settings later. The By category switch only shows with other mods installed. `fault-log.txt` rolls over at 256 KB.
+- Head tracking moved to Controls, so it can be switched off without a VR build. Blade draw gain reaches its full 400 %. Defaults restores finger poses for other characters too.
+- Removed the Lean key row, which did nothing. Wound marks (procedural cuts, punctures, bruises, and running blood) are fully integrated natively into ExCamera.
+- Fixed "Task fatal error" after arena rounds: moving a character between scenes overflowed a fixed list in the game once finger bones were on. Finger poses need the standard game build for this fix and stay off on others.
+- World object detail is off by default, because it draws thin dark lines across furniture. Turn it on under Surface detail if you don't mind them.
+- Far rooms: the game only draws rooms next to the one you're in, so a far doorway could show solid black in first person. One more room now shows through doorways. The Draw far rooms setting switches it off. Standard build only; Hellmode keeps the game's rule.
+- Hair and headwear weighted partly to the neck no longer jitter in first person: worn pieces stay attached to the view, and hair merged into the head is hidden with it.
+- A slow title load no longer shows a false "did not finish starting" error; the launcher now waits as long as the mod does.
+- A short in-game message confirms the mod started and shows its keys. The launcher's errors are in plain language, and an unsupported game version says to look for a new release.
+- The ZIP now includes a README.txt. The per-spawn debug log is dev-only.
+- ExCamera operates completely standalone with its own integrated native settings and procedural damage passes; ExanimaLua is not required.
 
 - If the Settings integration refuses a changed native owner, restore the game's original Settings table when ownership is still proven; leave unknown replacement tables untouched.
 - If the displayed-pointer sample becomes stale during a native click, fall back to the game's own pick coordinates instead of consuming the pickup. Record how often that fallback occurs.
@@ -16,7 +45,9 @@ Unreleased
 - The settings panel reads the game's GUI size from `hm_saves` on Hellmode installs instead of assuming AppData.
 - `build.py --dev`: dev-only build with a readiness file for automation and a save-slot loader driven by `dev-load.ini`. Never packaged; the loader hasn't loaded a slot in game yet.
 - Casts and comments tidied; camera math untouched.
-- Checked with MSVC, the generated tables, offline admission checks on both EXEs, a Hellmode title run and one in-game death. VR, the effects and the decal fix still need eyes in game. FPS gains unmeasured.
+- VR: recentering and the wrist menu no longer write `first-person.ini` from the render thread. The session worker saves them, so the headset doesn't drop a frame on a recenter and a wrist-menu change can't overwrite a settings save made at the same moment.
+- VR: a damaged `RecenterOrigin` line (nan, inf or a zero rotation) is ignored instead of handed to the headset runtime.
+- Checked with MSVC, the generated tables, and offline admission checks on both EXEs. See [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for the release build's observed status. VR, the effects and the decal fix still need eyes in game. FPS gains unmeasured.
 
 v0.2.3 (revision 58)
 

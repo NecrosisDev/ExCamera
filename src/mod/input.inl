@@ -10,19 +10,118 @@ static void recordHeldThrow(int wheel, float distance);
 static bool manualCombatNow();
 static bool bindingContextNow();
 static bool nativeSettingsBindingInput(UINT message, WPARAM wp, LPARAM lp);
+static bool readable(uintptr_t address, size_t size);
+static bool readable(uintptr_t address, size_t size, MEMORY_BASIC_INFORMATION& region);
+static inline bool readableRegionContains(const MEMORY_BASIC_INFORMATION& region, uintptr_t address, size_t size);
+
+inline uintptr_t characterSector(uintptr_t characterRoot) {
+    const uintptr_t mesh = readable(characterRoot, field::character::sceneNode + sizeof(uintptr_t))
+                               ? *reinterpret_cast<const uintptr_t*>(characterRoot + field::character::sceneNode)
+                               : 0;
+    return readable(mesh, field::sceneNode::sector + sizeof(uintptr_t))
+               ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector)
+               : 0;
+}
+
+inline bool readSectorOrigin(uintptr_t sector, float* out) {
+    if (!readable(sector, field::sector::origin + 3 * sizeof(float))) return false;
+    std::memcpy(out, reinterpret_cast<const void*>(sector + field::sector::origin), 3 * sizeof(float));
+    return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
+}
+
+inline void addSectorOrigin(const float* localPos, uintptr_t sector, float* worldPos) {
+    const auto* sectorOrig = reinterpret_cast<const float*>(sector + field::sector::origin);
+    for (int i = 0; i < 3; ++i) worldPos[i] = localPos[i] + sectorOrig[i];
+}
+
+inline void resolveNearerSectorWorld(const float* rawPos, const float* sectorOrig, const float* refWorld,
+                                     float* worldOut) {
+    float dRaw = 0.f, dShifted = 0.f, shifted[3];
+    for (int i = 0; i < 3; ++i) {
+        shifted[i] = rawPos[i] + sectorOrig[i];
+        const float a = rawPos[i] - refWorld[i], b = shifted[i] - refWorld[i];
+        dRaw += a * a;
+        dShifted += b * b;
+    }
+    const float* best = dShifted < dRaw ? shifted : rawPos;
+    for (int i = 0; i < 3; ++i) worldOut[i] = best[i];
+}
+
+struct CachedWindowGeometry {
+    LONGLONG fgQpc = 0;
+    unsigned fgEpoch = 0;
+    HWND foreground = nullptr;
+    LONGLONG rectQpc = 0;
+    unsigned rectEpoch = 0;
+    HWND rectWindow = nullptr;
+    RECT client{};
+    RECT screenClip{};
+    POINT screenCenter{};
+    bool rectValid = false;
+};
+
+static SRWLOCK windowCacheLock = SRWLOCK_INIT;
+static CachedWindowGeometry windowCache{};
+static std::atomic<unsigned> windowCacheEpoch{1};
+
+static SRWLOCK pointerCaptureLock = SRWLOCK_INIT;
+static RECT lastClipRect{-1, -1, -1, -1};
+static HWND lastClipWindow = nullptr;
+
+inline void invalidateWindowGeometryCache() {
+    windowCacheEpoch.fetch_add(1, std::memory_order_release);
+}
+
+static void clearPointerClipCache(bool unclip) {
+    AcquireSRWLockExclusive(&pointerCaptureLock);
+    lastClipRect = {-1, -1, -1, -1};
+    lastClipWindow = nullptr;
+    ReleaseSRWLockExclusive(&pointerCaptureLock);
+    if (unclip && InterlockedExchange(&cursorClipped, 0)) ClipCursor(nullptr);
+}
+
+static bool pointerClipMatches(HWND w, const RECT& screenClip) {
+    if (!w || !InterlockedCompareExchange(&cursorClipped, 0, 0)) return false;
+    AcquireSRWLockShared(&pointerCaptureLock);
+    const bool matches = lastClipWindow == w && EqualRect(&screenClip, &lastClipRect) != 0;
+    ReleaseSRWLockShared(&pointerCaptureLock);
+    return matches;
+}
+
+static void syncPointerCapture(HWND w, const RECT& screenClip, const POINT& center, bool wantCapture) {
+    if (!wantCapture || !w) {
+        InterlockedExchange(&mouseCaptured, 0);
+        clearPointerClipCache(true);
+        return;
+    }
+    const bool clipped = InterlockedCompareExchange(&cursorClipped, 0, 0) != 0;
+    AcquireSRWLockExclusive(&pointerCaptureLock);
+    const bool needClip = !clipped || lastClipWindow != w || !EqualRect(&screenClip, &lastClipRect);
+    if (needClip) {
+        if (ClipCursor(&screenClip)) {
+            lastClipRect = screenClip;
+            lastClipWindow = w;
+            InterlockedExchange(&cursorClipped, 1);
+        } else {
+            lastClipRect = {-1, -1, -1, -1};
+            lastClipWindow = nullptr;
+            InterlockedExchange(&cursorClipped, 0);
+        }
+    }
+    ReleaseSRWLockExclusive(&pointerCaptureLock);
+    SetCursorPos(center.x, center.y);
+    InterlockedExchange(&mouseCaptured, 1);
+}
 
 static inline bool alternateBindingKey(unsigned key) {
-    const unsigned alternate = nativeBinding(6);
-    if (!key || key >= 256 || !alternate || alternate >= 256) return false;
-    if (key == alternate) return true;
-    constexpr unsigned modifiers[][3] = {{VK_MENU, VK_LMENU, VK_RMENU},
-                                         {VK_CONTROL, VK_LCONTROL, VK_RCONTROL},
-                                         {VK_SHIFT, VK_LSHIFT, VK_RSHIFT}};
-    for (const auto& family : modifiers)
-        if ((key == family[0] && (alternate == family[1] || alternate == family[2])) ||
-            (alternate == family[0] && (key == family[1] || key == family[2])))
-            return true;
-    return false;
+    return fp::sameKey(key, nativeBinding(6));
+}
+// Any of the game's own Controls bindings (fp::gameUsesKey): the mod's whole-key actions leave these to the game.
+static bool gameBindingKey(unsigned key) {
+    if (!base) return false;
+    unsigned bindings[field::bindings::count];
+    for (size_t i = 0; i < field::bindings::count; ++i) bindings[i] = nativeBinding(i);
+    return fp::gameUsesKey(key, bindings);
 }
 
 static bool holdingItem() {
@@ -32,7 +131,7 @@ static bool holdingItem() {
     int kind = 0;
     __try {
         kind = dragKind();
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         kind = 0;
     }
     return kind == 1;
@@ -157,13 +256,32 @@ static void retireWindowInstallation(const WindowInstallation& owner) {
 }
 
 static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
+    __try {
     const WindowInstallation owner = windowInstallationSnapshot();
     if (owner.window != w || !owner.previous || owner.retired)
         return DefWindowProcW(w, message, wp, lp);
     if (message == WM_NCDESTROY) {
+        invalidateWindowGeometryCache();
+        clearPointerClipCache(true);
         const LRESULT result = CallWindowProcW(owner.previous, w, message, wp, lp);
         retireWindowInstallation(owner);
         return result;
+    }
+    if (message == WM_MOVE || message == WM_MOVING || message == WM_SIZE || message == WM_SIZING ||
+        message == WM_ENTERSIZEMOVE || message == WM_EXITSIZEMOVE || message == WM_WINDOWPOSCHANGED ||
+        message == WM_DISPLAYCHANGE) {
+        invalidateWindowGeometryCache();
+        if (message == WM_MOVE || message == WM_SIZE || message == WM_ENTERSIZEMOVE ||
+            message == WM_EXITSIZEMOVE || message == WM_DISPLAYCHANGE) {
+            InterlockedExchange(&mouseCaptured, 0);
+            clearPointerClipCache(true);
+            AcquireSRWLockExclusive(&rawLock);
+            rawLook.reset();
+            ReleaseSRWLockExclusive(&rawLock);
+        }
+    } else if (message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_ACTIVATE ||
+               message == WM_ACTIVATEAPP || message == WM_CANCELMODE) {
+        invalidateWindowGeometryCache();
     }
     if (InterlockedCompareExchange(&stopping, 0, 0))
         return CallWindowProcW(owner.previous, w, message, wp, lp);
@@ -208,13 +326,15 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 if (cursorKey != bindingKey) inputOwner.windowBegin(cursorKey);
             }
             const bool cursorToggleActive = !repeat && bindingKey == static_cast<int>(nativeBinding(8)) &&
-                                            InterlockedCompareExchange(&rmbFree, 0, 0);
+                                            cursorFreeBitSet(rmbFreeBit);
             const bool canTake = !repeat && (bindingContextNow() || cursorToggleActive);
             if (canTake && bindingKey == rotateHeldKey.load() && holdingItem()) {
                 inputOwner.windowClaim(bindingKey);
                 return xbutton ? TRUE : 0;
             }
-            if (canTake && bindingKey && (bindingKey == kickKey.load() || bindingKey == jumpKey.load())) { // the kick and jump keys: the game never sees them
+            // The kick and jump keys: the game never sees them, so a key the game itself uses stays the game's.
+            if (canTake && bindingKey && (bindingKey == kickKey.load() || bindingKey == jumpKey.load()) &&
+                !gameBindingKey(unsigned(bindingKey))) {
                 inputOwner.windowClaim(bindingKey);
                 if (bindingKey == kickKey.load()) motionKickRequested = true;
                 if (bindingKey == jumpKey.load()) motionJumpRequested = true;
@@ -276,7 +396,8 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         inputOwner.movementUp(bit);
 
     // The Settings window scrolls with the wheel; nothing of the camera's takes it while the window is up.
-    const uintptr_t optionsForm = message == WM_MOUSEWHEEL && base ? *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::guiOptionsForm)) : 0;
+    const uintptr_t optionsSlot = message == WM_MOUSEWHEEL && base ? optionalGameAt(fp::sig::guiOptionsForm) : 0;
+    const uintptr_t optionsForm = optionsSlot ? *reinterpret_cast<const uintptr_t*>(optionsSlot) : 0;
     const bool optionsShown = optionsForm && readable(optionsForm + field::form::visible, 1) &&
                               *reinterpret_cast<const unsigned char*>(optionsForm + field::form::visible);
     if (optionsShown) {
@@ -303,7 +424,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         int kind = 0;
         __try {
             kind = dragKind();
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&cursorFaults)) {
             kind = 0;
         }
         if (kind == 1) {
@@ -336,7 +457,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
-    if (message == WM_KEYDOWN && !(lp & (1LL << 30)) && (wp == VK_F6 || wp == VK_F8 || wp == VK_ESCAPE))
+    if (message == WM_KEYDOWN && !(lp & (1LL << 30)) && (wp == VK_F6 || wp == VK_F8 || wp == VK_F12 || wp == VK_ESCAPE))
         rmbEvent(fp::RmbEvent::lost, false);
 
     if (message == WM_KEYDOWN && !(lp & (1LL << 30))) {
@@ -368,8 +489,36 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (wp == VK_F8) {
-            InterlockedExchange(&cursorFree, !InterlockedCompareExchange(&cursorFree, 0, 0));
+            // The worker opens Settings only in play or at the title. Elsewhere a press would wait and pop up later.
+            const ULONGLONG gone = noPlayerSince.load();
+            if (!cursorFreeBitSet(cursorFreeBit) && !InterlockedCompareExchange(&active, 0, 0) &&
+                !(gone && GetTickCount64() - gone >= 2000))
+                return 0;
+            if (!layout.optionalGroupAvailable("nativeSettings")) {
+                showNotice(FP_SHOWN_NAME L": in-game Mod Settings is unavailable on this Exanima version; "
+                                         L"first-person.ini remains active.");
+                return 0;
+            }
+            setCursorFreeBit(cursorFreeBit, !cursorFreeBitSet(cursorFreeBit));
             releaseInput();
+            return 0;
+        }
+        if (wp == VK_F12) {
+            const bool next = !woundDebug.load(std::memory_order_relaxed);
+            woundDebug.store(next, std::memory_order_relaxed);
+            const wchar_t* poseNames[] = { L"Open", L"Fist", L"Hilt", L"Hold", L"Flat", L"Limp" };
+            const int pL = std::clamp(trackedPlayerPoseLeft.load(), 0, 5);
+            const int pR = std::clamp(trackedPlayerPoseRight.load(), 0, 5);
+            const unsigned wCount = activeWoundsCount.load();
+            const unsigned dCount = activeDripsCount.load();
+            const int bSat = int(activeWeaponBloodMax.load() * 100.f);
+            wchar_t msg[256];
+            swprintf_s(msg, L"%s: %s | Wounds: %u | Drips: %u | Blood: %d%% | Hands: [L:%s R:%s]",
+                       FP_SHOWN_NAME,
+                       next ? L"Debug ON (neon)" : L"Debug OFF (natural)",
+                       wCount, dCount, bSat,
+                       poseNames[pL], poseNames[pR]);
+            showNotice(msg, 3500, NoticeKind::info);
             return 0;
         }
         if (wp == VK_ESCAPE) releaseInput();
@@ -378,9 +527,11 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
     if (message == WM_KILLFOCUS || message == WM_CANCELMODE || (message == WM_ACTIVATEAPP && !wp)) {
         ++inventoryOwnerEpoch;
         rmbEvent(fp::RmbEvent::focusLost, false);
+        clearPointerClipCache(false);
         releaseInput();
     }
     return CallWindowProcW(owner.previous, w, message, wp, lp);
+    } __except (countFaultAndContinue(&windowFaults)) { return 0; }
 }
 
 static bool consoleWindow(HWND w) {
@@ -388,11 +539,93 @@ static bool consoleWindow(HWND w) {
     return GetClassNameW(w, c, 32) && !wcscmp(c, L"ConsoleWindowClass");
 }
 
+static inline LONGLONG windowCacheNowTicks(LONGLONG& maxAgeTicks) {
+    LARGE_INTEGER qpc{};
+    QueryPerformanceCounter(&qpc);
+    const LONGLONG freq = frequency.QuadPart;
+    if (freq > 0) {
+        maxAgeTicks = freq / 500; // 2 ms usermode QPC cache window
+        if (maxAgeTicks < 1) maxAgeTicks = 1;
+        return qpc.QuadPart;
+    }
+    maxAgeTicks = 2;
+    return LONGLONG(GetTickCount64());
+}
+
 static HWND gameWindow() {
+    LONGLONG maxAge = 0;
+    const LONGLONG nowTicks = windowCacheNowTicks(maxAge);
+    const unsigned epoch = windowCacheEpoch.load(std::memory_order_acquire);
+    AcquireSRWLockShared(&windowCacheLock);
+    if (windowCache.fgEpoch == epoch && nowTicks >= windowCache.fgQpc &&
+        nowTicks - windowCache.fgQpc <= maxAge) {
+        const HWND cached = windowCache.foreground;
+        ReleaseSRWLockShared(&windowCacheLock);
+        return cached;
+    }
+    ReleaseSRWLockShared(&windowCacheLock);
+
     HWND w = GetForegroundWindow();
     DWORD pid = 0;
-    GetWindowThreadProcessId(w, &pid);
-    return pid == GetCurrentProcessId() && !consoleWindow(w) ? w : nullptr;
+    if (w) GetWindowThreadProcessId(w, &pid);
+    const HWND resolved = w && pid == GetCurrentProcessId() && !consoleWindow(w) ? w : nullptr;
+
+    AcquireSRWLockExclusive(&windowCacheLock);
+    windowCache.fgQpc = nowTicks;
+    windowCache.fgEpoch = epoch;
+    windowCache.foreground = resolved;
+    ReleaseSRWLockExclusive(&windowCacheLock);
+    return resolved;
+}
+
+static bool cachedWindowClient(HWND w, RECT& client, RECT* screenClip = nullptr, POINT* screenCenter = nullptr) {
+    if (!w) return false;
+    LONGLONG maxAge = 0;
+    const LONGLONG nowTicks = windowCacheNowTicks(maxAge);
+    const unsigned epoch = windowCacheEpoch.load(std::memory_order_acquire);
+    AcquireSRWLockShared(&windowCacheLock);
+    if (windowCache.rectEpoch == epoch && windowCache.rectWindow == w && nowTicks >= windowCache.rectQpc &&
+        nowTicks - windowCache.rectQpc <= maxAge) {
+        const bool valid = windowCache.rectValid;
+        if (valid) {
+            client = windowCache.client;
+            if (screenClip) *screenClip = windowCache.screenClip;
+            if (screenCenter) *screenCenter = windowCache.screenCenter;
+        }
+        ReleaseSRWLockShared(&windowCacheLock);
+        return valid;
+    }
+    ReleaseSRWLockShared(&windowCacheLock);
+
+    RECT localClient{}, localScreen{};
+    POINT localCenter{};
+    bool valid = GetClientRect(w, &localClient) && localClient.right > 0 && localClient.bottom > 0;
+    if (valid) {
+        localScreen = localClient;
+        SetLastError(0);
+        if (!MapWindowPoints(w, nullptr, reinterpret_cast<POINT*>(&localScreen), 2) && GetLastError() != 0)
+            valid = false;
+        else
+            localCenter = {localScreen.left + localClient.right / 2, localScreen.top + localClient.bottom / 2};
+    }
+
+    AcquireSRWLockExclusive(&windowCacheLock);
+    windowCache.rectQpc = nowTicks;
+    windowCache.rectEpoch = epoch;
+    windowCache.rectWindow = w;
+    windowCache.rectValid = valid;
+    if (valid) {
+        windowCache.client = localClient;
+        windowCache.screenClip = localScreen;
+        windowCache.screenCenter = localCenter;
+    }
+    ReleaseSRWLockExclusive(&windowCacheLock);
+
+    if (!valid) return false;
+    client = localClient;
+    if (screenClip) *screenClip = localScreen;
+    if (screenCenter) *screenCenter = localCenter;
+    return true;
 }
 
 static BOOL CALLBACK findWindow(HWND w, LPARAM out) {
@@ -430,7 +663,7 @@ static bool controls(uintptr_t behavior) {
 static bool bindingContextNow() {
     __try {
         return gameplayOwnsPointer() && closeViewContext();
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         return false;
     }
 }
@@ -441,7 +674,7 @@ static bool manualCombatNow() {
         const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)),
                         bh = root ? *reinterpret_cast<const uintptr_t*>(root + field::character::behaviour) : 0;
         return bh && controls(bh) && manualCombat(root, bh);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         return false;
     }
 }
@@ -496,7 +729,7 @@ static uintptr_t tpAimSector(uintptr_t head) {
     __try {
         const uintptr_t mesh = *reinterpret_cast<const uintptr_t*>(head + field::bodyPart::meshNode);
         return mesh ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector) : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         return 0;
     }
 }
@@ -518,7 +751,7 @@ static bool tpAimRequestCurrent(const TpAimRequest& request) {
             return false;
         const uintptr_t bh = *reinterpret_cast<const uintptr_t*>(request.root + field::character::behaviour);
         return bh && controls(bh);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         return false;
     }
 }
@@ -542,6 +775,7 @@ static thread_local bool updateAimLocked = false; // behavior() releases aimLock
 
 static void updateAim(uintptr_t behavior) {
     if (!controls(behavior)) {
+        clearPointerClipCache(false);
         releaseInput();
         inputClock = ~0u;
         return;
@@ -556,19 +790,20 @@ static void updateAim(uintptr_t behavior) {
     inputClock = clock;
     const uintptr_t head = *reinterpret_cast<const uintptr_t*>(root + field::character::headPart);
     if (!head) {
+        clearPointerClipCache(false);
         releaseInput();
         return;
     }
     HWND w = gameWindow();
-    RECT rect;
-    POINT cursor, center;
-    if (!w || !GetClientRect(w, &rect) || !GetCursorPos(&cursor)) {
+    RECT rect{}, screenClip{};
+    POINT cursor{}, center{};
+    if (!w || !cachedWindowClient(w, rect, &screenClip, &center) || !GetCursorPos(&cursor)) {
+        clearPointerClipCache(false);
         releaseInput();
         return;
     }
-    center = {rect.right / 2, rect.bottom / 2};
-    ClientToScreen(w, &center);
     if (!MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) {
+        clearPointerClipCache(false);
         releaseInput();
         return;
     }
@@ -603,7 +838,19 @@ static void updateAim(uintptr_t behavior) {
         for (int a = 0; a < 3; a++) aim.anchor[a] = anchor[a];
     }
 
+    static uintptr_t boxRoot = 0, boxHead = 0;
     static int boxMode = -1, previousBoxX = -1, previousBoxY = -1;
+    static LONG previousBoxWidth = -1, previousBoxHeight = -1;
+    if (boxRoot != root || boxHead != head) {
+        boxRoot = root;
+        boxHead = head;
+        boxMode = -1;
+        previousBoxX = -1;
+        previousBoxY = -1;
+        previousBoxWidth = -1;
+        previousBoxHeight = -1;
+        tpAimBox = fp::AimBox{};
+    }
     const int mode = viewMode.load();
     const bool combat = *reinterpret_cast<const unsigned char*>(root + field::character::combatStance) != 0;
     const unsigned generation = inputOwner.generation(), policy = inputOwner.policyRevision();
@@ -618,15 +865,23 @@ static void updateAim(uintptr_t behavior) {
     const bool freeAim = mode == 0 || (mode == 1 && tpCombatAimFree.load());
     const int boxX = mode == 0 ? fpDeadzoneX.load() : tpDeadzoneX.load(),
               boxY = mode == 0 ? fpDeadzoneY.load() : tpDeadzoneY.load();
-    if (!freeAim || boxMode != mode || boxX != previousBoxX || boxY != previousBoxY ||
-        !InterlockedCompareExchange(&mouseCaptured, 0, 0))
+    const float boxHalfWidth = float(rect.right) * float(boxX) * 0.01f,
+                boxHalfHeight = float(rect.bottom) * float(boxY) * 0.01f;
+    if (!freeAim || boxMode != mode || !InterlockedCompareExchange(&mouseCaptured, 0, 0))
         tpAimBox = fp::AimBox{};
+    else if (boxX != previousBoxX || boxY != previousBoxY || rect.right != previousBoxWidth ||
+             rect.bottom != previousBoxHeight)
+        fp::aimBoxClamp(tpAimBox, boxHalfWidth, boxHalfHeight);
+    previousBoxWidth = rect.right;
+    previousBoxHeight = rect.bottom;
     if (boxMode != mode) tpAimSet = false;
     boxMode = mode;
     previousBoxX = boxX;
     previousBoxY = boxY;
+    const bool clipConsistent = pointerClipMatches(w, screenClip);
     if (!freeCursor && InterlockedCompareExchange(&mouseCaptured, 0, 0)) {
-        float dx = float(cursor.x - center.x), dy = float(cursor.y - center.y);
+        float dx = clipConsistent ? float(cursor.x - center.x) : 0.f,
+              dy = clipConsistent ? float(cursor.y - center.y) : 0.f;
         if (InterlockedCompareExchange(&rawRegistered, 0, 0)) {
             long rx = 0, ry = 0;
             AcquireSRWLockExclusive(&rawLock);
@@ -647,8 +902,7 @@ static void updateAim(uintptr_t behavior) {
         dx *= manipulationGain;
         dy *= manipulationGain;
         if (freeAim) {
-            fp::aimBoxStep(tpAimBox, dx, dy, float(rect.right) * float(boxX) * 0.01f,
-                           float(rect.bottom) * float(boxY) * 0.01f, aimEdgeSoftness.load());
+            fp::aimBoxMove(tpAimBox, dx, dy, boxHalfWidth, boxHalfHeight, aimEdgeSoftness.load());
         }
         float yawStep = -float(dx) * sensitivity,
               pitchStep = -float(dy) * sensitivity * (invertY ? -1.f : 1.f);
@@ -727,16 +981,7 @@ static void updateAim(uintptr_t behavior) {
     ++aim.revision;
     updateAimLocked = false;
     ReleaseSRWLockExclusive(&aimLock);
-    if (!freeCursor) {
-        SetCursorPos(center.x, center.y);
-        InterlockedExchange(&mouseCaptured, 1);
-        if (!InterlockedCompareExchange(&cursorClipped, 0, 0)) {
-            RECT clip = rect;
-            MapWindowPoints(w, nullptr, reinterpret_cast<POINT*>(&clip), 2);
-            if (ClipCursor(&clip)) InterlockedExchange(&cursorClipped, 1);
-        }
-    } else
-        InterlockedExchange(&mouseCaptured, 0);
+    syncPointerCapture(w, screenClip, center, !freeCursor);
     ++controlCalls;
 }
 
@@ -791,10 +1036,10 @@ static constexpr unsigned heldCollisionQueryBit = 0x200000;
 static constexpr float nativeHeldSweepSpan = 1000.f;
 
 static float heldPlacementStart(uintptr_t caller, const float* origin, const float* direction, float scale) {
-    if (boundedPlacement.object &&
+    if (boundedPlacement.object && caller &&
         (caller == gameAt(fp::sig::heldStartReturn) || caller == gameAt(fp::sig::heldChildStartReturn) ||
-         caller == gameAt(fp::sig::inventoryStartReturn) ||
-         caller == gameAt(fp::sig::inventoryChildStartReturn)) &&
+         caller == optionalGameAt(fp::sig::inventoryStartReturn) ||
+         caller == optionalGameAt(fp::sig::inventoryChildStartReturn)) &&
         !std::memcmp(origin, boundedPlacement.values, 12) && !std::memcmp(direction, boundedPlacement.values + 3, 12))
         return -boundedPlacement.distance;
     return scale;
@@ -817,7 +1062,7 @@ static void analogVectorFor(uintptr_t caller, bool forward, float* out, const fl
                 planar[2] = forward ? std::cos(a.yaw) : std::sin(a.yaw);
                 axis = planar;
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        } __except (countFaultAndHandle(&poseFaults)) {}
     }
     (forward ? originalAnalogAdd : originalAnalogScale)(out, axis, amount);
 }
@@ -1021,9 +1266,10 @@ static void steadyHeadAround(uintptr_t root, void (*build)(uintptr_t, float, uns
     float wobble = 1.f;
     {
         static fp::HeadWobble seen;
-        static uintptr_t seenHead = 0;
-        if (head != seenHead) {
+        static uintptr_t seenRoot = 0, seenHead = 0;
+        if (root != seenRoot || head != seenHead) {
             seen = fp::HeadWobble();
+            seenRoot = root;
             seenHead = head;
         }
         if (meshReadable) {
@@ -1147,7 +1393,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
             // A tracked body owns the spine instead of the look-driven bend.
             __try {
                 if (!trackedMotor) spineBendStep(root, borrowed);
-            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            } __except (countFaultAndHandle(&poseFaults)) {}
         }
         const uintptr_t bh = *reinterpret_cast<const uintptr_t*>(root + field::character::behaviour);
         Aim a;
@@ -1181,10 +1427,13 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
 static void poseBuilderProfileBody(uintptr_t root, float time, unsigned char mode) {
     InterlockedIncrement(&poseBuildsInFlight);
     __try {
-        healthHit(fp::HealthHook::poseBuilder);
-        poseBuilderOwned(root, time, mode);
-    } __finally {
-        InterlockedDecrement(&poseBuildsInFlight);
+        __try {
+            healthHit(fp::HealthHook::poseBuilder);
+            poseBuilderOwned(root, time, mode);
+        } __finally {
+            InterlockedDecrement(&poseBuildsInFlight);
+        }
+    } __except (countFaultAndContinue(&poseFaults)) {
     }
 }
 
@@ -1247,12 +1496,14 @@ static void steadyHeadPart(uintptr_t root, uintptr_t head) {
                                    headBob.load()};
     if (fp::steadyHead(headSteadyState, reinterpret_cast<float(*)[3]>(head + field::bodyPart::points),
                        reinterpret_cast<const float*>(head + field::bodyPart::poseCoefficients),
-                       reinterpret_cast<const float*>(root + field::character::gaze), s))
+                       reinterpret_cast<const float*>(root + field::character::gaze), s,
+                       reinterpret_cast<float(*)[3]>(head + field::bodyPart::history)))
         ++steadyTicks;
     headingTurn = holdHeadingOn.load()
                       ? fp::steadyHeading(reinterpret_cast<float(*)[3]>(head + field::bodyPart::points),
                                           reinterpret_cast<const float*>(head + field::bodyPart::poseCoefficients),
-                                          reinterpret_cast<const float*>(root + field::character::gaze), headSteadyYaw.load())
+                                          reinterpret_cast<const float*>(root + field::character::gaze), headSteadyYaw.load(),
+                                          reinterpret_cast<float(*)[3]>(head + field::bodyPart::history))
                       : 0.f;
 }
 
@@ -1262,31 +1513,35 @@ static void steadyUnderHead(uintptr_t root, int which, uintptr_t part) {
         return;
     }
     fp::steadyBodyPart(bodySteadyState[which], reinterpret_cast<float(*)[3]>(part + field::bodyPart::points),
-                       reinterpret_cast<const float*>(part + field::bodyPart::poseCoefficients), headSteady.load());
+                       reinterpret_cast<const float*>(part + field::bodyPart::poseCoefficients), headSteady.load(),
+                       reinterpret_cast<float(*)[3]>(part + field::bodyPart::history));
 }
 
 static void partSettleProfileBody(uintptr_t part) {
-    healthHit(fp::HealthHook::partSettle);
     __try {
-        const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
-        const uintptr_t head = root ? *reinterpret_cast<const uintptr_t*>(root + field::character::headPart) : 0;
-        if (part && (part == head || part == steadyNeck || part == steadyChest) && trackedMotorOwns(root)) {
-            // Native XR motors own head and chest; the stabiliser's history must not resume stale.
-            headSteadyState = {};
-            bodySteadyState[0] = {};
-            bodySteadyState[1] = {};
-            steadiedHead = steadiedRoot = steadyNeck = steadyChest = 0;
-            headingTurn = 0;
-        } else if (part && part == head)
-            steadyHeadPart(root, head);
-        else if (part && head == steadiedHead && (part == steadyNeck || part == steadyChest)) {
-            if (steadyAllowed(root, head)) steadyUnderHead(root, part == steadyNeck ? 0 : 1, part);
+        healthHit(fp::HealthHook::partSettle);
+        __try {
+            const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
+            const uintptr_t head = root ? *reinterpret_cast<const uintptr_t*>(root + field::character::headPart) : 0;
+            if (part && (part == head || part == steadyNeck || part == steadyChest) && trackedMotorOwns(root)) {
+                // Native XR motors own head and chest; the stabiliser's history must not resume stale.
+                headSteadyState = {};
+                bodySteadyState[0] = {};
+                bodySteadyState[1] = {};
+                steadiedHead = steadiedRoot = steadyNeck = steadyChest = 0;
+                headingTurn = 0;
+            } else if (part && part == head)
+                steadyHeadPart(root, head);
+            else if (part && head == steadiedHead && (part == steadyNeck || part == steadyChest)) {
+                if (steadyAllowed(root, head)) steadyUnderHead(root, part == steadyNeck ? 0 : 1, part);
+            }
+        } __except (countFaultAndHandle(&poseFaults)) {
+            headSteadyState = fp::HeadSteadyState();
+            steadyNeck = steadyChest = 0;
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        headSteadyState = fp::HeadSteadyState();
-        steadyNeck = steadyChest = 0;
+        fp::profile::invoke<fp::profile::Hook::partNative>(originalPartSettle, part);
+    } __except (countFaultAndContinue(&poseFaults)) {
     }
-    fp::profile::invoke<fp::profile::Hook::partNative>(originalPartSettle, part);
 }
 
 static void partSettle(uintptr_t part) {
@@ -1546,6 +1801,11 @@ static void publishCue(uintptr_t self) {
     cueOrigin.store(int(fp::originSide(cue, swingHands(root, cue, in.motion))));
     {
         static fp::Windup w;
+        static uintptr_t windupRoot = 0;
+        if (root != windupRoot) {
+            w = fp::Windup{};
+            windupRoot = root;
+        }
         const int motion = *reinterpret_cast<const int*>(root + field::character::motion);
         const bool on = attackCue && in.owned && in.combat && motion >= 5 && motion <= 12 &&
                         (motion != 11 || cueThrust.load());
@@ -1564,37 +1824,34 @@ static void publishCue(uintptr_t self) {
 static void behavior(uintptr_t self) {
     healthHit(fp::HealthHook::playerBehavior);
     __try {
-        updateAim(self);
-    } __finally {
-        if (updateAimLocked) {
-            updateAimLocked = false;
-            ReleaseSRWLockExclusive(&aimLock);
+        __try {
+            updateAim(self);
+        } __finally {
+            if (updateAimLocked) {
+                updateAimLocked = false;
+                ReleaseSRWLockExclusive(&aimLock);
+            }
         }
+    } __except (countFaultAndContinue(&behaviorFaults)) {
     }
     const AttackHeadingPresentation previous = attackHeadingPresentation;
     attackHeadingPresentation = {self};
     __try {
-        originalBehavior(self);
-    } __finally {
-        const AttackHeadingPresentation shown = attackHeadingPresentation;
-        if (shown.behavior == self && shown.borrowed &&
-            *reinterpret_cast<float*>(self + field::behaviour::aimHeading) == shown.presented)
-            *reinterpret_cast<float*>(self + field::behaviour::aimHeading) = shown.heading;
-        attackHeadingPresentation = previous;
-    }
-    Aim a;
-    if (getAim(self, a)) {
-        float heading[3];
-        headingToPoint(a, heading);
-        if ((*reinterpret_cast<const unsigned*>(a.root + field::character::stateFlags) & 0x40204) == 0) {
-            if (!*reinterpret_cast<const unsigned char*>(a.root + field::character::combatStance) ||
-                !*reinterpret_cast<const unsigned*>(self + field::behaviour::swingState)) {
-                std::memcpy(reinterpret_cast<void*>(a.root + field::character::facing), heading, 12);
-                std::memcpy(reinterpret_cast<void*>(a.root + field::character::movementFacing), heading, 12);
-            }
+        __try {
+            originalBehavior(self);
+        } __finally {
+            const AttackHeadingPresentation shown = attackHeadingPresentation;
+            if (shown.behavior == self && shown.borrowed &&
+                *reinterpret_cast<float*>(self + field::behaviour::aimHeading) == shown.presented)
+                *reinterpret_cast<float*>(self + field::behaviour::aimHeading) = shown.heading;
+            attackHeadingPresentation = previous;
         }
+    } __except (countFaultAndContinue(&behaviorFaults)) {
     }
-    publishCue(self);
+    __try {
+        publishCue(self);
+    } __except (countFaultAndContinue(&behaviorFaults)) {
+    }
 }
 
 static constexpr ULONGLONG reticleFreshMs = 250;
@@ -1650,7 +1907,7 @@ static bool guiPointerOwned() {
             point.stamp.mode == now.mode && point.stamp.generation == now.generation &&
             point.stamp.policyRevision == now.policyRevision)
             return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } __except (countFaultAndHandle(&windowFaults)) {}
     point.rejected = true;
     return false;
 }
@@ -1684,8 +1941,8 @@ static bool sampleWorldPointer(uintptr_t gui, WorldPointerSample& sample) {
                 !(interact > 0 && interact < 256 && (keyState(int(interact)) & 0x8000)))
                 return false;
         }
-        RECT rect;
-        if (!reticleForUi(&sample.x, &sample.y) || !GetClientRect(gameWindow(), &rect) ||
+        RECT rect{};
+        if (!reticleForUi(&sample.x, &sample.y) || !cachedWindowClient(gameWindow(), rect) ||
             rect.right <= 40 || rect.bottom <= 40 || sample.x < 0 || sample.y < 0 ||
             sample.x >= rect.right || sample.y >= rect.bottom)
             return false;
@@ -1693,7 +1950,7 @@ static bool sampleWorldPointer(uintptr_t gui, WorldPointerSample& sample) {
         sample.centerY = rect.bottom / 2;
         sample.limitX = rect.right / 4;
         sample.limitY = rect.bottom / 4;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&windowFaults)) {
         return false;
     }
     AcquireSRWLockExclusive(&worldPointerLock);
@@ -1852,7 +2109,7 @@ static uintptr_t levelGrid() {
 static int levelBlockedProfileBody(uintptr_t level, const float* origin, const float* dir, float length) {
     __try {
         return fp::profile::invoke<fp::profile::Hook::levelNative>(levelRay, level, origin, dir, length) || fp::profile::invoke<fp::profile::Hook::levelNative>(levelRay2, level, origin, dir, length) ? 1 : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         return -1;
     }
 }
@@ -1911,7 +2168,7 @@ static uintptr_t closeWorldHeldObject(uintptr_t viewport) {
         if (!readable(drag, 0x20) || *reinterpret_cast<const unsigned*>(drag + field::drag::flags) != 0x2000) return 0;
         const uintptr_t object = *reinterpret_cast<const uintptr_t*>(drag + field::drag::object);
         return readable(object, field::sceneNode::bodyPart + sizeof(uintptr_t)) ? object : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         return 0;
     }
 }
@@ -1919,12 +2176,12 @@ static uintptr_t closeWorldHeldObject(uintptr_t viewport) {
 static uintptr_t gameplayHeldObject(uintptr_t viewport) {
     const uintptr_t object = closeWorldHeldObject(viewport);
     if (!object ||
-        (!InterlockedCompareExchange(&inputEnabled, 0, 0) && !InterlockedCompareExchange(&rmbFree, 0, 0)) ||
-        InterlockedCompareExchange(&cursorFree, 0, 0) || InterlockedCompareExchange(&windowFree, 0, 0))
+        (!InterlockedCompareExchange(&inputEnabled, 0, 0) && !cursorFreeBitSet(rmbFreeBit)) ||
+        cursorFreeBitSet(cursorFreeBit) || cursorFreeBitSet(windowFreeBit))
         return 0;
     __try {
         return closeViewContext() && *reinterpret_cast<const int*>(gameAt(fp::sig::pointerOverride)) < 1 ? object : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         return 0;
     }
 }
@@ -1942,7 +2199,7 @@ static unsigned walkSceneVisit(uintptr_t scene, uintptr_t* nodes, unsigned* pare
 static float heldSweepFor(uintptr_t caller, uintptr_t body, const float* direction, uintptr_t viewport,
                           uintptr_t pose) {
     if (!boundedPlacement.object || viewport != boundedPlacement.viewport ||
-        (caller != gameAt(fp::sig::heldSweepReturn) && caller != gameAt(fp::sig::inventorySweepReturn)) ||
+        (!caller || (caller != gameAt(fp::sig::heldSweepReturn) && caller != optionalGameAt(fp::sig::inventorySweepReturn))) ||
         std::memcmp(direction, boundedPlacement.values + 3, 12))
         return originalHeldSweep(body, direction, viewport, pose);
     uintptr_t nodes[1024]{};
@@ -2123,11 +2380,13 @@ static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
         InterlockedCompareExchange(&cameraReady, 0, 0) && *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) &&
         (flags == 0x1000 || flags == 0x2000) && *reinterpret_cast<const uintptr_t*>(manager + field::drag::object) == object;
     if (closePlacement) {
+        inventoryPlacementAttempts.fetch_add(1, std::memory_order_relaxed);
         const ULONGLONG inventory = inventoryPlacementBegin(object, camera);
         if (flags == 0x1000) resetHeldGrab();
         alignas(8) unsigned char ray[0x40]{};
         if (!prepareHeldPlacement(object, camera, h, ray)) {
             inventoryPlacementEnd(inventory, object, 0);
+            inventoryPlacementFailures.fetch_add(1, std::memory_order_relaxed);
             return 0;
         }
         const DWORD previousThread = placingThread;
@@ -2159,6 +2418,9 @@ static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
             std::memcpy(placingRay, previousRay, sizeof placingRay);
         }
         inventoryPlacementEnd(inventory, object, result);
+        inventoryPlacementLastResult.store(result, std::memory_order_relaxed);
+        if (result) inventoryPlacementSuccesses.fetch_add(1, std::memory_order_relaxed);
+        else inventoryPlacementFailures.fetch_add(1, std::memory_order_relaxed);
         return result;
     }
     inventoryPlacementHandoff();
@@ -2168,13 +2430,10 @@ static int dragPlace(uintptr_t object, uintptr_t camera, float h) {
 
 static float holdReachClamp(const float* origin, const float* dir, float t) {
     const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
-    const uintptr_t mesh = root ? *reinterpret_cast<const uintptr_t*>(root + field::character::sceneNode) : 0,
-                    scene = mesh ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector) : 0;
-    if (scene) {
+    const uintptr_t sector = root ? characterSector(root) : 0;
+    if (sector && readable(sector, field::sector::origin + 3 * sizeof(float))) {
         float body[3];
-        for (int i = 0; i < 3; i++)
-            body[i] = *reinterpret_cast<const float*>(root + field::character::position + i * 4) +
-                      *reinterpret_cast<const float*>(scene + field::sector::origin + i * 4);
+        addSectorOrigin(reinterpret_cast<const float*>(root + field::character::position), sector, body);
         const float reach = fp::rayInSphere(origin, dir, body, fp::holdSphere(float(grabRange.load())));
         if (reach >= 0) t = std::fmin(t, reach);
     }
@@ -2208,8 +2467,8 @@ static float viewClearanceProfileBody(const float* pose, float fov, float maxCle
     const uintptr_t level = levelGrid();
     if (!level || !levelRay || !levelRay2) return -1;
     float aspect = 16.f / 9.f;
-    RECT r;
-    if (hookedWindow && GetClientRect(hookedWindow, &r) && r.bottom > 0 && r.right > 0)
+    RECT r{};
+    if (hookedWindow && cachedWindowClient(hookedWindow, r) && r.bottom > 0 && r.right > 0)
         aspect = float(r.right) / float(r.bottom);
     const float tv = std::tan(fov * 3.14159265f / 360.f), th = tv * aspect;
     float best = 1e9f;
@@ -2226,23 +2485,16 @@ static float viewClearanceProfileBody(const float* pose, float fov, float maxCle
         for (float& v : d) v = float(v / n);
         const float length = std::fmax(16.f, 9.f * float(n));
         const float depthScale = float(1.0 / n);
-        float probe = length;
-        if (std::isfinite(maxClearance) && maxClearance > 0.f && length * depthScale > maxClearance) {
-            float lo = 0.f, hi = length;
-            for (int i = 0; i < 6; ++i) {
-                const float mid = (lo + hi) * .5f;
-                if (mid * depthScale >= maxClearance) hi = mid;
-                else lo = mid;
-            }
-            probe = hi;
-        }
+        const float clearanceLimit =
+            std::isfinite(maxClearance) && maxClearance > 0.f ? maxClearance * float(n) : length;
+        const float probe = std::fmin(length, clearanceLimit);
         const int hit = levelBlocked(level, pose + 9, d, probe);
         if (hit < 0) return -1;
         if (hit == 0) {
             if (probe < length) best = std::fmin(best, maxClearance);
             continue;
         }
-        float lo = 0, hi = length;
+        float lo = 0.f, hi = probe;
         for (int i = 0; i < 6; i++) {
             const float mid = (lo + hi) * .5f;
             const int m = levelBlocked(level, pose + 9, d, mid);
@@ -2268,12 +2520,21 @@ static char heldPointAlongViewDistance(char hit, uintptr_t out, float distance) 
     if (!std::isfinite(length) || length < 0.5f || !std::isfinite(origin[0] + origin[1] + origin[2]))
         return 0;
     const float eye[3] = {eyeGlobal[0].load(), eyeGlobal[1].load(), eyeGlobal[2].load()};
-    float t = fp::holdAlongRay(origin, dir, eye, distance);
-    if (t < 0.f) return 0;
-    t = holdReachClamp(origin, dir, t);
-    const float reached = *reinterpret_cast<const float*>(out + field::pick::distance);
-    if (hit && (!std::isfinite(reached) || reached < 0.f)) return 0;
-    if (hit) t = std::fmin(t, reached);
+    float t = -1.f;
+    if (hit && !gameplayOwnsPointer()) {
+        const float reached = *reinterpret_cast<const float*>(out + field::pick::distance);
+        if (std::isfinite(reached) && reached >= 1.f) {
+            t = holdReachClamp(origin, dir, reached);
+        }
+    }
+    if (t < 0.f) {
+        t = fp::holdAlongRay(origin, dir, eye, distance);
+        if (t < 0.f) return 0;
+        t = holdReachClamp(origin, dir, t);
+        const float reached = *reinterpret_cast<const float*>(out + field::pick::distance);
+        if (hit && (!std::isfinite(reached) || reached < 0.f)) return 0;
+        if (hit) t = std::fmin(t, reached);
+    }
     const uintptr_t level = levelGrid();
     if (level) {
         if (!levelRay || !levelRay2) return 0;

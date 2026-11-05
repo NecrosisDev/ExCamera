@@ -5,6 +5,7 @@
 // No Win32 here: the DLL resolves the game's own file, the launcher the same file, and the tests
 // any buffer. A layout defaults to the source build's addresses (game_signatures.h knownRva), so
 // code that reads it before resolution, and the unit tests' fake memory, see the known build.
+#include "fpc_rtti.h"
 #include "game_signatures.h"
 #include <cstdint>
 #include <cstring>
@@ -67,14 +68,66 @@ inline bool mapPeFile(const uint8_t* file, size_t fileSize, std::vector<uint8_t>
     return true;
 }
 
-struct Pattern {
-    std::vector<uint8_t> bytes, mask; // mask 1: must match
-    size_t anchor = 0;                // first fixed byte, searched with memchr
+struct PatternBytes {
+    static constexpr size_t inlineCapacity = 512;
+    uint8_t inline_[inlineCapacity]{};
+    size_t size_ = 0;
+    std::vector<uint8_t> overflow_;
+    void clear() noexcept {
+        size_ = 0;
+        overflow_.clear();
+    }
+    bool push_back(uint8_t v) {
+        if (overflow_.empty()) {
+            if (size_ < inlineCapacity) {
+                inline_[size_++] = v;
+                return true;
+            }
+            overflow_.reserve(inlineCapacity * 2);
+            overflow_.insert(overflow_.end(), inline_, inline_ + size_);
+        }
+        overflow_.push_back(v);
+        size_ = overflow_.size();
+        return true;
+    }
+    size_t size() const noexcept { return size_; }
+    bool empty() const noexcept { return size_ == 0; }
+    const uint8_t* data() const noexcept { return overflow_.empty() ? inline_ : overflow_.data(); }
+    const uint8_t* begin() const noexcept { return data(); }
+    const uint8_t* end() const noexcept { return data() + size_; }
+    uint8_t operator[](size_t i) const noexcept { return data()[i]; }
+    uint8_t& operator[](size_t i) noexcept { return overflow_.empty() ? inline_[i] : overflow_[i]; }
 };
+
+struct Pattern {
+    PatternBytes bytes, mask; // mask 0xFF (non-zero): must match
+    size_t anchor = 0;        // rarest/preferred fixed byte, searched with memchr
+};
+
+inline bool commonSignatureAnchorByte(uint8_t b) noexcept {
+    switch (b) {
+    case 0x00:
+    case 0xFF:
+    case 0x48:
+    case 0x89:
+    case 0x8B:
+    case 0x53:
+    case 0x55:
+    case 0x56:
+    case 0x57:
+    case 0x41:
+    case 0xCC:
+        return true;
+    default:
+        return false;
+    }
+}
 
 // "48 8B ?? 05": two hex digits per byte, ?? for any byte. False on anything else.
 inline bool parsePattern(const char* text, Pattern& out) {
-    out = Pattern{};
+    out.bytes.clear();
+    out.mask.clear();
+    out.anchor = 0;
     auto hex = [](char c) {
         return c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
     };
@@ -84,32 +137,52 @@ inline bool parsePattern(const char* text, Pattern& out) {
             continue;
         }
         if (p[0] == '?' && p[1] == '?') {
-            out.bytes.push_back(0);
-            out.mask.push_back(0);
+            if (!out.bytes.push_back(0) || !out.mask.push_back(0)) return false;
         } else if (hex(p[0]) >= 0 && hex(p[1]) >= 0) {
-            out.bytes.push_back(uint8_t(hex(p[0]) * 16 + hex(p[1])));
-            out.mask.push_back(1);
+            if (!out.bytes.push_back(uint8_t(hex(p[0]) * 16 + hex(p[1]))) || !out.mask.push_back(0xFF))
+                return false;
         } else
             return false;
         p += 2;
     }
-    while (out.anchor < out.mask.size() && !out.mask[out.anchor]) ++out.anchor;
-    return out.anchor < out.mask.size();
+    const size_t n = out.mask.size();
+    size_t firstFixed = n, preferred = n;
+    for (size_t i = 0; i < n; ++i) {
+        if (!out.mask[i]) continue;
+        if (firstFixed == n) firstFixed = i;
+        if (!commonSignatureAnchorByte(out.bytes[i])) {
+            preferred = i;
+            break;
+        }
+    }
+    if (firstFixed == n) return false;
+    out.anchor = preferred < n ? preferred : firstFixed;
+    return true;
 }
 
 // Matches of the pattern in [begin, end) of the view, as RVAs; stops counting at `limit`.
 inline unsigned findPattern(const ImageView& v, const Pattern& p, uint32_t begin, uint32_t end,
                             uint32_t* first, unsigned limit = 2) {
-    if (begin > end || end > v.size || p.bytes.size() > end - begin) return 0;
+    const size_t patSize = p.bytes.size();
+    const size_t anchor = p.anchor;
+    if (begin > end || end > v.size || patSize == 0 || patSize > end - begin || anchor >= patSize) return 0;
     unsigned found = 0;
-    const uint8_t* const lo = v.data + begin + p.anchor;
-    const uint8_t* const hi = v.data + end - p.bytes.size() + p.anchor + 1;
+    const uint8_t anchorByte = p.bytes[anchor];
+    const uint8_t* const patBytes = p.bytes.data();
+    const uint8_t* const patMask = p.mask.data();
+    const uint8_t* const lo = v.data + begin + anchor;
+    const uint8_t* const hi = v.data + end - patSize + anchor + 1;
     for (const uint8_t* at = lo; at < hi && found < limit;) {
-        at = (const uint8_t*)memchr(at, p.bytes[p.anchor], size_t(hi - at));
+        at = static_cast<const uint8_t*>(memchr(at, anchorByte, size_t(hi - at)));
         if (!at) break;
-        const uint8_t* start = at - p.anchor;
+        const uint8_t* const start = at - anchor;
         bool match = true;
-        for (size_t i = 0; i < p.bytes.size() && match; ++i) match = !p.mask[i] || start[i] == p.bytes[i];
+        for (size_t i = 0; i < patSize; ++i) {
+            if (patMask[i] && start[i] != patBytes[i]) {
+                match = false;
+                break;
+            }
+        }
         if (match) {
             if (!found && first) *first = uint32_t(start - v.data);
             ++found;
@@ -181,12 +254,39 @@ struct ResolveReport {
 };
 
 namespace detail {
+struct VmtTargetHint {
+    sig::Target target;
+    const char* className;
+};
+
+struct VmtSlotHint {
+    sig::Target slot;
+    sig::Target holds;
+    const char* className;
+    uint32_t defaultOffset;
+};
+
+inline constexpr VmtTargetHint defaultVmtTargets[] = {
+    {sig::nodeVmt, "T3DNode"},
+    {sig::heldBodyMetadata, "TTetraRBD"},
+    {sig::characterMetadata, "TMotileDynamics"},
+};
+
+inline constexpr VmtSlotHint defaultVmtSlots[] = {
+    {sig::navSlot, sig::navSampler, "TNavCameraControl", 0x140},
+    {sig::behaviorSlot, sig::playerBehavior, "TPlayerBehaviour", 0x0F0},
+    {sig::pointSlot, sig::aimPoint, "TPlayerBehaviour", 0x160},
+    {sig::combatUpdateSlot, sig::combatUpdate, "TMotileDynamics", 0x158},
+};
+
 // Same resolver for the generated native tables and small adversarial fixtures.
 // Required targets are all-or-nothing. Every address in a failed optional group
 // is withheld together; individual diagnostics retain their original outcomes.
 inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& report,
                                 const sig::Signature* signatures, size_t signatureCount,
-                                const sig::SlotCheck* slots, size_t slotCount) {
+                                const sig::SlotCheck* slots, size_t slotCount,
+                                const VmtTargetHint* vmtTargets = nullptr, size_t vmtTargetCount = 0,
+                                const VmtSlotHint* vmtSlots = nullptr, size_t vmtSlotCount = 0) {
     report = ResolveReport{};
     uint32_t rva[sig::targetCount]{};
     unsigned matched[sig::targetCount]{};
@@ -228,6 +328,18 @@ inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& 
         rva[s.target] = uint32_t(value);
         ++matched[s.target];
     }
+    // Free Pascal x64 VMT fallback: if a class VMT target's constructor reference signatures all missed,
+    // recover its VMT directly from .rdata by ShortString class name and vInstanceSize/-vInstanceSize invariant.
+    for (size_t k = 0; k < vmtTargetCount; ++k) {
+        const VmtTargetHint& vt = vmtTargets[k];
+        if (vt.target >= sig::targetCount || matched[vt.target] || disagree[vt.target]) continue;
+        rtti::VmtInfo info{};
+        if (rtti::findClassVmt(v, vt.className, info) && info.rva > 0 && info.rva < v.size) {
+            rva[vt.target] = info.rva;
+            matched[vt.target] = 1;
+            report.degraded[vt.target] = true;
+        }
+    }
     auto fail = [&](unsigned t, Unresolved why) {
         if (report.why[t] == Unresolved::none) {
             report.why[t] = why;
@@ -257,6 +369,23 @@ inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& 
         --report.failures;
         report.degraded[c.holds] = true;
     }
+    // Conversely, if a VMT slot's own reference signatures missed while its virtual method resolved,
+    // locate the class VMT via RTTI and scan its virtual method table for the resolved method entry.
+    for (size_t k = 0; k < vmtSlotCount; ++k) {
+        const VmtSlotHint& vs = vmtSlots[k];
+        if (vs.slot >= sig::targetCount || vs.holds >= sig::targetCount ||
+            matched[vs.slot] || disagree[vs.slot] || report.why[vs.holds] != Unresolved::none)
+            continue;
+        rtti::VmtInfo info{};
+        uint32_t slotRva = 0;
+        if (rtti::findClassVmt(v, vs.className, info) &&
+            rtti::findMethodSlot(v, info.rva, rva[vs.holds], slotRva, vs.defaultOffset)) {
+            rva[vs.slot] = slotRva;
+            report.why[vs.slot] = Unresolved::none;
+            --report.failures;
+            report.degraded[vs.slot] = true;
+        }
+    }
     for (size_t i = 0; i < slotCount; ++i) {
         const sig::SlotCheck& c = slots[i];
         if (report.why[c.slot] != Unresolved::none || report.why[c.holds] != Unresolved::none) continue;
@@ -266,7 +395,25 @@ inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& 
             continue;
         }
         memcpy(&held, v.data + rva[c.slot], 8);
-        if (held != v.imageBase + rva[c.holds]) fail(c.slot, Unresolved::slotMismatch);
+        if (held != v.imageBase + rva[c.holds]) {
+            bool shiftedAdapted = false;
+            for (size_t k = 0; k < vmtSlotCount; ++k) {
+                const VmtSlotHint& vs = vmtSlots[k];
+                if (vs.slot != c.slot || vs.holds != c.holds) continue;
+                rtti::VmtInfo info{};
+                uint32_t shiftedSlotRva = 0;
+                if (rtti::findClassVmt(v, vs.className, info) &&
+                    rva[c.slot] >= info.rva + rtti::vmtHeaderSize &&
+                    rva[c.slot] < info.rva + rtti::vmtHeaderSize + rtti::maxVmtMethods * 8u &&
+                    rtti::findMethodSlot(v, info.rva, rva[c.holds], shiftedSlotRva, vs.defaultOffset)) {
+                    rva[c.slot] = shiftedSlotRva;
+                    report.degraded[c.slot] = true;
+                    shiftedAdapted = true;
+                }
+                break;
+            }
+            if (!shiftedAdapted) fail(c.slot, Unresolved::slotMismatch);
+        }
     }
     for (unsigned t = 0; t < sig::targetCount; ++t) {
         if (report.why[t] != Unresolved::none) report.degraded[t] = false;
@@ -300,7 +447,11 @@ inline bool resolveLayoutTables(const ImageView& v, Layout& out, ResolveReport& 
 inline bool resolveLayout(const ImageView& v, Layout& out, ResolveReport& report) {
     return detail::resolveLayoutTables(v, out, report, sig::signatures,
                                        sizeof sig::signatures / sizeof *sig::signatures, sig::slotChecks,
-                                       sizeof sig::slotChecks / sizeof *sig::slotChecks);
+                                       sizeof sig::slotChecks / sizeof *sig::slotChecks,
+                                       detail::defaultVmtTargets,
+                                       sizeof detail::defaultVmtTargets / sizeof *detail::defaultVmtTargets,
+                                       detail::defaultVmtSlots,
+                                       sizeof detail::defaultVmtSlots / sizeof *detail::defaultVmtSlots);
 }
 
 // The function entries the mod hooks or calls, compared in the running game with the file: a detour

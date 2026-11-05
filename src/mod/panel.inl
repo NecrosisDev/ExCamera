@@ -54,7 +54,8 @@ static void writeNativeCheckboxStatus(fp::JsonOut& j) {
 static std::atomic<bool> nativeSettingsWanted{false}, nativeSettingsRetired{true},
     nativeSettingsFaulted{false};
 static bool nativeSettingsConfigured = false;
-static thread_local bool inNativeSettingsMaintenance = false;
+
+// inNativeSettingsMaintenance is declared in session.inl for recordFault.
 static volatile LONG nativeSettingsInFlight = 0, nativeSettingsThread = 0;
 static uintptr_t nativeOptionsDesktop = 0;
 static int nativeOptionsContains(uintptr_t form) {
@@ -174,11 +175,12 @@ static void configureNativeSettings() {
         return value;
     };
     nativeSettings.mouseHeld = [] { return (GetAsyncKeyState(VK_LBUTTON)&0x8000) != 0; };
+    nativeSettings.gameKey = [](int key) { return key > 0 && gameBindingKey(unsigned(key)); };
 
     nativeSettings.openNative = [] {
         if (InterlockedCompareExchange(&stopping, 0, 0)) return;
         releaseInput();
-        InterlockedExchange(&cursorFree, 1);
+        setCursorFreeBit(cursorFreeBit, true);
         ((void (*)())gameAt(fp::sig::guiOptionsOpen))();
     };
     nativeSettings.closeNative = [](uintptr_t form) {
@@ -199,7 +201,7 @@ static void configureNativeSettings() {
     nativeSettings.recenter = [] { ++trackingReset; };
     nativeSettings.modsByMod = settingsPath[0] && GetPrivateProfileIntW(L"Settings", L"ModSettingsByMod", 0, settingsPath) != 0;
     nativeSettings.saveModsByMod = [](bool byMod) {
-        if (settingsPath[0]) WritePrivateProfileStringW(L"Settings", L"ModSettingsByMod", byMod ? L"1" : L"0", settingsPath);
+        pendingModsByModSave.store(byMod ? 1 : 0, std::memory_order_release);
     };
     // The Exanima Lua runtime's Settings tabs (its "Mod Settings" tab): this form already owns GUI maintenance,
     // so it hosts them instead of the runtime hooking the same step. Version 1 and every export must be present.
@@ -214,17 +216,26 @@ static void configureNativeSettings() {
         tabs.event = reinterpret_cast<decltype(tabs.event)>(GetProcAddress(runtime, "settings_tab_host_event"));
         tabs.help = reinterpret_cast<decltype(tabs.help)>(GetProcAddress(runtime, "mod_settings_help"));
         tabs.category = reinterpret_cast<decltype(tabs.category)>(GetProcAddress(runtime, "mod_settings_category"));
-        if (version && claim && tabs.ready() && version() == 1 && claim()) nativeSettings.runtimeTabs = tabs;
+        if (version && claim && tabs.ready() && version() == 1 && claim())
+            nativeSettings.runtimeTabs = tabs;
     }
     nativeSettings.onClosed = [] {
         nativeBindingArmed=0;
         nativeBindingResult=-2;
         nativeSettingsWanted = false;
-        InterlockedExchange(&cursorFree, 0);
+        setCursorFreeBit(cursorFreeBit, false);
         releaseInput();
     };
     nativeSettingsConfigured = true;
 }
+#if FP_DEV_TOOLS
+static void devSelectSettingsPage(int page) { nativeSettings.devSelectPage(page); }
+static void devWriteSettings(fp::JsonOut& j) {
+    j.num("settings_page", nativeSettings.selectedPage());
+    j.boolean("settings_failed", nativeSettings.failed());
+    j.boolean("settings_open", nativeSettings.handle() != 0);
+}
+#endif
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 static void publishNativeSettingsRetirement() {
     if (nativeSettings.faultAt && !nativeSettingsFaultAt.load())
@@ -252,6 +263,7 @@ static void nativeSettingsService() {
         nativeSettingsDispatches=nativeSettings.dispatches;
         nativeSettingsSteps=nativeSettings.steps;
         nativeSettingsRefused=nativeSettings.refusedFlags;
+        nativeSettingsRefusals=nativeSettings.refusals;
         {
             const auto& f=nativeSettings.seenFrames();
             const int v[9]={f[0].x,f[0].y,f[0].width,f[0].height,f[1].width,f[2].width,f[3].width,nativeSettings.seenFrameScale(),
@@ -287,7 +299,7 @@ static void nativeSettingsMaintenance(uintptr_t self) {
     __try {
         __try {
             nativeSettingsService();
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&windowFaults)) {
             nativeSettings.fail();
             nativeSettingsFaulted = true;
             nativeSettingsRetired = false;
@@ -296,7 +308,7 @@ static void nativeSettingsMaintenance(uintptr_t self) {
         __try {
             nativeSettings.observe();
             publishNativeSettingsRetirement();
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&windowFaults)) {
             nativeSettings.fail();
             nativeSettingsFaulted = true;
             nativeSettingsRetired = false;
@@ -306,7 +318,23 @@ static void nativeSettingsMaintenance(uintptr_t self) {
         InterlockedDecrement(&nativeSettingsInFlight);
     }
 }
+static bool createNativeSettingsHooks() {
+    if (!layout.optionalGroupAvailable("nativeSettings")) return true;
+    if (MH_CreateHook((void*)gameAt(fp::sig::guiMaintenance), (void*)nativeSettingsMaintenance,
+                      (void**)&originalGuiMaintenance) == MH_OK)
+        return true;
+    for (unsigned t = 0; t < fp::sig::targetCount; ++t) {
+        const char* grp = fp::sig::targetOptionalGroups[t];
+        if (grp && !strcmp(grp, "nativeSettings")) layout.rva[t] = 0;
+    }
+    return true;
+}
 static void f8WindowTick(bool requested, bool foreground) {
+    if (!layout.optionalGroupAvailable("nativeSettings")) {
+        if (cursorFreeBitSet(cursorFreeBit)) setCursorFreeBit(cursorFreeBit, false);
+        nativeSettingsWanted = false;
+        return;
+    }
     // Focus loss releases input, not the settings transaction. Only begin an
     // opening while foreground; explicit F8 dismissal still closes off-focus.
     if (!requested || foreground) nativeSettingsWanted = requested;

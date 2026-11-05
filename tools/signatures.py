@@ -23,8 +23,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = ROOT / 'tools' / 'targets.json'
-# The public repository keeps sources in src/; the development tree keeps them beside tools/.
-HEADER = (ROOT / 'src' if (ROOT / 'src').is_dir() else ROOT) / 'game_signatures.h'
+HEADER_PATH = ROOT / 'src/game_signatures.h'
+HEADER = HEADER_PATH
 MIN_BYTES, MAX_BYTES = 24, 160
 MD = None
 
@@ -317,6 +317,85 @@ def parse_optional_groups(text, names):
     return groups
 
 
+DEFAULT_VMT_TARGETS = (
+    ('nodeVmt', 'T3DNode'),
+    ('heldBodyMetadata', 'TTetraRBD'),
+    ('characterMetadata', 'TMotileDynamics'),
+)
+
+DEFAULT_VMT_SLOTS = (
+    ('navSlot', 'navSampler', 'TNavCameraControl', 0x70),
+    ('behaviorSlot', 'playerBehavior', 'TPlayerBehaviour', 0x68),
+    ('pointSlot', 'aimPoint', 'TPlayerBehaviour', 0x70),
+    ('combatUpdateSlot', 'combatUpdate', 'TMotileDynamics', 0xF8),
+)
+
+
+def find_fpc_vmt(exe, class_name):
+    """Mirror fp::rtti::findClassVmt on an Exe or mapped-image test fixture."""
+    mem = exe.mem
+    size = len(mem)
+    t0, t1 = exe.text
+    name_bytes = class_name.encode('ascii')
+    name_len = len(name_bytes)
+    if size < 0x68 or t0 >= t1 or t1 > size or not (1 <= name_len <= 127):
+        return None
+    base = exe.base
+    limit = size - 0x68
+    candidate = None
+    at = 0
+    while at <= limit:
+        if t0 <= at < t1:
+            at = (t1 + 7) & ~7
+            continue
+        s1 = int.from_bytes(mem[at:at + 8], 'little', signed=True)
+        if 8 <= s1 <= 0x100000:
+            s2 = int.from_bytes(mem[at + 8:at + 16], 'little', signed=True)
+            if s2 == -s1:
+                destroy_va = int.from_bytes(mem[at + 0x60:at + 0x68], 'little')
+                destroy_rva = destroy_va - base
+                parent_ref = int.from_bytes(mem[at + 0x10:at + 0x18], 'little')
+                name_va = int.from_bytes(mem[at + 0x18:at + 0x20], 'little')
+                parent_ok = (parent_ref == 0 or
+                             (base <= parent_ref <= base + size - 8 and not (t0 <= parent_ref - base < t1)))
+                nrva = name_va - base
+                if (t0 <= destroy_rva < t1 and parent_ok and 0 <= nrva <= size - (1 + name_len)
+                        and not (t0 <= nrva < t1)
+                        and mem[nrva] == name_len and bytes(mem[nrva + 1:nrva + 1 + name_len]) == name_bytes):
+                    if candidate is not None:
+                        return None
+                    candidate = at
+        at += 8
+    return candidate
+
+
+def find_vmt_method_slot(exe, vmt_rva, method_rva, preferred_offset=0):
+    """Mirror fp::rtti::findMethodSlot on an Exe or mapped-image test fixture."""
+    mem = exe.mem
+    size = len(mem)
+    t0, t1 = exe.text
+    if not (t0 <= method_rva < t1) or vmt_rva > size - 0x68:
+        return None
+    target_va = exe.base + method_rva
+    if 0x60 <= preferred_offset <= size - vmt_rva - 8:
+        if int.from_bytes(mem[vmt_rva + preferred_offset:vmt_rva + preferred_offset + 8], 'little') == target_va:
+            return vmt_rva + preferred_offset
+    match_rva = None
+    for m in range(160):
+        off = 0x60 + m * 8
+        if off > size - vmt_rva - 8:
+            break
+        entry = int.from_bytes(mem[vmt_rva + off:vmt_rva + off + 8], 'little')
+        entry_rva = entry - exe.base
+        if not (t0 <= entry_rva < t1):
+            break
+        if entry == target_va:
+            if match_rva is not None:
+                return None
+            match_rva = vmt_rva + off
+    return match_rva
+
+
 def resolve_rows(exe, rows, text):
     """The runtime resolver's target/group policy, separated from CLI formatting for contract tests."""
     found, missed, miss_why = {}, {}, {}
@@ -357,6 +436,13 @@ def resolve_rows(exe, rows, text):
             miss(name, 'outside the image')
             continue
         found.setdefault(name, set()).add(rva)
+    # Free Pascal x64 VMT fallback for VMT base targets whose constructor signatures missed.
+    for target, class_name in DEFAULT_VMT_TARGETS:
+        if target in known and target not in found:
+            vmt_rva = find_fpc_vmt(exe, class_name)
+            if vmt_rva is not None and 0 < vmt_rva < len(exe.mem):
+                found[target] = {vmt_rva}
+                missed[target] = missed.get(target, 0) or 1
     # a function reached only through a vtable: its slot holds its address (as the DLL does)
     holds = dict(re.findall(r'\{(\w+), (\w+)\},', text.split('slotChecks[]', 1)[1].split('};', 1)[0]))
     for slot, func in holds.items():
@@ -369,6 +455,16 @@ def resolve_rows(exe, rows, text):
             if exe.text[0] <= held < exe.text[1]:
                 found[func] = {held}
                 missed[func] = missed.get(func, 0) or 1
+    # Conversely, if a VMT slot's own signatures missed while its virtual method resolved, locate via FPC RTTI.
+    vmt_slot_map = {(slot, func): (cls, pref) for slot, func, cls, pref in DEFAULT_VMT_SLOTS}
+    for slot, func, cls, pref in DEFAULT_VMT_SLOTS:
+        if slot in known and slot not in found and len(found.get(func, ())) == 1:
+            vmt_rva = find_fpc_vmt(exe, cls)
+            if vmt_rva is not None:
+                slot_rva = find_vmt_method_slot(exe, vmt_rva, next(iter(found[func])), pref)
+                if slot_rva is not None:
+                    found[slot] = {slot_rva}
+                    missed[slot] = missed.get(slot, 0) or 1
     slot_failures = {}
     for slot, func in holds.items():
         if len(found.get(slot, ())) != 1 or len(found.get(func, ())) != 1:
@@ -377,7 +473,18 @@ def resolve_rows(exe, rows, text):
         if not 0 <= at <= len(exe.mem) - 8:
             slot_failures[slot] = 'outside the image'
         elif int.from_bytes(exe.mem[at:at + 8], 'little') != exe.base + next(iter(found[func])):
-            slot_failures[slot] = 'slot holds something else'
+            adapted = False
+            if (slot, func) in vmt_slot_map:
+                cls, pref = vmt_slot_map[(slot, func)]
+                vmt_rva = find_fpc_vmt(exe, cls)
+                if vmt_rva is not None and vmt_rva + 0x60 <= at < vmt_rva + 0x60 + 160 * 8:
+                    shifted = find_vmt_method_slot(exe, vmt_rva, next(iter(found[func])), pref)
+                    if shifted is not None:
+                        found[slot] = {shifted}
+                        missed[slot] = missed.get(slot, 0) or 1
+                        adapted = True
+            if not adapted:
+                slot_failures[slot] = 'slot holds something else'
     why = {n: miss_why.get(n, 'not found') for n in known if n not in found}
     why.update((n, 'references disagree') for n, values in found.items() if len(values) > 1)
     why.update(slot_failures)

@@ -25,8 +25,11 @@ static bool installWindow(HWND w) {
     }
     const bool live = same && installed && !windowInstallation.retired;
     ReleaseSRWLockExclusive(&windowInstallationLock);
-    if (live) hookedWindow = w;
-    else if (hookedWindow == w) hookedWindow = nullptr;
+    if (live) hookedWindow.store(w, std::memory_order_release);
+    else {
+        HWND expected = w;
+        hookedWindow.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+    }
     return live;
 }
 static bool restoreWindow() {
@@ -80,11 +83,13 @@ static bool arm(const char*& reason, const char*& hooks) {
         return false;
     }
     // The game window may have been rebuilt while stopped (re-arm): find it again.
-    if (!hookedWindow || !IsWindow(hookedWindow)) {
-        hookedWindow = nullptr;
-        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&hookedWindow));
+    HWND window = hookedWindow.load(std::memory_order_acquire);
+    if (!window || !IsWindow(window)) {
+        window = nullptr;
+        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&window));
+        hookedWindow.store(window, std::memory_order_release);
     }
-    if (!hookedWindow || !installWindow(hookedWindow)) {
+    if (!window || !installWindow(window)) {
         const bool rollback = rollbackDispatch(true, true, true);
         reason = rollback ? "window_install_failed" : "window_rollback_failed";
         hooks = rollback ? "removed" : "unknown";
@@ -146,7 +151,8 @@ static bool rawReconcileTarget(HWND desired) {
 static uint64_t rawWindowGeneration = 0;
 static void rawReconcile() {
     const WindowInstallation owner = windowInstallationSnapshot();
-    const bool live = owner.previous && !owner.retired && owner.window == hookedWindow &&
+    const bool live = owner.previous && !owner.retired &&
+                      owner.window == hookedWindow.load(std::memory_order_acquire) &&
                       IsWindow(owner.window);
     const uint64_t generation = live ? owner.generation : 0;
     if (rawWindowGeneration != generation) {
@@ -188,7 +194,10 @@ static void rehookWindow() {
     const WindowInstallation owner = windowInstallationSnapshot();
     if (!owner.generation) return;
     if (!owner.retired && owner.previous && IsWindow(owner.window)) return;
-    if (hookedWindow == owner.window) hookedWindow = nullptr;
+    {
+        HWND expected = owner.window;
+        hookedWindow.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+    }
     HWND w = nullptr;
     EnumWindows(findWindow, reinterpret_cast<LPARAM>(&w));
     if (w && installWindow(w)) ++windowRehooks;
@@ -275,14 +284,8 @@ static wchar_t unsupportedNotice[160]{};
 // Targets found although some of their signatures no longer match (status: worth regenerating before an update).
 static char degradedTargets[400]{};
 // Resolves the layout from the game's file. On failure the unresolved targets go to the status file.
-static bool resolveGame(const wchar_t* executable) {
-    std::vector<uint8_t> mapped;
-    fp::ImageView file;
+static bool resolveGameView(const fp::ImageView& file) {
     fp::ResolveReport report;
-    if (!readGameFile(executable, mapped, file)) {
-        snprintf(faultDetail, sizeof faultDetail, "Exanima.exe could not be read");
-        return false;
-    }
     fp::Layout candidate;
     if (fp::resolveLayout(file, candidate, report)) {
         if (!fp::validateNativeContracts(file, candidate, nativeContracts)) {
@@ -331,21 +334,11 @@ static bool slotTaken(fp::sig::Target slot, fp::sig::Target original) {
 } // no longer the game's own function
 // True to go on: nothing else hooked, or chaining is allowed. The function entries are compared with the
 // game's file; the slots with the game's own functions.
-static bool otherHooksCheck(const wchar_t* executable) {
-    std::vector<uint8_t> mapped;
-    fp::ImageView file;
-    if (!readGameFile(executable, mapped, file)) {
-        snprintf(faultDetail, sizeof faultDetail, "Exanima.exe could not be read");
-        return false;
-    }
-    // This optional closure proof is source-bound, unlike the core compatible
-    // build path. Recheck the established hash on initial install and F7/F6,
-    // alongside this freshly read file, rather than trusting cached startup status.
-    const bool optionalSourceVerified = fp::supportedExecutable(executable);
+static bool otherHooksCheckView(const fp::ImageView& file) {
     if (!admitManualDefenseEntries(file) ||
-        !admitAttackVariantsEntries(file, optionalSourceVerified) ||
-        !admitHeldThrowEntries(file, optionalSourceVerified) ||
-        !admitHeadwearRenderEntries(file, optionalSourceVerified) ||
+        !admitAttackVariantsEntries(file) ||
+        !admitHeldThrowEntries(file) ||
+        !admitHeadwearRenderEntries(file) ||
         !admitViewEffectsEntries(file) ||
         !admitSilhouetteEntries(file)) {
         otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
@@ -387,6 +380,15 @@ static bool otherHooksCheck(const wchar_t* executable) {
                otherHooksNames);
     return false;
 }
+static bool otherHooksCheck(const wchar_t* executable) {
+    std::vector<uint8_t> mapped;
+    fp::ImageView file;
+    if (!readGameFile(executable, mapped, file)) {
+        snprintf(faultDetail, sizeof faultDetail, "Exanima.exe could not be read");
+        return false;
+    }
+    return otherHooksCheckView(file);
+}
 // The dispatch slots' current owners become what this mod's replacements call: the game's own functions,
 // or (chained) another program's. Never this mod's own replacements (a stop that did not roll back).
 static uintptr_t nav(void*, float);
@@ -422,7 +424,13 @@ static void hookHealthTick() {
     if (hookHealth.decided) return;
     uint32_t hits[fp::healthHooks];
     for (unsigned k = 0; k < fp::healthHooks; ++k) hits[k] = healthHits[k].load(std::memory_order_relaxed);
-    const bool inPlay = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) != 0 && gameWindow() != nullptr;
+    AcquireSRWLockShared(&cameraLock);
+    const bool parked = park.active;
+    ReleaseSRWLockShared(&cameraLock);
+    const bool inPlay = InterlockedCompareExchange(&active, 0, 0) != 0 && !parked &&
+                        !InterlockedCompareExchange(&parkedNow, 0, 0) &&
+                        *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) != 0 &&
+                        gameWindow() != nullptr;
     const auto verdict = fp::healthStep(hookHealth, inPlay, *reinterpret_cast<uint32_t*>(gameAt(fp::sig::gameClock)), hits);
     // A late admitted increment is harmless: totals are never reset, and the
     // next installation takes its own start snapshot before testing progress.
@@ -487,11 +495,13 @@ static bool waitForGame() {
     for (;;) {
         if (GetModuleHandleW(
                 L"opengl32.dll")) { // the window looked for only then: not a window shown before the game's own
-            if (!hookedWindow || !IsWindow(hookedWindow)) {
-                hookedWindow = nullptr;
-                EnumWindows(findWindow, reinterpret_cast<LPARAM>(&hookedWindow));
+            HWND window = hookedWindow.load(std::memory_order_acquire);
+            if (!window || !IsWindow(window)) {
+                window = nullptr;
+                EnumWindows(findWindow, reinterpret_cast<LPARAM>(&window));
+                hookedWindow.store(window, std::memory_order_release);
             }
-            if (hookedWindow) return true;
+            if (window) return true;
         }
         if (GetTickCount64() - start >= gameReadyWaitMs) return false;
         Sleep(100);
@@ -519,11 +529,13 @@ static uintptr_t imageEnd(uintptr_t image) {
     const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(image + dos->e_lfanew);
     return image + nt->OptionalHeader.SizeOfImage;
 }
+static thread_local bool inNativeSettingsMaintenance = false;
 static LONG CALLBACK recordFault(EXCEPTION_POINTERS* info) {
     const DWORD code = info->ExceptionRecord->ExceptionCode;
-    // Informational codes (thread names, debug strings) and debugger traps are not faults.
+    // Informational codes (thread names, debug strings), debugger traps, and C++ throws caught inside our
+    // own native Settings maintenance guard are not faults.
     if ((code & 0xC0000000u) == 0x40000000u || code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP ||
-        inFaultRecord)
+        (code == 0xE06D7363u && inNativeSettingsMaintenance) || inFaultRecord)
         return EXCEPTION_CONTINUE_SEARCH;
     InterlockedIncrement(&faultsSeen);
     const uintptr_t raised = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
@@ -555,15 +567,17 @@ static LONG CALLBACK recordFault(EXCEPTION_POINTERS* info) {
                     if (!game) game = ip - game0;
                     else if (callers < 2) caller[callers++] = ip - game0;
                 }
+                const DWORD64 lookupIp = i > 0 ? c.Rip - 1 : c.Rip;
                 DWORD64 image = 0;
-                PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(c.Rip, &image, nullptr);
+                PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(lookupIp, &image, nullptr);
                 if (!entry) {
+                    if (i > 0) break;
                     c.Rip = *reinterpret_cast<const DWORD64*>(c.Rsp);
                     c.Rsp += 8;
                 } else {
                     void* data = nullptr;
                     DWORD64 frame = 0;
-                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, c.Rip, entry, &c, &data, &frame, nullptr);
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, lookupIp, entry, &c, &data, &frame, nullptr);
                 }
             }
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -640,7 +654,22 @@ static void logFaults() {
 // The worker's running snapshot includes the shared activation acknowledgement.
 // The first ten seconds after each spawn (a new player root), two lines a second to spawn-log.txt beside
 // the DLL: what the first-person hide waits on. The file is rewritten at each spawn, so it stays small.
+static bool spawnLogWanted() {
+#if FP_DEV_TOOLS || defined(FP_PROFILE)
+    return true;
+#else
+    static const int enabled = [] {
+        wchar_t v[8]{};
+        return (GetEnvironmentVariableW(L"EXCAMERA_SPAWN_LOG", v, 8) > 0 && v[0] != L'0') ||
+               (GetEnvironmentVariableW(L"EXCAMERA_PROFILE", v, 8) > 0 && v[0] != L'0')
+            ? 1
+            : 0;
+    }();
+    return enabled != 0;
+#endif
+}
 static void logSpawn() {
+    if (!spawnLogWanted()) return;
     static uintptr_t lastRoot = 0;
     static ULONGLONG since = 0;
     const uintptr_t root = base ? *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) : 0;
@@ -649,21 +678,27 @@ static void logSpawn() {
     lastRoot = root;
     if (fresh) since = now;
     if (!since || now - since > 10000 || !statusPath[0]) return;
+    bool owned = false, sameRoot = false, parked = false;
+    AcquireSRWLockShared(&cameraLock);
+    __try {
+        __try {
+            parked = park.active;
+            sameRoot = root == savedRoot;
+            owned = InterlockedCompareExchange(&pendingRestore, 0, 0) && !parked &&
+                    !InterlockedCompareExchange(&restorationUnknown, 0, 0);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    } __finally {
+        ReleaseSRWLockShared(&cameraLock);
+    }
     wchar_t path[MAX_PATH];
     wcscpy_s(path, statusPath);
     if (wchar_t* slash = wcsrchr(path, L'\\')) wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"spawn-log.txt");
     FILE* f = nullptr;
     if (_wfopen_s(&f, path, fresh ? L"w" : L"a") || !f) return;
-    bool owned = false, sameRoot = false;
-    __try {
-        sameRoot = root == savedRoot;
-        owned = InterlockedCompareExchange(&pendingRestore, 0, 0) && !park.active &&
-                !InterlockedCompareExchange(&restorationUnknown, 0, 0);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
     std::fprintf(f, "t=%5llu active=%ld ready=%ld owned=%d same_root=%d park=%d view=%d head_scan=%u head_nodes=%u "
                     "hidden_faces=%u wear_draws=%u scopes=%u head_skips=%u masked=%u parks=%u rearms=%u\n",
                  static_cast<unsigned long long>(now - since), InterlockedCompareExchange(&active, 0, 0),
-                 InterlockedCompareExchange(&cameraReady, 0, 0), owned ? 1 : 0, sameRoot ? 1 : 0, park.active ? 1 : 0,
+                 InterlockedCompareExchange(&cameraReady, 0, 0), owned ? 1 : 0, sameRoot ? 1 : 0, parked ? 1 : 0,
                  viewMode.load(), headWearScanState.load(), hiddenHeadNodes.load(), headwearRenderHidden.load(),
                  headwearRenderDraws.load(), supersampleScopes.load(), firstPersonHeadDrawsSkipped.load(),
                  maskedDraws.load(), parks.load(), rearms.load());
@@ -709,7 +744,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("guard_withdrawals", guardWithdrawals.load());
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
     j.num("fov", selectedFov.load());
-    j.boolean("settings_saved", !settingsSavePending());
+    j.boolean("settings_saved", !settingsSavePending() && pendingModsByModSave.load(std::memory_order_acquire) < 0);
     j.boolean("settings_widened", nativeSettingsWidened.load());
     {
         char at[24];
@@ -741,7 +776,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     const auto trackingNow = GetTickCount64();
     j.boolean("tracking_fresh", tracker.valid && trackingNow >= tracker.received &&
                                trackingNow - tracker.received <= fp::trackingStaleMs);
-    j.num("cursor_free", InterlockedCompareExchange(&cursorFree, 0, 0));
+    j.num("cursor_free", cursorFreeNow() ? 1 : 0);
     j.num("raw_mouse", InterlockedCompareExchange(&rawRegistered, 0, 0));
     j.unum("side_flips", sideFlips.load());
     j.str("helmet", helmetMode.load() == fp::HelmetMode::hide ? "hide" : "show");
@@ -785,7 +820,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.num("swap_starved", swapWatch.starved ? 1 : 0);
     j.num("cursor_clipped", InterlockedCompareExchange(&cursorClipped, 0, 0));
     j.num("view_fault", viewFault.load());
-    j.num("attack_cue", attackCue ? 1 : 0);
+    j.num("attack_cue", attackCue.load(std::memory_order_relaxed) ? 1 : 0);
     j.num("cue_state", cueState.load());
     j.unum("cue_draws", cueDraws.load());
     j.num("cue_gl", cueGl.load());
@@ -918,7 +953,8 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("hidden_body", hiddenBodyNodes.load());
     j.str("view", viewMode.load() == 1 ? "third" : viewMode.load() == 2 ? "to-overhead" : "first");
     j.unum("tp_prop_pulls", tpPropPulls.load());
-    j.str("game_build", verifiedBuild ? "verified" : "compatible");
+    j.str("game_build", verifiedBuild ? "verified" : (closureVerifiedBuild ? "closure_verified" : "compatible"));
+    j.str("far_rooms", roomViewHooked.load() ? "hooked" : roomViewUnreviewedBuild ? "off_unreviewed_build" : "off");
     j.str("hook_health", hookHealthText());
     {
         char hooks[200];
@@ -928,6 +964,7 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.str("signatures_degraded", degradedTargets);
     writeNativeCheckboxStatus(j);
     j.unum("native_fields_checked", nativeContracts.checked);
+    j.unum("native_fields_adapted", nativeContracts.adaptedFields);
     j.unum("native_fields_withheld", nativeContracts.optionalFailures);
     j.str("native_field_issue", nativeContracts.firstOptional ? nativeContracts.firstOptional : "none");
     j.object("held")
@@ -1038,6 +1075,19 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("faults", trackedBoneFaults.load())
         .boolean("fault", trackedBoneFault.load())
         .unum("pose_ticks", fingerPoseTicks.load())
+        .unum("player_vertices_left", trackedPlayerVerticesLeft.load())
+        .unum("player_vertices_right", trackedPlayerVerticesRight.load())
+        .num("player_pose_left", trackedPlayerPoseLeft.load())
+        .num("player_pose_right", trackedPlayerPoseRight.load())
+        .boolean("player_gloved_left", trackedPlayerGlovedLeft.load())
+        .boolean("player_gloved_right", trackedPlayerGlovedRight.load())
+        .boolean("player_gripped_left", trackedPlayerGrippedLeft.load())
+        .boolean("player_gripped_right", trackedPlayerGrippedRight.load())
+        .boolean("player_fitted_left", trackedPlayerFittedLeft.load())
+        .boolean("player_fitted_right", trackedPlayerFittedRight.load())
+        .unum("active_wounds", activeWoundsCount.load())
+        .unum("active_drips", activeDripsCount.load())
+        .real("active_weapon_blood", activeWeaponBloodMax.load())
         .end();
     j.finish();
 }
@@ -1056,14 +1106,25 @@ static DWORD runSession() {
         wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - statusPath), L"first-person-status.json");
         swprintf_s(statusTempPath, L"%s.tmp", statusPath);
     }
-    EnumWindows(findWindow, reinterpret_cast<LPARAM>(&hookedWindow));
+    {
+        HWND initialWindow = nullptr;
+        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&initialWindow));
+        hookedWindow.store(initialWindow, std::memory_order_release);
+    }
     wchar_t executable[MAX_PATH]{};
     if (!GetModuleFileNameW(nullptr, executable, MAX_PATH)) {
         reportFault("unsupported_executable", "not_installed", "not_required");
         return 2;
     }
     verifiedBuild = fp::supportedExecutable(executable);
-    if (!resolveGame(executable)) {
+    std::vector<uint8_t> startupMapped;
+    fp::ImageView startupFile;
+    if (!readGameFile(executable, startupMapped, startupFile)) {
+        snprintf(faultDetail, sizeof faultDetail, "Exanima.exe could not be read");
+        reportFault("unsupported_game_build", "not_installed", "not_required");
+        return 2;
+    }
+    if (!resolveGameView(startupFile)) {
         reportFault("unsupported_game_build", "not_installed", "not_required",
                     unsupportedNotice[0] ? unsupportedNotice : nullptr);
         return 2;
@@ -1097,11 +1158,13 @@ static DWORD runSession() {
     }
     base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     originalNav = (Nav)(gameAt(fp::sig::navSampler));
-    if (!otherHooksCheck(executable)) {
+    if (!otherHooksCheckView(startupFile)) {
         reportFault("native_code_conflict", "not_installed", "not_required",
                     otherHooksNotice[0] ? otherHooksNotice : nullptr);
         return 2;
     }
+    startupFile = {};
+    std::vector<uint8_t>().swap(startupMapped);
     rebuildProjection = (Projection)(gameAt(fp::sig::rebuildProjection));
     rebuildInverse = (Inverse)(gameAt(fp::sig::rebuildInverse));
     levelRay = (LevelRay)(gameAt(fp::sig::levelRay));
@@ -1127,8 +1190,6 @@ static DWORD runSession() {
                       (void**)&originalCameraMouse) != MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::aimWorldToLocal), (void*)aimWorldToLocal,
                       (void**)&originalAimWorldToLocal) != MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::guiMaintenance), (void*)nativeSettingsMaintenance,
-                      (void**)&originalGuiMaintenance) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::cursorAim)), (void*)cursorAim, (void**)&originalCursor) !=
             MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::combatAttention), (void*)combatAttention,
@@ -1170,14 +1231,6 @@ static DWORD runSession() {
             MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::coverDepth)), (void*)coverDepth, (void**)&originalCoverDepth) !=
             MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::resourceQueue), (void*)resourceQueue,
-                      (void**)&originalResourceQueue) != MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::inventoryComplete), (void*)inventoryComplete,
-                      (void**)&originalInventoryComplete) != MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::inventoryCommit), (void*)inventoryCommit,
-                      (void**)&originalInventoryCommit) != MH_OK ||
-        MH_CreateHook((void*)gameAt(fp::sig::inventoryAdmission), (void*)inventoryAdmission,
-                      (void**)&originalInventoryAdmission) != MH_OK ||
         MH_CreateHook((void*)(gameAt(fp::sig::dragPlace)), (void*)dragPlace, (void**)&originalDragPlace) !=
             MH_OK ||
         MH_CreateHook((void*)gameAt(fp::sig::heldUpdate), (void*)heldUpdate, (void**)&originalHeldUpdate) !=
@@ -1215,52 +1268,60 @@ static DWORD runSession() {
                       (void*)cueDeleteContext, (void**)&originalCueDeleteContext) != MH_OK ||
         MH_CreateHook((void*)GetProcAddress(GetModuleHandleW(L"opengl32.dll"), "wglSwapBuffers"), (void*)swap,
                       (void**)&originalSwap) != MH_OK) {
-        MH_Uninitialize();
-        awaitNativeHookRecovery();
+        uninitializeNativeHooks();
         reportFault("hook_creation_failed", "not_installed", "not_required");
         return 3;
     }
+    if (!createNativeSettingsHooks()) {
+        uninitializeNativeHooks();
+        reportFault("settings_hook_rollback_failed", "not_installed", "not_required");
+        return 3;
+    }
+    if (!createInventoryReachHooks()) {
+        uninitializeNativeHooks();
+        reportFault("inventory_hook_rollback_failed", "not_installed", "not_required");
+        return 3;
+    }
     if (!createManualDefenseHooks()) {
-        MH_Uninitialize();
-        awaitNativeHookRecovery();
+        uninitializeNativeHooks();
         reportFault("manual_hook_rollback_failed", "not_installed", "not_required");
         return 3;
     }
     if (!createAttackVariantsHooks()) {
-        MH_Uninitialize();
-        awaitNativeHookRecovery();
+        uninitializeNativeHooks();
         reportFault("attack_variant_hook_rollback_failed", "not_installed", "not_required");
         return 3;
     }
     if (!createHeldThrowHooks()) {
-        MH_Uninitialize();
-        awaitNativeHookRecovery();
+        uninitializeNativeHooks();
         reportFault("held_throw_hook_rollback_failed", "not_installed", "not_required");
         return 3;
     }
     if(!createHeadwearRenderHooks()) {
-        MH_Uninitialize();awaitNativeHookRecovery();
+        uninitializeNativeHooks();
         reportFault("headwear_hook_rollback_failed","not_installed","not_required");return 3;
     }
     if (!createSkinMergeHook()) { // rigid hand pieces into the body skin (xr_bones.inl)
-        MH_Uninitialize();
-        awaitNativeHookRecovery();
+        uninitializeNativeHooks();
         reportFault("skin_merge_hook_creation_failed", "not_installed", "not_required");
         return 3;
     }
     if (!createBladeHooks()) { // the plain build's own contact and commit hooks; the headset build's drive owns them
-        MH_Uninitialize();
-        awaitNativeHookRecovery();
+        uninitializeNativeHooks();
         reportFault("blade_hook_creation_failed", "not_installed", "not_required");
         return 3;
     }
     if (!createStereoHooks()) {
-        MH_Uninitialize();
-        awaitNativeHookRecovery();
+        uninitializeNativeHooks();
         reportFault("stereo_hook_creation_failed", "not_installed", "not_required");
         return 3;
     }
     createViewEffectsHook();
+    createNodeMoveHook();
+    createRoomViewHook();
+    createManualPageHook();
+    createWoundHooks();
+    stoneSkinWarmup();
     {
         const char* reason = "";
         const char* hooks = "";
@@ -1269,10 +1330,16 @@ static DWORD runSession() {
             return 4;
         }
     }
+    closureVerifiedBuild = !verifiedBuild &&
+                           nativeContracts.optionalFailures == 0 &&
+                           degradedTargets[0] == 0 &&
+                           attackVariantsHooksCreated &&
+                           heldThrowHooksCreated &&
+                           headwearHooksCreated;
     if (chained)
         showNotice(otherHooksNotice, 12000);
-    else if (!verifiedBuild)
-        showNotice(FP_SHOWN_NAME L": untested Exanima version. Every game function was found; hold F7 if "
+    else if (!verifiedBuild && !closureVerifiedBuild)
+        showNotice(FP_SHOWN_NAME L": untested Exanima version. Compatible game functions resolved; hold F7 if "
                                  L"anything looks wrong.",
                    12000);
     profileInitialize(); // Publish only after this instance owns successfully armed hooks.
@@ -1309,7 +1376,7 @@ static DWORD runSession() {
                     aim.valid = false;
                     ReleaseSRWLockExclusive(&aimLock);
                 } // no nav frame ended the blend (parked, loading): end it as F6 did
-                f8WindowTick(InterlockedCompareExchange(&cursorFree, 0, 0) &&
+                f8WindowTick(cursorFreeNow() &&
                                  (InterlockedCompareExchange(&active, 0, 0) || title),
                              gameWindow() != nullptr);
             }
@@ -1324,11 +1391,13 @@ static DWORD runSession() {
                         FP_SHOWN_NAME L": another program took over the game's frame hook (an overlay?). "
                                       L"Park, re-arm and F7 may not work; restart Exanima without it.");
             }
+            const bool inLevel = InterlockedCompareExchange(&cameraReady, 0, 0) &&
+                                 *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
             if (i % 5 == 0 && slash) {
-                logSpawn();
+                if (inLevel) logSpawn();
                 logFaults();
             }
-            if (i % 10 == 0 && slash) {
+            if ((inLevel ? (i % 10 == 0) : (i % 50 == 0)) && slash) {
                 Aim a;
                 AcquireSRWLockShared(&aimLock);
                 a = aim;
@@ -1357,6 +1426,7 @@ static DWORD runSession() {
         // Native Apply has retired: include its final accepted edits in the stop flush.
         // Failed rows stay pending and retry while waiting for re-arm.
         flushSettings();
+        flushPendingModsByMod();
         // Missing/minimized/teardown callbacks cannot make shutdown wait forever.
         // A timed-out module stays mapped with pass-through adapters and restoration
         // callbacks intact. Never free a trampoline another thread can still reach.
@@ -1461,6 +1531,8 @@ static DWORD WINAPI run(void*) {
     trackingReceiver.stop(); // includes early/fault exits and retained-hook sessions
     finishSessionWorker();
     flushSettings(); // final best-effort pass, still on the sole persistence owner
+    flushPendingModsByMod();
+    flushPendingRecenterOrigin();
     return result;
 }
 // Started only by `enable` (our launcher calls it right after loading the DLL; EMTK's native plugin loader

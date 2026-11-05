@@ -39,7 +39,9 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.drawDistance = drawDistanceM.load();
     s.objectLights = objectLightCap.load();
     s.woundMarks = woundMarks.load() > 0.f;
+    s.woundDebug = woundDebug.load(std::memory_order_relaxed);
     s.lightSmoothing = lightSmoothing.load();
+    s.farRooms = farRooms.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
     s.rawMouseFallback = rawMouse && !rawWanted.load();
@@ -97,6 +99,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.fpSwingSelection = fpSwingSelection.load();
     s.tpSwingSelection = tpSwingSelection.load();
     s.manualDefenseAvailable = manualDefenseReady.load();
+    s.scriptRuntimeAvailable = true;
     s.crouchMode = crouchMode.load();
     s.nearClip = nearClip.load();
     s.headRoll = headSteadyRoll.load();
@@ -168,7 +171,9 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     drawDistanceM = s.drawDistance;
     objectLightCap = s.objectLights;
     woundMarks = s.woundMarks ? 1.f : 0.f;
+    woundDebug.store(s.woundDebug, std::memory_order_relaxed);
     lightSmoothing = s.lightSmoothing;
+    farRooms = s.farRooms;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;
     rawMouse = s.rawMouse;
@@ -290,8 +295,16 @@ static panel::ModSettings readSettings(const wchar_t* path) {
         GetPrivateProfileStringW(L"VR", L"RecenterOrigin", L"", origin, 160, path);
         float o[7]{};
         if (origin[0] && swscanf_s(origin, L"%f,%f,%f,%f,%f,%f,%f", &o[0], &o[1], &o[2], &o[3], &o[4], &o[5], &o[6]) == 7) {
-            memcpy(vrRecenterOrigin, o, sizeof o);
-            vrRecenterOriginValid = true;
+            // A hand-edited or damaged line can hold nan/inf or a zero rotation, which the XR runtime rejects as an
+            // invalid pose. Keep only finite values with a usable rotation, normalised; otherwise forget the origin.
+            bool finite = true;
+            for (const float v : o) finite = finite && std::isfinite(v);
+            const float length = finite ? std::sqrt(o[3] * o[3] + o[4] * o[4] + o[5] * o[5] + o[6] * o[6]) : 0.0f;
+            if (finite && std::isfinite(length) && length > 0.5f && length < 2.0f) {
+                for (int k = 3; k < 7; ++k) o[k] /= length;
+                memcpy(vrRecenterOrigin, o, sizeof o);
+                vrRecenterOriginValid = true;
+            }
         }
     }
     wchar_t indicatorText[24]{};
@@ -373,11 +386,21 @@ static void persistSettingsRows(unsigned budget) {
         persistSettingsRow(row);
     }
 }
-static void flushSettings() { persistSettingsRows(panel::setting::count); }
-static void awaitRawRegistration(bool enabling) {
-    for (int i = 0; i < 20 && enabling && !InterlockedCompareExchange(&rawRegistered, 0, 0) && rawWanted.load();
-         ++i)
-        Sleep(25); // the worker registers within 100 ms
+static void acceptVrQuickSaves() {
+    const unsigned rows = vrQuickSaves.exchange(0, std::memory_order_acq_rel);
+    if (!rows) return;
+    static constexpr std::pair<unsigned, int> map[] = {
+        {vrQuickPosture, panel::setting::vrPosture}, {vrQuickTurning, panel::setting::vrTurning},
+        {vrQuickHands, panel::setting::vrHands},     {vrQuickBody, panel::setting::vrBody},
+        {vrQuickComfort, panel::setting::vrComfort}, {vrQuickHaptics, panel::setting::vrHaptics},
+    };
+    SettingsGuard guard;
+    for (const auto& [bit, row] : map)
+        if (rows & bit) ++settingsRevision[row];
+}
+static void flushSettings() {
+    acceptVrQuickSaves();
+    persistSettingsRows(panel::setting::count);
 }
 // Native Apply owns a draft. Merge only edited rows into the latest state so a
 // menu opened before a FOV key or raw-input fallback cannot overwrite that work.
@@ -397,39 +420,4 @@ static void commitSettingsDraft(const panel::ModSettings& initial, const panel::
     // Registration remains asynchronous on its existing worker. GUI maintenance
     // must never wait for that worker while it owns the native Settings task.
 }
-// Bulk configuration remains available to the owned tests and explicit callers.
-// Interactive controls use applySetting below, which never accepts a stale image.
-[[maybe_unused]] static panel::ModSettings applySettings(const panel::ModSettings& want) {
-    panel::ModSettings s = want;
-    s.normalize();
-    bool enablingRaw;
-    {
-        SettingsGuard guard;
-        const panel::ModSettings was = readLiveSettings();
-        enablingRaw = s.rawMouse && !was.rawMouse;
-        commitSettings(s, was);
-    }
-    awaitRawRegistration(enablingRaw); // worker reconciliation needs settingsLock too
-    return currentSettings();
-}
-// From the F8 window: choose the latest state and apply one row action while the
-// same lock excludes FOV keys, bulk changes, and raw fallback.
-[[maybe_unused]] static panel::SettingsChange applySetting(int row, int delta, int group) {
-    panel::SettingsChange result;
-    bool enablingRaw = false;
-    {
-        SettingsGuard guard;
-        const panel::ModSettings was = readLiveSettings();
-        result.settings = was;
-        if (row != panel::ModSettings::resetControl && was.inactiveReason(row)) return result;
-        result.changed = result.settings.click(row, delta, group);
-        if (!result.changed) return result;
-        result.settings.normalize();
-        enablingRaw = result.settings.rawMouse && !was.rawMouse;
-        result.saved = commitSettings(result.settings, was);
-    }
-    awaitRawRegistration(enablingRaw);
-    result.settings = currentSettings();
-    result.rawUnavailable = enablingRaw && result.settings.rawMouseFallback;
-    return result;
-}
+

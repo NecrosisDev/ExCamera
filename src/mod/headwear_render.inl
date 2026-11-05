@@ -2,6 +2,7 @@
 // Read contracts: headwearRender optional group, exact reviewed source image.
 // No native geometry, physics, transform, mask, callback or descriptor is written.
 #include "../headwear_render.h"
+#include "../gl_procs.h"
 #include <memory>
 
 using WearPass = void(*)(uintptr_t, uintptr_t, unsigned);
@@ -70,6 +71,7 @@ struct WearPlan {
     uintptr_t indices = 0;
     GLenum type = 0;
     bool stable = false;
+    uint64_t cacheSerial = 0;
     float bind[16]{};
 };
 
@@ -194,6 +196,51 @@ inline bool wearMeshFormat(uintptr_t node, uintptr_t material, int lastFace, int
     return true;
 }
 
+struct WearPlanCacheKey {
+    uintptr_t node = 0, material = 0, head = 0, root = 0;
+    uintptr_t triangles = 0, source = 0, posIndices = 0, weightsData = 0, tags = 0;
+    uintptr_t normalsData = 0, normIndices = 0, tangents = 0, indices = 0;
+    unsigned first = 0, count = 0, vertices = 0, buffer = 0, attributes = 0, posCount = 0;
+    float setback = 0.f;
+    float bind[16]{};
+    uint64_t tagHash = 0;
+    bool hideAll = false;
+
+    bool operator==(const WearPlanCacheKey& o) const {
+        return node == o.node && material == o.material && head == o.head && root == o.root &&
+               triangles == o.triangles && source == o.source && posIndices == o.posIndices &&
+               weightsData == o.weightsData && tags == o.tags && normalsData == o.normalsData &&
+               normIndices == o.normIndices && tangents == o.tangents && indices == o.indices &&
+               first == o.first && count == o.count && vertices == o.vertices && buffer == o.buffer &&
+               attributes == o.attributes && posCount == o.posCount && setback == o.setback &&
+               hideAll == o.hideAll && tagHash == o.tagHash && std::memcmp(bind, o.bind, sizeof(bind)) == 0;
+    }
+};
+
+struct WearPlanCacheSlot {
+    bool valid = false, any = false, stable = false, hasGear = false;
+    uint64_t serial = 0;
+    WearPlanCacheKey key{};
+    std::vector<fp::wear::Face> faces;
+    std::vector<unsigned> tags;
+    std::vector<WearVertex> vertices;
+};
+
+static WearPlanCacheSlot wearPlanCache[8];
+static unsigned wearPlanCacheNext = 0;
+static uint64_t wearPlanNextSerial = 1;
+
+inline uint64_t hashWearTags(uintptr_t tags, unsigned first, unsigned count) {
+    if (!tags || !count) return 0;
+    uint64_t h = 14695981039346656037ull;
+    const auto* p = reinterpret_cast<const unsigned*>(tags) + first;
+    for (unsigned i = 0; i < count; ++i) {
+        h ^= uint64_t(p[i]);
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
 inline bool prepareWearPlan(uintptr_t node, uintptr_t material, WearPlan& plan) {
     const bool hideAll = helmetMode.load(std::memory_order_relaxed) == fp::HelmetMode::hide;
     if (!ensureWearScratch()) return false;
@@ -272,19 +319,104 @@ inline bool prepareWearPlan(uintptr_t node, uintptr_t material, WearPlan& plan) 
        !wearStream(node, normals, static_cast<unsigned>(lastVertex + 1), normIndices))) return false;
     const uintptr_t tangents = hideAll || !tangent ? 0 : *(uintptr_t*)(material + 0xe8);
     if (!hideAll && tangent && !readable(tangents, size_t(plan.vertices) * 16)) return false;
+    const float setback = hideAll ? 0.f : static_cast<float>(eyeSetback.load());
+    const bool canCache = wglGetCurrentContext() != nullptr;
+    WearPlanCacheKey cacheKey{};
+    if (canCache) {
+        cacheKey.node = node;
+        cacheKey.material = material;
+        cacheKey.head = head;
+        cacheKey.root = root;
+        cacheKey.triangles = triangles;
+        cacheKey.source = source;
+        cacheKey.posIndices = posIndices;
+        cacheKey.weightsData = weights.data;
+        cacheKey.tags = tags;
+        cacheKey.normalsData = normals.data;
+        cacheKey.normIndices = normIndices;
+        cacheKey.tangents = tangents;
+        cacheKey.indices = plan.indices;
+        cacheKey.first = plan.first;
+        cacheKey.count = count;
+        cacheKey.vertices = plan.vertices;
+        cacheKey.buffer = plan.buffer;
+        cacheKey.attributes = plan.attributes;
+        cacheKey.posCount = positions.count;
+        cacheKey.setback = setback;
+        std::memcpy(cacheKey.bind, plan.bind, sizeof(plan.bind));
+        cacheKey.tagHash = aggregate ? hashWearTags(tags, plan.first, count) : 0;
+        cacheKey.hideAll = hideAll;
+        for (const WearPlanCacheSlot& slot : wearPlanCache) {
+            if (slot.valid && slot.key == cacheKey) {
+                if (!slot.any) return false;
+                std::memcpy(wearScratch().faces, slot.faces.data(), size_t(count) * sizeof(fp::wear::Face));
+                std::memcpy(wearScratch().tags, slot.tags.data(), size_t(count) * sizeof(unsigned));
+                if (!hideAll && slot.vertices.size() == plan.vertices)
+                    std::memcpy(wearScratch().vertices, slot.vertices.data(), size_t(plan.vertices) * sizeof(WearVertex));
+                plan.stable = slot.stable;
+                plan.cacheSerial = slot.serial;
+                if (slot.hasGear) headwearSeen.store(GetTickCount64(), std::memory_order_relaxed);
+                return supersampleViewMatches() && verifiedPlayerHead(root) == head &&
+                       *(uintptr_t*)(node + field::sceneNode::sector) == sector;
+            }
+        }
+    }
+    auto saveCache = [&](bool anyFound, bool hasGearFaces) {
+        if (!canCache) return;
+        try {
+            WearPlanCacheSlot& slot = wearPlanCache[wearPlanCacheNext];
+            wearPlanCacheNext = (wearPlanCacheNext + 1) % 8;
+            slot.valid = false;
+            slot.key = cacheKey;
+            slot.any = anyFound;
+            slot.stable = plan.stable;
+            slot.hasGear = hasGearFaces;
+            slot.serial = anyFound ? wearPlanNextSerial++ : 0;
+            if (anyFound) {
+                slot.faces.assign(wearScratch().faces, wearScratch().faces + count);
+                slot.tags.assign(wearScratch().tags, wearScratch().tags + count);
+                if (!hideAll) slot.vertices.assign(wearScratch().vertices, wearScratch().vertices + plan.vertices);
+                else slot.vertices.clear();
+            } else {
+                slot.faces.clear();
+                slot.tags.clear();
+                slot.vertices.clear();
+            }
+            slot.valid = true;
+            plan.cacheSerial = slot.serial;
+        } catch (const std::bad_alloc&) {
+            plan.cacheSerial = 0;
+        }
+    };
     bool any = false;
     for (unsigned f = 0; f < count; ++f) {
         const unsigned* tri = (const unsigned*)(triangles + (size_t(first) + f) * 12);
-        bool onHead = true;
+        bool onHead = true, mostlyHead = true;
+        float triHeadShare = 0.f;
+        float maxHeadShare = 0.f;
         for (unsigned c = 0; c < 3; ++c) {
             if (tri[c] < static_cast<unsigned>(firstVertex) || tri[c] > static_cast<unsigned>(endVertex)) return false;
             if (aggregate) {
                 const unsigned p = *(unsigned*)(posIndices + size_t(tri[c]) * 4);
                 if (p >= positions.count) return false;
-                if (!fp::wear::headVertex(((const fp::wear::Weights*)weights.data)[p], headBones, boneCount)) onHead = false;
+                const auto& vertexWeights = ((const fp::wear::Weights*)weights.data)[p];
+                if (!fp::wear::headVertex(vertexWeights, headBones, boneCount)) onHead = false;
+                const float share = fp::wear::headShare(vertexWeights, headBones, boneCount);
+                if (share < 0.5f) mostlyHead = false;
+                triHeadShare += share;
+                if (share > maxHeadShare) maxHeadShare = share;
             }
         }
-        auto kind = onHead ? (aggregate && *(unsigned*)(tags + (size_t(first) + f) * 4) == 0 ? fp::wear::Face::head : fp::wear::Face::gear) : fp::wear::Face::native;
+        // Hair and rims are often weighted partly to the neck. Left native they swing against the steady
+        // view, so what mostly follows the head goes with it: worn pieces stay attached to the view, and
+        // hair merged into the head goes with the head, whose hidden scalp it would float off otherwise.
+        // For merged base body faces (tag 0: head, ears, jaw, skull), if the face has any significant head
+        // connection (average share > 15%, max share > 35%, or passing strict vertex tests), it belongs to
+        // the head and must be hidden as Face::head so ears and jaw never clip into first-person view.
+        const bool merged = aggregate && *(unsigned*)(tags + (size_t(first) + f) * 4) == 0;
+        const bool isHeadFace = (merged && (onHead || mostlyHead || (triHeadShare / 3.f) > 0.15f || maxHeadShare > 0.35f)) ||
+                                (!merged && (onHead || mostlyHead));
+        auto kind = isHeadFace ? (merged ? fp::wear::Face::head : fp::wear::Face::gear) : fp::wear::Face::native;
         if (hideAll && kind == fp::wear::Face::gear) kind = fp::wear::Face::blocked;
         wearScratch().faces[f] = kind;
         wearScratch().tags[f] = aggregate ? *(unsigned*)(tags + (size_t(first) + f) * 4) : 1;
@@ -331,17 +463,24 @@ inline bool prepareWearPlan(uintptr_t node, uintptr_t material, WearPlan& plan) 
                 }
         }
     }
-    if (!any) return false;
+    if (!any) {
+        saveCache(false, false);
+        return false;
+    }
+    bool hasGear = false;
     for (unsigned f = 0; f < count; ++f)
         if (wearScratch().faces[f] == fp::wear::Face::gear || wearScratch().faces[f] == fp::wear::Face::blocked) {
+            hasGear = true;
             headwearSeen.store(GetTickCount64(), std::memory_order_relaxed);
             break;
         }
-    if (hideAll) return supersampleViewMatches() && verifiedPlayerHead(root) == head &&
-                       *(uintptr_t*)(node + field::sceneNode::sector) == sector;
+    if (hideAll) {
+        saveCache(true, hasGear);
+        return supersampleViewMatches() && verifiedPlayerHead(root) == head &&
+               *(uintptr_t*)(node + field::sceneNode::sector) == sector;
+    }
     unsigned blocked[fp::wear::maxGroups]{}, nBlocked = 0;
     bool overflow = false;
-    const float setback = static_cast<float>(eyeSetback.load());
     for (unsigned f = 0; f < count; ++f) {
         if (wearScratch().faces[f] == fp::wear::Face::gear) {
             const unsigned* tri = (const unsigned*)(triangles + (size_t(first) + f) * 12);
@@ -366,6 +505,7 @@ inline bool prepareWearPlan(uintptr_t node, uintptr_t material, WearPlan& plan) 
             else plan.stable = true;
         }
     }
+    saveCache(true, hasGear);
     return supersampleViewMatches() && verifiedPlayerHead(root) == head &&
            *(uintptr_t*)(node + field::sceneNode::sector) == sector;
 }
@@ -385,9 +525,11 @@ struct WearGl {
 };
 
 inline bool loadWearGl(WearGl& g) {
-    return loadGl(g.attrib, "glGetVertexAttribiv") && loadGl(g.pointer, "glGetVertexAttribPointerv") &&
-           loadGl(g.uniform, "glGetUniformfv") && loadGl(g.uniformInt, "glGetUniformiv") &&
-           loadGl(g.setUniform, "glUniformMatrix4fv");
+    return fp::glproc::loadForCurrentContext(g, [](WearGl& out) {
+        return loadGl(out.attrib, "glGetVertexAttribiv") && loadGl(out.pointer, "glGetVertexAttribPointerv") &&
+               loadGl(out.uniform, "glGetUniformfv") && loadGl(out.uniformInt, "glGetUniformiv") &&
+               loadGl(out.setUniform, "glUniformMatrix4fv");
+    });
 }
 static bool (*wearGlLoader)(WearGl&) = loadWearGl;
 
@@ -395,6 +537,14 @@ struct WearAttribState {
     GLuint index = 0;
     GLint size = 0, type = 0, normalized = 0, stride = 0, buffer = 0;
     void* pointer = nullptr;
+};
+
+struct WearAttribLayoutSlot {
+    HGLRC context = nullptr;
+    uintptr_t node = 0, material = 0;
+    GLint vao = 0, program = 0;
+    unsigned mask = 0, count = 0;
+    WearAttribState layout[4]{};
 };
 
 struct WearGlState {
@@ -411,7 +561,7 @@ inline bool captureWearGl(const WearPlan& plan, const WearGl& api, WearGlState& 
     glGetIntegerv(0x85b5, &state.vao);
     if (GLuint(state.elementBuffer) != plan.buffer) return false;
     state.cull = glIsEnabled(GL_CULL_FACE);
-    if (!plan.stable) return glGetError() == GL_NO_ERROR;
+    if (!plan.stable) return true;
     glGetIntegerv(0x8b8d, &state.program);
     const uintptr_t renderer = *(uintptr_t*)gameAt(fp::sig::headwearWorldRenderer);
     if (!readable(renderer, 0x88)) return false;
@@ -441,6 +591,26 @@ inline bool captureWearGl(const WearPlan& plan, const WearGl& api, WearGlState& 
         for (float v : state.mounted)
             if (!std::isfinite(v)) return false;
     }
+    const unsigned attrMask = plan.attributes & (2u | 8u | 0x40u);
+    const HGLRC ctx = wglGetCurrentContext();
+    thread_local WearAttribLayoutSlot layoutCache[8]{};
+    thread_local unsigned layoutCacheNext = 0;
+    if (ctx && state.vao) {
+        for (const WearAttribLayoutSlot& cached : layoutCache) {
+            if (cached.context == ctx && cached.node == plan.node && cached.material == plan.material &&
+                cached.vao == state.vao && cached.program == state.program && cached.mask == attrMask) {
+                state.count = cached.count;
+                for (unsigned k = 0; k < cached.count; ++k) {
+                    WearAttribState& a = state.attributes[k];
+                    a = cached.layout[k];
+                    api.attrib(a.index, 0x889f, &a.buffer);
+                    api.pointer(a.index, 0x8645, &a.pointer);
+                    if (!a.buffer) return false;
+                }
+                return true;
+            }
+        }
+    }
     const GLuint indices[4] = {0, 2, 6, 7};
     const bool needed[4] = {true, (plan.attributes & 2) != 0, (plan.attributes & 8) != 0, (plan.attributes & 0x40) != 0};
     for (unsigned k = 0; k < 4; ++k) {
@@ -460,7 +630,19 @@ inline bool captureWearGl(const WearPlan& plan, const WearGl& api, WearGlState& 
                 return false;
         }
     }
-    return glGetError() == GL_NO_ERROR;
+    if (ctx && state.vao) {
+        WearAttribLayoutSlot& slot = layoutCache[layoutCacheNext];
+        layoutCacheNext = (layoutCacheNext + 1) % 8;
+        slot.context = ctx;
+        slot.node = plan.node;
+        slot.material = plan.material;
+        slot.vao = state.vao;
+        slot.program = state.program;
+        slot.mask = attrMask;
+        slot.count = state.count;
+        for (unsigned k = 0; k < state.count; ++k) slot.layout[k] = state.attributes[k];
+    }
+    return true;
 }
 
 inline void restoreWearAttributes(const gl::Api& g, const WearGlState& state) {
@@ -486,6 +668,40 @@ inline void wearDrawRange(const WearPlan& plan, unsigned first, unsigned count) 
 
 using WearBindBuffer = void (APIENTRY*)(GLenum, GLuint);
 
+struct WearNativeGl {
+    WearBindBuffer bindBuffer = nullptr;
+};
+
+inline bool loadWearNativeGl(WearNativeGl& out) {
+    return fp::glproc::loadForCurrentContext(out, [](WearNativeGl& s) {
+        return loadGl(s.bindBuffer, "glBindBuffer");
+    });
+}
+
+inline bool wearVboNeedsUpload(const fp::CueResources* owner, GLuint vbo, uint64_t serial, bool createdVbo) {
+    const HGLRC ctx = wglGetCurrentContext();
+    if (!ctx || !serial || !vbo) return true;
+    struct Slot {
+        HGLRC context = nullptr;
+        const fp::CueResources* owner = nullptr;
+        GLuint vbo = 0;
+        uint64_t serial = 0;
+    };
+    static Slot slots[4]{};
+    static unsigned nextSlot = 0;
+    for (Slot& s : slots) {
+        if (s.context == ctx && s.owner == owner) {
+            if (!createdVbo && s.vbo == vbo && s.serial == serial) return false;
+            s.vbo = vbo;
+            s.serial = serial;
+            return true;
+        }
+    }
+    slots[nextSlot] = {ctx, owner, vbo, serial};
+    nextSlot = (nextSlot + 1) % 4;
+    return true;
+}
+
 inline bool emitWearNativeOnly(const WearPlan& plan, bool bind) {
     if (!ownedNativeSwap(cueCurrentDC()) || !wearScope.colour || !supersampleViewMatches() ||
        viewMode.load() != 0 || !InterlockedCompareExchange(&active, 0, 0) ||
@@ -498,11 +714,11 @@ inline bool emitWearNativeOnly(const WearPlan& plan, bool bind) {
     __try {
         if (cueDeletesInFlight || cueRetiring.load() || cueBindingFailed.load() ||
            InterlockedCompareExchange(&stopping, 0, 0) || !ownedNativeSwap(cueCurrentDC())) return false;
-        WearBindBuffer bindBuffer = nullptr;
-        if (bind && !loadGl(bindBuffer, "glBindBuffer")) return false;
+        WearNativeGl nativeGl{};
+        if (bind && !loadWearNativeGl(nativeGl)) return false;
         if (bind) {
             wearBind(plan.material + 8);
-            bindBuffer(0x8893, plan.buffer);
+            nativeGl.bindBuffer(0x8893, plan.buffer);
         }
         GLint elementBuffer = 0;
         glGetIntegerv(0x8895, &elementBuffer);
@@ -559,12 +775,12 @@ inline bool emitWearPlan(const WearPlan& plan, bool bind) {
         __try {
             stoneSkinWearBegin(plan.node, plan.material, swap);
             if (stable && !owner->resources.ready() && !owner->resources.prepare(g)) stable = false;
-            if (stable && !owner->resources.headwearVbo) g.genBuffers(1, &owner->resources.headwearVbo);
-            if (stable && (!owner->resources.headwearVbo || glGetError() != GL_NO_ERROR)) stable = false;
-            if (stable) {
+            const bool createdVbo = stable && !owner->resources.headwearVbo;
+            if (createdVbo) g.genBuffers(1, &owner->resources.headwearVbo);
+            if (stable && !owner->resources.headwearVbo) stable = false;
+            if (stable && wearVboNeedsUpload(&owner->resources, owner->resources.headwearVbo, plan.cacheSerial, createdVbo)) {
                 g.bindBuffer(0x8892, owner->resources.headwearVbo);
                 g.bufferData(0x8892, ptrdiff_t(size_t(plan.vertices) * sizeof(WearVertex)), wearScratch().vertices, 0x88e8);
-                if (glGetError() != GL_NO_ERROR) stable = false;
             }
             for (unsigned f = 0; f < plan.count;) {
                 const auto kind = wearScratch().faces[f];
@@ -640,7 +856,7 @@ inline void wearSubmitBody(uintptr_t node, int index, uintptr_t caller) {
     __try {
         __try {
             if (single || sampled) submitted = wearSubmission(node, index);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&headwearRenderFaults)) {
             submitted = {};
         }
         if (sampled) wearScope.submission = submitted;
@@ -686,8 +902,7 @@ inline void wearDrawBody(uintptr_t material, bool bind, uintptr_t caller) {
                 if (submitted.index >= 0 && submitted.index <= last && last < 256 &&
                    readable(table, size_t(last + 1) * 8) && *(uintptr_t*)(table + size_t(submitted.index) * 8) == material)
                     prepared = prepareWearPlan(submitted.node, material, plan);
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-                headwearRenderFaults.fetch_add(1, std::memory_order_relaxed);
+            } __except (countFaultAndHandle(&headwearRenderFaults)) {
             }
             if (prepared) {
                 handled = emitWearPlan(plan, bind);
@@ -729,7 +944,7 @@ inline void wearPassBody(uintptr_t list, uintptr_t sector, unsigned flags) {
                     collectWearHints(root, head, sector);
                 }
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        } __except (countFaultAndHandle(&headwearRenderFaults)) {
             wearScope = {};
         }
         wearScope.colourPass = true; // after the scope is settled, so no assignment above clears it
@@ -747,14 +962,14 @@ inline void wearPass(uintptr_t list, uintptr_t sector, unsigned flags) {
 static bool silhouetteSubmitHooked() { return headwearRenderReady.load(std::memory_order_relaxed); }
 
 static bool headwearHooksCreated = false, headwearAdmitted = false;
-inline bool admitHeadwearRenderEntries(const fp::ImageView& file, bool sourceVerified) {
+inline bool admitHeadwearRenderEntries(const fp::ImageView& file) {
     headwearRenderReady = false;
     headwearAdmitted = false;
     bool admitted = false;
     __try {
-        admitted = sourceVerified && layout.optionalGroupAvailable("headwearRender") &&
+        admitted = layout.optionalGroupAvailable("headwearRender") &&
                  loadedOptionalContractsImpl(file, "headwearRender");
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&headwearRenderFaults)) {
         admitted = false;
     }
     if (!admitted) {

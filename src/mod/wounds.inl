@@ -77,7 +77,7 @@ struct Wound {
 };
 
 // What the finishing pass takes: view-space marks, nearest first.
-constexpr unsigned woundDripLimit = 96, woundDripShown = 24;
+constexpr unsigned woundDripLimit = 128, woundDripShown = 32;
 constexpr float woundDripSeconds = 120.f, woundDripDrySeconds = 30.f;
 // On the living: an open cut closes into a scar over this long (the Regenerate mark's own time while it
 // runs); a bruise fades away over this long.
@@ -100,7 +100,12 @@ static unsigned woundNext = 0;
 static uint32_t woundSerial = 0; // the newest record taken
 static SRWLOCK woundLock = SRWLOCK_INIT;
 static std::atomic<CharacterHits> characterHits{nullptr};
-static std::atomic<ULONGLONG> characterHitsProbed{0};
+using BodyDamageFn = unsigned char (*)(uintptr_t, float, float, char);
+static BodyDamageFn originalBodyDamage = nullptr;
+using PhysicalImpactFn = void (*)(uintptr_t);
+static PhysicalImpactFn originalPhysicalImpact = nullptr;
+static thread_local uintptr_t currentImpactAttacker = 0;
+static std::atomic<int> characterHitsState{0}; // 0 unprobed, 1 ready, -1 absent
 static std::atomic<unsigned> woundsTaken{0}, woundsRetired{0}, woundFaults{0}, woundsMended{0};
 static unsigned woundSkinVersion = 1; // woundLock: bumped when a baked (mapped) mark changes or goes
 // Injuries' "injuries.burn" mark: a burn level (0..255) per character scene node, read each frame; woundLock.
@@ -143,10 +148,11 @@ static void woundReadLevels(int (*marks)(const char*, uintptr_t*, uint32_t*, int
 // Drops of blood fallen from bleeding cuts: where they fell from (the cut, sector-local) and its sector's
 // origin; the wound pass draws each on the first upward surface 20..200 cm below. woundLock.
 struct WoundDrip { float from[3], sectorOrigin[3], radius; ULONGLONG born; };
-static WoundDrip woundDrips[96];
+static WoundDrip woundDrips[woundDripLimit];
 static unsigned woundDripNext = 0;
 static bool woundSkinBaked(uintptr_t character);            // wounds_bake.inl
 static void bakeWoundSkins(gl::Api& g, fp::CueResources& r); // wounds_bake.inl, from the view-effects pass
+static bool initWoundBakeResources(gl::Api& g, fp::CueResources& r); // wounds_bake.inl, warm-up precompile
 
 // Regeneration (the Injuries addon's "injuries.mend" mark, value = seconds to close a wound
 // fully): ScriptRuntime.dll's character_mark_nodes export (marks version 1).
@@ -154,38 +160,50 @@ using WoundMarkNodes = int (*)(const char*, uintptr_t*, uint32_t*, int);
 using WoundMarksVersion = uint32_t (*)();
 constexpr unsigned woundMendLimit = 64;
 static std::atomic<WoundMarkNodes> woundMarkNodes{nullptr};
-static std::atomic<ULONGLONG> woundMarksProbed{0};
+static std::atomic<int> woundMarksState{0}; // 0 unprobed, 1 ready, -1 absent
 static ULONGLONG woundFadeTick = 0; // woundLock
 
+// Looked up once: ScriptRuntime.dll loads before game play if installed, and is pinned once found.
 static WoundMarkNodes woundMarkExport() {
-    if (auto fn = woundMarkNodes.load(std::memory_order_acquire)) return fn;
-    const ULONGLONG now = GetTickCount64();
-    if (now - woundMarksProbed.load(std::memory_order_relaxed) < 2000) return nullptr;
-    woundMarksProbed.store(now, std::memory_order_relaxed);
+    const int state = woundMarksState.load(std::memory_order_acquire);
+    if (state < 0) return nullptr;
+    if (state > 0) return woundMarkNodes.load(std::memory_order_relaxed);
     HMODULE runtime = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) return nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) {
+        woundMarksState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
     const auto version = reinterpret_cast<WoundMarksVersion>(GetProcAddress(runtime, "character_marks_version"));
     const auto fn = reinterpret_cast<WoundMarkNodes>(GetProcAddress(runtime, "character_mark_nodes"));
-    if (!version || !fn || version() != 1) return nullptr;
-    woundMarkNodes.store(fn, std::memory_order_release);
+    if (!version || !fn || version() != 1) {
+        woundMarksState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
+    woundMarkNodes.store(fn, std::memory_order_relaxed);
+    woundMarksState.store(1, std::memory_order_release);
     return fn;
 }
 
-// The runtime's export, looked up again at most every two seconds until found; the module is pinned
-// once found, so the cached entry stays valid for the life of the process.
+// Looked up once; the module is pinned once found, so the cached entry stays valid for the life of the process.
 static CharacterHits characterHitsExport() {
-    if (auto fn = characterHits.load(std::memory_order_acquire)) return fn;
-    const ULONGLONG now = GetTickCount64();
-    if (now - characterHitsProbed.load(std::memory_order_relaxed) < 2000) return nullptr;
-    characterHitsProbed.store(now, std::memory_order_relaxed);
+    const int state = characterHitsState.load(std::memory_order_acquire);
+    if (state < 0) return nullptr;
+    if (state > 0) return characterHits.load(std::memory_order_relaxed);
     HMODULE runtime = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) return nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) {
+        characterHitsState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
     const auto version = reinterpret_cast<CharacterHitsVersion>(GetProcAddress(runtime, "character_hits_version"));
     const auto fn = reinterpret_cast<CharacterHits>(GetProcAddress(runtime, "character_hits"));
     const uint32_t found = version ? version() : 0;
-    if (!fn || (found != 1 && found != 2)) return nullptr;
+    if (!fn || (found != 1 && found != 2)) {
+        characterHitsState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
     characterHitsVersion.store(found, std::memory_order_relaxed);
-    characterHits.store(fn, std::memory_order_release);
+    characterHits.store(fn, std::memory_order_relaxed);
+    characterHitsState.store(1, std::memory_order_release);
     return fn;
 }
 
@@ -230,6 +248,33 @@ static void addWound(const CharacterHitRecord& h) {
     }
     if (!w.owner || w.owner != uintptr_t(h.victim) || !intoPose(h.pose, h.point, true, w.local)) return;
     if (!intoPose(h.pose, h.direction, false, w.along)) memset(w.along, 0, sizeof w.along);
+    const uintptr_t player = gameAt(fp::sig::playerRoot) ? *(const uintptr_t*)gameAt(fp::sig::playerRoot) : 0;
+    if (player && uintptr_t(h.victim) == player) {
+        const float flash = std::clamp(0.4f + health * 3.0f, 0.4f, 1.0f);
+        float curFlash = playerDamageFlash.load(std::memory_order_relaxed);
+        while (flash > curFlash && !playerDamageFlash.compare_exchange_weak(curFlash, flash, std::memory_order_relaxed)) {}
+
+        float dirWorld[3]{};
+        outOfPose(h.pose, h.direction, false, dirWorld);
+        float lenSq = dirWorld[0] * dirWorld[0] + dirWorld[1] * dirWorld[1] + dirWorld[2] * dirWorld[2];
+        if (lenSq < 1e-4f) {
+            dirWorld[0] = 0.f; dirWorld[1] = 0.4f; dirWorld[2] = 1.0f;
+            lenSq = 1.16f;
+        }
+        const float invLen = 1.0f / std::sqrt(lenSq);
+        dirWorld[0] *= invLen;
+        dirWorld[1] *= invLen;
+        dirWorld[2] *= invLen;
+
+        const float impulse = std::clamp(health * 0.20f + balance * 0.10f, 0.02f, 0.08f);
+        const float kickPitch = (-dirWorld[1] * 0.6f + dirWorld[2] * 0.4f) * impulse;
+        const float kickYaw = dirWorld[0] * impulse * 0.8f;
+        const float kickRoll = -dirWorld[0] * impulse * 0.35f;
+
+        cameraImpactPitch.store(std::clamp(cameraImpactPitch.load(std::memory_order_relaxed) + kickPitch, -0.10f, 0.10f), std::memory_order_relaxed);
+        cameraImpactYaw.store(std::clamp(cameraImpactYaw.load(std::memory_order_relaxed) + kickYaw, -0.10f, 0.10f), std::memory_order_relaxed);
+        cameraImpactRoll.store(std::clamp(cameraImpactRoll.load(std::memory_order_relaxed) + kickRoll, -0.06f, 0.06f), std::memory_order_relaxed);
+    }
     if (!std::isfinite(healthMax) || healthMax < 0.05f) healthMax = 1.f;
     // PROVISIONAL(2026-10-22, size from damage: a third of full health fills the scale; tune after
     // a first look in game, ratify-by: 2026-11-05)
@@ -287,6 +332,7 @@ struct WeaponBlood {
     float local[bloodSpotsPerWeapon][3]{};
     float amount[bloodSpotsPerWeapon]{};
     ULONGLONG born[bloodSpotsPerWeapon]{};
+    float drip[bloodSpotsPerWeapon]{};
 };
 static WeaponBlood weaponBlood[bloodWeaponLimit];
 static unsigned weaponBloodNext = 0;
@@ -386,7 +432,7 @@ static void addWeaponBlood(const CharacterHitRecord& h) {
 // plus how wet it still is, drying over two minutes, as tenths in the whole part (0 for none).
 static void weaponBloodFor(uintptr_t node, float (*out)[4]) {
     for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) out[k][0] = out[k][1] = out[k][2] = out[k][3] = 0.f;
-    if (!TryAcquireSRWLockShared(&woundLock)) return;
+    AcquireSRWLockShared(&woundLock);
     const ULONGLONG now = GetTickCount64();
     for (const WeaponBlood& w : weaponBlood) {
         if (w.node != node) continue;
@@ -403,6 +449,7 @@ static void weaponBloodFor(uintptr_t node, float (*out)[4]) {
 }
 
 static void takeHits() {
+    if (originalBodyDamage) return;
     const CharacterHits fn = characterHitsExport();
     if (!fn) return;
     // Version 1 records are 0x70 bytes apart; they are read into raw space and widened.
@@ -444,20 +491,16 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
     uintptr_t mendNodes[woundMendLimit]{};
     uint32_t mendSeconds[woundMendLimit]{};
     int mendCount = 0;
-    if (const WoundMarkNodes marks = woundMarkExport()) {
-        __try { mendCount = marks("injuries.mend", mendNodes, mendSeconds, int(woundMendLimit)); }
-        __except (EXCEPTION_EXECUTE_HANDLER) { mendCount = 0; woundFaults.fetch_add(1, std::memory_order_relaxed); }
-        mendCount = std::clamp(mendCount, 0, int(woundMendLimit));
-    }
     uintptr_t brokenNodes[woundMendLimit]{};
     uint32_t brokenBits[woundMendLimit]{};
     int brokenCount = 0;
     if (const WoundMarkNodes marks = woundMarkExport()) {
+        __try { mendCount = marks("injuries.mend", mendNodes, mendSeconds, int(woundMendLimit)); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { mendCount = 0; woundFaults.fetch_add(1, std::memory_order_relaxed); }
+        mendCount = std::clamp(mendCount, 0, int(woundMendLimit));
         __try { brokenCount = marks("injuries.broken", brokenNodes, brokenBits, int(woundMendLimit)); }
         __except (EXCEPTION_EXECUTE_HANDLER) { brokenCount = 0; woundFaults.fetch_add(1, std::memory_order_relaxed); }
         brokenCount = std::clamp(brokenCount, 0, int(woundMendLimit));
-    }
-    if (const WoundMarkNodes marks = woundMarkExport()) {
         woundReadLevels(marks, "injuries.burn", woundBurns, woundBurnCount);
         woundReadLevels(marks, "injuries.burnscar", woundBurnScars, woundBurnScarCount);
         woundReadLevels(marks, "injuries.severed", woundSevered, woundSeveredCount);
@@ -618,6 +661,48 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         memcpy(out.c[k], c, sizeof c);
     }
     out.count = count;
+    activeWoundsCount.store(visible, std::memory_order_relaxed);
+    float maxWeaponSaturation = 0.f;
+    for (WeaponBlood& wb : weaponBlood) {
+        if (!wb.node) continue;
+        float wpose[12];
+        if (!meshPose(wb.node, wpose)) continue;
+        float wSector[3]{};
+        __try {
+            if (readable(wb.node, field::sceneNode::sector + 8)) {
+                const uintptr_t sector = *(const uintptr_t*)(wb.node + field::sceneNode::sector);
+                if (sector && readable(sector, field::sector::origin + 12))
+                    memcpy(wSector, (const void*)(sector + field::sector::origin), sizeof wSector);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+        for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) {
+            if (wb.amount[k] > maxWeaponSaturation) maxWeaponSaturation = wb.amount[k];
+            if (wb.amount[k] <= 0.35f) continue;
+            const float age = float(now - wb.born[k]) / 1000.f;
+            if (age >= 120.f) continue;
+            const float wet = 1.f - age / 120.f;
+            if (wet <= 0.15f) continue;
+            if (fadeDt > 0.f) {
+                wb.drip[k] += fadeDt * wb.amount[k] * wet * 0.8f;
+                if (wb.drip[k] >= 1.f) {
+                    wb.drip[k] -= 1.f;
+                    float world[3];
+                    outOfPose(wpose, wb.local[k], true, world);
+                    WoundDrip& d = woundDrips[woundDripNext];
+                    woundDripNext = (woundDripNext + 1) % woundDripLimit;
+                    const unsigned salt = unsigned(now) * 2654435761u + k * 131071u + woundDripNext * 524287u;
+                    d.from[0] = world[0] + float(int(salt % 7) - 3);
+                    d.from[1] = world[1];
+                    d.from[2] = world[2] + float(int((salt >> 8) % 7) - 3);
+                    memcpy(d.sectorOrigin, wSector, sizeof d.sectorOrigin);
+                    d.radius = 1.0f + float((salt >> 16) % 18) / 10.f;
+                    d.born = now;
+                }
+            }
+        }
+    }
+    activeWeaponBloodMax.store(maxWeaponSaturation, std::memory_order_relaxed);
     // The drops, nearest first, as their point in view space (the nearer reading of the sector origin, as
     // for the wounds); gone after two minutes, dry after half of one.
     struct ShownDrip { float distanceSq, centre[3], w; };
@@ -641,6 +726,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         s.w = d.radius + 10.f * std::floor(dry * 9.f);
         drops[dropCount++] = s;
     }
+    activeDripsCount.store(dropCount, std::memory_order_relaxed);
     const unsigned dripCount = (std::min)(dropCount, woundDripShown);
     std::partial_sort(drops, drops + dripCount, drops + dropCount,
                       [](const ShownDrip& l, const ShownDrip& r) { return l.distanceSq < r.distanceSq; });
@@ -652,3 +738,149 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
     woundSeveredCaps(view, out);
     ReleaseSRWLockExclusive(&woundLock);
 }
+
+static void emitImpactSpatter(const CharacterHitRecord& r, const float* sectorOrigin) {
+    if (r.kind == woundCrush && r.health < 0.05f) return;
+    if (r.health < 1e-3f) return;
+    const ULONGLONG now = GetTickCount64();
+    const float speed = std::sqrt(r.direction[0] * r.direction[0] +
+                                  r.direction[1] * r.direction[1] +
+                                  r.direction[2] * r.direction[2]);
+    const float dirNorm[3] = {
+        speed > 1e-3f ? r.direction[0] / speed : 0.f,
+        speed > 1e-3f ? r.direction[1] / speed : -0.3f,
+        speed > 1e-3f ? r.direction[2] / speed : 0.f
+    };
+    const int count = std::clamp(int(r.health * 16.f + speed * 0.15f) + 1, 2, 5);
+    for (int k = 0; k < count; ++k) {
+        WoundDrip& d = woundDrips[woundDripNext];
+        woundDripNext = (woundDripNext + 1) % woundDripLimit;
+        const unsigned salt = unsigned(now) * 2654435761u + k * 524287u + woundDripNext * 131071u;
+        const float spreadDist = 3.f + float(salt % 14);
+        const float alongDist = 6.f + float((salt >> 4) % 22) + (std::min)(speed * 0.35f, 30.f);
+        const float lateralX = float(int((salt >> 8) % 17) - 8) / 8.f;
+        const float lateralZ = float(int((salt >> 12) % 17) - 8) / 8.f;
+
+        d.from[0] = r.point[0] + dirNorm[0] * alongDist + lateralX * spreadDist;
+        d.from[1] = r.point[1] + dirNorm[1] * alongDist * 0.4f;
+        d.from[2] = r.point[2] + dirNorm[2] * alongDist + lateralZ * spreadDist;
+        std::memcpy(d.sectorOrigin, sectorOrigin, sizeof(d.sectorOrigin));
+        d.radius = 0.9f + float((salt >> 16) % 22) / 10.f; // 0.9 to 3.1 cm
+        d.born = now;
+    }
+}
+
+static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, float balance) {
+    if (!attacker || !victim) return;
+    if (woundMarks.load(std::memory_order_relaxed) <= 0.f) return;
+
+    CharacterHitRecord r{};
+    r.size = sizeof(r);
+    r.victim = victim;
+    r.health = health;
+    r.balance = balance;
+
+    uintptr_t part = 0;
+    int32_t index = -1;
+    if (!readable(attacker + 0xc20, sizeof(uintptr_t))) return;
+    part = *reinterpret_cast<const uintptr_t*>(attacker + 0xc20);
+    if (!part || !readable(part + woundPartIndex, sizeof(int32_t))) return;
+    index = *reinterpret_cast<const int32_t*>(part + woundPartIndex);
+    if (index < 0 || index >= 18) return;
+    r.part = part;
+
+    if (!readable(attacker + 0xc28, 12) || !readable(part + field::bodyPart::pose, 48)) return;
+    std::memcpy(r.point, reinterpret_cast<const void*>(attacker + 0xc28), 12);
+    std::memcpy(r.pose, reinterpret_cast<const void*>(part + field::bodyPart::pose), 48);
+
+    uintptr_t weapon = 0;
+    float now[12]{}, before[12]{};
+    if (readable(attacker + 0xc38, sizeof(uintptr_t))) {
+        weapon = *reinterpret_cast<const uintptr_t*>(attacker + 0xc38);
+        if (weapon && readable(weapon + 0xf0, 48) && readable(weapon + 0x120, 48)) {
+            std::memcpy(now, reinterpret_cast<const void*>(weapon + 0xf0), 48);
+            std::memcpy(before, reinterpret_cast<const void*>(weapon + 0x120), 48);
+            for (int axis = 0; axis < 3; ++axis) {
+                float a = 0.f, b = 0.f;
+                for (int k = 0; k < 4; ++k) {
+                    a += now[k * 3 + axis];
+                    b += before[k * 3 + axis];
+                }
+                r.direction[axis] = (a - b) * 0.25f;
+            }
+        }
+    }
+    r.weapon = weapon;
+
+    uint32_t motion = 0;
+    if (readable(attacker + field::character::motion, sizeof(uint32_t))) {
+        motion = *reinterpret_cast<const uint32_t*>(attacker + field::character::motion);
+        if (motion == 0xb) {
+            r.kind = woundThrust;
+        } else {
+            r.kind = (health > 0.4f * balance) ? woundCut : woundCrush;
+        }
+    } else {
+        r.kind = (health > 0.4f * balance) ? woundCut : woundCrush;
+    }
+
+    float sectorOrigin[3]{};
+    if (part && readable(part + field::bodyPart::meshNode, sizeof(uintptr_t))) {
+        const uintptr_t node = *reinterpret_cast<const uintptr_t*>(part + field::bodyPart::meshNode);
+        if (node && readable(node + field::sceneNode::sector, sizeof(uintptr_t))) {
+            const uintptr_t sector = *reinterpret_cast<const uintptr_t*>(node + field::sceneNode::sector);
+            if (sector && readable(sector + field::sector::origin, sizeof(sectorOrigin))) {
+                std::memcpy(sectorOrigin, reinterpret_cast<const void*>(sector + field::sector::origin), sizeof(sectorOrigin));
+            }
+        }
+    }
+
+    AcquireSRWLockExclusive(&woundLock);
+    r.serial = ++woundSerial;
+    addWound(r);
+    addWeaponBlood(r);
+    emitImpactSpatter(r, sectorOrigin);
+    ReleaseSRWLockExclusive(&woundLock);
+}
+
+static unsigned char bodyDamageDetour(uintptr_t character, float balance, float health, char canFall) {
+    const auto result = originalBodyDamage(character, balance, health, canFall);
+    __try {
+        recordNativeHit(character, currentImpactAttacker, health, balance);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        woundFaults.fetch_add(1, std::memory_order_relaxed);
+    }
+    return result;
+}
+
+static void physicalImpactDetour(uintptr_t attacker) {
+    const auto outer = currentImpactAttacker;
+    currentImpactAttacker = attacker;
+    __try {
+        originalPhysicalImpact(attacker);
+    } __finally {
+        currentImpactAttacker = outer;
+    }
+}
+
+static void createWoundHooks() {
+    if (!layout.optionalGroupAvailable("wounds")) return;
+    const uintptr_t impactTarget = optionalGameAt(fp::sig::woundImpact);
+    const uintptr_t damageTarget = optionalGameAt(fp::sig::bodyDamage);
+
+    static const unsigned char applySig[] = {0x53, 0x56, 0x48, 0x8d, 0x64, 0x24, 0xd8, 0x48, 0x89, 0xcb, 0x40, 0x30, 0xf6};
+    static const unsigned char impactSig[] = {0x55, 0x48, 0x89, 0xe5, 0x48, 0x8d, 0xa4, 0x24, 0x90, 0xfe, 0xff, 0xff};
+
+    if (damageTarget && readable(damageTarget, sizeof(applySig)) && std::memcmp(reinterpret_cast<const void*>(damageTarget), applySig, sizeof(applySig)) == 0) {
+        MH_CreateHook(reinterpret_cast<void*>(damageTarget),
+                      reinterpret_cast<void*>(bodyDamageDetour),
+                      reinterpret_cast<void**>(&originalBodyDamage));
+    }
+
+    if (impactTarget && readable(impactTarget, sizeof(impactSig)) && std::memcmp(reinterpret_cast<const void*>(impactTarget), impactSig, sizeof(impactSig)) == 0) {
+        MH_CreateHook(reinterpret_cast<void*>(impactTarget),
+                      reinterpret_cast<void*>(physicalImpactDetour),
+                      reinterpret_cast<void**>(&originalPhysicalImpact));
+    }
+}
+

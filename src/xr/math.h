@@ -1,9 +1,12 @@
 #pragma once
-#if __has_include(<openxr/openxr.h>)
+#ifdef FP_OPENXR_EMULATION
 #include <openxr/openxr.h>
-#else
-// A build without the OpenXR SDK still lays out hands (the finger poses): the four value types this
-// header and the hand model use, as the SDK declares them.
+#elif !defined(OPENXR_H_) && !defined(XR_CURRENT_API_VERSION)
+// A build without OpenXR emulation still lays out hands (the finger poses) and runs pure-math XR tests:
+// the value types this header and the hand/body models use, as the SDK declares them.
+#include <cstdint>
+using XrTime = int64_t;
+typedef struct XrVector2f { float x, y; } XrVector2f;
 typedef struct XrVector3f { float x, y, z; } XrVector3f;
 typedef struct XrQuaternionf { float x, y, z, w; } XrQuaternionf;
 typedef struct XrPosef { XrQuaternionf orientation; XrVector3f position; } XrPosef;

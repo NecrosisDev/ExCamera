@@ -92,6 +92,7 @@ private:
         WSADATA data{};
         if (WSAStartup(MAKEWORD(2, 2), &data)) { state = Status::unavailable; return 1; }
         SOCKET socketHandle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        WSAEVENT sockEvent = WSACreateEvent();
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -99,11 +100,14 @@ private:
         BOOL exclusive = TRUE;
         u_long nonblocking = 1;
         const bool ready = socketHandle != INVALID_SOCKET &&
+            sockEvent != WSA_INVALID_EVENT &&
             !setsockopt(socketHandle, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
                         reinterpret_cast<const char*>(&exclusive), sizeof exclusive) &&
             !bind(socketHandle, reinterpret_cast<const sockaddr*>(&address), sizeof address) &&
-            !ioctlsocket(socketHandle, FIONBIO, &nonblocking);
+            !ioctlsocket(socketHandle, FIONBIO, &nonblocking) &&
+            !WSAEventSelect(socketHandle, sockEvent, FD_READ | FD_CLOSE);
         if (!ready) {
+            if (sockEvent != WSA_INVALID_EVENT) WSACloseEvent(sockEvent);
             if (socketHandle != INVALID_SOCKET) closesocket(socketHandle);
             WSACleanup();
             state = Status::unavailable;
@@ -118,7 +122,19 @@ private:
         ULONGLONG lastAccepted = 0;
         bool haveSender = false;
         bool receiveFailed = false;
-        while (!receiveFailed && WaitForSingleObject(wake, 4) == WAIT_TIMEOUT) {
+        WSASetEvent(sockEvent); // Drain anything queued between bind() and WSAEventSelect().
+        const HANDLE events[2] = {wake, sockEvent}; // wake at index 0 guarantees stop() priority under flood.
+        while (!receiveFailed) {
+            const DWORD waited = WaitForMultipleObjects(2, events, FALSE, INFINITE);
+            if (waited == WAIT_OBJECT_0) break;
+            if (waited != WAIT_OBJECT_0 + 1) {
+                receiveFailed = true;
+                clearSample();
+                state = Status::unavailable;
+                break;
+            }
+            WSAResetEvent(sockEvent);
+            bool drained = false;
             // Bounded work even if a sender floods the endpoint; shutdown always gets a turn.
             for (unsigned i = 0; i < 64; ++i) {
                 char bytes[49]; // oversized packets must never masquerade as a six-double packet
@@ -129,8 +145,11 @@ private:
                 if (n == SOCKET_ERROR) {
                     const int error = WSAGetLastError();
                     if (error == WSAEMSGSIZE) continue;
-                    // Empty queues and interrupted calls may retry after the wake poll.
-                    if (error == WSAEWOULDBLOCK || error == WSAEINTR) break;
+                    // Empty queues and interrupted calls retry on the next socket event.
+                    if (error == WSAEWOULDBLOCK || error == WSAEINTR) {
+                        drained = true;
+                        break;
+                    }
                     // Do not leave a broken receiver alive: service() can only reap
                     // and back off/restart a completed worker. Retire its pose now.
                     receiveFailed = true;
@@ -162,7 +181,9 @@ private:
                 ReleaseSRWLockExclusive(&lock);
                 state = Status::receiving;
             }
+            if (!drained && !receiveFailed) WSASetEvent(sockEvent);
         }
+        WSACloseEvent(sockEvent);
         closesocket(socketHandle);
         boundPort = 0;
         WSACleanup();

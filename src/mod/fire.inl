@@ -32,20 +32,26 @@ struct FireUniforms {
 using FireNodes = int (*)(uintptr_t* nodes, float* sizes, int capacity);
 using FireNodesVersion = uint32_t (*)();
 static std::atomic<FireNodes> fireNodes{nullptr};
-static std::atomic<ULONGLONG> fireNodesProbed{0};
+static std::atomic<int> fireNodesState{0}; // 0 unprobed, 1 ready, -1 absent
 
-// Looked up again at most every two seconds until found; the module is pinned once found.
+// Looked up once; the module is pinned once found.
 static FireNodes fireNodeExport() {
-    if (auto fn = fireNodes.load(std::memory_order_acquire)) return fn;
-    const ULONGLONG now = GetTickCount64();
-    if (now - fireNodesProbed.load(std::memory_order_relaxed) < 2000) return nullptr;
-    fireNodesProbed.store(now, std::memory_order_relaxed);
+    const int state = fireNodesState.load(std::memory_order_acquire);
+    if (state < 0) return nullptr;
+    if (state > 0) return fireNodes.load(std::memory_order_relaxed);
     HMODULE runtime = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) return nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"ScriptRuntime.dll", &runtime) || !runtime) {
+        fireNodesState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
     const auto version = reinterpret_cast<FireNodesVersion>(GetProcAddress(runtime, "fire_nodes_version"));
     const auto fn = reinterpret_cast<FireNodes>(GetProcAddress(runtime, "fire_nodes"));
-    if (!version || !fn || version() != 1) return nullptr;
-    fireNodes.store(fn, std::memory_order_release);
+    if (!version || !fn || version() != 1) {
+        fireNodesState.store(-1, std::memory_order_release);
+        return nullptr;
+    }
+    fireNodes.store(fn, std::memory_order_relaxed);
+    fireNodesState.store(1, std::memory_order_release);
     return fn;
 }
 
@@ -113,6 +119,12 @@ inline bool nodeOrigin(uintptr_t node, float* local, float* sectorOrigin) {
 static void fireViewUniforms(const float* view, float period, FireUniforms& out) {
     out.count = 0;
     if (!(fireLook.load(std::memory_order_relaxed) > 0.f)) return;
+    const WoundMarkNodes marks = woundMarkExport();
+    const FireNodes fires = fireNodeExport();
+    if (!marks && !fires) {
+        fireShown.store(0, std::memory_order_relaxed);
+        return;
+    }
     using firepass::Candidate;
     Candidate found[fireNodeLimit + 24];
     unsigned n = 0;
@@ -121,7 +133,6 @@ static void fireViewUniforms(const float* view, float period, FireUniforms& out)
     firepass::direction(view, worldUp, up);
     firepass::direction(view, worldRight, out.right);
     __try {
-        const WoundMarkNodes marks = woundMarkExport();
         // The blade's flames are found first: a fire node the Fire mod attached to the blade (attach_fire) is
         // the same flame, and is left out of the fires below.
         Candidate bladeFire{};
@@ -164,7 +175,7 @@ static void fireViewUniforms(const float* view, float period, FireUniforms& out)
         }
         // Fires: the node's origin is where the flames stand; the native size scales them (1 is the
         // game's medium fire).
-        if (const FireNodes fires = fireNodeExport()) {
+        if (fires) {
             uintptr_t list[fireNodeLimit]{};
             float sizes[fireNodeLimit]{};
             const int count = std::clamp(fires(list, sizes, int(fireNodeLimit)), 0, int(fireNodeLimit));

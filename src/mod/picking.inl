@@ -58,7 +58,7 @@ static float heldAimGain(uintptr_t root, float width, float height) {
                 }
             }
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         gain = 1.f;
     }
     ReleaseSRWLockShared(&cameraLock);
@@ -104,10 +104,7 @@ static bool finiteAimVector(const float* p) {
 }
 
 static uintptr_t aimSector(uintptr_t root) {
-    const auto mesh = readable(root, field::character::sceneNode + sizeof(uintptr_t))
-                          ? *reinterpret_cast<const uintptr_t*>(root + field::character::sceneNode)
-                          : 0;
-    return readable(mesh, field::sceneNode::sector + sizeof(uintptr_t)) ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector) : 0;
+    return characterSector(root);
 }
 
 static bool nativeAimEligible(uintptr_t root, uintptr_t behavior) {
@@ -258,16 +255,14 @@ static bool nativeAimPointLocked(uintptr_t behavior, float* out, const Aim& a) {
     s.viewport = *reinterpret_cast<const uintptr_t*>(behavior + field::behaviour::view);
     if (!readable(s.viewport, field::viewport::pickCamera + sizeof(uintptr_t))) return false;
     s.camera = *reinterpret_cast<const uintptr_t*>(s.viewport + field::viewport::pickCamera);
-    s.sector = aimSector(s.root);
-    if (!readable(s.sector, field::sector::origin + 3 * sizeof(float))) return false;
-    std::memcpy(s.sectorOrigin, reinterpret_cast<const void*>(s.sector + field::sector::origin), 3 * sizeof(float));
+    s.sector = characterSector(s.root);
+    if (!readSectorOrigin(s.sector, s.sectorOrigin)) return false;
     s.opponent = *reinterpret_cast<const uintptr_t*>(s.root + field::character::aimOpponent);
     if (s.opponent) {
-        s.opponentSector = aimSector(s.opponent);
-        if (!readable(s.opponentSector, field::sector::origin + 3 * sizeof(float))) return false;
-        std::memcpy(s.opponentOrigin, reinterpret_cast<const void*>(s.opponentSector + field::sector::origin), 3 * sizeof(float));
+        s.opponentSector = characterSector(s.opponent);
+        if (!readSectorOrigin(s.opponentSector, s.opponentOrigin)) return false;
     }
-    if (!finiteAimVector(s.sectorOrigin) || !finiteAimVector(s.opponentOrigin) || !nativeAimCurrent(s))
+    if (!nativeAimCurrent(s))
         return false;
     const int width = *reinterpret_cast<const int*>(s.viewport + field::viewport::width);
     const int height = *reinterpret_cast<const int*>(s.viewport + field::viewport::height);
@@ -416,7 +411,7 @@ static void recordHeldThrow(int wheel, float distance) {
             intent.speed = speed;
             intent.at = GetTickCount64();
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) { clearHeldThrow(); return; }
+    } __except (countFaultAndHandle(&cursorFaults)) { clearHeldThrow(); return; }
     AcquireSRWLockExclusive(&heldThrowLock);
     if (epoch == heldThrowEpoch)
         heldThrowIntent = intent; // cancellation during validation cannot resurrect a gesture
@@ -442,7 +437,7 @@ static InventoryAdmission originalInventoryAdmission;
 static uintptr_t inventoryAdmission(uintptr_t drag, unsigned format) {
     bool owned = false;
     __try {
-        if (format == 0xFB01 && base && onGameThread() && viewMode.load() < 2 &&
+        if ((format == 0xFB01 || format == 0xFB02) && base && onGameThread() && viewMode.load() < 2 &&
             InterlockedCompareExchange(&active, 0, 0) &&
             !InterlockedCompareExchange(&stopping, 0, 0) &&
             InterlockedCompareExchange(&cameraReady, 0, 0) &&
@@ -469,8 +464,7 @@ static uintptr_t inventoryAdmission(uintptr_t drag, unsigned format) {
                 const LONG y = reinterpret_cast<const LONG*>(gui + field::gui::pointerX)[1];
                 alignas(8) unsigned char ray[0x40]{}; // off-viewport native pick leaves output untouched
                 const char hit = pickPastSelf(ownedPickRay, viewport, float(x), float(y), reinterpret_cast<uintptr_t>(ray));
-                const float distance = std::fmin(std::fmax(fp::holdNear * 2.f, fp::holdNear),
-                                                 float(grabRange.load()));
+                const float distance = float(grabRange.load());
                 if (!heldPointAlongViewDistance(hit, reinterpret_cast<uintptr_t>(ray), distance) ||
                     mode != viewMode.load() || generation != holdGeneration.load() ||
                     !InterlockedCompareExchange(&active, 0, 0) ||
@@ -486,7 +480,7 @@ static uintptr_t inventoryAdmission(uintptr_t drag, unsigned format) {
                     gui != *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::guiManager))) return 0;
             }
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         if (owned) return 0;
     }
     const ULONGLONG generation = inventoryAdmissionBegin(drag, format);
@@ -495,6 +489,36 @@ static uintptr_t inventoryAdmission(uintptr_t drag, unsigned format) {
     } __finally {
         inventoryAdmissionEnd(generation);
     }
+}
+
+static bool createInventoryReachHooks() {
+    if (!layout.optionalGroupAvailable("inventoryReach")) return true;
+    struct Hook { fp::sig::Target target; void* replacement; void** original; };
+    const Hook hooks[] = {
+        {fp::sig::resourceQueue, (void*)resourceQueue, (void**)&originalResourceQueue},
+        {fp::sig::inventoryComplete, (void*)inventoryComplete, (void**)&originalInventoryComplete},
+        {fp::sig::inventoryCommit, (void*)inventoryCommit, (void**)&originalInventoryCommit},
+        {fp::sig::inventoryAdmission, (void*)inventoryAdmission, (void**)&originalInventoryAdmission},
+    };
+    unsigned created = 0;
+    for (const Hook& hook : hooks) {
+        if (MH_CreateHook((void*)gameAt(hook.target), hook.replacement, hook.original) != MH_OK) {
+            bool removed = true;
+            while (created) {
+                --created;
+                removed = (MH_RemoveHook((void*)gameAt(hooks[created].target)) == MH_OK) && removed;
+            }
+            if (removed) {
+                for (unsigned t = 0; t < fp::sig::targetCount; ++t) {
+                    const char* grp = fp::sig::targetOptionalGroups[t];
+                    if (grp && !strcmp(grp, "inventoryReach")) layout.rva[t] = 0;
+                }
+            }
+            return removed;
+        }
+        ++created;
+    }
+    return true;
 }
 
 static char heldPick(uintptr_t object, uintptr_t viewport, float x, float y, uintptr_t out,
@@ -535,7 +559,13 @@ static char heldPick(uintptr_t object, uintptr_t viewport, float x, float y, uin
     holdTick = now;
     holdApplied = fp::holdApproach(holdApplied.load(), holdTarget.load(), dt);
     publishHeldThrowRay(object, dir);
-    if (!heldPointAlongView(hit, out)) { clearHeldThrow(); return 0; }
+    // Against a wall the held distance can be blocked while a closer point on the same ray
+    // is clear. An inventory drag retries there, checked as any other, before it cancels.
+    if (!heldPointAlongView(hit, out) &&
+        (gameplay || !heldPointAlongViewDistance(hit, out, fp::holdNear))) {
+        clearHeldThrow();
+        return 0;
+    }
     ++holdPlacements;
     return 1;
 }
@@ -551,8 +581,14 @@ static bool prepareHeldPlacement(uintptr_t object, uintptr_t viewport, float hei
         x = *reinterpret_cast<const LONG*>(gui + field::gui::pointerX);
         y = reinterpret_cast<const LONG*>(gui + field::gui::pointerX)[1];
     }
-    if (!heldPick(object, viewport, float(x), float(y), reinterpret_cast<uintptr_t>(ray))) return false;
-    // Native 1183C0 must take its hit branch, never its ray/height fallback.
+    if (!heldPick(object, viewport, float(x), float(y), reinterpret_cast<uintptr_t>(ray))) {
+        heldPickFailures.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Native 1183C0 takes its hit branch at or above height. Below it, its height fallback
+    // lands earlier on this already-cleared ray, but only when the ray starts above height.
+    const float hitHeight = reinterpret_cast<const float*>(ray + 8)[1];
+    const float rayHeight = reinterpret_cast<const float*>(ray + field::pick::origin)[1];
     const uintptr_t drag = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::dragManager));
     return viewMode.load() == mode && holdGeneration.load() == generation &&
            InterlockedCompareExchange(&active, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
@@ -560,7 +596,7 @@ static bool prepareHeldPlacement(uintptr_t object, uintptr_t viewport, float hei
            root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) &&
            viewport == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::mainViewport)) && readable(drag, 0x20) &&
            *reinterpret_cast<const uintptr_t*>(drag + field::drag::object) == object && std::isfinite(height) &&
-           (reinterpret_cast<float*>(ray + 8))[1] >= height;
+           (hitHeight >= height - 5.f || rayHeight > height);
 }
 
 static char pickRayFor(uintptr_t caller, uintptr_t viewport, float x, float y, uintptr_t out) {
@@ -601,12 +637,11 @@ static uintptr_t heldQuery(uintptr_t object, uintptr_t viewport, uintptr_t out, 
         pendingPlacement.query = out;
         pendingPlacement.root = *(uintptr_t*)gameAt(fp::sig::playerRoot);
         pendingPlacement.scene = *(uintptr_t*)gameAt(fp::sig::currentScene);
-        pendingPlacement.sector = aimSector(pendingPlacement.root);
-        if (!readable(pendingPlacement.sector, field::sector::origin + 12)) {
+        pendingPlacement.sector = characterSector(pendingPlacement.root);
+        if (!readSectorOrigin(pendingPlacement.sector, pendingPlacement.sectorOrigin)) {
             pendingPlacement = {};
             return 0;
         }
-        memcpy(pendingPlacement.sectorOrigin, (void*)(pendingPlacement.sector + field::sector::origin), 12);
         pendingPlacement.generation = holdGeneration.load();
         pendingPlacement.mode = viewMode.load();
         pendingPlacement.distance = distance;
@@ -618,7 +653,7 @@ static uintptr_t heldQuery(uintptr_t object, uintptr_t viewport, uintptr_t out, 
         // The configured free-cursor hold uses the game's current pointer.
         // A stale gameplay reticle is otherwise a rejected query.
         const uintptr_t gui = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::guiManager));
-        if (!InterlockedCompareExchange(&rmbFree, 0, 0) ||
+        if (!cursorFreeBitSet(rmbFreeBit) ||
             !readable(gui, field::gui::pointerX + 2 * sizeof(LONG)))
             return 0;
         x = *reinterpret_cast<const LONG*>(gui + field::gui::pointerX);
@@ -639,12 +674,11 @@ static uintptr_t heldQuery(uintptr_t object, uintptr_t viewport, uintptr_t out, 
     pendingPlacement.query = out;
     pendingPlacement.root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
     pendingPlacement.scene = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::currentScene));
-    pendingPlacement.sector = aimSector(pendingPlacement.root);
-    if (!readable(pendingPlacement.sector, field::sector::origin + 3 * sizeof(float))) {
+    pendingPlacement.sector = characterSector(pendingPlacement.root);
+    if (!readSectorOrigin(pendingPlacement.sector, pendingPlacement.sectorOrigin)) {
         pendingPlacement = {};
         return 0;
     }
-    std::memcpy(pendingPlacement.sectorOrigin, reinterpret_cast<const void*>(pendingPlacement.sector + field::sector::origin), 3 * sizeof(float));
     pendingPlacement.generation = holdGeneration.load();
     pendingPlacement.mode = viewMode.load();
     pendingPlacement.distance = *reinterpret_cast<const float*>(ray + field::pick::distance);
@@ -720,7 +754,7 @@ static void heldUpdate(uintptr_t context) {
         originalHeldUpdate(context);
         completed = true;
         // Our own bookkeeping never throws into the game's task loop; a fault only drops the proposal.
-        if (outer) __try { observeHeldAcceptance(); } __except (EXCEPTION_EXECUTE_HANDLER) { completed = false; }
+        if (outer) __try { observeHeldAcceptance(); } __except (countFaultAndHandle(&cursorFaults)) { completed = false; }
     } __finally {
         --heldUpdateDepth;
         if (outer && !completed) {
@@ -960,7 +994,7 @@ static bool heldPlanePoint(int slot, uintptr_t drag, uintptr_t viewport, int x, 
     }
     // Native GUI coordinates are deliberate only during the configured free-cursor hold.
     // A stale reticle otherwise freezes the last accepted constraint target.
-    const bool pointer = reticle || InterlockedCompareExchange(&rmbFree, 0, 0);
+    const bool pointer = reticle || cursorFreeBitSet(rmbFreeBit);
     alignas(8) unsigned char ray[0x40]{};
     if (pointer) ownedPickRay(viewport, float(x), float(y), reinterpret_cast<uintptr_t>(ray));
     if (viewMode.load() != mode || holdGeneration.load() != generation || !heldDoorLive() ||
@@ -1065,11 +1099,11 @@ static unsigned long long constrainedHandler(DragHandler native, uintptr_t drag,
     if (message == 0x80 || !heldDoorLive() || heldDoorDrag() != drag) return native(drag, ui, message);
     const uintptr_t viewport = *reinterpret_cast<const uintptr_t*>(drag + field::drag::viewport);
     if (!heldViewportMatches(drag, viewport)) return native(drag, ui, message);
-    if (!closeViewContext() || InterlockedCompareExchange(&cursorFree, 0, 0) ||
-        InterlockedCompareExchange(&windowFree, 0, 0))
+    if (!closeViewContext() || cursorFreeBitSet(cursorFreeBit) ||
+        cursorFreeBitSet(windowFreeBit))
         return 3;
     LONG freshX = 0, freshY = 0;
-    if (!InterlockedCompareExchange(&rmbFree, 0, 0) &&
+    if (!cursorFreeBitSet(rmbFreeBit) &&
         (!reticleForUi(&freshX, &freshY) || freshX < 0 || freshY < 0))
         return 3;
     const unsigned flags = *reinterpret_cast<const unsigned*>(drag + field::drag::flags);
@@ -1147,7 +1181,7 @@ static void sendDoorMessage(uintptr_t drag, int message) {
         const auto handler =
             (flags & 0x4000) ? doorHandler : ((flags & 0x20000) ? constraintHandler : hingeHandler);
         handler(drag, ui, message);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cursorFaults)) {
         doorDistance = 0;
     }
 }
@@ -1213,7 +1247,7 @@ static void dragDrop(uintptr_t drag) {
         door = ownView && ui && readable(drag, 0x20) &&
                (*reinterpret_cast<const unsigned*>(drag + 8) & (0x4000 | 0x10000 | 0x20000)) &&
                *reinterpret_cast<const uintptr_t*>(drag + field::drag::object);
-    } __except (EXCEPTION_EXECUTE_HANDLER) { door = false; }
+    } __except (countFaultAndHandle(&cursorFaults)) { door = false; }
     if (door) {
         doorDistance = 0;
         lastDoorObject = 0;
@@ -1228,7 +1262,6 @@ static void f8MouseStep();
 
 // The title screen: no controlled character (root 0, as the park logic reads gameplay) for 2 s, so
 // a load's brief gap does not count. Worker thread.
-static ULONGLONG noPlayerSince = 0;
 
 static bool atTitle() {
     const ULONGLONG now = GetTickCount64();
@@ -1236,27 +1269,43 @@ static bool atTitle() {
         noPlayerSince = 0;
         return false;
     }
-    if (!noPlayerSince) noPlayerSince = now;
-    const bool title = now - noPlayerSince >= 2000;
+    if (!noPlayerSince.load()) noPlayerSince = now;
+    const bool title = now - noPlayerSince.load() >= 2000;
     return title;
 }
+
+struct ReticleFilterState {
+    uintptr_t root = 0, head = 0, scene = 0;
+    float sx = -1.f, sy = -1.f;
+    ULONGLONG st = 0;
+    float shownX = -1.f, shownY = -1.f;
+    bool markerShown = false;
+};
+
+static ReticleFilterState reticleFilter;
+static void resetCameraPassCache();
 
 // cameraLock is held by the caller, which releases it even when a fault unwinds past.
 static void cursorPositionLocked(LONG* x, LONG* y) {
     HWND window = gameWindow();
     RECT rect{};
+    const bool haveClient = window && cachedWindowClient(window, rect);
     Aim a;
     AcquireSRWLockShared(&aimLock);
     a = aim;
     ReleaseSRWLockShared(&aimLock);
     const uintptr_t viewport = pickViewportForCamera(savedCamera);
     const bool currentCamera = viewport && *reinterpret_cast<const uintptr_t*>(viewport + field::viewport::view) == savedView;
-    if (window && currentCamera && a.valid && a.root == filterRoot && a.head == filterHead &&
-        a.root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) && GetClientRect(window, &rect) &&
+    if (haveClient && currentCamera && a.valid && a.root == filterRoot && a.head == filterHead &&
+        a.root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) &&
         rect.right > 40 && rect.bottom > 40) {
-        auto mesh = *reinterpret_cast<const uintptr_t*>(a.root + field::character::sceneNode),
-             scene = mesh ? *reinterpret_cast<const uintptr_t*>(mesh + field::sceneNode::sector) : 0;
-        if (scene) {
+        if (reticleFilter.root != a.root || reticleFilter.head != a.head || reticleFilter.scene != savedScene) {
+            reticleFilter = {};
+            reticleFilter.root = a.root;
+            reticleFilter.head = a.head;
+            reticleFilter.scene = savedScene;
+        }
+        if (characterSector(a.root)) {
             // Project through the achieved physical camera. Only exploration
             // presentation has the existing 35 ms filter and 1.5 px dead-zone.
             float px = 0, py = 0;
@@ -1264,30 +1313,27 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
                                                      float(rect.bottom), renderedFov, px, py);
             if (projected) {
                 const bool combat = *reinterpret_cast<const unsigned char*>(a.root + field::character::combatStance) != 0;
-                static float sx = -1, sy = -1;
-                static ULONGLONG st = 0;
                 const ULONGLONG nowMs = GetTickCount64();
-                const float dt = st ? float(nowMs - st) / 1000.f : 1.f;
-                st = nowMs;
-                const float dx = px - sx, dy = py - sy;
-                if (sx < 0 || dt > 0.25f || dx * dx + dy * dy > 80.f * 80.f || viewMode.load() != 0 ||
+                const float dt = reticleFilter.st ? float(nowMs - reticleFilter.st) / 1000.f : 1.f;
+                reticleFilter.st = nowMs;
+                const float dx = px - reticleFilter.sx, dy = py - reticleFilter.sy;
+                if (reticleFilter.sx < 0 || dt > 0.25f || dx * dx + dy * dy > 80.f * 80.f || viewMode.load() != 0 ||
                     combat) {
-                    sx = px;
-                    sy = py;
+                    reticleFilter.sx = px;
+                    reticleFilter.sy = py;
                 } else {
                     const float k = 1.f - std::exp(-dt / 0.035f);
-                    sx += dx * k;
-                    sy += dy * k;
+                    reticleFilter.sx += dx * k;
+                    reticleFilter.sy += dy * k;
                 }
-                static float shownX = -1, shownY = -1;
                 const float dead = 1.5f * float(rect.bottom) / 1080.f; // tiny wobbles do not move it at all
-                if (shownX < 0 || std::fabs(sx - shownX) > dead || std::fabs(sy - shownY) > dead ||
-                    viewMode.load() != 0 || combat) {
-                    shownX = sx;
-                    shownY = sy;
+                if (reticleFilter.shownX < 0 || std::fabs(reticleFilter.sx - reticleFilter.shownX) > dead ||
+                    std::fabs(reticleFilter.sy - reticleFilter.shownY) > dead || viewMode.load() != 0 || combat) {
+                    reticleFilter.shownX = reticleFilter.sx;
+                    reticleFilter.shownY = reticleFilter.sy;
                 }
-                px = shownX;
-                py = shownY;
+                px = reticleFilter.shownX;
+                py = reticleFilter.shownY;
             }
             if (projected) {
                 const bool inside = px >= 0 && py >= 0 && px <= rect.right - 1 && py <= rect.bottom - 1;
@@ -1319,7 +1365,6 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
                 // attack cue use the reticle published above, so doors, pick-ups and talking still work. Only the
                 // mod's own first and third person ever hide it; the overhead view and its blend are the game's.
                 const bool combat = *reinterpret_cast<const unsigned char*>(a.root + field::character::combatStance) != 0;
-                static bool markerShown = false; // the aim leads the head: show where it will land
                 {
                     float d[3];
                     float n = 0;
@@ -1331,13 +1376,14 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
                     const float c =
                         n > 0 ? -(d[0] * lastCamera[6] + d[1] * lastCamera[7] + d[2] * lastCamera[8]) / n
                               : 1.f; // the camera's forward is its back axis reversed
-                    markerShown = aimMarker.load() && viewMode.load() == 0 &&
-                                  fp::aimMarkerStep(markerShown, std::acos(std::clamp(c, -1.f, 1.f)));
+                    reticleFilter.markerShown =
+                        aimMarker.load() && viewMode.load() == 0 &&
+                        fp::aimMarkerStep(reticleFilter.markerShown, std::acos(std::clamp(c, -1.f, 1.f)));
                 }
                 if (aimIndicator.load() == 0 || (aimIndicator.load() == 1 && !combat) ||
                     (trackingPresented && !inside) || (viewMode.load() < 2 &&
                     !fp::crosshairDrawn(combat, swinging.load(), hideSwingCrosshair.load(),
-                                        idleCrosshairAlways.load(), markerShown,
+                                        idleCrosshairAlways.load(), reticleFilter.markerShown,
                                         hoverOutOfRange.load() &&
                                             GetTickCount64() - hoverRangeAt.load() <= reticleFreshMs))) {
                     *x = rect.right + 256;
@@ -1351,7 +1397,7 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
     AcquireSRWLockExclusive(&reticleLock);
     reticleFrame = -1;
     ReleaseSRWLockExclusive(&reticleLock);
-    if (trackingPresented && currentCamera && rect.right > 40 && rect.bottom > 40 &&
+    if (trackingPresented && currentCamera && haveClient && rect.right > 40 && rect.bottom > 40 &&
         a.valid && a.root == filterRoot && a.head == filterHead &&
         closeViewContext()) {
         *x = rect.right + 256;
@@ -1359,16 +1405,12 @@ static void cursorPositionLocked(LONG* x, LONG* y) {
         return;
     }
     originalCursorPosition(x, y);
-    if (hideSwingCrosshair.load() && swinging.load() && currentCamera && a.valid &&
+    if (hideSwingCrosshair.load() && swinging.load() && currentCamera && haveClient && a.valid &&
         a.root == filterRoot && a.head == filterHead &&
         a.root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot)) && closeViewContext()) {
-        HWND w = gameWindow();
-        RECT r;
-        if (w && GetClientRect(w, &r)) {
-            *x = r.right + 256;
-            *y = r.bottom + 256;
-            ++swingHides;
-        }
+        *x = rect.right + 256;
+        *y = rect.bottom + 256;
+        ++swingHides;
     } // also when the projection failed
 }
 
@@ -1434,9 +1476,15 @@ static void resetViewHistory() {
     trackingView.clear();
     trackingPresented = false;
     cameraFrame.valid = false;
+    reticleFilter = {};
+    for (auto& plane : heldPlanes) plane = {};
+    lastDoorObject = 0;
+    doorGrabPointValid = false;
+    resetCameraPassCache();
     InterlockedExchange(&cameraReady, 0);
     nearPlane.reset();
     filterRoot = filterHead = 0;
+    clearPointerClipCache(false);
     releaseInput();
     AcquireSRWLockExclusive(&aimLock);
     aim.valid = false;
@@ -1478,6 +1526,8 @@ static void parkCamera(fp::OwnerChange kind) {
     park.scene = savedScene;
     park.stable = 0;
     park.left = identityChanged();
+    invalidateStaleRetired();
+    cameraOwnershipState.store(2, std::memory_order_relaxed);
     savedCamera = savedView = savedController = savedRoot = savedScene = 0;
     InterlockedExchange(&pendingRestore, 0);
     resetViewHistory();
@@ -1542,7 +1592,7 @@ static bool checkSavedOwner(uintptr_t view, uintptr_t camera) {
             if (retired[k].left) slot = k;
         if (slot == retiredSlots) {
             slot = 0;
-            InterlockedExchange(&restorationUnknown, 1);
+            markRestorationUnknown();
         }
         for (unsigned k = slot; k + 1 < retiredSlots; ++k)
             retired[k] = retired[k + 1]; // keep age order: newest last

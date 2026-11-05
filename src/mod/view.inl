@@ -10,17 +10,44 @@ static inline bool readableRegionContains(const MEMORY_BASIC_INFORMATION& region
 
 // The last 32 readable regions this thread saw in the current frame (swap serial): the game's heaps are a
 // handful of large committed regions, so most checks land in one already queried. A region is never kept
-// past the frame it was queried in.
+// past the frame it was queried in. A tiny 4-slot front cache serves common pointer checks in L1 without
+// walking the full region table.
+struct ReadableTls {
+    LONG frame = -1;
+    uintptr_t base[4]{};
+    uintptr_t end[4]{};
+    unsigned next = 0;
+};
 struct RegionCache { LONG frame = -1; unsigned count = 0, next = 0; MEMORY_BASIC_INFORMATION regions[32]{}; };
+static thread_local ReadableTls readableTls;
 static thread_local RegionCache regionCache;
+
+static inline void readableTlsRecord(ReadableTls& tls, const MEMORY_BASIC_INFORMATION& m) {
+    const uintptr_t begin = reinterpret_cast<uintptr_t>(m.BaseAddress);
+    const uintptr_t limit = m.RegionSize <= UINTPTR_MAX - begin ? begin + m.RegionSize : UINTPTR_MAX;
+    tls.base[tls.next] = begin;
+    tls.end[tls.next] = limit;
+    tls.next = (tls.next + 1) & 3u;
+}
 
 static bool readableProfileBody(uintptr_t address, size_t size, MEMORY_BASIC_INFORMATION* region) {
     if (address < 0x10000) return false;
+    const LONG frame = *reinterpret_cast<const volatile LONG*>(&swapCalls);
+    ReadableTls& tls = readableTls;
+    if (tls.frame != frame) {
+        tls.frame = frame;
+        tls.next = 0;
+        for (unsigned k = 0; k < 4; ++k) tls.base[k] = tls.end[k] = 0;
+    } else if (!region) {
+        for (unsigned k = 0; k < 4; ++k)
+            if (address >= tls.base[k] && address <= tls.end[k] && size <= tls.end[k] - address)
+                return true;
+    }
     RegionCache& cache = regionCache;
-    const LONG frame = InterlockedCompareExchange(&swapCalls, 0, 0);
     if (cache.frame != frame) { cache.frame = frame; cache.count = cache.next = 0; }
     for (unsigned k = 0; k < cache.count; ++k)
         if (readableRegionContains(cache.regions[k], address, size)) {
+            readableTlsRecord(tls, cache.regions[k]);
             if (region) *region = cache.regions[k];
             return true;
         }
@@ -30,6 +57,7 @@ static bool readableProfileBody(uintptr_t address, size_t size, MEMORY_BASIC_INF
     cache.regions[cache.next] = m;
     cache.next = (cache.next + 1) % 32;
     cache.count = (std::min)(cache.count + 1, 32u);
+    readableTlsRecord(tls, m);
     if (region) *region = m;
     return true;
 }
@@ -72,7 +100,7 @@ static bool closeViewFadeOwner(uintptr_t controller) {
         owned = !park.active && !InterlockedCompareExchange(&restorationUnknown, 0, 0) &&
                 controller == savedController && sameOwner(view, camera) && savedRoot && savedScene &&
                 !identityChanged();
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&cameraFaults)) {
         owned = false;
     }
     ReleaseSRWLockShared(&cameraLock);
@@ -198,7 +226,8 @@ static bool playerHeadMaskCurrent(uintptr_t sector) {
 }
 
 static volatile LONG sectorThread = 0;
-static std::atomic<int> viewFault{0};
+static std::atomic<int> viewFault{0}; // sticky: stops the view hooks once one faults
+static std::atomic<unsigned> viewFaults{0};
 using SectorUpdate = uintptr_t (*)(uintptr_t);
 static SectorUpdate originalSectorUpdate;
 
@@ -282,12 +311,26 @@ static bool culledBefore(uintptr_t m) {
     return false;
 }
 static void rememberCulled(uintptr_t m, bool culled) {
+    unsigned firstTombstone = cullSlots;
     for (unsigned i = unsigned(m >> 4) % cullSlots, n = 0; n < 16; ++n, i = (i + 1) % cullSlots) {
-        if (culledMeshes[i] == m) { if (!culled) culledMeshes[i] = 1; return; }
-        if (!culledMeshes[i] || culledMeshes[i] == 1) { if (culled) culledMeshes[i] = m; return; }
+        const uintptr_t slot = culledMeshes[i];
+        if (slot == m) {
+            if (!culled) culledMeshes[i] = 1;
+            return;
+        }
+        if (!slot) {
+            if (culled) culledMeshes[firstTombstone < cullSlots ? firstTombstone : i] = m;
+            return;
+        }
+        if (slot == 1 && firstTombstone == cullSlots) firstTombstone = i;
     }
+    if (culled && firstTombstone < cullSlots) culledMeshes[firstTombstone] = m;
 }
 static void distanceCull(uintptr_t sector) {
+    if (!InterlockedCompareExchange(&cameraReady, 0, 0) ||
+        !InterlockedCompareExchange(&active, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0) ||
+        !*reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot))) return;
     const int metres = drawDistanceM.load(std::memory_order_relaxed);
     if (metres <= 0) return;
     const uintptr_t scene = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::currentScene));
@@ -334,6 +377,199 @@ static void distanceCull(uintptr_t sector) {
     }
 }
 
+// Far rooms. Native 143C20 sorts the level's rooms around the player: entry +0x30 is 2 for the rooms at hand and
+// 1 for their neighbours, and sector +0x318 tells the render walk (5B400, its only reader) how to draw each: 1
+// whole, 2 through a portal into a type 1 room, 0 not at all. That shows nothing two doorways away, which the
+// overhead camera never reached and first person does. Run after it, this draws the neighbours whole and their
+// neighbours through portals. Entries, the active list and collision are untouched. Native only rewrites +0x318
+// when a room's state changes, so every room is set again on every call; off, each goes back to native's value.
+using RoomClassify = char (*)(uintptr_t, uintptr_t);
+static RoomClassify originalRoomClassify = nullptr;
+static constexpr unsigned char roomClassifyEntry[] = {0x53, 0x57, 0x56, 0x41, 0x54, 0x41, 0x55, 0x41,
+                                                      0x56, 0x41, 0x57, 0x48, 0x8D, 0x64, 0x24, 0x90,
+                                                      0x48, 0x89, 0x4C, 0x24, 0x20, 0x49, 0x89, 0xD7};
+static std::atomic<bool> roomViewHooked{false};
+static std::atomic<unsigned> roomViewOpened{0};
+
+static void setRoomTypes(uintptr_t level, bool wide) {
+    const int count = *reinterpret_cast<const int*>(level + 0x1c);
+    const uintptr_t entries = *reinterpret_cast<const uintptr_t*>(level + 0x20),
+                    indices = *reinterpret_cast<const uintptr_t*>(level + 0x28);
+    if (count <= 0 || count > 4096 || !entries) return;
+    const auto entry = [&](int room) { return entries + size_t(room) * 0x54; };
+    const auto sector = [&](uintptr_t e) { return *reinterpret_cast<const uintptr_t*>(e + 0x34); };
+    for (int room = 0; room < count; ++room) {
+        const uintptr_t e = entry(room), s = sector(e);
+        if (!s) continue;
+        const int state = *reinterpret_cast<const int*>(e + 0x30);
+        const int type = state == 2 ? 1 : state == 1 ? (wide ? 1 : 2) : 0;
+        int& shown = *reinterpret_cast<int*>(s + 0x318);
+        if (shown != type) shown = type;
+    }
+    if (!wide) return;
+    unsigned opened = 0;
+    for (int room = 0; room < count; ++room) {
+        const uintptr_t e = entry(room);
+        if (*reinterpret_cast<const int*>(e + 0x30) != 1) continue;
+        const int edges = *reinterpret_cast<const int*>(e + 0x18);
+        const uintptr_t pairs = *reinterpret_cast<const uintptr_t*>(e + 0x1c);
+        if (edges <= 0 || edges > 256 || !pairs || !indices) continue;
+        for (int k = 0; k < edges; ++k) {
+            const int edge = *reinterpret_cast<const int*>(pairs + size_t(k) * 8 + 4);
+            const int next = *reinterpret_cast<const int*>(indices + size_t(edge) * 4) - 1; // numbered from 1
+            if (next < 0 || next >= count) continue;
+            const uintptr_t n = entry(next), s = sector(n);
+            if (!s || *reinterpret_cast<const int*>(n + 0x30) != 0) continue;
+            *reinterpret_cast<int*>(s + 0x318) = 2;
+            ++opened;
+        }
+    }
+    roomViewOpened.store(opened, std::memory_order_relaxed);
+}
+
+static char roomClassify(uintptr_t level, uintptr_t out) {
+    const char result = originalRoomClassify(level, out);
+    __try {
+        const bool wide = farRooms.load(std::memory_order_relaxed) && viewMode.load() < 2 &&
+                          InterlockedCompareExchange(&active, 0, 0) &&
+                          !InterlockedCompareExchange(&stopping, 0, 0);
+        setRoomTypes(level, wide);
+    } __except (countFaultAndHandle(&roomViewFaults)) {
+    }
+    return result;
+}
+
+// The level/entry/sector offsets above (+1C, +20, +28, stride 54, +30, +34, sector +318) are checked by
+// hand against 143C20 and 5B400 on the hashed builds only; no field contract covers them, and the hook
+// writes +318 even with the option off. Another build keeps the game's room rule.
+static bool roomViewUnreviewedBuild = false;
+static void createRoomViewHook() {
+    if (!layout.optionalGroupAvailable("farRooms")) return;
+    if (!verifiedBuild) {
+        roomViewUnreviewedBuild = true;
+        return;
+    }
+    const uintptr_t addr = optionalGameAt(fp::sig::roomClassify);
+    if (!addr || !readable(addr, sizeof roomClassifyEntry) ||
+        std::memcmp(reinterpret_cast<const void*>(addr), roomClassifyEntry, sizeof roomClassifyEntry))
+        return; // another build: the room rule stays the game's
+    roomViewHooked = MH_CreateHook(reinterpret_cast<void*>(addr), (void*)roomClassify, (void**)&originalRoomClassify) == MH_OK;
+}
+
+// Node move. Native 5C030 re-parents a node's tree to a scene: it walks the tree with a work list in 38 stack
+// slots and no bounds check. A wide tree (a character with the finger bones on) writes past them onto the return
+// address, and the game then "returns" into a child node: "Task fatal error". This is the same function with a
+// list that grows. The whole native body is compared first, so any other build keeps its own.
+static constexpr unsigned char nodeMoveBody[] = {
+    0x53, 0x57, 0x56, 0x41, 0x54, 0x48, 0x8D, 0xA4, 0x24, 0xC8, 0xFE, 0xFF, 0xFF, 0x48, 0x89, 0x4C, 0x24, 0x20,
+    0x48, 0x89, 0xD3, 0x48, 0x8B, 0x44, 0x24, 0x20, 0x48, 0x8B, 0x80, 0x30, 0x01, 0x00, 0x00, 0x48, 0x8D, 0x50,
+    0x64, 0x4C, 0x8D, 0x43, 0x64, 0x48, 0x8D, 0x8C, 0x24, 0x28, 0x01, 0x00, 0x00, 0xE8, 0x0A, 0xD1, 0xFB, 0xFF,
+    0xBE, 0x01, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x44, 0x24, 0x20, 0x48, 0x89, 0x44, 0x24, 0x28, 0xE9, 0xAE, 0x00,
+    0x00, 0x00, 0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00, 0x83, 0xEE, 0x01, 0x89, 0xF0, 0x4C, 0x8B, 0x64, 0xC4, 0x28,
+    0x49, 0x83, 0xBC, 0x24, 0x60, 0x01, 0x00, 0x00, 0x00, 0x74, 0x23, 0x49, 0x8B, 0x8C, 0x24, 0x60, 0x01, 0x00,
+    0x00, 0x48, 0x8D, 0x94, 0x24, 0x28, 0x01, 0x00, 0x00, 0x49, 0x8B, 0x84, 0x24, 0x60, 0x01, 0x00, 0x00, 0x48,
+    0x8B, 0x00, 0xFF, 0x90, 0x18, 0x01, 0x00, 0x00, 0x66, 0x90, 0x41, 0x8B, 0x44, 0x24, 0x08, 0x83, 0xE0, 0x5F,
+    0x83, 0xF8, 0x09, 0x75, 0x2F, 0x49, 0x83, 0xBC, 0x24, 0x18, 0x02, 0x00, 0x00, 0x00, 0x74, 0x24, 0x49, 0x8B,
+    0x8C, 0x24, 0x18, 0x02, 0x00, 0x00, 0x48, 0x8D, 0x94, 0x24, 0x28, 0x01, 0x00, 0x00, 0x49, 0x8B, 0x84, 0x24,
+    0x18, 0x02, 0x00, 0x00, 0x48, 0x8B, 0x00, 0xFF, 0x90, 0xD8, 0x00, 0x00, 0x00, 0x0F, 0x1F, 0x00, 0x45, 0x8B,
+    0x84, 0x24, 0x18, 0x01, 0x00, 0x00, 0x45, 0x85, 0xC0, 0x7C, 0x27, 0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0x66, 0x90,
+    0x83, 0xC7, 0x01, 0x49, 0x8B, 0x8C, 0x24, 0x20, 0x01, 0x00, 0x00, 0x89, 0xF8, 0x89, 0xF2, 0x48, 0x8B, 0x04,
+    0xC1, 0x48, 0x89, 0x44, 0xD4, 0x28, 0x83, 0xC6, 0x01, 0x41, 0x39, 0xF8, 0x7F, 0xE0, 0x85, 0xF6, 0x0F, 0x8F,
+    0x50, 0xFF, 0xFF, 0xFF, 0x48, 0x8B, 0x44, 0x24, 0x20, 0x48, 0x83, 0xB8, 0x60, 0x01, 0x00, 0x00, 0x00, 0x75,
+    0x25, 0x48, 0x8B, 0x44, 0x24, 0x20, 0x48, 0x8D, 0x88, 0x94, 0x00, 0x00, 0x00, 0x48, 0x8D, 0x94, 0x24, 0x28,
+    0x01, 0x00, 0x00, 0xE8, 0xA8, 0xCF, 0xFB, 0xFF, 0x48, 0x8B, 0x4C, 0x24, 0x20, 0xE8, 0x4E, 0x4D, 0xFF, 0xFF,
+    0x66, 0x90, 0x48, 0x8B, 0x44, 0x24, 0x20, 0x48, 0x8B, 0x90, 0x30, 0x01, 0x00, 0x00, 0x81, 0x8A, 0x18, 0x02,
+    0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x48, 0x8B, 0x54, 0x24, 0x20, 0x48, 0x89, 0xD9, 0xE8, 0xE9, 0x3F, 0xFF,
+    0xFF, 0x48, 0x8B, 0x44, 0x24, 0x20, 0x8B, 0x40, 0x08, 0x25, 0x00, 0x00, 0x04, 0x00, 0x76, 0x12, 0x48, 0x8D,
+    0x54, 0x24, 0x20, 0x48, 0x89, 0xD9, 0x45, 0x31, 0xC0, 0xE8, 0xFA, 0x9D, 0xFF, 0xFF, 0x66, 0x90, 0x90, 0x48,
+    0x8D, 0xA4, 0x24, 0x38, 0x01, 0x00, 0x00, 0x41, 0x5C, 0x5E, 0x5F, 0x5B, 0xC3};
+using NodeMove = void (*)(uintptr_t, uintptr_t);
+static NodeMove originalNodeMove = nullptr;
+static std::atomic<bool> nodeMoveHooked{false};
+static std::atomic<unsigned> nodeMovePeak{0}, nodeMoveOverflows{0};
+
+static void nodeMoveImpl(uintptr_t node, uintptr_t scene) {
+    using Difference = void (*)(float*, const float*, const float*);
+    using Offset = void (*)(uintptr_t, const float*);
+    using Rebuild = void (*)(uintptr_t);
+    using Attach = void (*)(uintptr_t, uintptr_t);
+    using Register = void (*)(uintptr_t, uintptr_t*, int);
+    using Shift = void (*)(uintptr_t, const float*);
+    alignas(16) float delta[4]{};
+    const uintptr_t sector = *reinterpret_cast<const uintptr_t*>(node + 0x130);
+    reinterpret_cast<Difference>(gameAt(fp::sig::nodeVecSub))(delta, reinterpret_cast<const float*>(sector + 0x64),
+                                                              reinterpret_cast<const float*>(scene + 0x64));
+    std::vector<uintptr_t> pending;
+    pending.reserve(64);
+    pending.push_back(node);
+    size_t peak = 1;
+    while (!pending.empty()) {
+        const uintptr_t at = pending.back();
+        pending.pop_back();
+        if (const uintptr_t part = *reinterpret_cast<const uintptr_t*>(at + 0x160))
+            (*reinterpret_cast<Shift*>(*reinterpret_cast<const uintptr_t*>(part) + 0x118))(part, delta);
+        if ((*reinterpret_cast<const unsigned*>(at + 8) & 0x5f) == 9) {
+            if (const uintptr_t attached = *reinterpret_cast<const uintptr_t*>(at + 0x218))
+                (*reinterpret_cast<Shift*>(*reinterpret_cast<const uintptr_t*>(attached) + 0xd8))(attached, delta);
+        }
+        const int last = *reinterpret_cast<const int*>(at + field::sceneNode::lastChild);
+        const uintptr_t children = *reinterpret_cast<const uintptr_t*>(at + field::sceneNode::children);
+        for (int k = 0; k <= last; ++k) pending.push_back(*reinterpret_cast<const uintptr_t*>(children + size_t(k) * 8));
+        peak = (std::max)(peak, pending.size());
+    }
+    if (peak > nodeMovePeak.load(std::memory_order_relaxed)) nodeMovePeak.store(unsigned(peak), std::memory_order_relaxed);
+    if (peak >= 32) nodeMoveOverflows.fetch_add(1, std::memory_order_relaxed);
+    if (!*reinterpret_cast<const uintptr_t*>(node + 0x160)) {
+        reinterpret_cast<Offset>(gameAt(fp::sig::nodeVecAddTo))(node + 0x94, delta);
+        reinterpret_cast<Rebuild>(gameAt(fp::sig::propagateNodePose))(node);
+    }
+    *reinterpret_cast<unsigned*>(*reinterpret_cast<const uintptr_t*>(node + 0x130) + 0x218) |= 0x300000;
+    reinterpret_cast<Attach>(gameAt(fp::sig::nodeMoveAttach))(scene, node);
+    if (*reinterpret_cast<const unsigned*>(node + 8) & 0x40000) {
+        uintptr_t self = node;
+        reinterpret_cast<Register>(gameAt(fp::sig::nodeRegisterDynamic))(scene, &self, 0);
+    }
+}
+
+static void nodeMove(uintptr_t node, uintptr_t scene) {
+    __try { nodeMoveImpl(node, scene); }
+    __except (countFaultAndHandle(&nodeMoveFaults)) {}
+}
+
+static bool nodeMoveBodyMatches(uintptr_t addr) {
+    if (!addr || !readable(addr, sizeof nodeMoveBody)) return false;
+    const auto* live = reinterpret_cast<const unsigned char*>(addr);
+    struct CallEdge { size_t offset; fp::sig::Target callee; };
+    static constexpr CallEdge edges[] = {
+        {49, fp::sig::nodeVecSub},
+        {291, fp::sig::nodeVecAddTo},
+        {301, fp::sig::propagateNodePose},
+        {338, fp::sig::nodeMoveAttach},
+        {369, fp::sig::nodeRegisterDynamic},
+    };
+    for (size_t i = 0; i < sizeof nodeMoveBody; ++i) {
+        bool inRel32 = false;
+        for (const auto& edge : edges)
+            if (i >= edge.offset + 1 && i < edge.offset + 5) { inRel32 = true; break; }
+        if (!inRel32 && live[i] != nodeMoveBody[i]) return false;
+    }
+    for (const auto& edge : edges) {
+        int32_t rel = 0;
+        std::memcpy(&rel, live + edge.offset + 1, sizeof rel);
+        const uintptr_t dest = static_cast<uintptr_t>(static_cast<intptr_t>(addr + edge.offset + 5) + rel);
+        if (dest != optionalGameAt(edge.callee)) return false;
+    }
+    return true;
+}
+
+static void createNodeMoveHook() {
+    if (!layout.optionalGroupAvailable("nodeMove")) return;
+    const uintptr_t addr = optionalGameAt(fp::sig::nodeMove);
+    if (!nodeMoveBodyMatches(addr))
+        return; // another build: its own walk, and no finger bones to overflow it
+    nodeMoveHooked = MH_CreateHook(reinterpret_cast<void*>(addr), (void*)nodeMove, (void**)&originalNodeMove) == MH_OK;
+}
+
 // Lights per object. The queue (26F230), its flush recount (26F420) and the binder walk a mesh's light list
 // from its head while entries are active, up to six. Clearing the active flag of the entry after the Nth
 // stops all three there, keeping the N strongest (the list is sorted). The game rereads that flag when it
@@ -341,17 +577,35 @@ static void distanceCull(uintptr_t sector) {
 // render), never in the next: between frames a round or level change can free the meshes, and the write would
 // land in freed memory. A trim the swap did not put back is dropped unwritten.
 struct LightTrim { uintptr_t entry; unsigned active; };
+static SRWLOCK lightTrimLock = SRWLOCK_INIT;
+static std::atomic<unsigned> lightTrimPending{0};
 static LightTrim lightTrims[16384];
 static unsigned lightTrimCount = 0;
 static LONG lightTrimFrame = -1;
 static std::atomic<unsigned> lightsTrimmed{0};
-static void restoreLightTrims() { // render thread, at the swap
+static void restoreLightTrimsLocked() {
     for (unsigned k = 0; k < lightTrimCount; ++k)
         if (readable(lightTrims[k].entry, field::lightEntry::active + 4))
             *reinterpret_cast<unsigned*>(lightTrims[k].entry + field::lightEntry::active) = lightTrims[k].active;
-    lightTrimCount = 0;
+}
+static void restoreLightTrims() { // render thread, at the swap
+    AcquireSRWLockExclusive(&lightTrimLock);
+    __try {
+        __try {
+            restoreLightTrimsLocked();
+        } __except (countFaultAndHandle(&swapFaults)) {
+        }
+        lightTrimCount = 0;
+        lightTrimPending.store(0, std::memory_order_release);
+    } __finally {
+        ReleaseSRWLockExclusive(&lightTrimLock);
+    }
 }
 static void trimLights(uintptr_t sector) {
+    if (!InterlockedCompareExchange(&cameraReady, 0, 0) ||
+        !InterlockedCompareExchange(&active, 0, 0) ||
+        InterlockedCompareExchange(&stopping, 0, 0) ||
+        !*reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot))) return;
     int keep = objectLightCap.load(std::memory_order_relaxed);
     if (keep < 6 && effectsLowTier()) keep = (std::max)(keep - 1, 2); // auto quality: one fewer while slow
     if (keep >= 6 || keep < 1 || !readable(sector, field::sector::meshes + 8)) return;
@@ -428,12 +682,18 @@ static void shadowSchedule(uintptr_t viewport) {
     }
 }
 
-static uintptr_t sectorUpdateProfileBody(uintptr_t sector) {
-    const LONG frame = InterlockedCompareExchange(&swapCalls, 0, 0);
+static void sectorTrimLightsLocked(uintptr_t sector, LONG frame) {
     if (frame != lightTrimFrame) { // a new frame; the swap put the last one's trims back
         lightTrimCount = 0;
         lightTrimFrame = frame;
+        lightTrimPending.store(0, std::memory_order_relaxed);
     }
+    trimLights(sector);
+    lightTrimPending.store(lightTrimCount, std::memory_order_release);
+}
+
+static uintptr_t sectorUpdateProfileBody(uintptr_t sector) {
+    const LONG frame = *reinterpret_cast<const volatile LONG*>(&swapCalls);
     const uintptr_t result = fp::profile::invoke<fp::profile::Hook::sectorNative>(originalSectorUpdate, sector);
     InterlockedExchange(&sectorThread, LONG(GetCurrentThreadId()));
     bool fault = false;
@@ -441,8 +701,7 @@ static uintptr_t sectorUpdateProfileBody(uintptr_t sector) {
     __try {
         if (hideMeshCount) maskSector(sector);
         distanceCull(sector);
-        trimLights(sector);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&viewFaults)) {
         viewFault = 1;
         fault = true;
     }
@@ -452,6 +711,19 @@ static uintptr_t sectorUpdateProfileBody(uintptr_t sector) {
         hideMeshCount = 0;
         hideScene = 0;
         ReleaseSRWLockExclusive(&hideLock);
+    } else {
+        AcquireSRWLockExclusive(&lightTrimLock);
+        __try {
+            __try {
+                sectorTrimLightsLocked(sector, frame);
+            } __except (countFaultAndHandle(&viewFaults)) {
+                viewFault = 1;
+                lightTrimCount = 0;
+                lightTrimPending.store(0, std::memory_order_release);
+            }
+        } __finally {
+            ReleaseSRWLockExclusive(&lightTrimLock);
+        }
     }
     return result;
 }
@@ -751,19 +1023,24 @@ struct BodyWear {
 static BodyWear bodyWear[96];
 static unsigned bodyWearCount = 0;
 static uintptr_t bodyScene = 0;
-static std::atomic<unsigned> bodyWearNodes{0}, hiddenBodyNodes{0};
-static std::atomic<int> bodyFault{0};
+static std::atomic<unsigned> bodyWearNodes{0}, hiddenBodyNodes{0}, bodyPartFaults{0};
 
 static void updateBodyWear(bool live) {
     pendingBodyWear = {};
     if (live && lastCamera[7] < 0.34f)
         live = false;
+    if (!live) { // the game pointers may already be gone while the session stops
+        bodyWearCount = 0;
+        bodyScene = 0;
+        bodyWearNodes = 0;
+        hiddenBodyNodes = 0;
+        return;
+    }
     const uintptr_t root = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot));
     const uintptr_t scene = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::currentScene));
-    live = live && root == savedRoot && scene == savedScene;
-    if (!live) {
+    if (root != savedRoot || scene != savedScene) {
         bodyWearCount = 0;
-        bodyScene = scene;
+        bodyScene = 0;
         bodyWearNodes = 0;
         hiddenBodyNodes = 0;
         return;
@@ -844,16 +1121,21 @@ static void viewFeaturesProfileBody(bool live) {
         if (!viewFault.load()) updateHeadWear(live);
         if (ownView && viewMode.load() != 0 && !viewFault.load())
             tpHideAdd();
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } __except (countFaultAndHandle(&viewFaults)) {
         viewFault = 1;
         headWearScanState.store(5, std::memory_order_relaxed);
         headWearCount = 0;
     }
     __try {
-        if (!bodyFault.load()) updateBodyWear(live);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        bodyFault = 1;
+        updateBodyWear(live);
+    } __except (countFaultAndHandle(&bodyPartFaults)) {
+        // A body node can move between the walk and the probe. Drop this frame's
+        // partial hides and rebuild next frame instead of disabling body wear.
+        pendingBodyWear = {};
         bodyWearCount = 0;
+        bodyScene = 0;
+        bodyWearNodes = 0;
+        hiddenBodyNodes = 0;
     }
     hidePublish();
 }
