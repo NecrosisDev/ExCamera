@@ -130,7 +130,22 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
   - That fits a colour at `+0x210`, but it does not show which of `+0x21C`/`+0x220`/`+0x224` is intensity and
     which is range; the code assumes `+0x21C` intensity and `+0x224` range. Needed next: the routine that hands
     lights to the shaders (or the uniforms in the shader dump below).
-- **Item wear and dirt (item 2), still UNPROVEN.** Not examined yet.
+- **Item wear and dirt (item 2): mostly proven, still gated.**
+  - Lookup, PROVEN. 0x103DB0 picks the table by the id's top bits (0x80000000 level `DAT_4EF930`, 0x40000000
+    world `DAT_4EF940`, else `DAT_4EF920`). 0x104660 binary-searches `count +8` rows of 16 bytes at `+0x10` by
+    `[row+0]`. 0x104B10 returns the record `data(+0x18) + row[+8]` with size `row[+0xC]`. This is exactly the
+    mod's read.
+  - Chunks, PROVEN. 0x103A90 walks `[+0]` tag and `[+4]` size inside the record, as the mod does.
+  - Byte placement, PROVEN. The chunk writers move the same three source bytes (`+8`, `+9`, `+0xA`): for tag
+    0x4000 to chunk `+0x14..+0x16` (0x12DED4-0x12DF15), for tag 0x1000 to chunk `+0x1B8` block bytes 1-2
+    (0x12DFCC-0x12E025). Those are the offsets the mod reads.
+  - Byte order, PROVEN for the game's item editor form. 0x296D60 copies a 100-byte block to `form+0x170` and
+    shows byte 0 in its "Quality" widget, byte 1 in "Wear " and byte 2 in "Dirt " (labels at 0x3528E0,
+    0x352940, 0x352988; the setters 0x295480/0x295640/0x2957C0 write `+0x170`/`+0x171`/`+0x172`).
+  - **Missing:** (1) that the form's block is the record chunk at the offsets above (0x296CE0 copies
+    `form+0x264` into chunk 0x4000's payload, a different form offset, not yet tied together); (2) that
+    `+0x180` on the held item's scene node is that item id. 0x118F80 passes `[rbx+0x180]` to the lookup, but
+    rbx's class is not yet named.
 - **Skin texture unit roles (units 0/1/2 = diffuse/specular/normal), still UNPROVEN.**
   - The game's shader sources are in Resource.rpk as `shading.flb`; its table lists `shading_f`/`_v`,
     `shadesss_f`, `shadehar_f`, `shadetrn_f` and others. The bodies are packed or encoded, not plain GLSL.
