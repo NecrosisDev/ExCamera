@@ -329,12 +329,12 @@ static void addWound(const CharacterHitRecord& h) {
     }
     w.born = GetTickCount64();
     w.seed = float((h.serial * 2654435761u) >> 8) / float(1u << 24);
-    // A deep cut or thrust into a thigh, an upper arm or the head and neck opens an artery: it spurts with
-    // the heartbeat for the first several beats (the floor layer's teardrop jets).
-    if (kind != woundCrush && w.severity > 0.6f) {
-        const int p = w.partIndex;
-        if (p == 1 || p == 4 || p == 11 || p == 14) w.spurts = 8; // the thighs and upper arms (woundBoneBit's indices)
-        if (w.spurts) w.spurt = 0.25f;
+    // A deep wound spurts with the heartbeat for the first several beats (the floor layer's teardrop jets).
+    // Which skeletal part (bodyPart::index) is a thigh or an upper arm is not shown by any game code read so
+    // far, so it is by depth alone: a blow taking about two thirds of full health or more.
+    if (kind != woundCrush && w.severity > 0.78f) {
+        w.spurts = 8;
+        w.spurt = 0.25f;
     }
     switch (kind) {
     case woundCut: w.halfLength = 4.f + 7.f * w.severity; w.halfWidth = 0.35f + 0.5f * w.severity; break;
