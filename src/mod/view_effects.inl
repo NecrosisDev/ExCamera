@@ -1102,7 +1102,7 @@ vec3 levelSurface(vec3 color) {
         // mortar, sandy and set back.
         vec3 around = 0.5 * (toLight(texture2D(sceneTex, uv + vec2(4.0 * texel.x, 0.0)).rgb) +
                              toLight(texture2D(sceneTex, uv + vec2(0.0, 4.0 * texel.y)).rgb));
-        float joint = smoothstep(0.82, 0.6, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
+        float joint = 1.0 - smoothstep(0.6, 0.82, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
         float pit = smoothstep(0.82, 0.94, grain.b) * 0.25;
         h = (grain.r - 0.5) * 0.2 - pit * 0.3 * (1.0 - joint) - 0.3 * joint;
         albedo = mix((0.96 + 0.08 * grain.g) * (1.0 - 0.12 * pit), 0.92 + 0.12 * grain.a, joint);
