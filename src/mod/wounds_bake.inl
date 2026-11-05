@@ -1283,7 +1283,41 @@ static void woundSkinDiagnose(uintptr_t node, uintptr_t material, bool bind) {
     }
 }
 #endif
+// The lights the game drew a node with, copied at its material draw (infrastructure, nothing reads it yet).
+// The submit 0x200770 packs the node's lights into renderer state +170 (0x1FF430 at 0x2007AD; three vec4 a light,
+// count at state +A8, uploaded at 0x200BBD) before the node's material draws, so at a draw the state holds that
+// node's lights: A position (w shadow depth scale), B colour (w inverse range), C shadow spread and shaping
+// (docs/render-assumptions.md, "Per-light uniform layout"). Render thread only.
+struct MeshLights { uintptr_t node = 0; ULONGLONG tick = 0; unsigned count = 0; float light[18][4]{}; };
+static MeshLights meshLights[16];
+static unsigned meshLightsNext = 0;
+static void captureMeshLights(uintptr_t node) {
+    const uintptr_t renderer = *(const uintptr_t*)gameAt(fp::sig::headwearWorldRenderer);
+    if (!readable(renderer, 0x170 + 18 * 16) || !node) return;
+    const int count = *(const int*)(renderer + 0xa8);
+    if (count < 0 || count > 6) return;
+    MeshLights* slot = nullptr;
+    for (MeshLights& m : meshLights) if (m.node == node) slot = &m;
+    if (!slot) { slot = &meshLights[meshLightsNext]; meshLightsNext = (meshLightsNext + 1) % 16; }
+    slot->node = node;
+    slot->tick = GetTickCount64();
+    slot->count = unsigned(count);
+    memcpy(slot->light, (const void*)(renderer + 0x170), size_t(count) * 3 * 16);
+#if FP_DEV_TOOLS
+    static ULONGLONG logged = 0;
+    if (renderAuditOn() && slot->tick - logged > 1000) {
+        logged = slot->tick;
+        renderAuditLog("mesh lights: node %p count %u%s; first: position %.1f %.1f %.1f (w %.4f), colour %.3f %.3f %.3f "
+                       "(1/range %.5f), shadow spread %.3f, shaping %.3f %.3f %.3f",
+                       (void*)node, slot->count, count ? "" : " (none)", slot->light[0][0], slot->light[0][1],
+                       slot->light[0][2], slot->light[0][3], slot->light[1][0], slot->light[1][1], slot->light[1][2],
+                       slot->light[1][3], slot->light[2][0], slot->light[2][1], slot->light[2][2], slot->light[2][3]);
+    }
+#endif
+}
+
 static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind) {
+    __try { captureMeshLights(node); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 #if FP_DEV_TOOLS
     __try { woundSkinDiagnose(node, material, bind); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 #endif
