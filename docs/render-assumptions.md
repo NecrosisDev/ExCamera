@@ -168,8 +168,27 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
     samples (the game's Supersample) the mount is now not attempted and the native draw stays (gated,
     headwear_render.inl).
 
+- **Witnessed fields re-checked (f).**
+  - **Supersampling globals: PROVEN.** 0x4B6D0 writes the sample index `DAT_49CA10` from its loop counter r13d
+    (0x4B857) and resets it to 0 (0x4BA2E). It writes the sample count `DAT_2AFC60` (0x4B783) and resets it to 1
+    (0x4BA02).
+  - **Wound hit fields: PROVEN.** 0x1590D0(rcx = part A, rdx = part B, …, [rbp+0x30] = point) takes A's owner
+    character `rdi = [A+0x580]` and skips parts of the same owner (`+0x420`). On that character it writes:
+    `+0xC18` the hit kind (1-3), `+0xC20` part B (the part struck), `+0xC28` the 12-byte contact point (the
+    stack argument), `+0xC38` part A (its own part that made contact, see +F0/+120 above). Wounds place the mark
+    on `+0xC20`, as intended.
+  - **Lights per object: PROVEN.** 0x26F420 walks a mesh's list from the head `+0x1DC` through entries at
+    `+0x1E0` (0x18 bytes each). It continues while `[entry+0xC]` (active) is nonzero and the weight `[entry+0]`
+    is above a threshold, follows `[entry+8]` (next index, negative ends), and stops after min(sector `+0x1F0`,
+    6). Clearing an entry's active flag ends the walk there, as view.inl does. The queue 0x26F230 and the binder
+    were not re-read.
+  - **Draw distance: PROVEN.** The sector update's frustum pass ORs `0x1000001` into `mesh+0xE0` when 0x79E60
+    accepts the mesh's sphere at `mesh+0x20` (0x58EEE-0x58EFB). Draw distance clears exactly those bits on the
+    sector's meshes (`sector+0x1D0` list, last index `+0x1C8`; both witnessed in pickRay), as if outside the
+    view. `sceneNode::bodyPart +0x160` and `bodyPart::character +0x580` are witnessed by their writers.
+  - **Far rooms: WITNESSED and hash-gated**; meaning not re-derived in this audit.
+
 ## Not yet proven, not gated (for the audit thread)
 
 - Unit roles of the skin texture set (0 diffuse, 1 specular, 2 normal): from the shader review, not re-derived.
-- Supersampling globals: meaning from the notes in targets.json, not re-derived in this audit.
-- Draw distance, Lights per object, Far rooms: offsets witnessed; meaning not re-derived in this audit.
+- Far rooms: offsets witnessed and hash-gated; meaning not re-derived in this audit.
