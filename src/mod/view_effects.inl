@@ -1593,8 +1593,9 @@ vec3 woundMarks(vec3 color) {
             spec += colour * w * min(D, 60.0) * NL / (4.0 * NV * max(NL, 0.05) + 1e-3) * NL;
         }
         lit += spec * fresnel * incident * wet;
-        // And the room it lies in: at grazing angles a wet surface mirrors the light around it.
-        lit += vec3(level) * (fresnel - 0.02) * 0.6 * wet;
+        // And the room it lies in: at grazing angles a wet surface mirrors the light around it. Kept faint, so
+        // the blood's colour stays solid from every angle (only the sharp highlights come and go).
+        lit += vec3(level) * min(fresnel - 0.02, 0.25) * 0.4 * wet;
     }
     return toStored(clamp(lit, 0.0, 1.0));
 }
