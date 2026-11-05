@@ -882,14 +882,48 @@ inline void wearSubmit(uintptr_t node, int index) {
 static void markGameBloodStain(gl::Api& g, fp::CueResources& r, void (*native)(uintptr_t), uintptr_t material); // view_effects.inl
 // A draw of the game's own weapon blood stain pass (its three return sites, gameBloodStains group): drawn as the game
 // asked, then once more into the coverage the finish pass keeps (view_effects.inl markGameBloodStain).
+// Toward the eye: slope factor and units (units x the depth buffer's resolution, so -256 is about 1.5e-5 of a
+// 24-bit buffer's range, a little more than the error it covers at first-person range).
+constexpr GLfloat gameBloodStainOffsetFactor = -1.f, gameBloodStainOffsetUnits = -256.f;
 static bool gameBloodStainDraw(uintptr_t material, bool bind, uintptr_t caller) {
     if (!layout.optionalGroupAvailable("gameBloodStains") || cueGlDepth || wearDrawing ||
         (caller != optionalGameAt(fp::sig::gameBloodStainDrawReturn) && caller != optionalGameAt(fp::sig::gameBloodStainBoundReturn) &&
          caller != optionalGameAt(fp::sig::gameBloodStainOtherReturn)))
         return false;
     const WearDraw native = bind ? originalWearDraw : originalWearDrawBound;
+    // The stain pass draws the weapon a second time with its own program, glDepthMask(0) at 0x10084C and no
+    // depth func or polygon offset of its own (its GL calls: glDepthMask, glUniform1f/4fv, glUniformMatrix4fv,
+    // glViewport). It wins the depth test against the weapon's own surface only by a nudge of its projection,
+    // P[10] + 1e-5 (0x100925, the double at 0x30FBA0, restored at 0x100C6A), which moves the stain 1e-5 nearer in
+    // NDC. Its matrix is composed on the CPU in floats (0x18C70: the nudged projection x view, then x the node's
+    // +A0), the weapon's own draw by another path; with the blade some 30 cm from the eye in first person the two
+    // differ by about as much as the nudge, so the stain passes the depth test on some frames and not on others.
+    // A polygon offset toward the eye for the stain draws only (its own state, put back after) makes it win.
+    GLboolean offsetFill = glIsEnabled(GL_POLYGON_OFFSET_FILL);
+    GLfloat offset[2]{};
+    glGetFloatv(GL_POLYGON_OFFSET_FACTOR, &offset[0]);
+    glGetFloatv(GL_POLYGON_OFFSET_UNITS, &offset[1]);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(gameBloodStainOffsetFactor, gameBloodStainOffsetUnits);
     fp::profile::invoke<fp::profile::Hook::wearDrawNative>(native, material);
-    if (!ownedNativeSwap(cueCurrentDC())) return true;
+#if FP_DEV_TOOLS
+    {
+        static ULONGLONG logged = 0;
+        if (renderAuditOn() && GetTickCount64() - logged > 2000) {
+            logged = GetTickCount64();
+            GLint func = 0;
+            glGetIntegerv(0x0B74 /*DEPTH_FUNC*/, &func);
+            renderAuditLog("game blood stain draw: depth test %d, func 0x%X, the game's offset %s (%.2f, %.2f), ours (%.1f, %.1f)",
+                           int(glIsEnabled(GL_DEPTH_TEST)), func, offsetFill ? "on" : "off", offset[0], offset[1],
+                           gameBloodStainOffsetFactor, gameBloodStainOffsetUnits);
+        }
+    }
+#endif
+    if (!ownedNativeSwap(cueCurrentDC())) {
+        glPolygonOffset(offset[0], offset[1]);
+        (offsetFill ? glEnable : glDisable)(GL_POLYGON_OFFSET_FILL);
+        return true;
+    }
     AcquireSRWLockExclusive(&cueLock);
     ++cueGlDepth;
     __try {
@@ -898,6 +932,8 @@ static bool gameBloodStainDraw(uintptr_t material, bool bind, uintptr_t caller) 
     } __finally {
         --cueGlDepth;
         ReleaseSRWLockExclusive(&cueLock);
+        glPolygonOffset(offset[0], offset[1]);
+        (offsetFill ? glEnable : glDisable)(GL_POLYGON_OFFSET_FILL);
     }
     return true;
 }
