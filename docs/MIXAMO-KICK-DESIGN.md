@@ -345,7 +345,9 @@ cm frame as 9.2, lead foot, shoulder twist), so the table can be confirmed or co
 class. Two-handed axes, hammers and staves hold the hands farther apart on the haft than a hilt; if the Great Sword
 arms fight their grip, that class's two-handed sub-kinds move to lower body (needs the low flag bits, see 9.1).
 
-## 10. Toppling during the kick: what the game does to the legs (decode in progress)
+## 10. Toppling during the kick: what the game does to the legs
+
+Superseded by docs/GAME-BALANCE-PHYSICS.md (the full decode). Kept for the trail.
 
 Everything below is read from the reviewed exe; nothing is implemented yet.
 

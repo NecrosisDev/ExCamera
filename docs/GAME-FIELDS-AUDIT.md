@@ -63,11 +63,11 @@ game has you recovering, defending or in another reaction", "…wait until you'v
 ## 5. Open
 
 * **Motion 13 as the kick's carrier.** Proven: it is the game's own "Kick" clip, which its inputs never start, so
-  playing it is legitimate. While it plays the game sets state 0x8000, sets +0xDC8 to 2 × +0xDCC (as while
-  defending) and re-grips via 0x152930(+0xE2C) when stance +0x590 ≥ 0.85, and `contactFrame` 0x1603F0 skips its
-  leg-support check (0x1612C9, as for state 0x4000). That skipped check means the standing leg is not held by the
-  game's support logic during the kick, which is the likely cause of the toppling seen with a 40 ms blend (200 ms now).
-  What +0xDC8 scales is not decoded. The Animated kick still depends on the body-part fields below.
+  playing it is legitimate. While it plays the game sets state 0x8000, plays the clip at twice the base rate (+0xDC8
+  = 2 × +0xDCC at 0x16B0AA; +0xDC8 is added to the clip clock +0xA20 each step, 0x16CB04–0x16CB0C), and `contactFrame`
+  0x1603F0 makes both legs supports anchored where they are and takes no corrective step (0x1612C9–0x16133E).
+  0x152930 ignores its +0xE2C argument (edx overwritten at 0x152949). Why a kicker falls: docs/GAME-BALANCE-PHYSICS.md.
+  The Animated kick still depends on the body-part fields below.
 * **Body-part fields** for the Animated kick (section 3).
 * **Finger poses / skin** (render and VR code): layout PROVEN by the register routine 0xD39B0 (0xD39C0–0xD3AEF): skin
   +8 back-pointer, +0x10 count, +0x18 node array, +0x20 inverse binds, +0x28 floats, node id at +0x17C; skin build
