@@ -1512,8 +1512,8 @@ static bool bodyCalm(uintptr_t root, uintptr_t head) {
     const unsigned state = *reinterpret_cast<const unsigned*>(root + field::character::stateFlags);
     if ((state & (0xac0 | 0x40204 | 0xa00)) || (*reinterpret_cast<const unsigned*>(root + field::character::lifeFlags) & 0x100))
         return false;
-    const float balance = *reinterpret_cast<const float*>(root + field::character::stamina),
-                most = *reinterpret_cast<const float*>(root + field::character::staminaMax);
+    const float balance = *reinterpret_cast<const float*>(root + field::character::balance),
+                most = *reinterpret_cast<const float*>(root + field::character::balanceMax);
     if (!(balance >= most - 0.05f)) return false;
     const uintptr_t drag = *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::dragManager));
     if (readable(drag, 0x20) && (*reinterpret_cast<const unsigned*>(drag + 8) & (0x4000 | 0x10000 | 0x80000)))

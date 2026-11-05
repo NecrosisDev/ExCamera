@@ -989,24 +989,22 @@ inline bool gameUsesKey(unsigned key, const unsigned (&bindings)[N]) {
 }
 // Why a kick or jump key press played nothing (motions.inl): counted in the status file, and for the reasons a
 // player can act on, said in a short notice. The checks are motionPlayable's, in its order, then the kick's stance.
-enum class MotionRefusal { unavailable, fault, tooSoon, notPlayer, cursorFree, busy, notUpright, dead, stamina,
-                           notInStance, gameKey, count };
-inline constexpr const char* motionRefusalNames[] = {"unavailable", "fault",  "too_soon", "not_player",
-                                                     "cursor_free", "busy",   "moving",   "dead",
-                                                     "stamina",     "stance", "game_key"};
+enum class MotionRefusal { unavailable, fault, tooSoon, notPlayer, cursorFree, busy, notUpright, dead, gameKey, count };
+inline constexpr const char* motionRefusalNames[] = {"unavailable", "fault", "too_soon", "not_player", "cursor_free",
+                                                     "busy",        "moving", "dead",     "game_key"};
 static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(MotionRefusal::count));
 // The refusal for a player already found eligible as a character (root readable, the controlled one); `none`
 // (count) when the clip may play. state: the character's state flags, 0 or 8 is upright and free.
-// planted: both feet on the ground (state 0 only; 8 is upright but not both feet), for the kick.
-inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, bool dead, float stamina,
-                                float staminaMax, float share, bool needStance, bool inStance, bool planted = false) {
+// planted: both feet on the ground (state 0 only; 8 is upright but not both feet), for the kick: kicking from one
+// foot leaves nothing to stand on.
+// The game plays neither clip itself, so these gates are ours and only physical: no stamina, balance or stance
+// requirement (an earlier gate read balance +10B8 as if it were stamina). busy: an attack, kick or jump already owns
+// the motion; state: the knock-down/fall/get-up bits (0x200/0x800... in +DF4) make the game drive the body itself.
+inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, bool dead, bool planted = false) {
     if (cursorFree) return MotionRefusal::cursorFree;
     if (busyMotion) return MotionRefusal::busy;
     if (state != 0 && (state != 8 || planted)) return MotionRefusal::notUpright;
     if (dead) return MotionRefusal::dead;
-    if (!(std::isfinite(stamina) && std::isfinite(staminaMax) && staminaMax > 0 && stamina >= share * staminaMax))
-        return MotionRefusal::stamina;
-    if (needStance && !inStance) return MotionRefusal::notInStance;
     return MotionRefusal::count;
 }
 // The notice for a refused key press, or nullptr where there is nothing to tell (too soon after the last one,
@@ -1014,11 +1012,11 @@ inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state
 inline const wchar_t* motionRefusalNotice(bool jump, MotionRefusal r) {
     switch (r) {
     case MotionRefusal::busy:
+        return jump ? L"Jump: not while you are attacking, kicking or already jumping."
+                    : L"Kick: not while you are attacking, jumping or already kicking.";
     case MotionRefusal::notUpright:
-    case MotionRefusal::stamina:
-    case MotionRefusal::notInStance:
-        return jump ? L"Jump: stand still and upright, with at least half your stamina."
-                    : L"Kick: stand still in your fighting stance, with most of your stamina (80%).";
+        return jump ? L"Jump: not while you are down, falling or getting up."
+                    : L"Kick: stand on both feet first (not while down, falling or getting up).";
     case MotionRefusal::cursorFree:
         return jump ? L"Jump: not while the pointer is free (a menu, the inventory or Cursor Look)."
                     : L"Kick: not while the pointer is free (a menu, the inventory or Cursor Look).";

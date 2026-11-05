@@ -32,9 +32,13 @@ inline constexpr size_t gazeDistance = 0xCBC;   // float
 inline constexpr size_t aimDirection = 0xCC0;   // float[3]: the cursor aim's heading
 inline constexpr size_t facing = 0xCFC;         // float[3]
 inline constexpr size_t behaviour = 0xD40;      // its behaviour object (namespace behaviour)
-inline constexpr size_t postureReadiness = 0xD58; // float: native B7560 readiness gate (>= .01)
-inline constexpr size_t health = 0xD5C;          // float: current health
-inline constexpr size_t healthMax = 0x103C;      // float: its maximum
+// Vitals, as the HUD (13E0F0) draws them. Left bar (13C880): health +D58 (drawn through its frame-interpolated
+// copy +D70 = lerp(+D6C, +D58), 17A100) in yellow, up to healthRestorable +D5C in pale, the rest of healthMax
+// +103C dark (lost). Right, blue bar (13C470): stamina +D74 up to staminaCeiling +D78, both 0..1.
+inline constexpr size_t health = 0xD58;          // float: current health; B7560 gates posture on > 0.01
+inline constexpr size_t healthRestorable = 0xD5C; // float: how far health can still recover; healing (1A0C50) raises it
+inline constexpr size_t stamina = 0xD74, staminaCeiling = 0xD78; // floats 0..1: the blue bar; spent through 17A640
+inline constexpr size_t healthMax = 0x103C;      // float: the whole health bar
 inline constexpr size_t chestPart = 0xD48;      // the part the arms hang from
 inline constexpr size_t stateFlags =
     0xDF4; // knocked down / falling / getting up bits; 0x20: right mouse is the game's
@@ -50,8 +54,10 @@ inline constexpr size_t swingBits = 0x1018;  // bounce/block bits (& 0x26)
 inline constexpr size_t gripFlags =
     0x1068; // 0x80: the opposite family uses slot 1; nonzero: the wide threshold
 inline constexpr size_t gripEntry = 0x1070;    // slot 0's entry in the grip table (gripTable)
-inline constexpr size_t stamina = 0x10B8;      // float
-inline constexpr size_t staminaMax = 0x10BC;   // float
+// Balance (poise), not on the HUD: regenerates to balanceMax every step (169A4C); below it by a margin the game
+// plays its recover motion 3 (169B99). Not stamina.
+inline constexpr size_t balance = 0x10B8;      // float
+inline constexpr size_t balanceMax = 0x10BC;   // float
 inline constexpr size_t gaitFlags = 0x10F4;    // bit 1: backward gait
 inline constexpr size_t headPart = 0x11E0;     // the head's body part
 inline constexpr size_t walking = 0x12EA;      // u8: exploration travel under way

@@ -398,8 +398,8 @@ const wchar_t* settingTip(int id) {
     case setting::tpCombatAim: return L"Third person. Oval: the cursor moves freely and the view turns at its edge. Centre: the view turns directly.";
     case setting::eyeSetback: return L"Moves the first-person view back toward the middle of the head. Third-person framing and interaction distance use the same shifted eye position. Headwear that blocks the first-person view is hidden; its shadow remains.";
     case setting::rotateHeldKey: return L"Hold and move the mouse to turn what you're holding. The view stays still meanwhile. Delete clears the key.";
-    case setting::kickKey: return L"Plays the game's unused kick. Fighting stance, upright, needs most of your stamina. Not a key the game uses (Alt is its thrust). Delete clears the key.";
-    case setting::jumpKey: return L"Plays the game's unused jump. Upright, needs half your stamina. Not a key the game uses. Delete clears the key.";
+    case setting::kickKey: return L"Plays the game's unused kick, standing on both feet. Not a key the game uses (Alt is its thrust). Delete clears the key.";
+    case setting::jumpKey: return L"Plays the game's unused jump, standing upright. Not a key the game uses. Delete clears the key.";
     case setting::kickStyle: return L"Classic: the game's own kick. Animated: the same kick, gates and hit, with your body moved like a motion-captured kick that suits what you hold. Experimental.";
     case setting::fpKnockdown: return L"Show third: knocked down in first person, the view goes to third person and back a moment after you are up. F6 meanwhile keeps your choice; death never switches.";
     case setting::tpLookFollow: return L"Out of combat, looking down lifts the camera and moves it back so the ground ahead shows; looking up brings it closer and lower. Walls still pull it in.";
@@ -441,8 +441,8 @@ const wchar_t* settingTip(int id) {
     case setting::vrGrabTurn: return L"On: squeeze an empty hand and sweep it sideways to drag the world round, through the same body turn as the stick. A hand holding something, or any drawn weapon, never turns. Off leaves turning to the stick.";
     case setting::vrEyeScale: return L"How large each eye is drawn, as a share of the window size: lower is cheaper and softer. Applies to the per-eye draws only; mirror and reconstruction modes and the desktop stay at full size.";
     case setting::vrGripSlide: return L"Slides the hand along a held weapon's hilt: positive towards the blade, negative towards the pommel.";
-    case setting::vrKick: return L"Experimental. On: pressing a stick in plays the game's own kick, only in the fighting stance, upright, not mid-swing and with most of your stamina. The game never plays this clip itself, so a hit lands by foot contact only.";
-    case setting::vrJump: return L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright, not mid-swing and with half your stamina. The game never jumps by itself, so landing is its ordinary physics.";
+    case setting::vrKick: return L"Experimental. On: pressing a stick in plays the game's own kick, standing on both feet and not mid-swing. The game never plays this clip itself, so a hit lands by foot contact only.";
+    case setting::vrJump: return L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright and not mid-swing. The game never jumps by itself, so landing is its ordinary physics.";
     case setting::vrWeaponWeight: return L"On: a held weapon follows your hands with a lag set by its own heft, so a heavy axe trails a fast swing and a dagger does not; a two-handed grip carries it better.";
     case setting::vrTeleport: return L"On: push the right stick forward to aim an arc from your right hand, let go to move there. Walls stop the arc; not while dragging something, attacking, down or out of reach. Walking on the left stick stays as it is.";
     case setting::vrHandPanel: return L"On: the inventory and every open menu sit on a panel held in your left hand, turned towards you; point at it with the right hand, the trigger clicks and the grip is the right button. Hold the trigger on an item and point out into the world to carry it out; let go to set it down there and pick it up. Off: the menu floats in front of you.";
