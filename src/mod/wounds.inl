@@ -63,8 +63,9 @@ constexpr float woundBleedFull = 6.f, woundFreshSeconds = 10.f, woundDrySeconds 
 // record's victim.
 
 constexpr uint32_t woundThrustMotion = 0xB; // see recordNativeHit
-// Dead: character::stateFlags (+DF4) holds 0x800, which the death routine 0x156480 writes and itself tests
-// (witness characterDie::deadState). (+DF8's 0x100, used here before, is a short stun.)
+// Dead: character::stateFlags (+DF4) has 0x800 set, the test the game itself makes (the death routine 0x156480
+// tests it before writing 0x800; 0x167ED0 also writes 0x800, 0xF12C4 and 0x156E48 write 0xA00; witness
+// characterDie::deadState). +DF8's 0x100, used here before, is set by 0x17B100 and not by any death path.
 constexpr unsigned woundDeadState = 0x800;
 struct Wound {
     uintptr_t part = 0, owner = 0; // the part, and the character it named at the hit; a change retires the mark
