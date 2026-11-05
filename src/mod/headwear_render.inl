@@ -37,7 +37,7 @@ static bool stoneSkinSubmission(uintptr_t node, bool ownBody = false);
 static bool stoneSkinDraw(uintptr_t node, uintptr_t material, bool bind, bool ownBody = false);
 // Wound skins (wounds_bake.inl, included after stone_skin.inl) too.
 static bool woundSkinSubmission(uintptr_t node);
-static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind);
+static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind, bool ownBody = false);
 static void captureSubmittedLights(uintptr_t node, int index); // wounds_bake.inl: the lights the submit packed
 // The player's own skinned mesh stays with the headwear path in first person; its native body
 // runs take the stone maps there (cueLock held for all three).
@@ -980,9 +980,11 @@ inline void wearDrawBody(uintptr_t material, bool bind, uintptr_t caller) {
         }
     }
     // The player's own mesh with nothing for the headwear path to hide (no head faces in this
-    // material) still takes the stone maps when the player is stone.
+    // material) still takes the stone maps when the player is stone, or its baked wound skin.
     if (!handled && caller == expected && submitted.node && submitted.material == material && !wearDrawing && !cueGlDepth &&
         stoneSkinDraw(submitted.node, material, bind, true)) return;
+    if (!handled && caller == expected && submitted.node && submitted.material == material && !wearDrawing && !cueGlDepth &&
+        woundSkinDraw(submitted.node, material, bind, true)) return; // and the wound skin when the player is wounded
     if (!handled)
         fp::profile::invoke<fp::profile::Hook::wearDrawNative>(bind ? originalWearDraw : originalWearDrawBound, material);
 }

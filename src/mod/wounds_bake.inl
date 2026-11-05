@@ -69,6 +69,7 @@ struct WoundSkinSlot {
 };
 static WoundSkinSlot woundSkinSlots[woundSkinLimit]; // render thread only
 static std::atomic<unsigned> woundSkinBakes{0}, woundSkinMapped{0}, woundSkinUnmapped{0}, woundSkinDraws{0}, woundSkinFaults{0};
+static std::atomic<unsigned> woundSkinOwnHanded{0}; // the player's own first-person mesh, left to the headwear path
 static bool woundSkinBroken = false; // the bake program or a needed entry point is missing: screen marks only
 
 static bool woundSkinBaked(uintptr_t character) { // declared in wounds.inl
@@ -1447,11 +1448,19 @@ static void captureSubmittedLights(uintptr_t node, int) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
-static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind) {
+static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind, bool ownBody) {
 #if FP_DEV_TOOLS
     __try { woundSkinDiagnose(node, material, bind); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 #endif
     if (woundSkinBroken || !wearScope.colourPass) return false;
+    // The player's own mesh in first person (in the wear scope, as woundSkinSubmission excludes it) goes first to
+    // the headwear path, which drops the head faces and swaps in this skin through woundSkinWearBegin. Drawn here it
+    // went out whole: head and ears included, seen at the screen edge when the view turned ahead of the head. Only
+    // a material that path leaves (no head faces in it) comes back here, as ownBody.
+    if (!ownBody && wearScope.colour && std::binary_search(wearScope.nodes, wearScope.nodes + wearScope.nodeCount, node)) {
+        woundSkinOwnHanded.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     if (!bind && woundSkinProven() && woundSkinMaterial(material)) {
         __try { woundSkinSpecWitness(); } __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
