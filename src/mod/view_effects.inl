@@ -1397,8 +1397,25 @@ vec4 bloodLayerAt(vec3 p, out float why) {
     vec2 off = texel - bloodMapInfo.zw;
     if (max(abs(off.x), abs(off.y)) > size * 0.5 - 3.0) { why = 1.0; return vec4(0.0); }
     vec2 tuv = texel / size; // the layer's texture repeats
-    vec4 s = texture2D(bloodMap, tuv);
-    if (s.a < 0.004) return vec4(0.0);
+    // Thickness through a cubic B-spline (four bilinear reads): a drop a texel or two across comes out
+    // round instead of a bilinear diamond or square.
+    vec2 cell = texel - 0.5, f = fract(cell), i0 = floor(cell);
+    vec2 w0 = (1.0 - f) * (1.0 - f) * (1.0 - f) / 6.0, w1 = (4.0 - 6.0 * f * f + 3.0 * f * f * f) / 6.0;
+    vec2 w2 = (1.0 + 3.0 * f + 3.0 * f * f - 3.0 * f * f * f) / 6.0, w3 = f * f * f / 6.0;
+    vec2 g0 = w0 + w1, g1 = w2 + w3;
+    vec2 h0 = (i0 - 0.5 + w1 / max(g0, vec2(1e-5))) / size, h1 = (i0 + 1.5 + w3 / max(g1, vec2(1e-5))) / size;
+    float thickness = g0.y * (g0.x * texture2D(bloodMap, vec2(h0.x, h0.y)).a + g1.x * texture2D(bloodMap, vec2(h1.x, h0.y)).a) +
+                      g1.y * (g0.x * texture2D(bloodMap, vec2(h0.x, h1.y)).a + g1.x * texture2D(bloodMap, vec2(h1.x, h1.y)).a);
+    if (thickness < 0.004) return vec4(0.0);
+    // Source height and landing time from the four nearest texels, each weighted by its own blood: an empty
+    // texel's zeros would otherwise pull a mark's rim towards height 0 and time 0, and its edge broke up into
+    // texel squares that passed and failed the tests below by turns.
+    vec2 base = i0 + 0.5;
+    vec4 t00 = texture2D(bloodMap, base / size), t10 = texture2D(bloodMap, (base + vec2(1.0, 0.0)) / size);
+    vec4 t01 = texture2D(bloodMap, (base + vec2(0.0, 1.0)) / size), t11 = texture2D(bloodMap, (base + vec2(1.0)) / size);
+    vec4 k = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y) *
+             (vec4(t00.a, t10.a, t01.a, t11.a) + 1e-4);
+    vec4 s = vec4((k.x * t00.rg + k.y * t10.rg + k.z * t01.rg + k.w * t11.rg) / (k.x + k.y + k.z + k.w), 0.0, thickness);
     float srcY = (s.r - 0.5) * bloodMapTime.z + bloodMapTime.y;
     float below = srcY - w.y;
     if (below < -6.0 || below > 230.0) { why = 2.0; return vec4(0.0); }
