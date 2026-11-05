@@ -287,6 +287,21 @@ procedural ID. That is the next step to bring the four detail rows back with the
   `[[node+0x1D0][i]+0xD0]+0x208 == 0x26` (with the name compared at `+0x209`). Worn pieces merged into the
   _SKIN mesh keep their own sets, from their own factory (item rule above), and so their own layer IDs.
   Which exact 38-character name it is was not read here (it is runtime data).
+- **How the factory lays out an item's texture (PROVEN).**
+  - 0x20FB80 walks the factory's channels (count `factory+0x58`, packed 0xB5-byte records at `+0x60`). For each
+    channel it takes the instance's variant (`[arg+4+channel] - 1`, bounded by `channel+0xA8`; 0x20FDD3-0x20FE02)
+    and fills a 0x1F0-byte job entry (job array `+0x30`). Entry `+0` and `+8` come from channel `+0x3C` and
+    `+0x44` (0x20FE30-0x20FE66). Then up to three layers: each gets its procedural material (ID through
+    channel `+0xAC` rows of 0x2C bytes -> factory 9-byte table at `+0x8C`; 0x2103A8-0x2103F0), a colour from
+    the table at `+0x90` (0x2104D1-0x2104F1) and a pattern (0x270370, 0x210529).
+  - The executor 0x1EBC60 (stored as the job's callback at 0x20FBCD) draws each entry with 0x1EB910(entry,
+    entry+8, entry+0x10), which emits a quad from `entry+0` to `entry+0 + entry+8 × entry+0x10`
+    (0x1EB910-0x1EBA2E). **So each channel is a rectangle of the item's texture, and its layers' procedural
+    materials are known.**
+  - Still missing for per-pixel material: which layer covers a texel inside a channel (its pattern/mask,
+    0x270370 and the executor's later passes), the link from `node+0x180` (item id) to the factory, and each
+    pixel's texture coordinate in our replay (the game's draw does not output it; it would need our own
+    shader in the replay).
 
 ## The game's own shading, as decoded (for the reflections and AO work)
 
