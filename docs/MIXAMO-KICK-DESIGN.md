@@ -7,7 +7,52 @@ Everything below was traced in this worktree (branch `claude/mixamo-kick`, from 
 reviewed executable (Exanima 0.9.5.2g, SHA-256 af9033c7…, `game/Exanima/Exanima.exe`). RVAs are from that
 build. **No new game offset or signature is needed**; see "What the design reuses".
 
-## 1. Summary
+## 0. Phase 2 revision (2026-11-05): full body, clip sets by weapon
+
+Hunter changed the plan after Phase 1: the clips play **as authored on the whole body** (no lowering; only a
+per-step safety cap), and the clip set depends on what the player holds. Sections 4, 5 and 8 are rewritten for
+that; sections 3 and 7 still hold, and section 1 is the superseded leg-only summary. What Phase 2 built:
+
+* **Clip sets and modes** (`src/kick_retarget.h`, `classRules`, a per-weapon-class table):
+
+  | weapon class (detected) | set | body |
+  |---|---|---|
+  | unarmed | 0: Standing Melee v2, Sword and Shield, MMA | full |
+  | one-handed, with or without a shield, dual wield | 0 | full |
+  | two-handed | 1: Great Sword, Great Sword 1 | full |
+  | polearm | 0 | hips and legs only (the game keeps the arms and the hold) |
+
+  Within a set the clips rotate, never repeating the previous one. A polearm-specific clip is a new row/set.
+* **Detection uses existing fields only**: `character::weaponCount`, `character::heldItems` (both hands holding
+  the same item is a two-handed grip) and `character::gripFlags` (0x10 one hand, 0x20/0x30 two hands with a
+  right/left lead, as `xr_weapon.inl` already reads them). **A polearm cannot be told from a two-handed sword with
+  what the mod reads**: the polearm bits live in the held item's own record (ExanimaLua reads them from the item
+  payload's first flag word, `flags & 0x30`), which ExCamera does not read or witness. Until that field is reviewed
+  and added, spears, halberds and staves held in two hands get the two-handed (Great Sword) set, full body. The
+  table row for polearms is in place.
+* **Mirroring**: each baked clip is stored as a right-leg kick. At kick start the clip is mirrored when its stance
+  (supporting foot ahead of or behind the hips) does not match which of the character's feet leads. The status file
+  counts whether the game's own kick lifted the same leg (`native_leg_agree/disagree`).
+
+### Stepping and pivoting clips (MMA, Great Sword, Great Sword 1)
+
+These clips pivot the supporting foot or step (54-81 cm of slide) and turn the hips 90-120°. The game's supporting
+foot is held by its contacts and support code, so **the step does not happen**: the foot stays planted where it
+stood. What the drive does instead:
+
+* The legs, torso and arms follow the clip's directions in the heading frame, so the kicking leg still travels its
+  authored arc (a roundhouse comes round from the side) and the torso still turns.
+* The hips follow the clip's offset from the supporting foot. Because that foot does not slide, the hips travel only
+  as far as the planted foot allows; the per-step cap (10 cm) keeps the target near the body.
+* The visible difference: a pivot kick done on a planted foot, i.e. the knee and hip twist where the clip's foot
+  would have turned. That may read as stiff, or topple the character on the 120° Great Sword turn.
+
+Recommendation: keep all five as authored for the first play check (as Hunter asked) and watch the status file's
+`fell` and `cut_short` against `last_clip`. If the pivots topple or look wrong, the options are, in order: scale
+the hip yaw for those clips only, trim them to the strike (drop the wind-up turn), or drop them from the rotation.
+None needs new game data.
+
+## 1. Summary (Phase 1, leg-only; superseded by section 0)
 
 * Animated is an *overlay on the Classic kick*. The key still starts the game's own kick clip (`0xD`) exactly
   as now (`src/mod/motions.inl:32-67`), so gates, stamina, motion-busy state, AI reactions and contact damage
@@ -130,61 +175,59 @@ Plan, without changing VR behaviour:
    The VR scope is consulted first and returns when it replaced, so VR output is bit-identical.
 3. `poseBuilderOwned` calls `kickPoseBegin(root)` only when `trackedMotorBegin` returned false, and
    `kickPoseEnd()` in the same `__finally` chain.
-4. Admission for Animated: groups `kick` and `xrDrive` available, and the reviewed whole-function contracts for
-   `poseBuilder`, `motorCompose`, `footAngle`, `motorWeights` (a subset of `fp::xr::contracts`,
-   `src/xr/native_contracts.h`) match the loaded image. These are existing reviewed contracts, now also checked
-   in desktop builds; any mismatch withholds Animated (Classic keeps working) and is reported in the status file
-   and the settings row, like other withheld optional features.
-5. The detour is installed when Animated is first selected (session worker) and stays; its body gates itself
-   (return-address check first, so the many other `xrCompose` callers pay one compare).
+4. Admission for Animated: groups `kick` and `xrDrive` available, the same admission the VR motor drive uses
+   (`createTrackedDriveHooks`). Built: the whole-function contracts were not added to desktop builds after all
+   (their header is ~390 KB of text); a withheld group shows the settings row as unavailable and Classic stays.
+5. Built: the detour is created with the other hooks at start (`createKickDriveHook`, after the stereo hooks) when
+   the groups resolve; with no kick being animated it costs one thread-local check per call.
 
-## 4. Retarget
+## 4. Retarget (full body, as built)
 
-### 4.1 Offline bake (tools)
+### 4.1 Offline bake
 
-`tools/kick_bake.py` (stdlib) reads one clip JSON and writes `src/kick_clip.h` (generated, checked by
-`tools/check_generated.py`): per frame, for the kicking leg only, three **unit bone directions** in the clip's
-heading frame (thigh: UpLeg→Leg, shin: Leg→Foot, foot: Foot→ToeBase), the stance-frame directions (frame 0),
-the peak frame, frame count and fps. Directions, not rotations: they need no knowledge of the game's part rest
-frames or twist axes, and Hips root motion drops out (only differences of positions are used). A mirrored copy
-(swap left/right, negate X) is baked too, so either leg can kick.
+`tools/kick_bake.py bake <dir>` turns the five clip JSONs into `tools/kick_clips.json` (committed), and
+`kick_bake.py header` generates `src/kick_clip.h` (checked by `tools/check_generated.py`). Per frame, in the clip's
+heading frame, only chords between joints both skeletons have:
 
-### 4.2 Run time, per physics step (inside the pose builder)
+* pelvis up (mid-hip to Spine2) and across (left hip minus right hip); chest up (Spine2 to Head) and across (left
+  shoulder joint minus right);
+* unit directions of each shoulder, upper arm, forearm, thigh, shin and foot;
+* the mid-hip's offset from the supporting foot, in cm (the authored hip travel).
 
-1. **Frame mapping.** Mixamo heading frame (X lateral, Y up, Z forward) → native world: Y to world up, Z to the
-   character's facing at kick start (`character::facing`/body frame), X to the measured lateral axis (the left
-   hip minus the right hip, projected). The lateral sign is measured, never assumed, so a mirrored native
-   handedness cannot flip the kick. Captured once at kick start, so the leg does not swing with body turn noise.
-2. **Time.** `p = motionProgress` (native, per step). A piecewise-linear warp maps native progress to clip time:
-   `[0, p_hit, 1] → [0, f_peak, f_end]`, with `p_hit` measured from the Classic kick in Phase 2 (where the native
-   foot peaks). Sample with linear interpolation of directions + renormalize (30 fps bake, ~60+ Hz steps).
-3. **Height.** Rotate the thigh direction toward straight-down about the lateral axis by `(1 - s)` of its
-   flexion (s ≈ 0.75); the shin and foot keep their angles relative to the thigh. Foot peak ≈ 80-90 cm.
-4. **Blend.** Weight `w(p)` ramps 0→1 over the first ~12% and 1→0 over the last ~15% (smoothstep). Desired
-   direction = slerp(achieved direction, clip direction, w). Outside `0 ≤ p ≤ 1` (start dwell) the weight is 0.
-5. **Targets.** As `trackedLowerPlan` does: thigh orientation = `directionRotation(achieved thigh dir, desired) *
-   achieved orientation`, same for shin, foot limited to 0.6 rad per step (`limitMotorRotation`). Rows
-   `lowerKind` 2 (thigh, shin) and 3 (foot, no position): the motors chase them with native stiffness.
-6. **Support foot.** Not driven: the native kick clip already plants it, and `standingLegs`/`footAngle` keep it
-   on the ground. Mixamo's own support leg and Hips motion are ignored.
+Chords need no knowledge of the game's part rest frames, and the clip's travel across the floor drops out.
 
-### 4.3 Which leg
+### 4.2 Run time, per physics step (`src/mod/pose_drive.inl`)
 
-The baked clip's leg must be the leg the native kick lifts. Phase 2 measures it (the shin whose contacts drop to
-none during the Classic kick, `bodyPart::contacts`), then picks the original or mirrored bake at run time.
+1. The game's kick clip is the carrier: the key, gates, stamina, damage and reactions are unchanged. While it runs,
+   `kickPoseBegin` (from `poseBuilderOwned`, only when the VR drive did not plan) reads the 18 parts by structure.
+2. First step of a kick: weapon class, rule, next clip of the set, heading (character facing, hips across), and the
+   mirror from the stance.
+3. Time: native `motionProgress` warped `[0, 0.35, 1] -> [0, peak, last]`; the clip is sampled at 30 fps with
+   interpolation. Weight: smoothstep in over the first 12%, out over the last 15%.
+4. Targets: trunk parts (pelvis, belly, chest) turn so their measured up/across chords match the clip's; limbs turn
+   so their bone points along the clip's (twist kept); head, hands and feet turn with their parent. Every turn is
+   capped at 0.35 rad per step (the only safety clamp; the motion is not lowered).
+5. Hips: the pelvis target is placed so the mid-hip sits above the supporting foot by the clip's offset, scaled by
+   leg length (character / clip), at most 10 cm from where it is per step.
+6. In the composition detour, each planned part's native local target is blended toward the clip's by the weight
+   (rotation slerp; the pelvis's position too). Lower-body mode plans only the pelvis and legs.
+7. Arms: an arm whose hand holds something follows the clip at 60% (`heldArmWeight`); its grip joints stay native.
 
-## 5. Balance
+## 5. Balance (full body)
 
-* The pelvis target is `animationPose ∘ balanceFrame` (0xDFC) and the support legs are solved by the native
-  support code after the pose builder (`0x16E058` → `standingLegs`). Driving only the kicking leg keeps all of
-  that native: the balance frame, support height and foot angles react to the leg's mass moving forward as they
-  do for the Classic kick.
-* Risk: a high, extended leg moves the centre of mass further forward than the native kick → stumble. Mitigations,
-  in order: lower the kick (s ≈ 0.75); cap the thigh's change per step (0.35 rad, as the VR pelvis); keep the
-  Classic blend (200 ms, `motions.inl:10-12`); later, a small backward chest/belly lean (`lowerKind` 0 rows,
-  ≤ 0.15 rad) as Mixamo does. No pelvis or support-leg override is planned.
-* `standingLegs` runs after our compose for the support leg only; if it also rewrites the swing leg's foot target
-  in some state, the status counters (rows applied vs. composes seen) will show it in Phase 2.
+* The hips now move: the pelvis target follows the clip relative to the planted foot and is composed with the
+  game's balance frame at the pelvis site, so the game's balance still adds its own correction. The support code
+  (`standingLegs`) runs after the pose builder and keeps the planted foot.
+* Risks, in order: toppling on high kicks and pivots (the clips are not lowered any more); the game's balance and
+  the clip's hip travel disagreeing (seen as shaking during the blend); the game's kick lifting the other leg than
+  the clip during the first 12% (counted as `native_leg_disagree`).
+* Status (`first-person-status.json`, object `kick_animated`): `kicks`, `blended_in`, `blended_out`, `cut_short`
+  (the kick ended while still blended, e.g. interrupted), `fell` (the state left upright during the kick or within
+  1.5 s after), `last_clip`, `last_class`, `last_mode`, `last_mirrored`, `held_arm_steps`, `native_peak_progress`
+  (where the game's own foot peaked, to tune the 0.35 hit point).
+* Hands and weapons: arms are driven at 60% when holding something. The grip joints are physical constraints, so
+  the weapon is carried, not dropped; it can clip the body or a shield when the clip's guard differs from the game's
+  hold. If that conflicts in play, the next step is to keep held arms native (weight 0) for that set.
 
 ## 6. Camera and views
 
@@ -200,17 +243,15 @@ contacts}`, `sceneNode::{bodyPart, sector}`, `sector::origin` — all witnessed 
 Signatures: `playerRoot`, `motionPlay` (group `kick`), `poseBuilder`, `xrCompose` and the three compose return sites (group
 `xrDrive`). Contracts: `poseBuilder`, `motorCompose`, `footAngle`, `motorWeights` from `xr_contracts.json`.
 
-## 8. Phases, effort, risk
+## 8. Phases, effort, risk (revised for full body)
 
 | phase | work | effort |
 |---|---|---|
-| 2 | Setting row (Classic/Animated, ini `KickStyle`), `kick_bake.py` + generated header + check, `kick_retarget.h` maths with C++ tests (frame mapping, warp, height scale, blend, mirror), `pose_drive.inl` scope + shared detour, kicking leg only, status counters (`kick_animated`: admitted, steps driven, rows applied, refusals by reason). Build minimal + dev + VR, all tests, `check_game.py`, update camera-test only. | 1.5-2 days |
-| 3 | Hunter's play check, then tune: `p_hit`, height scale, blend widths, which leg, foot limit. Status file guides each round. | 1-2 days (paced by play sessions) |
-| 4 | Torso lean and arm counter-swing (`lowerKind` 0 rows on belly/chest/upper arms, small), optional second clip. | ~1 day |
-| 5 | VR coexistence check, release checklist rows, README/CHANGELOG, manual text. | 0.5 day |
+| 2 (built) | Setting, five baked clips in two sets, weapon-class table, full/lower-body drive, hips over the planted foot, status counters, tests, all builds. | done |
+| 3 | Hunter's play checks per clip and weapon; tune hit point, blend widths, caps, held-arm weight; fix what topples. | 2-4 days (paced by play sessions) |
+| 4 | Pivot clips: hip yaw scaling or trims; foot (toe) direction from the clip once the foot part's axes are measured. | 1-2 days |
+| 5 | Polearm detection (needs the item-record flag field reviewed and witnessed, see section 0), VR check, docs, release rows. | 1 day |
 
-**Patch risk.** An Exanima update that moves the pose builder or its compose sites fails the `xrDrive` signatures
-or the whole-function contracts → Animated is withheld, Classic stays. Fields are contract-witnessed and adapt
-or withhold. No raw RVAs are added. **Run-time risks:** toppling on a high kick (mitigated as above), a swing leg
-that fights `standingLegs` (measured in Phase 2), and the kick touching an opponent harder or softer than
-Classic (damage stays native, but foot speed changes the impulse).
+**Patch risk** is unchanged: the drive uses only the `kick` and `xrDrive` groups and witnessed fields; any mismatch
+withholds Animated and the kick stays Classic. **Run-time risk** is higher than the leg-only plan: the whole body
+and the hips move as authored.

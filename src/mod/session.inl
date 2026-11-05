@@ -1067,6 +1067,31 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         j.end();
     }
     j.end();
+    { // every build: the Animated kick (pose_drive.inl)
+        const int clip = kickLastClip.load(), cls = kickLastClass.load(), peak = kickNativePeakMilli.load();
+        j.object("kick_animated")
+            .str("style", kickStyle.load() ? "animated" : "classic")
+            .boolean("ready", kickDriveReady.load())
+            .boolean("fault", kickDriveFault.load())
+            .unum("kicks", kickAnimated.load())
+            .unum("blended_in", kickBlendedIn.load())
+            .unum("blended_out", kickBlendedOut.load())
+            .unum("cut_short", kickCutShort.load())
+            .unum("fell", kickFell.load())
+            .unum("steps", kickSteps.load())
+            .unum("rows", kickRows.load())
+            .unum("held_arm_steps", kickHeldArms.load())
+            .unum("refused_body", kickRefusedGraph.load())
+            .unum("refused_heading", kickRefusedHeading.load())
+            .unum("native_leg_agree", kickNativeLegAgree.load())
+            .unum("native_leg_disagree", kickNativeLegDisagree.load())
+            .str("last_clip", clip >= 0 && clip < fp::kick::clipCount ? fp::kick::clips[clip].name : "none")
+            .str("last_class", cls >= 0 && cls < int(fp::kick::WeaponClass::count) ? fp::kick::classNames[cls] : "none")
+            .str("last_mode", kickLastMode.load() == 1 ? "lower_body" : kickLastMode.load() == 0 ? "full_body" : "none")
+            .boolean("last_mirrored", kickLastMirror.load() == 1)
+            .fixed("native_peak_progress", peak >= 0 ? peak / 1000.0 : -1.0, 3)
+            .end();
+    }
     j.object("blade") // every build: the drawn edge and the sinking thrust on the game's impact path
         .boolean("ready", bladeReady.load())
         .unum("drags", bladeDrags.load())
@@ -1329,6 +1354,11 @@ static DWORD runSession() {
     if (!createStereoHooks()) {
         uninitializeNativeHooks();
         reportFault("stereo_hook_creation_failed", "not_installed", "not_required");
+        return 3;
+    }
+    if (!createKickDriveHook()) { // after the stereo hooks: the VR drive may own the composition detour already
+        uninitializeNativeHooks();
+        reportFault("kick_hook_creation_failed", "not_installed", "not_required");
         return 3;
     }
     createViewEffectsHook();

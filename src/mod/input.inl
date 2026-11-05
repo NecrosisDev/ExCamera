@@ -3,6 +3,8 @@
 static void fingerPosesTick(uintptr_t root); // xr_bones.inl: the held-item finger poses, after the drive
 static void motionKeysTick(uintptr_t root);  // motions.inl: the kick and jump keys
 static void motionJumpTick(uintptr_t root, bool owned); // motions.inl: the jump's push over physics steps
+static bool kickPoseBegin(uintptr_t root); // pose_drive.inl: the Animated kick's targets for this step
+static void kickPoseEnd();
 
 static std::atomic<unsigned> dropSpots{0}; // accepted close-view query outputs
 
@@ -1421,6 +1423,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
     uintptr_t* contextual = nullptr;
     uintptr_t savedContext = 0;
     const bool trackedMotor = trackedMotorBegin(root);
+    const bool kickMotor = !trackedMotor && kickPoseBegin(root); // the VR drive's scope comes first
     __try {
         if (root == *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot))) {
             ++playerSteps;
@@ -1434,7 +1437,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
             }
             // A tracked body owns the spine instead of the look-driven bend.
             __try {
-                if (!trackedMotor) spineBendStep(root, borrowed);
+                if (!trackedMotor && !kickMotor) spineBendStep(root, borrowed);
             } __except (countFaultAndHandle(&poseFaults)) {}
         }
         const uintptr_t bh = *reinterpret_cast<const uintptr_t*>(root + field::character::behaviour);
@@ -1460,7 +1463,7 @@ static void poseBuilderOwned(uintptr_t root, float time, unsigned char mode) {
                 restoreSpinePart(borrowed[1]);
             } __finally {
                 __try { restoreSpinePart(borrowed[0]); }
-                __finally { trackedMotorEnd(); }
+                __finally { kickPoseEnd(); trackedMotorEnd(); }
             }
         }
     }

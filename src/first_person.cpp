@@ -116,6 +116,7 @@ static MH_STATUS disableStereoHooks() { return MH_OK; }
 #include "mod/xr_bones.inl"
 #include "mod/blade.inl"
 #include "mod/motions.inl"
+#include "mod/pose_drive.inl"
 #include "mod/camera.inl"
 #include "mod/dev.inl"
 #ifdef FP_OPENXR_EMULATION

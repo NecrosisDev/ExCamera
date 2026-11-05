@@ -1083,7 +1083,7 @@ static void trackedComposeFor(uintptr_t caller, float* out, float* local, const 
                 }
         }
     }
-    originalTrackedCompose(out, local, parent);
+    if (!kickComposeFor(caller, out, local, parent, originalTrackedCompose)) originalTrackedCompose(out, local, parent);
 }
 static void trackedCompose(float* out, float* local, const float* parent) { trackedComposeFor(reinterpret_cast<uintptr_t>(_ReturnAddress()), out, local, parent); }
 
@@ -1328,6 +1328,7 @@ static bool createTrackedDriveHooks() {
     trackedGrabRoot = reinterpret_cast<TrackedGrabRoot>(gameAt(fp::sig::aimMeshRoot));
     if (MH_CreateHook(reinterpret_cast<void*>(gameAt(fp::sig::xrCompose)), reinterpret_cast<void*>(trackedCompose), reinterpret_cast<void**>(&originalTrackedCompose)) != MH_OK) return false;
     trackedDriveHooks[0] = true;
+    kickComposeChained = true; // the Animated kick (pose_drive.inl) takes this detour's fall-through
     if (MH_CreateHook(reinterpret_cast<void*>(gameAt(fp::sig::aimScreenRay)), reinterpret_cast<void*>(trackedScreenRay), reinterpret_cast<void**>(&originalTrackedScreenRay)) != MH_OK) return false;
     trackedDriveHooks[1] = true;
     return true;

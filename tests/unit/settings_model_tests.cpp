@@ -278,6 +278,20 @@ bool knockdown_view_row_steps_and_saves() {
     return true;
 }
 
+bool kick_style_row_steps_and_saves() {
+    ModSettings settings;
+    CHECK(settings.kickStyle == 0);
+    CHECK(settings.step(panel::setting::kickStyle, 1));
+    CHECK(settings.kickStyle == 1);
+    const auto& info = panel::rowInfo(panel::setting::kickStyle);
+    CHECK(info.key != nullptr && info.fromText(L"Animated") == 1 && info.fromText(L"classic") == 0 && info.fromText(L"x") == panel::badText);
+    CHECK(panel::rowCapability(panel::setting::kickStyle) == panel::capAnimatedKick);
+    settings.kickStyle = 7;
+    settings.normalize();
+    CHECK(settings.kickStyle == 0);
+    return true;
+}
+
 bool settings_file_candidates_follow_portable_mode() {
     // A portable copy: only the file beside it, which safe start then backs up and resets.
     const auto portable = fp::settingsCandidates(L"E:\\test\\", true, L"C:\\Docs", L"C:\\Users\\p\\Documents");
@@ -324,6 +338,7 @@ int main() {
         {"unavailable and faulted rows say why", unavailable_and_faulted_rows_say_why},
         {"look-follow row is a saved switch", look_follow_row_is_a_saved_switch},
         {"knockdown view row steps and saves", knockdown_view_row_steps_and_saves},
+        {"kick style row steps and saves", kick_style_row_steps_and_saves},
         {"settings file candidates follow portable mode", settings_file_candidates_follow_portable_mode},
         {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });

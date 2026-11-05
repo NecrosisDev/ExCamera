@@ -129,6 +129,7 @@ enum : int {
     swapShoulderKey,
     tpLookFollow,
     fpKnockdown,
+    kickStyle,
     count
 };
 }
@@ -152,6 +153,7 @@ inline bool fixedSetting(int row) {
 enum : unsigned {
     capFingers = 1u << 0, capFarRooms = 1u << 1, capViewEffects = 1u << 2, capWounds = 1u << 3,
     capBlades = 1u << 4, capKick = 1u << 5, capJump = 1u << 6, capManualDefense = 1u << 7,
+    capAnimatedKick = 1u << 8,
 };
 inline unsigned rowCapability(int row) {
     switch (row) {
@@ -165,6 +167,7 @@ inline unsigned rowCapability(int row) {
     case setting::woundMarks: return capWounds;
     case setting::bladeDrag: case setting::stabSink: case setting::bladeGain: return capBlades;
     case setting::kickKey: return capKick;
+    case setting::kickStyle: return capAnimatedKick;
     case setting::jumpKey: return capJump;
     case setting::fpDefense: case setting::tpDefense: return capManualDefense;
     default: return 0;
@@ -197,6 +200,7 @@ struct ModSettings {
     bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
     int hitReaction = 100; // percent of the first-person view's kick when a hit lands; 100 as before
     int f6Cycle = 0;
+    int kickStyle = 0; // 0: the game's own kick; 1: its leg moved as the baked Mixamo kick (pose_drive.inl)
     int fpKnockdown = 1; // 1: knocked down in first person shows third person until you are up; 0 stays first // 0: F6 steps first, third, the game's camera; 1: first and third, the game's camera held
     bool woundMarks = true; // cuts, bruises and running blood where weapons got through; on by default (owner's request)
     bool woundDebug = false; // neon debug highlight for wounds, blade blood and spatters
@@ -315,6 +319,7 @@ struct ModSettings {
         case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
         case setting::f6Cycle: f6Cycle = f6Cycle ? 0 : 1; break;
         case setting::fpKnockdown: fpKnockdown = fpKnockdown ? 0 : 1; break;
+        case setting::kickStyle: kickStyle = kickStyle ? 0 : 1; break;
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -583,6 +588,8 @@ struct ModSettings {
             return tpLookFollow ? L"on" : L"off";
         case setting::fpKnockdown:
             return fpKnockdown ? L"Show third person" : L"Stay in first person";
+        case setting::kickStyle:
+            return kickStyle ? L"Animated" : L"Classic";
         case setting::attackCue:
             return attackCue ? L"shown while a swing winds up" : L"off";
         case setting::cueSize:
@@ -764,6 +771,12 @@ inline int iniKnockdownView(const wchar_t* text) {
 }
 inline const wchar_t* iniKnockdownViewText(int mode) {
     return mode ? L"third" : L"first";
+}
+inline int iniKickStyle(const wchar_t* text) {
+    return iniIs(text, L"animated") ? 1 : iniIs(text, L"classic") ? 0 : badText;
+}
+inline const wchar_t* iniKickStyleText(int mode) {
+    return mode ? L"animated" : L"classic";
 }
 inline int iniSwingSelection(const wchar_t* text) {
     return iniIs(text, L"mouse") ? 1 : iniIs(text, L"native") ? 0 : badText;
@@ -1268,6 +1281,11 @@ inline const RowInfo& rowInfo(int row) {
          L"Show third person: when you are knocked down in first person, the view goes to third person so you see "
          L"where you fell, and back to first person a moment after you are up. Pressing F6 meanwhile keeps your "
          L"choice; death never switches. Stay in first person keeps the view in your eyes."},
+        {setting::kickStyle, L"Kick style", RowInfo::choice, &ModSettings::kickStyle, nullptr,
+         L"Input", L"KickStyle", iniKickStyle, iniKickStyleText,
+         L"Classic plays the game's own kick. Animated plays the same kick (same gates, stamina and hit) but moves the "
+         L"body like a motion-captured kick, chosen by what you hold: unarmed or one-handed kicks, or two-handed ones. "
+         L"Experimental; when this game build cannot be checked for it, the kick stays Classic."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
@@ -1332,6 +1350,7 @@ inline void ModSettings::normalize() {
     if (tpSwingSelection != 0) tpSwingSelection = 1;
     if (f6Cycle != 1) f6Cycle = 0;
     if (fpKnockdown != 0) fpKnockdown = 1;
+    if (kickStyle != 1) kickStyle = 0;
     const ModSettings defaults;
     for (int r = 0; r < setting::count; ++r) {
         const RowInfo& i = rowInfo(r);

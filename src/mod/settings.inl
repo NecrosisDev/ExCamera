@@ -32,6 +32,8 @@ static void rowCapabilities(unsigned& unavailable, unsigned& faulted) {
     if (!layout.optionalGroupAvailable("kick")) unavailable |= panel::capKick | panel::capJump;
     if (!layout.optionalGroupAvailable("jump")) unavailable |= panel::capJump;
     if (motionKickFault.load()) faulted |= panel::capKick;
+    if (!kickDriveReady.load()) unavailable |= panel::capAnimatedKick;
+    if (kickDriveFault.load()) faulted |= panel::capAnimatedKick;
     if (motionJumpFault.load()) faulted |= panel::capJump;
     const int defense = manualDefenseAvailability.load(); // 0 not decided yet, 1 ready, 5 changed after its hooks
     if (defense == 5) faulted |= panel::capManualDefense;
@@ -65,6 +67,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.farRooms = farRooms.load();
     s.f6Cycle = f6Cycle.load();
     s.fpKnockdown = fpKnockdown.load();
+    s.kickStyle = kickStyle.load();
     s.hitReaction = hitReactionPercent.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
@@ -203,6 +206,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     farRooms = s.farRooms;
     f6Cycle = s.f6Cycle;
     fpKnockdown = s.fpKnockdown;
+    kickStyle = s.kickStyle;
     hitReactionPercent = s.hitReaction;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;

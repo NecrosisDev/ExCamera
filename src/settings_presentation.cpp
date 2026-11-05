@@ -239,6 +239,8 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return L"";
     case setting::fpKnockdown:
         return settings.fpKnockdown ? L"Show third" : L"Stay first";
+    case setting::kickStyle:
+        return settings.kickStyle ? L"Animated" : L"Classic";
     case setting::f6Cycle:
         return settings.f6Cycle ? L"1st/3rd only" : L"1st/3rd/game";
     default: return L"";
@@ -288,6 +290,7 @@ const wchar_t* settingLabel(int id) {
     case setting::swapShoulderKey: return L"Swap shoulder";
     case setting::tpLookFollow: return L"Follow look angle";
     case setting::fpKnockdown: return L"Knocked down";
+    case setting::kickStyle: return L"Kick style";
     case setting::leanKey: return L"Lean";
     case setting::holdHeading: return L"Heading correction";
     case setting::autoRecenter: return L"Auto-center";
@@ -397,6 +400,7 @@ const wchar_t* settingTip(int id) {
     case setting::rotateHeldKey: return L"Hold and move the mouse to turn what you're holding. The view stays still meanwhile. Delete clears the key.";
     case setting::kickKey: return L"Plays the game's unused kick. Fighting stance, upright, needs most of your stamina. Not a key the game uses (Alt is its thrust). Delete clears the key.";
     case setting::jumpKey: return L"Plays the game's unused jump. Upright, needs half your stamina. Not a key the game uses. Delete clears the key.";
+    case setting::kickStyle: return L"Classic: the game's own kick. Animated: the same kick, gates and hit, with your body moved like a motion-captured kick that suits what you hold. Experimental.";
     case setting::fpKnockdown: return L"Show third: knocked down in first person, the view goes to third person and back a moment after you are up. F6 meanwhile keeps your choice; death never switches.";
     case setting::tpLookFollow: return L"Out of combat, looking down lifts the camera and moves it back so the ground ahead shows; looking up brings it closer and lower. Walls still pull it in.";
     case setting::swapShoulderKey: return L"Third person: slides the camera over your other shoulder and keeps it there. Does nothing with the camera centred. Delete clears the key.";

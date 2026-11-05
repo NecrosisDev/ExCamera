@@ -1068,6 +1068,7 @@ static std::atomic<bool> hoverOutOfRange{false};
 static std::atomic<ULONGLONG> hoverRangeAt{0};
 static std::atomic<int> rotateHeldKey{0x02};
 static std::atomic<int> kickKey{0}, jumpKey{0}; // motions.inl; unbound until the player picks a key
+static std::atomic<int> kickStyle{0}; // pose_drive.inl: 0 Classic, 1 Animated (the kicking leg follows the baked clip)
 static std::atomic<int> swapShoulderKey{0}; // [Input] SwapShoulderKey: third person, the other shoulder
 static std::atomic<bool> motionKickRequested{false}, motionJumpRequested{false}; // a key press claimed by the window handler, taken on the game thread
 // Refused key presses by fp::MotionRefusal (status file), and the newest refusal for the worker's notice:
