@@ -13,7 +13,7 @@
 - **Manual guard:** hold right mouse in combat to angle your parry yourself.
 - **Object handling:** pick things up, rotate them freely in 3D, and drop items from your inventory onto the floor.
 - **Wounds and blood:** cuts, punctures, bruises and running blood drawn on characters.
-- **Graphics extras,** all optional: ambient occlusion, reflections, depth of field, edge smoothing, a helmet view and a hurt/winded overlay.
+- **Graphics extras,** all optional: ambient occlusion, reflections, depth of field, edge smoothing, a helmet view and a hurt overlay.
 - **Settings inside the game's own Settings window,** with Apply, Cancel and Defaults. No config files to edit.
 
 ## Install

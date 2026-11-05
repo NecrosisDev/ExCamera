@@ -105,14 +105,14 @@ class Gl:
                                            wintypes.HWND, ctypes.c_void_p, wintypes.HINSTANCE, wintypes.LPVOID]
         user32.GetDC.restype = wintypes.HDC
         user32.GetDC.argtypes = [wintypes.HWND]
-        user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
-        user32.DestroyWindow.argtypes = [wintypes.HWND]
         gdi32.ChoosePixelFormat.argtypes = [wintypes.HDC, ctypes.POINTER(PIXELFORMATDESCRIPTOR)]
         gdi32.SetPixelFormat.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.POINTER(PIXELFORMATDESCRIPTOR)]
         opengl32.wglCreateContext.restype = ctypes.c_void_p
         opengl32.wglCreateContext.argtypes = [wintypes.HDC]
         opengl32.wglMakeCurrent.argtypes = [wintypes.HDC, ctypes.c_void_p]
         opengl32.wglDeleteContext.argtypes = [ctypes.c_void_p]
+        user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]  # 64-bit handles
+        user32.DestroyWindow.argtypes = [wintypes.HWND]
         opengl32.wglGetProcAddress.restype = ctypes.c_void_p
         opengl32.wglGetProcAddress.argtypes = [ctypes.c_char_p]
         opengl32.glGetString.restype = ctypes.c_char_p
@@ -229,8 +229,12 @@ def main(argv=None) -> int:
     sources = collect_sources()
     gl = Gl()
     print(f'Driver: {gl.describe()}')
+    # A program this branch does not have yet (another thread's) is skipped, not failed.
+    for name, shared, body in VIEW_PROGRAMS:
+        if body not in sources:
+            print(f'[skip] {name}: {body} is not in this source tree')
     jobs = [(name, [sources['viewVertexShader']], [sources['viewPrelude'], sources[shared] if shared else '', sources[body]])
-            for name, shared, body in VIEW_PROGRAMS]
+            for name, shared, body in VIEW_PROGRAMS if body in sources]
     jobs += [(name, [sources['woundSkinVertex']], [sources['woundSkinFragmentHead'], sources[body]])
              for name, body in BAKE_PROGRAMS]
     failed = 0

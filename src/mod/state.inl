@@ -697,7 +697,7 @@ static void publishStatus(FILE* f) {
 // line to the engine's log and shows it on screen for 2 s + 50 ms a character (FUN_1000259A0, drawn every
 // frame by FUN_100025A50). The engine logs from the game thread only, so any thread queues here and the
 // frame hook delivers (deliverModMessages, frame.inl). Without that path (contract missing, the engine not
-// up, the frame hook gone) a message goes to Documents\ExCamera\excamera-messages.log; there is no window.
+// up, the frame hook gone) a message goes to excamera-messages.log beside first-person.ini; there is no window.
 enum class NoticeKind { info, warning, fault };
 static std::atomic<unsigned> notices{0};
 static std::atomic<bool> engineLogAdmitted{false};
@@ -723,26 +723,29 @@ static SRWLOCK modMessageLock = SRWLOCK_INIT;
 static ModMessage modMessages[modMessageQueue];
 static unsigned modMessageHead = 0;
 static std::atomic<unsigned> modMessageCount{0};
-// The text as the engine's 8-bit font shows it: ASCII, dashes and quotes simplified, anything else '?'.
-static void modMessageText(const wchar_t* text, char* out, size_t size) {
-    size_t n = 0;
-    for (const wchar_t* c = text; *c && n + 1 < size; ++c) {
-        wchar_t ch = *c;
-        if (ch == 0x2013 || ch == 0x2014) ch = L'-';
-        else if (ch == 0x2018 || ch == 0x2019) ch = L'\'';
-        else if (ch == 0x201C || ch == 0x201D) ch = L'"';
-        else if (ch == L'\n' || ch == L'\r' || ch == L'\t') ch = L' ';
-        out[n++] = ch >= 32 && ch < 127 ? char(ch) : '?';
+// Beside first-person.ini (Documents\ExCamera, or a portable test copy's own folder).
+static std::wstring settingsFolderFile(const wchar_t* name) {
+    std::wstring folder;
+    if (settingsPath[0]) {
+        folder = settingsPath;
+        folder.resize(folder.find_last_of(L"\\/") + 1);
+    } else {
+        const std::wstring documents = userDocumentsDir();
+        if (documents.empty()) return {};
+        folder = documents + L"\\ExCamera\\";
+        SHCreateDirectoryExW(nullptr, folder.c_str(), nullptr);
     }
-    out[n] = 0;
+    return folder + name;
 }
 static void modMessageToFile(NoticeKind kind, const char* text) {
-    static wchar_t path[MAX_PATH]{};
-    if (!path[0]) {
-        const std::wstring documents = userDocumentsDir();
-        if (documents.empty()) return;
-        SHCreateDirectoryExW(nullptr, (documents + L"\\ExCamera").c_str(), nullptr);
-        swprintf_s(path, L"%s\\ExCamera\\excamera-messages.log", documents.c_str());
+    static wchar_t kept[MAX_PATH]{}; // once the settings file is known; until then Documents\ExCamera
+    wchar_t early[MAX_PATH]{};
+    const wchar_t* path = kept;
+    if (!kept[0]) {
+        const std::wstring found = settingsFolderFile(L"excamera-messages.log");
+        if (found.empty() || found.size() >= MAX_PATH) return;
+        wcscpy_s(settingsPath[0] ? kept : early, found.c_str());
+        if (!settingsPath[0]) path = early;
     }
     SYSTEMTIME t;
     GetLocalTime(&t);
@@ -760,7 +763,7 @@ static void modMessageToFile(NoticeKind kind, const char* text) {
 // Any thread. Faults also go to the file: the hooks that would deliver them may be on their way out.
 static bool modMessage(NoticeKind kind, const wchar_t* text) {
     char ascii[512];
-    modMessageText(text, ascii, sizeof ascii);
+    fp::engineAscii(text, ascii, sizeof ascii);
     ++notices;
     const bool native = engineLogAdmitted.load(std::memory_order_acquire);
     if (kind == NoticeKind::fault || !native) modMessageToFile(kind, ascii);

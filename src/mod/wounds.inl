@@ -8,6 +8,13 @@
 
 static std::atomic<float> woundMarks{1.f}; // the Wounds row: 0 off
 
+// Game reads the render code makes on layouts no game code has yet been shown to read that way
+// (docs/render-assumptions.md, "UNPROVEN"): the held items' light from the light-node fields, their wear
+// and dirt from the item database record, the level's two nearest lamps, and a weapon's two transforms for a
+// cut's direction. Off until each is proven from the game code; the effects then use their neutral
+// fallbacks (default light from above, unread condition, no lamps, a direction picked on the surface).
+constexpr bool unprovenRenderReads = false;
+
 // The runtime's record, shared with ScriptRuntime's character_hits: version 2 (0x78 bytes); a version 1
 // runtime writes the first 0x70 bytes only (no weapon, kind 0 or 3).
 struct CharacterHitRecord {

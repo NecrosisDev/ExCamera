@@ -1,4 +1,5 @@
 #include "camera_motion.h"
+#include "engine_text.h"
 #include "hook_health.h"
 #include "input_policy.h"
 #include "native_contracts.h"
@@ -751,6 +752,23 @@ bool real_binary_resilience_simulations() {
     return true;
 }
 
+bool engine_text_ascii_line() {
+    char out[64];
+    // The old F12 line: '%', '[', ']' and '|' are kept as they are (the engine formats nothing).
+    CHECK(fp::engineAscii(L"Blood: 40% | Hands: [L:Open R:Hilt]", out, sizeof out) == 35);
+    CHECK(std::strcmp(out, "Blood: 40% | Hands: [L:Open R:Hilt]") == 0);
+    // One line: CR/LF (the engine's line breaks) and tabs become spaces; typographic dashes and quotes ASCII.
+    fp::engineAscii(L"a\r\nb\tc \x2014 \x201Cq\x201D \x2019", out, sizeof out);
+    CHECK(std::strcmp(out, "a  b c - \"q\" '") == 0);
+    // Anything else outside ASCII is '?', and the result always fits and ends.
+    fp::engineAscii(L"\x00E9\x4E2D", out, sizeof out);
+    CHECK(std::strcmp(out, "??") == 0);
+    char small[4];
+    CHECK(fp::engineAscii(L"abcdef", small, sizeof small) == 3 && std::strcmp(small, "abc") == 0);
+    CHECK(fp::engineAscii(nullptr, small, sizeof small) == 0 && small[0] == 0);
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -772,5 +790,6 @@ int main() {
         {"call-graph closure verification and scoped subsystem degradation",
          call_graph_closure_and_scoped_degradation},
         {"real Exanima.exe resilience simulations", real_binary_resilience_simulations},
+        {"engine log text: one ASCII line, nothing escaped", engine_text_ascii_line},
     });
 }

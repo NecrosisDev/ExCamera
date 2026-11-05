@@ -354,9 +354,16 @@ void main() {
     }
     now = clamp(now, low, high);
     gl_FragColor = now;
+    // Held items, worn gear and objects in the mask take no occlusion or reflection from these passes. They
+    // were kept out of the blend over frames (they move with the camera, so their history trails), which left
+    // them this frame's raw result: a few taps whose noise turns every frame (frameOffset), so the item's
+    // surface and the blood on it flickered. The held-item detail shades them itself.
     if (silhouetteOn > 0.5) {
         float maskCode = floor(texture2D(silhouette, uv).g * 255.0 + 0.5) - 1.0;
-        if (maskCode >= 0.0 && maskCode < 240.0) return;
+        if (maskCode >= 0.0 && maskCode < 240.0) {
+            gl_FragColor = vec4(0.0);
+            return;
+        }
     }
     float raw = texture2D(depthTex, uv).r;
     if (raw >= skyDepth || historyWeight <= 0.0) return;
@@ -1186,7 +1193,7 @@ vec3 levelSurface(vec3 color) {
         // mortar, sandy and set back.
         vec3 around = 0.5 * (toLight(texture2D(sceneTex, uv + vec2(4.0 * texel.x, 0.0)).rgb) +
                              toLight(texture2D(sceneTex, uv + vec2(0.0, 4.0 * texel.y)).rgb));
-        float joint = (1.0 - smoothstep(0.6, 0.82, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4)));
+        float joint = 1.0 - smoothstep(0.6, 0.82, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
         float pit = smoothstep(0.82, 0.94, grain.b) * 0.25;
         h = (grain.r - 0.5) * 0.2 - pit * 0.3 * (1.0 - joint) - 0.3 * joint;
         albedo = mix((0.96 + 0.08 * grain.g) * (1.0 - 0.12 * pit), 0.92 + 0.12 * grain.a, joint);
@@ -3387,10 +3394,13 @@ static bool bloodLayerUpdate(gl::Api& g, fp::CueResources& r, const ViewProgramU
 // unit DAT_10049B5F0, 16 entries of object/target at DAT_10049B600) before and after, checks that the
 // cache agrees with GL (a disagreement makes the game skip a bind and draw with another texture), and
 // that the effect inputs are our own copies at the view's size. Findings go to
-// Documents\ExCamera\render-audit.log and the counts to the status file's render_audit.
+// render-audit.log beside first-person.ini and the counts to the status file's render_audit.
 static std::atomic<unsigned> renderAuditAnomalies{0}, renderAuditCacheDesyncs{0}, renderAuditInputMismatches{0},
     renderAuditStateLeaks{0}, renderAuditPasses{0};
 static std::atomic<bool> renderAuditActive{false};
+// Why this frame's world pass left no held-item mask (render audit only; nullptr once one was drawn).
+static thread_local const char* heldMaskWhy = nullptr;
+static thread_local unsigned heldMaskGlError = 0;
 #if FP_DEV_TOOLS
 #define FP_RENDER_AUDIT 1
 constexpr unsigned renderAuditUnits = 16, renderAuditLineLimit = 4000;
@@ -3408,11 +3418,8 @@ static bool renderAuditOn() { // render thread
 static void renderAuditLog(const char* format, ...) {
     if (renderAuditLines >= renderAuditLineLimit) return;
     static std::wstring path;
-    if (path.empty()) {
-        const std::wstring documents = userDocumentsDir();
-        if (documents.empty()) return;
-        path = documents + L"\\ExCamera\\render-audit.log";
-    }
+    if (path.empty()) path = settingsFolderFile(L"render-audit.log"); // beside first-person.ini
+    if (path.empty()) return;
     char line[512];
     const int head = snprintf(line, sizeof line, "%llu swap %ld: ", GetTickCount64(), InterlockedCompareExchange(&swapCalls, 0, 0));
     va_list args;
@@ -3563,6 +3570,7 @@ static void auditViewInputs(gl::Api& g, fp::CueResources& r, const char* stage, 
 }
 #else
 #define FP_RENDER_AUDIT 0
+static void renderAuditLog(const char*, ...) {}
 struct RenderAuditState {};
 static bool renderAuditBegin(gl::Api&, RenderAuditState&, const char*) { return false; }
 static void renderAuditEnd(gl::Api&, const RenderAuditState&, const char*) {}
@@ -4308,12 +4316,12 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                                    r.bloodBox[1], r.bloodBox[4], r.bloodBox[2], r.bloodBox[5], r.bloodMapCentre[0],
                                    r.bloodMapCentre[1], r.bloodMapCamera[0], r.bloodMapCamera[1], r.bloodMapCamera[2], upX, upY, upZ);
 #endif
-                {   // Wet blood's highlights: no lamps. The kind-5 scene nodes read as lamps (colour +210,
-                    // intensity +21C, range +224) are made only by the constructor that stores kind 5 at
-                    // 0x518D0 and sets +210 and +21C there, but nothing proves they are the lights the game
-                    // draws with or what +224 holds, so the wound pass takes its fixed light from above
-                    // and the viewer's side (the shaders' fallback, weight 0 here) until that is shown.
+                {   // Wet blood's highlights from the game's lights near the player, under the one flag that
+                    // gates every light-node read (unprovenRenderReads, off: levelLightsFor finds none and the
+                    // shaders use their fixed light from above). Kind 5 is stored only by the constructor at
+                    // 0x518D0, which also sets +210 and +21C; that they are the drawn lights is not shown yet.
                     float lamps[2][4]{}, lampColours[2][4]{};
+                    lampsInView(request, projection.view, lamps, lampColours);
                     g.uniform4fv(u.at[uLevelLight], 2, lamps[0]);
                     g.uniform4fv(u.at[uLevelLightColour], 2, lampColours[0]);
                 }
@@ -4475,6 +4483,10 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                     if (!(strength > 0.f)) continue;
                     if (!heldViewFrame(projection.view, h, itemFrame, &itemDepth)) {
                         heldDetailUnanchored.fetch_add(1, std::memory_order_relaxed);
+                        if (renderAuditActive.load(std::memory_order_relaxed))
+                            renderAuditLog("held slot %u unanchored (%s): origin %.0f %.0f %.0f, sector %.0f %.0f %.0f",
+                                           k, h.object ? "object" : h.apparel ? "worn" : "held", h.pose[9], h.pose[10],
+                                           h.pose[11], h.sectorOrigin[0], h.sectorOrigin[1], h.sectorOrigin[2]);
                         continue;
                     }
                     for (int a = 0; a < 3; ++a) {
@@ -5166,6 +5178,7 @@ static bool sectorOriginOf(uintptr_t node, float* origin) {
 static void heldLightFor(uintptr_t node, uintptr_t sector, HeldPose& h) {
     memset(h.light, 0, sizeof h.light);
     h.lightColour[0] = h.lightColour[1] = h.lightColour[2] = 1.f;
+    if constexpr (!unprovenRenderReads) return; // light-node fields unproven (render-assumptions.md): the default light
     const LightList& list = lightsOf(sector);
     float item[3];
     for (int i = 0; i < 3; ++i) item[i] = h.pose[9 + i] + h.sectorOrigin[i];
@@ -5228,6 +5241,7 @@ static void heldLightFor(uintptr_t node, uintptr_t sector, HeldPose& h) {
 static std::atomic<unsigned> heldConditionReads{0};
 static void heldConditionOf(uintptr_t node, bool apparel, float* out) {
     out[0] = out[1] = out[2] = out[3] = 0.f;
+    if constexpr (!unprovenRenderReads) return; // item record layout unproven (render-assumptions.md): read as unknown
     if (!node || !layout.optionalGroupAvailable("itemCondition") || !readable(node, 0x184)) return;
     const uint32_t id = *(const uint32_t*)(node + 0x180);
     if (!id) return;
@@ -5301,11 +5315,15 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
     // (offset by a pixel); the mask takes the target's size and is drawn as sample 0.
     const GLint expected = offscreenPassArmed ? offscreenSceneFramebuffer : 0;
     if (glGetError() != GL_NO_ERROR || framebuffer != expected || readFramebuffer != expected ||
-        (offscreenPassArmed && !expected) || viewport[2] < 32 || viewport[3] < 32)
+        (offscreenPassArmed && !expected) || viewport[2] < 32 || viewport[3] < 32) {
+        heldMaskWhy = "the highlight pass ran with another framebuffer or a tiny viewport";
         return false;
+    }
     if (!offscreenPassArmed && (!hookedWindow || !GetClientRect(hookedWindow, &client) || viewport[0] != 0 ||
-                                viewport[1] != 0 || viewport[2] != client.right || viewport[3] != client.bottom))
+                                viewport[1] != 0 || viewport[2] != client.right || viewport[3] != client.bottom)) {
+        heldMaskWhy = "the highlight pass's viewport is not the window's";
         return false;
+    }
     auto* owner = prepareCue();
     if (!owner) return false;
     auto& g = owner->api;
@@ -5315,7 +5333,10 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
         owner->viewApiFailed = !loadViewEffectsApi(g);
         if (owner->viewApiFailed) noteViewEffectFailure(viewApiMissing, "OpenGL 3.2 entry points missing");
     }
-    if (owner->viewApiFailed || owner->viewTargetsFailed || !cueOutputReady(g)) return false;
+    if (owner->viewApiFailed || owner->viewTargetsFailed || !cueOutputReady(g)) {
+        heldMaskWhy = "the view-effect API or targets failed, or another output is active";
+        return false;
+    }
 
     // Everything changed below without the game's caches, read first.
     const uintptr_t priorMaterial = *(const uintptr_t*)gameAt(fp::sig::currentMaterial);
@@ -5513,7 +5534,11 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                 drawn |= heldMaskSlot << e.slot;
             }
         }
-        if (glGetError() != GL_NO_ERROR) drawn = 0;
+        if (const GLenum error = glGetError(); error != GL_NO_ERROR) {
+            drawn = 0;
+            heldMaskWhy = "a GL error during the replay";
+            heldMaskGlError = error;
+        }
         // The poses the held items and body parts were drawn with, for their detail frames.
         for (unsigned k = 0; k < s.slotCount; ++k) {
             if (!(drawn & (heldMaskSlot << k))) continue;
@@ -5589,12 +5614,20 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
         glClearColor(clear[0], clear[1], clear[2], clear[3]);
         drainGl();
     }
-    if (drawn) silhouetteReplays.fetch_add(1, std::memory_order_relaxed);
+    if (drawn) {
+        silhouetteReplays.fetch_add(1, std::memory_order_relaxed);
+        heldMaskWhy = nullptr;
+    } else if (!heldMaskWhy) {
+        heldMaskWhy = "the replay drew no part (none visible, or every part refused)";
+    }
     return drawn;
 }
 
 static uint64_t drawSilhouetteMask(const SilhouetteScope& s) {
-    if (!supersampleViewMatches() || (*(const int*)gameAt(fp::sig::sampleLast) != 0) != offscreenPassArmed) return 0;
+    if (!supersampleViewMatches() || (*(const int*)gameAt(fp::sig::sampleLast) != 0) != offscreenPassArmed) {
+        heldMaskWhy = "the highlight pass was not the main view's sample";
+        return 0;
+    }
     uint64_t drawn = 0;
     AcquireSRWLockExclusive(&cueLock);
     ++cueGlDepth;
@@ -5635,6 +5668,8 @@ static void silhouettePassBody(uintptr_t camera, uintptr_t caller) {
     // With Supersample the world is drawn once per jittered sample into the default
     // framebuffer and the last sample's depth stays for the finish pass, so only the
     // last sample's camera pass draws the mask (index + 1 == count; 0 and 1 otherwise).
+    if (s && s->armed && !s->count && caller == gameAt(fp::sig::silhouettePassReturn))
+        heldMaskWhy = "no player, held or worn part was submitted in the world pass";
     if (s && s->armed && s->count && caller == gameAt(fp::sig::silhouettePassReturn)) {
         __try {
             // Offscreen sampling draws up to four samples a pass (index = first sample of the pass).
@@ -5679,31 +5714,26 @@ static bool playerCapsule(ViewRequest& request) {
     return true;
 }
 
-// Hurt ramps from half health to a tenth. Winded starts 0.05 below the stamina
-// ceiling (where the game switches to its low-stamina idle), is full 0.5 below
-// it, and pulses with a breath every two seconds.
-constexpr float hurtStart = 0.5f, hurtSpan = 0.4f, windedGap = 0.05f, windedSpan = 0.45f, breathPeriodMs = 2000.f;
+// Hurt ramps from half health to a tenth. Health is what the HUD's left bar fills to: +D58 (the HUD draws its
+// interpolated copy +D70, written from +D58 at 0x17A1F7) over the bar's whole length +103C (0x13E327-0x13E32F).
+// On this branch +D58 is still named postureReadiness and `health` names +D5C, the bar's pale "restorable" layer
+// (0x13E35E); the playtest branch renames them (8389d19). There is no winded part: the blue bar +D74/+D78 the
+// HUD draws is magic, spent only by spell and power effects through 0x17A640 (docs/render-assumptions.md),
+// and no game code reads a "low-stamina idle"; the shader's winded input stays 0.
+constexpr float hurtStart = 0.5f, hurtSpan = 0.4f;
 static void readCondition(ViewRequest& request) {
-    float health = 0.f, healthMax = 0.f, stamina = 0.f, ceiling = 0.f;
+    float health = 0.f, healthMax = 0.f;
     __try {
         const uintptr_t root = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
         if (!root) return;
-        health = *(const float*)(root + field::character::health);
+        health = *(const float*)(root + field::character::postureReadiness); // +D58: current health (see above)
         healthMax = *(const float*)(root + field::character::healthMax);
-        stamina = *(const float*)(root + field::character::stamina);
-        ceiling = *(const float*)(root + field::character::staminaMax);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return;
     }
     if (std::isfinite(health) && std::isfinite(healthMax) && healthMax > 0.f) {
         const float t = std::clamp((hurtStart - health / healthMax) / hurtSpan, 0.f, 1.f);
         request.hurt = t * t * (3.f - 2.f * t);
-    }
-    if (std::isfinite(stamina) && std::isfinite(ceiling)) {
-        const float shortfall = std::clamp((ceiling - windedGap - stamina) / windedSpan, 0.f, 1.f);
-        const float phase = float(GetTickCount64() % ULONGLONG(breathPeriodMs)) / breathPeriodMs;
-        const float breath = 0.5f + 0.5f * std::sin(6.2831853f * phase);
-        request.winded = shortfall * (0.6f + 0.4f * breath);
     }
     const float flash = playerDamageFlash.load(std::memory_order_relaxed);
     request.damageFlash = flash;
@@ -5721,6 +5751,7 @@ static std::atomic<unsigned> levelPeopleSeen{0};
 // items use (collectHeldLights; rebuilt from the player's sector at most every half second), for
 // level detail: strength = intensity x colour brightness x the light's own range falloff.
 static void levelLightsFor(ViewRequest& request) {
+    if constexpr (!unprovenRenderReads) return; // light-node fields unproven (render-assumptions.md): no lamps
     __try {
         const uintptr_t player = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
         const uintptr_t mesh = player && readable(player, field::character::sceneNode + 8)
@@ -6013,7 +6044,13 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
             maskEye = lastMaskEye;
             ++missed;
             heldMaskReused.fetch_add(1, std::memory_order_relaxed);
+            if (!eye && renderAuditActive.load(std::memory_order_relaxed))
+                renderAuditLog("held mask: none drawn, reusing the last (%u): %s gl 0x%X", missed,
+                               heldMaskWhy ? heldMaskWhy : "?", heldMaskGlError);
         } else {
+            if (!eye && lastMask && renderAuditActive.load(std::memory_order_relaxed))
+                renderAuditLog("held mask: none drawn and reuse spent, held detail off this frame: %s gl 0x%X",
+                               heldMaskWhy ? heldMaskWhy : "?", heldMaskGlError);
             lastMask = 0;
         }
     }
@@ -6028,6 +6065,8 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
         memcpy(request.held, heldMaskPoses, sizeof request.held);
     }
     levelDetailFor(request);
+    // Wet blood lights from the same game lights; level detail may be off, or have given way.
+    if (woundMarks.load(std::memory_order_relaxed) > 0.f && !(request.lamps[0][3] > 0.f)) levelLightsFor(request);
     // Wounds: desktop and VR eyes alike, in the space of the matrices this view was drawn with.
     if (woundMarks.load(std::memory_order_relaxed) <= 0.f && heldDetail.load(std::memory_order_relaxed) > 0.f &&
         TryAcquireSRWLockExclusive(&woundLock)) {
@@ -6136,6 +6175,8 @@ static void armSilhouette(uintptr_t view, SilhouetteScope& scope) {
     scope.count = scope.heldCount = scope.slotCount = 0;
     scope.root = 0;
     silhouetteMaskReady = 0;
+    heldMaskWhy = "the world pass did not reach the highlight pass";
+    heldMaskGlError = 0;
     __try {
         scope.body = silhouetteWanted(view, true);
         const bool held = silhouetteWanted(view, false);
@@ -6153,6 +6194,8 @@ static void armSilhouette(uintptr_t view, SilhouetteScope& scope) {
         if (scope.body || scope.heldCount || scope.apparel || scope.objects) {
             scope.armed = true;
             silhouetteScope = &scope;
+        } else {
+            heldMaskWhy = "nothing wanted the mask (no held item, and gear and object detail off)";
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         silhouetteFaults.fetch_add(1, std::memory_order_relaxed);
