@@ -23,9 +23,12 @@ struct ShadowEvent {
     unsigned state = 0;
     float margin = 0, height = 0, uprightness = 0;
     bool kick = false; // the player's event inside the kick window (cause=kick)
+    bool airborne = false; // a fall that came while no foot was down (the game's in-the-air rule)
 };
 struct ShadowFighter {
     uintptr_t root = 0;
+    bs::V3 accel[shadowPartLimit * 4]{}; // each node's acceleration last step, for the shake (jitter) measure
+    unsigned accelNodes = 0;
     unsigned id = 0; // order of first sight this session
     bool player = false;
     ULONGLONG lastSeen = 0;
@@ -46,7 +49,7 @@ static unsigned shadowEventHead = 0, shadowEventCount = 0, shadowEventsDropped =
 // Session totals (under shadowLock).
 static uint32_t shadowTotals[size_t(bs::Event::count)]{};
 static uint64_t shadowSteps = 0, shadowStandingSteps = 0, shadowPlayerSteps = 0;
-static bs::Spread shadowRecoveryDepth{-60, 0}, shadowRecoverySeconds{0, 2}, shadowMargin{-60, 60}, shadowShake{0, 8000}, shadowRate{0, 166}, shadowCostUs{0, 200},
+static bs::Spread shadowRecoveryDepth{-60, 0}, shadowRecoverySeconds{0, 2}, shadowMargin{-60, 60}, shadowShake{0, 20000}, shadowRate{0, 166}, shadowCostUs{0, 200},
     shadowUpdateUs{0, 2000};
 static std::atomic<unsigned> shadowReadFaults{0};
 // The kick window (player only) and its log: one row per physics step, drained by the worker (under shadowLock).
@@ -192,12 +195,16 @@ static void balanceShadowObserve(uintptr_t root, double updateUs) {
     sample.now = read.now, sample.before = read.before, sample.before2 = read.before2, sample.nodes = read.nodes;
     sample.footprint = read.foot, sample.footprintCount = read.feet, sample.ground = read.ground;
     sample.grounded = read.grounded != 0;
-    const bs::Measure m = bs::measure(sample);
     const ULONGLONG now = GetTickCount64();
     const bool player = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) == root;
     {
         AcquireSRWLockExclusive(&shadowLock);
         ShadowFighter& f = shadowSlotFor(root, now);
+        static thread_local bs::V3 accel[shadowPartLimit * 4];
+        sample.previous = f.accelNodes == read.nodes ? f.accel : nullptr; // the part list changed: start over
+        sample.accelerations = accel;
+        const bs::Measure m = bs::measure(sample);
+        if (m.valid) memcpy(f.accel, accel, sizeof(bs::V3) * read.nodes), f.accelNodes = read.nodes;
         f.player = player;
         f.lastSeen = now;
         const bool kick = player && shadowKick.feed(read.game.motion, now);
@@ -228,7 +235,8 @@ static void balanceShadowObserve(uintptr_t root, double updateUs) {
                 continue;
             }
             shadowEvents[(shadowEventHead + shadowEventCount++) % shadowEventRing] =
-                {now, f.id, player, bs::Event(e), read.game.state, m.margin, m.height, read.game.uprightness, kick};
+                {now, f.id, player, bs::Event(e), read.game.state, m.margin, m.height, read.game.uprightness, kick,
+                 f.tracker.lastFallAirborne && bs::Event(e) == bs::Event::fallByRule};
         }
         if (kick) {
             if (shadowKickCount == shadowKickRing) ++shadowKickDropped;
@@ -444,7 +452,7 @@ static void balanceShadowPulse() {
         char row[200];
         snprintf(row, sizeof row, "%llu,%s,%u,%d,0x%X,%.1f,%.1f,%.3f,%s\r\n", (unsigned long long)(e.at - shadowStarted),
                  bs::eventNames[size_t(e.kind)], e.fighter, e.player ? 1 : 0, e.state, double(e.margin), double(e.height),
-                 double(e.uprightness), e.kick ? "kick" : "");
+                 double(e.uprightness), e.kick ? (e.airborne ? "kick+airborne" : "kick") : (e.airborne ? "airborne" : ""));
         shadowAppend(L"events.csv", row);
         if (!bs::eventIsProblem[size_t(e.kind)]) continue;
         // On screen through the game's log, at most once per problem kind every 15 s; the rest are counted.
@@ -454,7 +462,8 @@ static void balanceShadowPulse() {
             continue;
         }
         wchar_t text[256];
-        swprintf_s(text, L"Balance check: %s %s%s.%s", e.player ? L"you" : L"an NPC", shadowProblemText(e.kind),
+        swprintf_s(text, L"Balance check: %s %s%s.%s", e.player ? L"you" : L"an NPC",
+                   e.airborne ? L"fell by the game's in-the-air rule (no foot near the ground)" : shadowProblemText(e.kind),
                    e.kick ? L" (kick)" : L"", shadowSuppressed[k] ? L" (more since the last notice: see the balance log)" : L"");
         modMessage(NoticeKind::warning, text);
         shadowLastFlag[k] = now, shadowSuppressed[k] = 0;

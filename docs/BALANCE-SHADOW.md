@@ -50,8 +50,10 @@ If a game update moves any of them, the shadow switches itself off; nothing else
 * **Base of support:** the outline of the loaded feet. That's every support contact within 20 units of its ground,
   plus every node of the parts hanging from that shin. **Margin** is how far the capture point is inside that
   outline (negative = outside).
-* **Shake:** the mean node acceleration with the whole body's own acceleration removed, so walking and getting hit
-  don't count, only parts jittering against each other.
+* **Shake:** how much each node's acceleration **reverses** from one step to the next (√max(0, −a(t)·a(t−1))),
+  with the whole body's own acceleration removed. Jitter flips direction every step. A sword swing, a step or a
+  hit pushes the same way for several steps and counts for nothing. (The first version counted any acceleration,
+  so every swing and block was flagged as shaking: 103 false flags in the first logged session, 2026-11-05.)
 * **Costs:** how long the game's own update took for that fighter, and how long the shadow took.
 * **Step rate per fighter**, measured each second. This checks the 83-a-second assumption.
 
@@ -67,7 +69,7 @@ A condition is reported once when it reaches its duration, and again only after 
 | `shaking` | yes | upright and nearly still (< 0.3 m/s), shake over 4000 cm/s² for 0.25 s |
 | `stuck_down` | yes | on the ground or getting up for 15 s while alive |
 | `failed_get_up` | yes | getting up (0x300) went back to lying (0x200) |
-| `fall_by_rule` | yes | the game dropped the fighter while the capture point was inside the feet: a rule fired, not physics |
+| `fall_by_rule` | yes | the game dropped the fighter while the capture point was inside the feet, **or after 5+ steps with no foot down** (in the air the game sets uprightness to 0, `supportHeight` 0x16F98D, and drops the fighter whatever the body does). Either way a rule fired, not physics. Airborne ones have cause `airborne` in events.csv and their own message. |
 | `fall_physical` | no, counted | the game dropped the fighter within 0.3 s of the capture point leaving the feet: a real fall |
 | `recovered` | no, counted | upright on its feet, the capture point left the feet and came back inside for 0.2 s without a fall: the fighter caught a stumble. How deep and how long each caught stumble was goes into the summary. |
 | `held_up` | no, counted | upright, a foot down, capture point more than 15 cm outside the feet for 0.5 s, no step and no fall: the "string" holding a body up. Expected to be common with the game's balance and to drop with a new model. |

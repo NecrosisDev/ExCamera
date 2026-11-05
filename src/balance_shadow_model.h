@@ -83,6 +83,10 @@ struct Sample {
     unsigned footprintCount = 0;
     float ground = 0;              // ground height under the loaded feet
     bool grounded = false;         // any footprint point at all
+    // Shake needs each node's acceleration one step back: `previous` (nullptr on a fighter's first step, or when
+    // its node count changed) is read, `accelerations` (nodes long) receives this step's.
+    const V3* previous = nullptr;
+    V3* accelerations = nullptr;
 };
 
 struct Measure {
@@ -94,7 +98,7 @@ struct Measure {
     float omega = 0;        // sqrt(g / height), 1/s
     V2 xcom{};              // extrapolated centre of mass (capture point) on the ground
     float margin = -INFINITY; // cm from the capture point to the edge of the base of support, + inside
-    float shake = 0;        // mean |node acceleration| relative to the centre of mass, cm/s^2
+    float shake = 0;        // mean reversal of node acceleration between two steps (jitter), cm/s^2
     float fastestNode = 0;  // cm/s
 };
 
@@ -121,7 +125,13 @@ inline Measure measure(const Sample& s) {
         const V3 a{s.now[i].x - 2 * s.before[i].x + s.before2[i].x - comAcc.x,
                    s.now[i].y - 2 * s.before[i].y + s.before2[i].y - comAcc.y,
                    s.now[i].z - 2 * s.before[i].z + s.before2[i].z - comAcc.z};
-        shake += std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+        // Jitter flips a node's acceleration every step; a swing or a hit accelerates it the same way for several
+        // steps. Only the reversed part counts: sqrt(max(0, -a(t).a(t-1))), relative to the body's own acceleration.
+        if (s.previous) {
+            const V3 p = s.previous[i];
+            shake += std::sqrt((std::max)(0.f, -(a.x * p.x + a.y * p.y + a.z * p.z)));
+        }
+        if (s.accelerations) s.accelerations[i] = a;
         const V3 v{s.now[i].x - s.before[i].x, s.now[i].y - s.before[i].y, s.now[i].z - s.before[i].z};
         fastest = (std::max)(fastest, std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z));
     }
@@ -184,6 +194,7 @@ inline constexpr unsigned shakeSteps = 21;      // 0.25 s
 inline constexpr unsigned stuckSteps = 83 * 15; // 15 s
 inline constexpr unsigned predictWindow = 25;   // 0.3 s: a fall is physical if the capture point left the feet within it
 inline constexpr unsigned recoverSteps = 17;    // 0.2 s back inside the feet ends a stumble as a recovery
+inline constexpr unsigned airborneSteps = 5;    // no foot down this long before a fall: the game's in-the-air rule
 
 inline bool dead(unsigned state) { return (state & 0x800) != 0; }   // the game's own death test (CV section 1)
 inline bool down(unsigned state) { return (state & 0xA00) != 0; }   // on the ground, getting up, scripted down, dead
@@ -212,6 +223,8 @@ struct Tracker {
     float deepest = 0;           // the stumble's most negative margin
     unsigned lastStumbleSteps = 0;
     float lastStumbleDepth = 0;  // of the stumble that just ended in a recovery, for the logs
+    unsigned airborne = 0;       // upright steps in a row with no foot down
+    bool lastFallAirborne = false; // the fall just reported came while airborne
     unsigned lastState = 0;
     bool seen = false, stuckReported = false;
 
@@ -225,6 +238,9 @@ struct Tracker {
         const bool alive = !dead(g.state);
         if (m.valid && std::isfinite(m.margin) && m.margin < 0) sinceOutside = 0;
         else if (sinceOutside != ~0u) ++sinceOutside;
+
+        if (standing && !g.footDown) ++airborne;
+        else if (g.footDown) airborne = 0;
 
         // Floating: upright, nothing under the feet, and not falling. A jump is excluded.
         if (m.valid && standing && !g.footDown && g.motion != jumpMotion && m.velocity.y > notDropping) {
@@ -265,8 +281,13 @@ struct Tracker {
 
         if (seen) {
             if ((lastState & 0x300) == 0x300 && g.state == 0x200) events |= bit(Event::failedGetUp);
-            if (!down(lastState) && (g.state & 0x200) && alive)
-                events |= bit(sinceOutside <= predictWindow ? Event::fallPhysical : Event::fallByRule);
+            if (!down(lastState) && (g.state & 0x200) && alive) {
+                // In the air the game sets uprightness to 0 (supportHeight 0x16F98D) and drops the fighter whatever
+                // the body does: a rule. Otherwise the capture point decides.
+                lastFallAirborne = airborne >= airborneSteps;
+                events |= bit(!lastFallAirborne && sinceOutside <= predictWindow ? Event::fallPhysical : Event::fallByRule);
+                airborne = 0;
+            }
         }
         lastState = g.state;
         seen = true;
