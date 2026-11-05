@@ -226,8 +226,29 @@ under the release rule they are off unless proven (`colourMaterialGuesses = fals
 
 Not material guesses, and kept: eye adaptation (the image's brightness, our design), the AO "bright pixels are
 direct light" rule (shading choice), the helmet view (depth within 18 cm of the eye), hurt (proven health).
-To bring the material-based ones back: decode the material type the game itself keeps per material or part
-(it plays different hit sounds per material, so such data likely exists), then flip the flag.
+To bring the material-based ones back: decode the material type the game itself keeps per material or part,
+then flip `panel::materialDataDecoded` (settings_model.h).
+
+**Game material data, decoded so far (PROVEN):** the game has its own procedural material system
+(`FLX_Materials_Procedural`). 0x1EAEE0(id) creates and caches (`DAT_56B030[id]`) one instance per ID 1-25 through
+the jump table at 0x32FC08, by class (VMT class names):
+
+| ID | Class | ID | Class | ID | Class |
+|---|---|---|---|---|---|
+| 1 | TClothBasic | 10 | TSuedeA01 | 19 | TIronGen |
+| 2 | TClothFine | 11 | TSteelChain | 20 | TCopperAlloy |
+| 3 | TClothSilk | 12 | TSteelGen | 21 | TCopperSatin |
+| 4 | TClothVelvet | 13 | TSteelPlate2 | 22 | TWiredGripA01 |
+| 5 | TClothPadded1 | 14 | TSteelPainted | 23 | TGemstone |
+| 6 | TClothPadded2 | 15 | TSteelPlate2 | 24 | TResin |
+| 7 | TLeatherA02 | 16 | TSteelBlade | 25 | TPlanksPainted |
+| 8 | TLeatherA01 | 17 | TWoodFineA | | |
+| 9 | TSuedeA01 | 18 | TWoodRoughA | | |
+
+The item factory 0x20FB80 gives each layer of an item part its procedural material: the ID is the byte at
+`[table + index*9 + 0x8C]`, 12 (TSteelGen) when 0 (0x2103B8-0x2103F0), and the instance is stored at the layer's
+`+0x50` (0x2103FC). **Missing:** the link from a drawn mesh material (`node+0x1D0[i]`) back to its layer and
+procedural ID. That is the next step to bring the four detail rows back with the game's own materials.
 
 ## Not yet proven, not gated (for the audit thread)
 
