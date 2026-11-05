@@ -517,7 +517,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             const unsigned dCount = activeDripsCount.load();
             const int bSat = int(activeWeaponBloodMax.load() * 100.f);
             wchar_t msg[256];
-            swprintf_s(msg, L"%s: %s | Wounds: %u | Drips: %u | Blood: %d%% | Hands: [L:%s R:%s]",
+            swprintf_s(msg, L"%s: %s | Wounds: %u | Drips: %u | Blade blood: %d%% | Hands: [L:%s R:%s]",
                        FP_SHOWN_NAME,
                        next ? L"Debug ON (neon)" : diag ? L"Debug DIAGNOSTICS (green ok, yellow out of window, magenta height, cyan not a floor, blue box)" : L"Debug OFF (natural)",
                        wCount, dCount, bSat,
