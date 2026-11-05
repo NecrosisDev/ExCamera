@@ -14,8 +14,6 @@ static std::atomic<float> heldDetail{0.5f}; // procedural surface detail on held
 static std::atomic<float> armourDetail{0.35f}; // the same on worn armour and clothing; 35% by default (frame cost)
 static std::atomic<float> objectDetail{0.35f}; // the same on loose items and placed objects near the player; 35%
 static std::atomic<bool> lightSmoothing{true}; // tricubic reads of the game's GI voxel volume (shader rewrite)
-static std::atomic<float> levelDetail{0.3f};   // walls, floors and ceilings within about 3 m; 30% by default
-static std::atomic<float> levelDetailScale{1.f}; // 1 down to 0 as the frame slows (see levelDetailFor)
 
 // A setting's stored value as a strength, and back. The old choices 0, 1, 2 (Off, Subtle,
 // Strong) stay as they are, so saved files and the current choice rows keep working; any other
@@ -515,16 +513,11 @@ uniform vec4 heldDetail;   // x: strength, 0 when off
 // blood spots it carries (z), and whether wear and dirt were read (w); 10 what it is (x: 0 held,
 // 1 worn, 2 a loose item or placed object).
 uniform sampler2D heldData;
-// Level surfaces near the camera. levelDetail: x strength (0 off), y and z the distance (cm) over
-// which it fades out, w 1 when the mask holds this frame's held items and gear (else it is ignored). levelRow0..2: view space to world space. levelPeople: up to six people near the
-// camera, view-space centre (xyz) and 1 in w, whose space (a 50 cm capsule 110 cm up and down) is
-// left alone.
-uniform vec4 levelDetail;
+// levelRow0..2: view space to world space (world = rows . (p, 1)).
 uniform vec4 levelRow0;
 uniform vec4 levelRow1;
 uniform vec4 levelRow2;
 uniform float woundDebug;
-uniform vec4 levelPeople[6];
 uniform sampler3D heldNoise; // tiling smooth noise, 16 units a tile (held-item surfaces)
 uniform vec4 worldUp;      // world +Y in view space; w unused
 
@@ -1042,122 +1035,6 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     return toStored(clamp(result, 0.0, 1.0));
 }
 
-// Walls, floors and ceilings, in world space (they do not move), each only reshaping the light the
-// game put there. Up close (to levelDetail.y..z, about 3 m) by material, told from the surface's
-// own colour and which way it faces:
-// - wood (warm, saturated): fibres;
-// - plaster (pale, plain): soft mottling and hairline cracks;
-// - metal (dark, cool grey; grates and bars): fine pitting, rust speckle where it is warm;
-// - packed dirt and gravel (brownish floors): pebbles and grit;
-// - stone (everything else): grain and pits, with the texture's own darker joints read as mortar
-//   (sandy and recessed).
-// Further out, to about 8 m, one fetch of broad variation (damp, weathering) only, so the near
-// detail fades into it instead of popping. Bodies near the camera are skipped by their capsules;
-// the mask keeps held items, worn gear and world objects to their own surface.
-vec3 levelSurface(vec3 color) {
-    float raw = texture2D(depthTex, uv).r;
-    if (raw >= skyDepth) return color;
-    vec3 p = viewPosition(uv, raw);
-    float range = -p.z;
-    float far = 1.0 - smoothstep(600.0, 800.0, range);
-    if (far <= 0.0 || range < 20.0) return color;
-    float near = 1.0 - smoothstep(levelDetail.y, levelDetail.z, range);
-    if (silhouetteOn > 0.5) {
-        float mask = floor(texture2D(silhouette, uv).g * 255.0 + 0.5) - 1.0;
-        if (mask >= 0.0 && mask < 240.0) return color;
-    }
-    for (int i = 0; i < 6; ++i) {
-        if (levelPeople[i].w <= 0.0) continue;
-        vec3 d = p - levelPeople[i].xyz;
-        float dh = dot(d, worldUp.xyz);
-        vec3 dCapsule = d - worldUp.xyz * clamp(dh, -110.0, 110.0);
-        if (length(dCapsule) < 65.0) return color;
-    }
-    vec3 q = vec3(dot(levelRow0, vec4(p, 1.0)), dot(levelRow1, vec4(p, 1.0)), dot(levelRow2, vec4(p, 1.0)));
-    vec3 light = toLight(color);
-    float luma = dot(light, vec3(0.2126, 0.7152, 0.0722));
-    vec4 broad = texture3D(heldNoise, q * (1.0 / 16.0) * 0.08); // 12 cm patches
-    float damp = smoothstep(0.58, 0.82, broad.a);
-    float weather = 0.94 + 0.12 * broad.r;                      // large, slow variation
-    if (near <= 0.0) {
-        // The far tier: broad variation only.
-        vec3 broadLook = light * weather * (1.0 - 0.18 * damp);
-        return toStored(clamp(mix(light, broadLook, levelDetail.x * far * 0.6), 0.0, 1.0));
-    }
-    float footprint = 2.0 * range * texel.y / projection.y;
-    vec3 n = normalize(cross(dFdx(p), dFdy(p)));
-    if (dot(n, p) > 0.0) n = -n;
-    float up = dot(n, worldUp.xyz);
-    float hi = max(light.r, max(light.g, light.b));
-    float saturation = hi > 1e-4 ? (hi - min(light.r, min(light.g, light.b))) / hi : 0.0;
-    float stored = dot(color, vec3(0.2126, 0.7152, 0.0722));   // as stored (lighting-independent cut-offs below are rough)
-    bool warm = light.r > light.b * 1.2 && light.g > light.r * 0.45;
-    bool wood = warm && saturation > 0.15;
-    bool dirt = !wood && up > 0.7 && warm && saturation > 0.15;
-    bool metal = !wood && !dirt && saturation < 0.12 && light.b >= light.r * 0.95 && stored < 0.3;
-    bool plaster = !wood && !dirt && !metal && saturation < 0.12 && stored > 0.45;
-    vec4 grain = texture3D(heldNoise, q * (1.0 / 16.0) * 2.5);  // 4 mm features
-    float h, albedo = 1.0, shine = 0.0;
-    vec3 tint = light;
-    if (wood) {
-        h = (grain.r - 0.5) * 0.6 + (grain.g - 0.5) * 0.4;
-        albedo = 0.9 + 0.22 * grain.r;
-    } else if (dirt) {
-        // Pebbles: the brightest grain points stand proud, grit between them.
-        float pebble = smoothstep(0.62, 0.8, grain.b);
-        h = 0.8 * pebble + 0.3 * (grain.r - 0.5);
-        albedo = (0.85 + 0.25 * pebble) * (0.92 + 0.16 * grain.g);
-    } else if (metal) {
-        float pit = smoothstep(0.75, 0.88, grain.b);
-        float rust = smoothstep(0.6, 0.85, broad.g) * (0.4 + 0.6 * grain.a);
-        h = (grain.r - 0.5) * 0.3 - 0.6 * pit;
-        albedo = 1.0 - 0.3 * pit;
-        tint = mix(light, luma * vec3(1.4, 0.7, 0.4), rust * 0.6);
-        shine = 0.6 * (1.0 - rust);
-    } else if (plaster) {
-        // Mottled, with hairline cracks where the grain runs along a ridge.
-        float crack = 1.0 - smoothstep(0.0, 0.03, abs(grain.g - 0.5)) * 1.0;
-        crack *= smoothstep(0.55, 0.7, broad.b) * clamp(0.3 / max(footprint, 1e-3), 0.0, 1.0);
-        h = (grain.r - 0.5) * 0.25 - 0.5 * crack;
-        albedo = (0.95 + 0.08 * grain.r) * (1.0 - 0.35 * crack);
-    } else {
-        // Stone. A spot darker than its surroundings in the game's own texture is a joint:
-        // mortar, sandy and set back.
-        vec3 around = 0.5 * (toLight(texture2D(sceneTex, uv + vec2(4.0 * texel.x, 0.0)).rgb) +
-                             toLight(texture2D(sceneTex, uv + vec2(0.0, 4.0 * texel.y)).rgb));
-        float joint = 1.0 - smoothstep(0.6, 0.82, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
-        float pit = smoothstep(0.82, 0.94, grain.b) * 0.25;
-        h = (grain.r - 0.5) * 0.2 - pit * 0.3 * (1.0 - joint) - 0.3 * joint;
-        albedo = mix((0.96 + 0.08 * grain.g) * (1.0 - 0.12 * pit), 0.92 + 0.12 * grain.a, joint);
-    }
-    // The 4 mm grain only where a pixel is finer than it (within a metre or two): coarser pixels each
-    // take an unrelated grain value, which read as a darker, noisy oval around the view on the floor
-    // in front. Its colour and bump both fade to the plain surface there; the broad look stays.
-    float fine = clamp(0.2 / max(footprint, 1e-3) - 0.5, 0.0, 1.0);
-    fine = fine * fine * (3.0 - 2.0 * fine);
-    albedo = mix(1.0, albedo, fine);
-    albedo *= weather * (1.0 - 0.22 * damp * (wood ? 0.4 : 1.0));
-    h *= 0.15 * fine;
-    vec3 dpx = dFdx(p), dpy = dFdy(p);
-    vec3 r1 = cross(dpy, n), r2 = cross(n, dpx);
-    float det = dot(dpx, r1);
-    vec2 dh = clamp(vec2(dFdx(h), dFdy(h)), vec2(-0.35), vec2(0.35));
-    vec3 v = abs(det) > 1e-6 ? (abs(det) * n - sign(det) * (dh.x * r1 + dh.y * r2)) : n;
-    vec3 bumped = dot(v, v) > 1e-6 ? normalize(v) : n;
-    if (dot(bumped, n) < 0.55) bumped = n;
-)glsl" R"glsl(    // The fixed top/viewer light.
-    vec3 lightDir = normalize(worldUp.xyz * 0.8 + vec3(0.0, 0.0, 0.6));
-    vec3 lightTint = vec3(1.0);
-    float shade = clamp((0.4 + 0.6 * max(dot(bumped, lightDir), 0.0)) / (0.4 + 0.6 * max(dot(n, lightDir), 0.0)), 0.6, 1.5);
-    vec3 halfway = normalize(lightDir + normalize(-p));
-    float sheen = (damp * 0.35 + shine) * pow(max(dot(bumped, halfway), 0.0), metal ? 60.0 : 40.0);
-    vec3 detailed = tint * albedo * shade + luma * sheen * lightTint;
-    // Near detail fades into the far tier's broad look rather than to nothing.
-    vec3 broadLook = light * weather * (1.0 - 0.18 * damp);
-    vec3 result = mix(mix(light, broadLook, 0.6), detailed, near);
-    return toStored(clamp(mix(light, result, levelDetail.x * far), 0.0, 1.0));
-}
-
 void main() {
     vec4 c = texture2D(sceneTex, uv);
     vec3 color = smoothEdges > 0.0 ? mix(c.rgb, smoothed(c.rgb), smoothEdges) : sharpen > 0.0 ? sharpened(c.rgb) : c.rgb;
@@ -1180,8 +1057,6 @@ void main() {
                                     kind, tint.a, heldDatum(slot, 3.0), tint.rgb, maskEdge);
         }
     }
-    // Level surfaces: pixels no held item, worn gear or world object claims, near the camera.
-    if (levelDetail.x > 0.0 && (levelDetail.w < 0.5 || maskCode > 254.5)) color = levelSurface(color);
     // Occlusion is low-frequency: applied after the edge passes they look
     // the same as before them, and this pass then needs no neighbouring shaded pixels.
     // Sharpened or smoothed first, then blurred where out of focus: blurred areas need neither.
@@ -2049,7 +1924,7 @@ enum ViewUniform : unsigned {
     uStrength, uTaps, uWorldUp, uFocus, uMaxBlur, uLens, uSmoothEdges, uVisor, uGhostA, uGhostB, uCondition,
     uAoHalf, uHalfSize, uAoStrength, uBounceOn, uBounceStrength, uSharpen, uPreviousDepth, uSurfacesOn, uDofOn, uDistanceHalf, uDistanceHalfOn,
     uFrameOffset, uCurrent, uHistory, uToPrevious, uPreviousProjection, uHistoryWeight, uDofHalf, uCells, uExposure,
-    uSilhouette, uSilhouetteOn, uHeldDetail, uHeldNoise, uHeldData, uLevelDetail, uLevelRow0, uLevelRow1, uLevelRow2, uLevelPeople, uGameLight, uGameLightUp,
+    uSilhouette, uSilhouetteOn, uHeldDetail, uHeldNoise, uHeldData, uLevelRow0, uLevelRow1, uLevelRow2, uGameLight, uGameLightUp,
     uWoundA, uWoundB, uWoundC, uWoundM, uWoundMask, uWoundMaskOn, uWoundCount, uWoundRect, uDripA, uDripCount,
     uFireA, uFireB, uFireC, uFireCount, uFireRect, uFireLook, uFireRight, uFireNoise, uCapA, uCapB, uCapCount, uWoundDebug,
     uBloodMap, uBloodMapInfo, uBloodMapTime, uSplatA, uSplatB, uSplatC, uFallA, uFallB, uFallCount, viewUniformCount
@@ -2059,7 +1934,7 @@ static const char* const viewUniformNames[viewUniformCount] = {
     "strength", "taps", "worldUp", "focus", "maxBlur", "lens", "smoothEdges", "visor", "ghostA", "ghostB", "condition",
     "aoHalf", "halfSize", "aoStrength", "bounceOn", "bounceStrength", "sharpen", "previousDepth", "surfacesOn", "dofOn", "distanceHalf", "distanceHalfOn",
     "frameOffset", "current", "history", "toPrevious", "previousProjection", "historyWeight", "dofHalf", "cells", "exposure",
-    "silhouette", "silhouetteOn", "heldDetail", "heldNoise", "heldData", "levelDetail", "levelRow0", "levelRow1", "levelRow2", "levelPeople", "gameLight", "gameLightUp",
+    "silhouette", "silhouetteOn", "heldDetail", "heldNoise", "heldData", "levelRow0", "levelRow1", "levelRow2", "gameLight", "gameLightUp",
     "woundA", "woundB", "woundC", "woundM", "woundMask", "woundMaskOn", "woundCount", "woundRect", "dripA", "dripCount",
     "fireA", "fireB", "fireC", "fireCount", "fireRect", "fireLook", "fireRight", "fireNoise", "capA", "capB", "capCount", "woundDebug",
     "bloodMap", "bloodMapInfo", "bloodMapTime", "splatA", "splatB", "splatC", "fallA", "fallB", "fallCount"};
@@ -2850,16 +2725,12 @@ struct ViewRequest {
     uint64_t heldSlots = 0;              // bit k: the mask holds slot k this frame
     float armour = 0.f;                  // armour and clothing strength
     float objects = 0.f;                 // loose items' and placed objects' strength
-    float level = 0.f;                   // level surfaces' strength, already scaled for the frame rate
-    float people[6][3]{};                // people near the camera (sector-local, as their mesh is drawn), for level
-    float peopleOrigin[6][3]{};          // and their sectors' origins
-    unsigned peopleCount = 0;
     HeldPose held[heldSlotLimit]{};
     WoundUniforms wounds;                // wounds in view, already in this view's space
     FireUniforms fires;                  // fire and smoke volumes in view (fire.inl), this view's space
     bool finish() const {
         return smooth > 0.f || sharpen > 0.f || visor > 0.f || ghost || detail > 0.f || armour > 0.f || objects > 0.f ||
-               level > 0.f || hurt > 0.f || winded > 0.f || damageFlash > 0.f || wounds.any() || fires.any();
+               hurt > 0.f || winded > 0.f || damageFlash > 0.f || wounds.any() || fires.any();
     }
     bool any() const { return ao > 0.f || dof > 0.f || adapt || finish(); }
 };
@@ -3226,7 +3097,7 @@ static bool growScreenBox(const ViewEffectProjectionSnapshot& projection, const 
 // splats: drops, flung teardrops, pool marks) are drawn into it once with the splat program under a scissor
 // of their own texel box; the wound pass then reads it under every floor pixel in reach, so pools grow,
 // merge and deepen, and stains stay until the window moves on past them. The layer's world is the view
-// matrix's (its rotation transposed and translation taken back, as level detail's rows); a jump of the camera
+// matrix's (its rotation transposed and translation taken back, as the world rows); a jump of the camera
 // (a new level, a teleport) clears it. Returns true when the layer holds anything to draw.
 constexpr int bloodMapSize = 2048;
 constexpr float bloodMapCm = 2.5f, bloodHeightScale = 8000.f, bloodTimeScale = 16384.f;
@@ -4567,8 +4438,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             g.uniform1i(u.at[uSilhouette], 2);
             g.uniform1f(u.at[uSilhouetteOn], silhouette ? 1.f : 0.f);
             g.uniform4f(u.at[uHeldDetail], held ? 1.f : 0.f, 0.f, 0.f, 0.f);
-            // Level surfaces: world rows (the view matrix is rigid: its rotation transposed, its
-            // translation taken back), the people's view-space centres, the strength and its fade.
+            // World rows (the view matrix is rigid: its rotation transposed, its translation taken back).
             {
                 const float* m = projection.view;
                 float rows3[3][4];
@@ -4581,32 +4451,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform4f(u.at[uLevelRow0], rows3[0][0], rows3[0][1], rows3[0][2], rows3[0][3]);
                 g.uniform4f(u.at[uLevelRow1], rows3[1][0], rows3[1][1], rows3[1][2], rows3[1][3]);
                 g.uniform4f(u.at[uLevelRow2], rows3[2][0], rows3[2][1], rows3[2][2], rows3[2][3]);
-                float people[6][4]{};
-                for (unsigned k = 0; k < request.peopleCount && k < 6; ++k) {
-                    // The same sector-local or global question as the held items: of the two readings,
-                    // the one in reach of the camera.
-                    float best = 600.f * 600.f;
-                    for (int candidate = 0; candidate < 2; ++candidate) {
-                        float w[3], c[3];
-                        for (int i = 0; i < 3; ++i) w[i] = request.people[k][i] + (candidate ? request.peopleOrigin[k][i] : 0.f);
-                        toView(projection.view, w, c);
-                        const float sq = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
-                        if (std::isfinite(sq) && sq < best) {
-                            best = sq;
-                            people[k][0] = c[0]; people[k][1] = c[1]; people[k][2] = c[2]; people[k][3] = 1.f;
-                        }
-                    }
-                }
-                const bool levelOn = request.level > 0.f && g.uniform4fv && projection.worldUpValid;
-                if (g.uniform4fv) g.uniform4fv(u.at[uLevelPeople], 6, people[0]);
                 if (g.uniform4fv) uploadGameLights(g, u, projection.view); // blade blood's highlights
-                g.uniform4f(u.at[uLevelDetail], levelOn ? std::clamp(effectScale(request.level, 0.5f, 1.f), 0.f, 1.f) : 0.f,
-                            250.f, 300.f, silhouette || held ? 1.f : 0.f);
-                if (levelOn && !held) { // the level reads the shared noise even when no held item does
-                    g.activeTexture(glc::texture0 + heldNoiseUnit);
-                    noiseTouched = true;
-                    if (prepareHeldNoise(g, r)) g.bindTexture(texture3D, r.heldNoise);
-                }
             }
             const float up[3] = {projection.worldUpValid ? projection.worldUpX : 0.f,
                                  projection.worldUpValid ? projection.worldUpY : 1.f,
@@ -5668,71 +5513,6 @@ static void readCondition(ViewRequest& request) {
     }
 }
 
-// Level detail's strength this frame: the row's value times a scale that falls from 1 to 0 as the
-// frame period (eased, viewCpuFrameMs) grows from 18 to 25 ms, and climbs back slowly (2% a
-// frame), so it is the first effect to give way when the game runs slow. And the people near the
-// player (the world roster within 4 m, nearest six), whose bodies and faces it leaves alone.
-static std::atomic<unsigned> levelPeopleSeen{0};
-static void levelDetailFor(ViewRequest& request) {
-    if (!InterlockedCompareExchange(&cameraReady, 0, 0) ||
-        !InterlockedCompareExchange(&active, 0, 0) ||
-        InterlockedCompareExchange(&stopping, 0, 0)) return;
-    const float wanted = levelDetail.load(std::memory_order_relaxed);
-    if (!(wanted > 0.f) || request.eye) return; // desktop view only (a headset's two eyes would double it)
-    if constexpr (!colourMaterialGuesses) return; // material from colour: off until proven (wounds.inl)
-    const float period = viewCpuFrameMs.load(std::memory_order_relaxed);
-    const float target = period > 0.f ? 1.f - std::clamp((period - 18.f) / 7.f, 0.f, 1.f) : 1.f;
-    float scale = levelDetailScale.load(std::memory_order_relaxed);
-    scale = target < scale ? target : (std::min)(target, scale + 0.02f);
-    levelDetailScale.store(scale, std::memory_order_relaxed);
-    request.level = wanted * scale;
-    if (!(request.level > 0.f)) return;
-    __try {
-        const uintptr_t player = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
-        const uintptr_t mesh = player && readable(player, field::character::sceneNode + 8)
-                                   ? *(const uintptr_t*)(player + field::character::sceneNode) : 0;
-        float centre[3];
-        if (!mesh || !heldGlobalOrigin(mesh, centre)) return;
-        auto note = [&](unsigned slot, uintptr_t node) {
-            const float* sampled = (const float*)(node + field::sceneNode::renderTransform);
-            for (int i = 0; i < 3; ++i) request.people[slot][i] = sampled[12 + i];
-            if (!sectorOriginOf(node, request.peopleOrigin[slot])) memset(request.peopleOrigin[slot], 0, 12);
-        };
-        note(0, mesh);
-        request.peopleCount = 1;
-        const uintptr_t world = *(const uintptr_t*)gameAt(fp::sig::world);
-        if (!readable(world, field::worldObject::characters + 8)) return;
-        const uintptr_t roster = *(const uintptr_t*)(world + field::worldObject::characters);
-        if (!readable(roster, field::list::items + 8)) return;
-        const int characters = *(const int*)(roster + field::list::count);
-        const uintptr_t entries = *(const uintptr_t*)(roster + field::list::items);
-        if (characters <= 0 || characters > 4096 || !readable(entries, size_t(characters) * 8)) return;
-        float distances[6]{};
-        for (int i = 0; i < characters; ++i) {
-            const uintptr_t character = *(const uintptr_t*)(entries + size_t(i) * 8);
-            if (!character || character == player || !readable(character, field::character::sceneNode + 8)) continue;
-            const uintptr_t node = *(const uintptr_t*)(character + field::character::sceneNode);
-            float at[3];
-            if (!node || !heldGlobalOrigin(node, at)) continue;
-            const float d[3] = {at[0] - centre[0], at[1] - centre[1], at[2] - centre[2]};
-            const float distanceSq = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-            if (!(distanceSq < 400.f * 400.f)) continue;
-            unsigned slot = request.peopleCount;
-            if (slot == 6) { // keep the nearest: replace the farthest if this one is nearer
-                slot = 1;
-                for (unsigned k = 2; k < 6; ++k) if (distances[k] > distances[slot]) slot = k;
-                if (distances[slot] <= distanceSq) continue;
-            } else {
-                ++request.peopleCount;
-            }
-            note(slot, node);
-            distances[slot] = distanceSq;
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-    }
-    levelPeopleSeen.store(request.peopleCount, std::memory_order_relaxed);
-}
-
 // The light-grid smoothing: a detour on the driver's glShaderSource (the entry the game loads by
 // name with wglGetProcAddress). A source that declares "uniform sampler3D VoxelGI" and reads it with
 // texture(VoxelGI, ...) gets a tricubic B-spline helper after the declaration and each such read
@@ -5976,7 +5756,6 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
         request.objects = panel::objectMaterialDataDecoded ? objectDetail.load(std::memory_order_relaxed) : 0.f;
         memcpy(request.held, heldMaskPoses, sizeof request.held);
     }
-    levelDetailFor(request);
     // Wounds: desktop and VR eyes alike, in the space of the matrices this view was drawn with.
     if (woundMarks.load(std::memory_order_relaxed) <= 0.f && heldDetail.load(std::memory_order_relaxed) > 0.f &&
         TryAcquireSRWLockExclusive(&woundLock)) {

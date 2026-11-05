@@ -49,7 +49,7 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 | Held item detail (`View/HeldItemDetail`) — **material from game data (2026-11-05), not yet seen in game** | Same replay mask; held node `renderTransform`, `sector+0x64` origin; per-texel material id from the game's item composer (`materialIds` group, mod/material_ids.inl), drawn into the mask's A with the game's own vertex shader | Replay PROVEN; `sceneNode::renderTransform`, `sector::origin` WITNESSED; material ids PROVEN (composer decode below, whole-body contracts); the look per material is OURS | as above | Core PROVEN. **Light** (light-node `+0x210/+0x21C/+0x224`, sector list `+0x130`, origin `+0x64`): UNPROVEN, **gated off**. **Wear and dirt** (item record: `node+0x180` id, database rows `+0x10/+0x18`, row `+0x8/+0xC`): UNPROVEN, **gated off**. Weapon blood spot source: see Wounds |
 | Armour and clothing detail (`View/ArmourDetail`) — **off: colour material guess** | Same as held items, for worn pieces | as above | as above | as above (same gates) |
 | World object detail (`View/ObjectDetail`) — **off: colour material guess** | Same, for nearby placed objects | as above | as above | as above (same gates) |
-| Level detail (`View/LevelDetail`) — **off: colour material guess** | People within 4 m (`worldObject::characters`); the two nearest lamps (light-node fields) | Roster WITNESSED; lamps UNPROVEN | audit clean | Surface detail PROVEN (image only, OURS). **Lamps gated off** |
+| Level detail (was `View/LevelDetail`) | — | — | — | **Removed** (Hunter, 2026-11-05): the game keeps no per-surface material for level geometry (see "Level detail" under Steps 2-4); the row, ini key, shader path and its people/lamp reads are gone. An old `LevelDetail` value is never read. Level surfaces will be handled by replacing the textures the game draws, not by a screen-space pass |
 | Draw distance (`View/DrawDistance`) | Clears the frustum bits on sector meshes | PROVEN (0x58EFB; see "Witnessed fields re-checked") | no GL | PROVEN |
 | Lights per object (`View/LightsPerObject`) | Writes `lightEntry::active` on per-node light lists and restores at the swap | PROVEN (0x26F420; see "Witnessed fields re-checked") | no GL | PROVEN |
 | Finger poses (`View/FingerPoses`, `FingerPosesOthers`) | Bone register 0xD39B0 and skin arrays | `skin+0x10/+0x18/+0x20`, `node+0x17C` PROVEN in 0xD39B0 | no GL | Data PROVEN; pose choice OURS; animation side for the audit thread |
@@ -227,7 +227,7 @@ under the release rule they are off unless proven (`colourMaterialGuesses = fals
 | Where | Guess | State |
 |---|---|---|
 | Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Removed** (2026-11-05): held items take each texel's material from the game (step 2-4 below); the readback and every colour rule are deleted. Armour and object detail stay off until their step |
-| Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Off**: level detail draws nothing |
+| Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Removed** with the whole effect (2026-11-05) |
 | Reflections (`ssrShader`) | Floor reflectivity by colour class (478b214) | **Removed**, with the whole Reflections effect (Hunter, 2026-11-05): the game's own reflections stay |
 | Helmet view (`finishShader` visor) | "Anything within 18 cm of the eye is helmet" (a depth guess) | **Off**, greyed out, until the helmet's own geometry shapes it |
 | See yourself through walls | A capsule of 25 cm radius standing in for the body, both as the fallback ghost and to ignore the body's own limbs | **Replaced**: the ghost is drawn only from the game's body draw (mask R), and a second channel (B) marks where the body itself is the nearest surface, from the same draw. No capsule. Needs an in-game check |
@@ -458,9 +458,25 @@ Each ships on its own once proven; the rest stay off.
     set at 0x14A789), not by the surface hit.
   - Level geometry draws with plain `TMaterial` (VMT 0x2FFE10): its textures (+0x48..+0x68) and shader feature
     flags; the procedural ids above belong to the item composer only (`TProcMaterial`, VMT 0x32FE78).
-  - So Level detail cannot pick wood, stone or plaster from game data. It stays off. What the game does have
+  - **Correction (2026-11-05, texture export):** the material manager (0x6E370 -> 0x6E030 -> 0x6CC60) gives every
+    TMaterial a collision sound class from its record (`data+0xAC`, up to 4 characters, else the first 3 of the
+    material name) and loads `<class>col` (0x6CEB3..0x6CF5D) into `TMaterial+0x288`; Sound.rpk has `stncol`,
+    `mtlcol`, `mtlmcol`... So level materials do carry a coarse surface class for sounds. Not traced: where
+    that sound is played, and whether the class is meaningful for every level material. The removal stands
+    (Hunter chose texture replacement); this is recorded so the earlier "nothing asks the floor" is not relied on.
+  - So Level detail could not pick wood, stone or plaster from game data. It is removed (Hunter, 2026-11-05). What the game does have
     per pixel for level surfaces is its specular and gloss data (`MatSpc` x `SpcTex`, `GlsTex`), which says how
     shiny a surface is, not what it is made of.
+- **Fix (2026-11-05, Hunter's playtest: `material_id_programs` 0, `_program_failures` 4, `_parts` 0).** The id
+  program had attached the game program's own vertex shader object, found with glGetAttachedShaders. The game's
+  linker 0x1FA120 detaches every shader right after glLinkProgram (glDetachShader, loaded from the name at
+  0x1EBF1 into DAT_100498D20, called at 0x1FA246, 0x1FA251 and 0x1FA260), so a game program has none and every id
+  program failed before any GL link was tried (PROVEN). Now 0x1FA120 is hooked (`programLink`, materialIds group,
+  whole-body contract): before it runs, the vertex shader's source is read with glGetShaderSource while still
+  attached, and kept by the program it returns. idProgramFor compiles that exact text again with the id fragment.
+  Failures log the driver's info log once (`material-id-shader.log` beside first-person.ini, and a modMessage);
+  `material_id_link_hooked` and `material_id_sources_kept` report the hook. tools/check_shaders.py `--dump
+  shader-dump.glsl` links the id fragments against every textured game vertex shader in a dev build's dump.
 - **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),
   parts drawn with ids and misses. Parallax (`Mat.TexDsp`) items read ids at the unshifted texcoord.
 
@@ -514,3 +530,49 @@ game's lights loop and Lighting function above applied to each captured light. W
 
 With no lights captured in the last 3 s the terms use the fixed light from above (counted per pass in first-person-status.json, blood_light_fixed_frames, with blood_light_set_changes). The old kind-5 light-node path
 (levelLightsFor, lampsInView) is removed; level detail keeps its fixed light.
+
+## Level textures (export, 2026-11-05)
+
+`tools/export_level_textures.py` writes PNGs and `index.csv`/`index.html` to `E:\ExCamera-playtest\textures\level`
+(never committed). What it counts and how it was established:
+- Level files: Resource.rpk `*.rfc` (actor models `*base`, `*morph`, `dummyhead`, `menuscene` excluded). Their
+  material records (tag `0x0000BA01`, size, name) are what the material manager turns into TMaterials (VMT
+  0x2FFE10: 0x6E030 constructs it with 0x6C710, 0x6CC60 fills it from the record). PROVEN.
+- Texture entries inside a record carry slot bits that equal the renderer's sampler flags >> 16 tested in
+  0x2010C0 (DifTex 0x2, SpcTex 0x4, EmiTex 0x8, NrmTex 0x20, OpcTex 0x40, DspTex 0x80, GlsTex 0x100, DrtTex
+  0x800). The equality holds for all eight flags; the code that copies record bits into the renderer flags is
+  not traced (UNPROVEN link). Slot 0x10 (the `R` reflection maps) matches no sampler flag.
+- Terrain tile tables (`*.ftb`, `Mat <name>` then texture names): map type from the name's last letter only
+  (UNPROVEN).
+- Pack reading matches the game's reader 0x6F400 (tag `0xAFBF0C01`, table size, 32-byte entries). PROVEN.
+- Image format: 32-byte `.rfi` header. Compressed formats from the game's own format table (see "Texture
+  replacements"); uncompressed channel layouts read from the files (UNPROVEN as code).
+- 80 names the level files reference exist in no pack (mostly the `ub6ap*` world set); listed in the index.
+
+## Texture replacements (2026-11-05)
+
+`textureReplace` optional group, `src/mod/texture_replace.inl`, F8 row "Texture replacements" (View/TextureReplacements,
+on by default). PROVEN from the binary:
+- Every texture's pixels go through `0x73580(texture, image)` (callers include the by-name loader 0x6FF70, which
+  finds or creates the texture with 0x72300 and loads the image with 0x70110 from the registered packs).
+- 0x72300 stores the texture's 16-byte name key, lowercased by 0x17B20, at `texture+8`. For names of 16 bytes or
+  less 0x6FF70 builds it zero-padded from the name (longer names take 0x725C0 and are not matched).
+- The image description 0x73580 reads: `+0` pixel data, `+8`/`+0xA` width/height (u16), `+0x10` format word,
+  `+0x14` flags (0x80000: mip chain), `+0x1C` data size. It copies 32 bytes to `texture+0x20`, sets the target
+  and filtering (0x72840, 0x72990, 0x72A60) from `texture+0x18`, and uploads compressed levels with 0x72AD0:
+  storage for every level down to 1x1, then glCompressedTexSubImage2D per level with sizes from width/height.
+  The texture-quality top-level skip and the size cap (`DAT_1002AE080`) apply as for the game's own images.
+- The hook passes a copy of that description pointing at a .dds file's levels (same block format as the
+  block layout of the GL format the game uploads it with; full mip chain required) to the same function, so
+  filtering, anisotropy and mip handling are the game's at the new size. No GL calls of the mod's own. Anything
+  that does not fit is refused, logged once per file, and the game's image is uploaded.
+- Folder: `textures\` beside first-person.ini (the portable copy's own folder, else Documents\ExCamera).
+  File name: the texture's name without `.rfi` (as in the export's index.csv), `.dds`.
+- **Block layout from the game's table (2026-11-05, correcting a6180a8).** 0x72790 resolves the format word to
+  the runtime table 0x766F0 fills (S3TC 0x2AE290, LATC 0x2AE310, RGTC1 0x2AE380 only without LATC, RGTC2
+  0x2AE350; 0x14-byte entries: word, GL internal format, sRGB form, GL format), matching under mask 0x800CFFFF
+  when `(word & 0x80100000) == 0x100000`, else exactly. The hook calls 0x72790 itself and reads the entry's
+  internal format: 0x83F0/0x83F1 (and sRGB 0x8C4C/0x8C4D) BC1, 0x83F3/0x8C4F BC3, 0x8C70/0x8DBB BC4, 0x8DBD
+  BC5; anything else is refused. The first version read the word's second byte, which is wrong for 0x813BE601
+  (byte 0xE6, DXT1). The export used the same wrong rule; checked against the table, every exported texture's
+  block type was right (the level set has no 0x813BE601), and the exporter now uses the table too.

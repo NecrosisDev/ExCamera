@@ -139,6 +139,7 @@ static BOOL WINAPI swapProfileBody(HDC dc) {
     heldDoorStep();
     f8MouseStep();
     presentCue(cueSideNow, cueX, cueY, cueFillNow, cueAlphaNow);
+    presentThreats();
     stereoBeforePresent();
     return fp::profile::invoke<fp::profile::Hook::swapNative>(originalSwap, dc);
 }

@@ -279,6 +279,12 @@ enum Target : uint16_t {
     proceduralMaterials,
     blendModeCache,
     programCache,
+    contactFrame,
+    textureUpload,
+    textureFormatIndex,
+    textureFormatTable,
+    textureFormatLast,
+    programLink,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -555,6 +561,12 @@ inline constexpr const char* targetNames[targetCount] = {
     "proceduralMaterials",
     "blendModeCache",
     "programCache",
+    "contactFrame",
+    "textureUpload",
+    "textureFormatIndex",
+    "textureFormatTable",
+    "textureFormatLast",
+    "programLink",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -830,6 +842,12 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "materialIds",
     "materialIds",
     "materialIds",
+    "materialIds",
+    "balanceShadow",
+    "textureReplace",
+    "textureReplace",
+    "textureReplace",
+    "textureReplace",
     "materialIds",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
@@ -1718,6 +1736,15 @@ inline constexpr Signature signatures[] = {
     {proceduralMaterials, Kind::Relative, false, false, 20, 24, 0, 0x56B030, "53 57 56 48 8D 64 24 E0 89 CB 44 88 C6 31 C0 89 D8 48 8D 15 ?? ?? ?? ??"},
     {blendModeCache, Kind::Relative, false, false, 13, 17, 0, 0x2AE250, "48 8D 64 24 D8 89 4C 24 20 89 C8 3B 05 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 90"},
     {programCache, Kind::Relative, false, false, 10, 14, 0, 0x58EC30, "53 48 8D 64 24 E0 89 C8 3B 05 ?? ?? ?? ?? 74 10 89 C3 89 D9 FF 15 ?? ?? ?? ??"},
+    {contactFrame, Kind::Code, false, true, 0, 0, 0, 0x1603F0, "53 57 56 41 54 41 55 48 8D A4 24 C0 FE FF FF 66 0F 7F B4 24 00 01 00 00 66 44 0F 7F 84 24 10 01 00 00"},
+    {textureUpload, Kind::Code, true, true, 0, 0, 0, 0x73580, "55 48 89 E5 48 8D A4 24 60 FF FF FF 48 89 5D 98 48 89 7D A0 48 89 75 A8 4C 89 65 B0 49 89 CC 48 89 55 F8"},
+    {textureUpload, Kind::Code, true, true, 0, 0, 0, 0x73580, "55 ?? 89 ?? ?? 8D ?? ?? 60 FF FF FF ?? 89 ?? 98 ?? 89 ?? A0 ?? 89 ?? A8 ?? 89 ?? B0 ?? 89 ?? ?? 89 ?? F8"},
+    {textureFormatIndex, Kind::Code, false, true, 0, 0, 0, 0x72790, "B8 FF FF FF FF 89 CA 81 E2 00 00 10 80 81 FA 00 00 10 00 75 54 44 8B 15 ?? ?? ?? ??"},
+    {textureFormatIndex, Kind::Code, false, true, 0, 0, 0, 0x72790, "B8 FF FF FF FF 89 ?? 81 ?? 00 00 10 80 81 ?? 00 00 10 00 75 54 ?? 8B ?? ?? ?? ?? ??"},
+    {textureFormatTable, Kind::Relative, false, false, 54, 58, 0, 0x49B5D0, "B8 FF FF FF FF 89 CA 81 E2 00 00 10 80 81 FA 00 00 10 00 75 54 44 8B 15 ?? ?? ?? ?? 45 85 D2 0F 8C ?? ?? ?? ?? BA FF FF FF FF 66 0F 1F 44 00 00 83 C2 01 4C 8B 0D ?? ?? ?? ??"},
+    {textureFormatLast, Kind::Relative, false, false, 24, 28, 0, 0x2AE0B0, "B8 FF FF FF FF 89 CA 81 E2 00 00 10 80 81 FA 00 00 10 00 75 54 44 8B 15 ?? ?? ?? ??"},
+    {programLink, Kind::Code, true, true, 0, 0, 0, 0x1FA120, "53 57 56 41 54 41 55 48 8D 64 24 D0 89 CB 89 D6 44 89 C7 45 31 ED FF 15 ?? ?? ?? ??"},
+    {programLink, Kind::Code, true, true, 0, 0, 0, 0x1FA120, "53 57 56 ?? 54 ?? 55 ?? 8D ?? ?? D0 89 ?? 89 ?? ?? 89 ?? ?? 31 ?? FF ?? ?? ?? ?? ??"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {

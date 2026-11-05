@@ -55,6 +55,10 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return std::to_wstring(settings.cueSize)+L"%";
     case setting::cueOpacity:
         return std::to_wstring(settings.cueOpacity)+L"%";
+    case setting::threatMarkers:
+        return settings.threatMarkers == 0 ? L"Off" : settings.threatMarkers == 2 ? L"Always" : L"Combat only";
+    case setting::threatOpacity:
+        return std::to_wstring(settings.threatOpacity)+L"%";
     case setting::cueThrust:
         return settings.cueThrust ? L"below the crosshair" : L"off";
     case setting::bladeDrag:
@@ -219,8 +223,6 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return settings.armourDetail ? std::to_wstring(settings.armourDetail) + L"%" : L"Off";
     case setting::objectDetail:
         return settings.objectDetail ? std::to_wstring(settings.objectDetail) + L"%" : L"Off";
-    case setting::levelDetail:
-        return settings.levelDetail ? std::to_wstring(settings.levelDetail) + L"%" : L"Off";
     case setting::woundMarks:
     case setting::woundDebug:
         return L"";
@@ -232,6 +234,8 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return L"";
     case setting::farRooms:
         return L"";
+    case setting::textureReplacements:
+        return L"";
     case setting::hitReaction:
         return settings.hitReaction ? std::to_wstring(settings.hitReaction) + L"%" : L"Off";
     case setting::tpLookFollow:
@@ -240,6 +244,10 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return settings.fpKnockdown ? L"Show third" : L"Stay first";
     case setting::kickStyle:
         return settings.kickStyle ? L"Animated" : L"Classic";
+    case setting::padKick: return fp::padButtonName(settings.padKick);
+    case setting::padJump: return fp::padButtonName(settings.padJump);
+    case setting::padGuard: return fp::padButtonName(settings.padGuard);
+    case setting::padShoulder: return fp::padButtonName(settings.padShoulder);
     case setting::parryDirection:
         return settings.parryDirection == fp::parryAssisted ? L"Drag: assisted"
                : settings.parryDirection == fp::parryStrict ? L"Drag: strict"
@@ -295,6 +303,12 @@ const wchar_t* settingLabel(int id) {
     case setting::fpKnockdown: return L"Knocked down";
     case setting::kickStyle: return L"Kick style";
     case setting::parryDirection: return L"Parry direction";
+    case setting::threatMarkers: return L"Threat markers";
+    case setting::threatOpacity: return L"Marker opacity";
+    case setting::padKick: return L"Kick button";
+    case setting::padJump: return L"Jump button";
+    case setting::padGuard: return L"Guard button";
+    case setting::padShoulder: return L"Shoulder button";
     case setting::leanKey: return L"Lean";
     case setting::holdHeading: return L"Heading correction";
     case setting::autoRecenter: return L"Auto-center";
@@ -350,13 +364,13 @@ const wchar_t* settingLabel(int id) {
     case setting::heldDetail: return L"Held items";
     case setting::armourDetail: return L"Armour";
     case setting::objectDetail: return L"Objects";
-    case setting::levelDetail: return L"Level";
     case setting::woundMarks: return L"Wounds";
     case setting::woundDebug: return L"Wound debug";
     case setting::drawDistance: return L"Draw distance";
     case setting::objectLights: return L"Object lights";
     case setting::lightSmoothing: return L"Smooth light";
     case setting::farRooms: return L"Far rooms";
+    case setting::textureReplacements: return L"Replacements";
     case setting::f6Cycle: return L"F6 cycle";
     case setting::hitReaction: return L"Hit reaction";
     default: return L"";
@@ -384,6 +398,8 @@ const wchar_t* settingTip(int id) {
     case setting::attackCue: return L"An arc round the crosshair fills as your swing winds up, so you can time the release.";
     case setting::cueSize: return L"Arc size.";
     case setting::cueOpacity: return L"Arc opacity.";
+    case setting::threatMarkers: return L"Soft arcs round the screen centre point toward attackers off screen or near its edge; brighter while their swing winds up. Combat only: while you are in combat stance.";
+    case setting::threatOpacity: return L"Threat marker opacity.";
     case setting::cueThrust: return L"Shows a matching cue under the crosshair for thrusts.";
     case setting::bladeDrag: return L"Dragging an edge across a body cuts it, not only the swing's hit. The game's own edge, speed and armour rules apply. Works for everyone.";
     case setting::stabSink: return L"Experimental. A point-first thrust into unarmoured flesh pushes in a hand's depth instead of stopping at the skin. Armour and skulls still stop it.";
@@ -404,6 +420,10 @@ const wchar_t* settingTip(int id) {
     case setting::kickKey: return L"Plays the game's own kick when you are not mid-swing or reacting to a hit. Not a key the game uses (Alt is its thrust). Delete clears the key.";
     case setting::jumpKey: return L"Plays the game's own jump when you are not mid-swing or reacting to a hit. Not a key the game uses. Delete clears the key.";
     case setting::kickStyle: return L"Classic: the game's own kick. Animated: the same kick, gates and hit, with your body moved like a motion-captured kick that suits what you hold. Experimental.";
+    case setting::padKick: return L"In combat, an Xbox-style controller button for the game's own kick. A button your Steam layout also uses does both.";
+    case setting::padJump: return L"Xbox-style controller button for the game's own jump. The right-stick click does nothing else in the game's Steam layout.";
+    case setting::padGuard: return L"Needs Block on Hold RMB. Held, guards like right mouse; with a Parry direction, push the right stick to pick the parry. Pick a button you do not need in combat.";
+    case setting::padShoulder: return L"Third person: an Xbox-style controller button that swaps the camera to your other shoulder.";
     case setting::parryDirection: return L"Needs Block on Hold RMB. Holding RMB keeps the view still and a drag picks the parry: up, left, right, down-left, down-right. Automatic: the game picks. Assisted: your drag picks; a small drag leaves it to the game. Strict: you parry only if your drag matches the incoming swing.";
     case setting::fpKnockdown: return L"Show third: knocked down in first person, the view goes to third person and back a moment after you are up. F6 meanwhile keeps your choice; death never switches.";
     case setting::tpLookFollow: return L"Out of combat, looking down lifts the camera and moves it back so the ground ahead shows; looking up brings it closer and lower. Walls still pull it in.";
@@ -463,12 +483,12 @@ const wchar_t* settingTip(int id) {
     case setting::heldDetail: return L"Scratches, metal grain, pits and worn edges on what you hold. It reshapes existing light only, so an unlit blade stays dark.";
     case setting::armourDetail: return L"Plate, mail rings, leather grain and padding detail on worn gear within 6 m. Costs more than held items.";
     case setting::objectDetail: return L"The same detail on loose items, racks, chests, doors and furniture within 6 m. Off by default: it can draw thin dark lines across furniture.";
-    case setting::levelDetail: return L"Fine surface detail on nearby walls, floors and ceilings. Turns itself down when the frame rate drops.";
     case setting::woundMarks: return L"Cuts, stab holes and bruises stay on bodies where weapons got through, with blood running from fresh cuts.";
     case setting::woundDebug: return L"Highlights all procedural wounds, blade blood, and floor spatters in vibrant neon colors (cyan/magenta/green). Toggle with F12.";
     case setting::drawDistance: return L"Small props and far people past this distance aren't drawn; big things stay longer. Off draws everything.";
     case setting::objectLights: return L"Lights each object takes. The game uses six; fewer runs faster and keeps the strongest.";
     case setting::lightSmoothing: return L"Strong lights fall off in round gradients instead of squares. From the next level load.";
+    case setting::textureReplacements: return L"Uses replacement textures (.dds, same name as the game's) from the textures folder. Off draws only the game's own. From the next level load.";
     case setting::farRooms: return L"Draws one more room through doorways, so far doorways don't show solid black. Off if it costs too much frame rate.";
     case setting::hitReaction: return L"First person. How hard the view jolts and tilts when a blow lands on you. 0 keeps it still; the damage flash stays. Never in VR.";
     case setting::f6Cycle: return L"What F6 switches between. 1st/3rd/game: each press moves on. 1st/3rd only: a press flips first and third person; hold F6 half a second for the game's camera.";

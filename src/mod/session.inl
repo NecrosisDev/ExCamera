@@ -357,7 +357,8 @@ static bool otherHooksCheckView(const fp::ImageView& file) {
         !admitHeadwearRenderEntries(file) ||
         !admitViewEffectsEntries(file) ||
         !admitSilhouetteEntries(file) ||
-        !admitMaterialIdsEntries(file)) {
+        !admitMaterialIdsEntries(file) ||
+        !admitTextureReplaceEntries(file)) {
         otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
         return false;
     }
@@ -767,6 +768,16 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("parry_assisted", parryAssisted.load());
     j.unum("parry_strict_matches", parryStrictMatches.load());
     j.unum("parry_strict_refusals", parryStrictRefusals.load());
+    // Controller: which XInput loaded, the pad in use (-1 none) and what it did. If a pad is plugged in and
+    // pad_index stays -1 or pad_buttons_seen stays 0, XInput is not seeing it (Steam Input may be holding it).
+    j.str("pad_xinput", padLibrary);
+    j.num("pad_index", padIndex.load());
+    j.unum("pad_buttons_seen", padButtonsSeen.load());
+    j.unum("pad_kicks", padKicks.load());
+    j.unum("pad_jumps", padJumps.load());
+    j.unum("pad_guard_polls", padGuardPolls.load());
+    j.unum("pad_parry_picks", padParryPicks.load());
+    j.unum("pad_shoulder_swaps", padShoulders.load());
     j.unum("unexpected_relaxed_steps", unexpectedRelaxedSteps.load());
     j.num("fov", selectedFov.load());
     j.boolean("settings_saved", !settingsSavePending() && pendingModsByModSave.load(std::memory_order_acquire) < 0);
@@ -891,10 +902,18 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("material_id_faults", matid::faults.load());
     j.unum("material_id_dropped", matid::dropped.load());
     j.unum("material_id_other_context", matid::otherContext.load());
+    j.boolean("material_id_link_hooked", matid::linkHooked.load());
+    j.unum("material_id_sources_kept", matid::sourcesKept.load());
     j.unum("material_id_programs", matid::idProgramsBuilt.load());
     j.unum("material_id_program_failures", matid::idProgramsFailed.load());
     j.unum("material_id_parts", materialIdParts.load());
     j.unum("material_id_misses", materialIdMisses.load());
+    // Texture replacements (texture_replace.inl): files found, uploaded in place, refused (reason of the last).
+    j.boolean("texture_replace_hooked", texrep::hooked.load());
+    j.unum("texture_replace_files", texrep::files.load());
+    j.unum("texture_replaced", texrep::replaced.load());
+    j.unum("texture_replace_refused", texrep::refused.load());
+    j.str("texture_replace_last_failure", texrep::lastFailure);
     j.unum("held_lights_seen", heldLightsSeen.load());
     j.unum("held_others", heldOthers.load());
     j.unum("weapon_blood_taken", weaponBloodTaken.load());
@@ -905,11 +924,9 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.boolean("light_smoothing_hooked", originalShaderSource != nullptr);
     j.unum("light_smoothing_rewrites", lightSmoothingRewrites.load());
     j.unum("light_smoothing_faults", lightSmoothingFaults.load());
-    j.fixed("level_detail_scale", levelDetailScale.load(std::memory_order_relaxed), 2);
     j.fixed("fire_volumes", float(fireShown.load(std::memory_order_relaxed)), 0);
     j.fixed("fire_quality", fireQuality.load(std::memory_order_relaxed), 2);
     j.fixed("fire_faults", float(fireFaults.load(std::memory_order_relaxed)), 0);
-    j.unum("level_people", levelPeopleSeen.load());
     j.unum("view_effects_draws", viewEffectsDraws.load());
     // Render audit (--dev, [Dev] RenderAudit=1): all zero when off or clean; see render-audit.log.
     j.boolean("render_audit", renderAuditActive.load(std::memory_order_relaxed));
@@ -1113,6 +1130,27 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("glove_bends", trackedGloveBends.load())
         .end();
 #endif
+    j.object("threat_markers") // every build: threats.inl, read-only
+        .str("mode", threatMode.load() == fp::threat::off ? "off" : threatMode.load() == fp::threat::always ? "always" : "combat")
+        .unum("reads", threatReads.load())
+        .unum("read_faults", threatReadFaults.load())
+        .unum("shown", threatsShown.load())
+        .unum("draws", threatDraws.load())
+        .end();
+    { // every build: the balance shadow (balance_shadow.inl), read-only
+        AcquireSRWLockShared(&shadowLock);
+        j.object("balance_shadow")
+            .str("state", balanceShadowReasonText())
+            .boolean("fault", balanceShadowFault.load())
+            .unum("steps", unsigned(shadowSteps))
+            .unum("player_steps", unsigned(shadowPlayerSteps))
+            .unum("game_physics_reports", shadowPhysicsReports)
+            .unum("flags_shown", shadowFlagsShown)
+            .unum("read_faults", shadowReadFaults.load());
+        for (unsigned e = 0; e < unsigned(bs::Event::count); ++e) j.unum(bs::eventNames[e], shadowTotals[e]);
+        j.end();
+        ReleaseSRWLockShared(&shadowLock);
+    }
     j.object("motions") // every build: the kick and the jump through the game's motion player
         .unum("kicks", motionKicks.load())
         .boolean("kick_fault", motionKickFault.load())
@@ -1437,6 +1475,7 @@ static DWORD runSession() {
     }
     createViewEffectsHook();
     createMaterialIdsHook(); // after it: needs the silhouette hook
+    createTextureReplaceHook();
     createNodeMoveHook();
     createRoomViewHook();
     createManualPageHook();
@@ -1462,6 +1501,7 @@ static DWORD runSession() {
         modMessage(NoticeKind::warning, FP_SHOWN_NAME L": untested Exanima version. Compatible game functions resolved; hold F7 if "
                                  L"anything looks wrong.");
     profileInitialize(); // Publish only after this instance owns successfully armed hooks.
+    balanceShadowStart(manualDefenseAvailability.load() == 1);
     bool viewFaultNoticed = false;
     for (;;) {
         InterlockedExchange(&active, 1);
@@ -1469,6 +1509,7 @@ static DWORD runSession() {
         for (int i = 0; !InterlockedCompareExchange(&stopping, 0, 0); i++) {
             Sleep(100);
             profilePulse();
+            balanceShadowPulse();
             devPulse();
             trackingReceiver.service(trackingEnabled.load());
             saveFov();
@@ -1554,6 +1595,7 @@ static DWORD runSession() {
             }
         }
         InterlockedExchange(&stopping, 1);
+        balanceShadowFlush(); // the summary as of the stop; it resumes if the mod is turned back on
         profileStop("mod_stopped");
         profilePulse(false);
         trackingReceiver.stop();

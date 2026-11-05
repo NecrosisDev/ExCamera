@@ -39,6 +39,8 @@ ALLOWED_OPTIONAL_GROUPS = (
     'wounds',
     'xrPhysicalContacts',
     'materialIds',
+    'balanceShadow',
+    'textureReplace',
 )
 
 # Fixed C++ struct ABIs static_asserted in native_widgets.h / game_structs.h:

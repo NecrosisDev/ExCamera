@@ -76,6 +76,16 @@ inline constexpr size_t transform = 0x9F0;   // float[12]: basis then position, 
 inline constexpr size_t bodyFrame = 0x9F0, balanceFrame = 0xDFC; // native affine frames
 inline constexpr size_t shieldPart = 0xBF8, specialHeldPart = 0xC00; // native alternate constraint owners
 inline constexpr size_t impactKind = 0xC18, impactTarget = 0xC20, impactPoint = 0xC28, impactWeapon = 0xC38;
+// Balance (docs/GAME-BALANCE-PHYSICS.md; read by the balance shadow, never written by the mod):
+inline constexpr size_t chestPosition = 0xBE8;  // float[3]: the chest attachment centre (supportPosition 0x163BB0)
+inline constexpr size_t tone = 0x590;           // float 0..1: 0 knocked out, fades while dying; heightForce needs > 0.5
+inline constexpr size_t footSlides = 0xDE4;     // int: stepping-foot anchor slides (0x15E84E), zeroed per new step target
+inline constexpr size_t footDown = 0x101C;      // float 0/1: a leg contact is on the ground (supportHeight)
+inline constexpr size_t standingFactor = 0x1020; // float: footDown x uprightness; squared into the part motor
+inline constexpr size_t uprightness = 0x12B0;   // float 0..1: (cos chest lean)^8; under 0.3 the character falls (16A6BA)
+inline constexpr size_t leanCounter = 0x12B4;   // int: uprightness takes the new value only once this reaches 100
+inline constexpr size_t stepping = 0x12EE;      // u8: a corrective step is under way (contactFrame)
+inline constexpr size_t onFeet = 0x12FC;        // u8: some leg contact is within reach of the ground
 } // namespace character
 
 // A character's behaviour (character::behaviour); the player's runs the input step.
@@ -135,6 +145,8 @@ inline constexpr size_t connectedAnchor = 0x10, connectedPart = 0x30, flags = 0x
 } // namespace gripJoint
 namespace contact {
 inline constexpr size_t flags = 0x10; // support/swing state, read only
+inline constexpr size_t position = 0x3C;     // float[3]: the contact point now (0x15DA80 refreshes it)
+inline constexpr size_t groundHeight = 0x90; // float: ground height under it; the foot is down within +94 + 20
 } // namespace contact
 
 // A node in a scene tree: a mesh, a group, a placed object.

@@ -1,5 +1,7 @@
 #include "camera_motion.h"
 #include "engine_text.h"
+#include "texture_formats.h"
+#include "gamepad.h"
 #include "hook_health.h"
 #include "input_policy.h"
 #include "native_contracts.h"
@@ -1055,8 +1057,54 @@ bool engine_text_ascii_line() {
 
 } // namespace
 
+bool controller_buttons_and_stick_parry() {
+    fp::PadState pad;
+    pad.buttons = 0x8000 | 0x0080; // Y and the right-stick click (XINPUT_GAMEPAD_Y, _RIGHT_THUMB)
+    pad.leftTrigger = 30;          // at the threshold is not pressed
+    pad.rightTrigger = 31;
+    CHECK(fp::padHeld(fp::padY, pad) && fp::padHeld(fp::padRS, pad) && !fp::padHeld(fp::padA, pad));
+    CHECK(!fp::padHeld(fp::padLT, pad) && fp::padHeld(fp::padRT, pad) && !fp::padHeld(fp::padNone, pad));
+    CHECK(!fp::padHeld(99, pad) && !fp::padHeld(-1, pad));
+    CHECK(fp::padButtonFromText(L"Back") == fp::padBack && fp::padButtonFromText(L"none") == fp::padNone);
+    CHECK(fp::padButtonFromText(L"bogus") < 0 && fp::padButtonFromText(nullptr) < 0);
+    for (int b = 0; b < fp::padButtonCount; ++b) CHECK(fp::padButtonFromText(fp::padButtonText(b)) == b);
+    // The stick picks as a drag would: up, right, down-right, down-left, left; a small push picks nothing.
+    CHECK(fp::padParryPose(0, 32767, false) == 22);
+    CHECK(fp::padParryPose(32767, 0, false) == 21);
+    CHECK(fp::padParryPose(20000, -20000, false) == 24);
+    CHECK(fp::padParryPose(-20000, -20000, false) == 23);
+    CHECK(fp::padParryPose(-32767, 0, false) == 20);
+    CHECK(fp::padParryPose(32767, 0, true) == 20);
+    CHECK(fp::padParryPose(8000, 0, false) == 0);
+    return true;
+}
+
+// Every format word the level textures carry (export index.csv), and the one whose second byte misleads: the
+// block layout comes from the game's table, never from the word's bytes.
+static bool texture_formats_from_the_game_table() {
+    using fp::Block;
+    struct Case { uint32_t word; Block withLatc, withoutLatc; };
+    const Case cases[] = {
+        {0x813BC600, Block::bc1, Block::bc1}, {0x823BC600, Block::bc1, Block::bc1},
+        {0x813BE601, Block::bc1, Block::bc1}, // byte 0xE6, yet DXT1 (GL_COMPRESSED_RGBA_S3TC_DXT1)
+        {0x817BE608, Block::bc3, Block::bc3}, {0x827BE608, Block::bc3, Block::bc3}, {0x827BA408, Block::bc3, Block::bc3},
+        {0x813B4200, Block::bc4, Block::bc4}, // LATC1 with LATC, RGTC1 without: both BC4 blocks
+        {0x927B8400, Block::bc5, Block::bc5}, {0x817B8400, Block::bc5, Block::bc5},
+        {0x817B6208, Block::none, Block::none}, // LATC2: luminance-alpha, not replaced
+        {0x01002008, Block::none, Block::none}, {0x0100C600, Block::none, Block::none}, {0x01114200, Block::none, Block::none},
+    };
+    for (const Case& c : cases) {
+        CHECK(fp::blockForGlInternal(fp::compressedInternalFor(c.word, true)) == c.withLatc);
+        CHECK(fp::blockForGlInternal(fp::compressedInternalFor(c.word, false)) == c.withoutLatc);
+    }
+    CHECK(fp::blockForGlInternal(0x8C4D) == Block::bc1); // the sRGB forms 0x72AD0 may pick
+    CHECK(fp::blockForGlInternal(0x8C4F) == Block::bc3);
+    return true;
+}
+
 int main() {
     return run_tests({
+        {"controller buttons and stick parry", controller_buttons_and_stick_parry},
         {"input ButtonHandoff and RawLook", input_button_handoff_and_raw_look},
         {"input angle wrapping and vrTurningFromText", input_angle_wrapping_and_vr_turning_text},
         {"input combat cues, cursor, and ray helpers", input_combat_cues_cursor_and_ray_helpers},
@@ -1084,5 +1132,6 @@ int main() {
          call_graph_closure_and_scoped_degradation},
         {"real Exanima.exe resilience simulations", real_binary_resilience_simulations},
         {"engine log text: one ASCII line, nothing escaped", engine_text_ascii_line},
+        {"texture formats from the game's table", texture_formats_from_the_game_table},
     });
 }

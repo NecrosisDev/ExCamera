@@ -292,6 +292,30 @@ bool kick_style_row_steps_and_saves() {
     return true;
 }
 
+bool controller_rows_step_save_and_drop_duplicates() {
+    ModSettings settings;
+    CHECK(settings.padKick == fp::padY && settings.padJump == fp::padRS);
+    CHECK(settings.padGuard == fp::padNone && settings.padShoulder == fp::padNone);
+    CHECK(settings.step(panel::setting::padGuard, -1));
+    CHECK(settings.padGuard == fp::padRight); // backwards from None wraps to the last button
+    CHECK(settings.step(panel::setting::padGuard, 1));
+    CHECK(settings.padGuard == fp::padNone);
+    const auto& info = panel::rowInfo(panel::setting::padGuard);
+    CHECK(info.kind == panel::RowInfo::choice && !wcscmp(info.section, L"Controller") && !wcscmp(info.key, L"Guard"));
+    CHECK(info.fromText(L"LT") == fp::padLT && info.fromText(L"rs") == fp::padRS && info.fromText(L"x") == fp::padX);
+    CHECK(info.fromText(L"lt2") == panel::badText && info.fromText(L"") == panel::badText);
+    CHECK(info.fromText(info.toText(fp::padStart)) == fp::padStart);
+    settings.padGuard = fp::padLB;
+    settings.padShoulder = fp::padLB; // the later duplicate is unbound
+    settings.padJump = 99;            // out of range
+    settings.normalize();
+    CHECK(settings.padGuard == fp::padLB && settings.padShoulder == fp::padNone && settings.padJump == fp::padNone);
+    settings.padKick = fp::padRight; // above the other choices' 0..2 is still a button
+    settings.normalize();
+    CHECK(settings.padKick == fp::padRight);
+    return true;
+}
+
 bool settings_file_candidates_follow_portable_mode() {
     // A portable copy: only the file beside it, which safe start then backs up and resets.
     const auto portable = fp::settingsCandidates(L"E:\\test\\", true, L"C:\\Docs", L"C:\\Users\\p\\Documents");
@@ -339,6 +363,7 @@ int main() {
         {"look-follow row is a saved switch", look_follow_row_is_a_saved_switch},
         {"knockdown view row steps and saves", knockdown_view_row_steps_and_saves},
         {"kick style row steps and saves", kick_style_row_steps_and_saves},
+        {"controller rows step, save and drop duplicates", controller_rows_step_save_and_drop_duplicates},
         {"settings file candidates follow portable mode", settings_file_candidates_follow_portable_mode},
         {"every row has valid presentation labels and tips", every_row_has_valid_presentation_labels_and_tips},
     });

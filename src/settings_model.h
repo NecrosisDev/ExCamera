@@ -15,6 +15,7 @@
 #include <cwctype>
 #include "camera_motion.h"
 #include "input_policy.h"
+#include "gamepad.h"
 #include "held_object.h"
 namespace panel {
 // The first-person mod's own settings: shown on the F8 panel's Settings page, applied
@@ -116,7 +117,6 @@ enum : int {
     heldDetail,
     armourDetail,
     objectDetail,
-    levelDetail,
     woundMarks,
     woundDebug,
     drawDistance,
@@ -130,17 +130,22 @@ enum : int {
     fpKnockdown,
     kickStyle,
     parryDirection,
+    threatMarkers,
+    threatOpacity,
+    padKick,
+    padJump,
+    padGuard,
+    padShoulder,
+    textureReplacements,
     count
 };
 }
 // Held-item, armour and object detail take each pixel's material from the game's own item composer
 // (mod/material_ids.inl, docs/render-assumptions.md); an object whose textures the composer did not build gets
-// none. Level detail is not yet built on the game's data: until it is, its row is inactive and draws nothing
-// (colourMaterialGuesses, wounds.inl).
+// none. (Level detail is removed: the game keeps no per-surface material for level geometry.)
 inline constexpr bool heldMaterialDataDecoded = true;
 inline constexpr bool armourMaterialDataDecoded = true;
 inline constexpr bool objectMaterialDataDecoded = true;
-inline constexpr bool materialDataDecoded = false;
 // Whether the helmet view is shaped by the helmet's own geometry; until it is, Helmet view is inactive (it had
 // treated anything within 18 cm of the eye as helmet).
 inline constexpr bool helmetShapeDecoded = false;
@@ -164,23 +169,27 @@ inline bool fixedSetting(int row) {
 enum : unsigned {
     capFingers = 1u << 0, capFarRooms = 1u << 1, capViewEffects = 1u << 2, capWounds = 1u << 3,
     capBlades = 1u << 4, capKick = 1u << 5, capJump = 1u << 6, capManualDefense = 1u << 7,
-    capAnimatedKick = 1u << 8,
+    capAnimatedKick = 1u << 8, capTextures = 1u << 9,
 };
 inline unsigned rowCapability(int row) {
     switch (row) {
     case setting::fingerPoses: case setting::fingerPosesOthers: return capFingers;
     case setting::farRooms: return capFarRooms;
+    case setting::textureReplacements: return capTextures;
     case setting::ambientOcclusion: case setting::depthOfField:
     case setting::edgeSmoothing: case setting::helmetVisor: case setting::playerGhost:
     case setting::conditionEffects: case setting::lightSmoothing: case setting::heldDetail:
-    case setting::armourDetail: case setting::objectDetail: case setting::levelDetail:
+    case setting::armourDetail: case setting::objectDetail:
         return capViewEffects;
     case setting::woundMarks: return capWounds;
     case setting::bladeDrag: case setting::stabSink: case setting::bladeGain: return capBlades;
-    case setting::kickKey: return capKick;
+    case setting::kickKey: case setting::padKick: return capKick;
     case setting::kickStyle: return capAnimatedKick;
-    case setting::jumpKey: return capJump;
-    case setting::fpDefense: case setting::tpDefense: case setting::parryDirection: return capManualDefense;
+    case setting::jumpKey: case setting::padJump: return capJump;
+    case setting::fpDefense: case setting::tpDefense: case setting::parryDirection: case setting::padGuard:
+        return capManualDefense;
+    // The threat markers read each character after the game's combat update, hooked with manual defense.
+    case setting::threatMarkers: case setting::threatOpacity: return capManualDefense;
     default: return 0;
     }
 }
@@ -205,8 +214,8 @@ struct ModSettings {
     int objectDetail = 0; // the same on loose items and placed objects near you, percent; off by default: thin dark lines on furniture
     int drawDistance = 60; // metres beyond which small props and far characters are not drawn; 0 draws everything
     int objectLights = 4;  // lights each mesh takes of the game's six; the strongest are kept
-    int levelDetail = 30; // walls, floors and ceilings within about 3 m, percent; light by default, drops first when slow
     bool lightSmoothing = true; // the game's light grid read smoothly (shader rewrite at compile time); on by default
+    bool textureReplacements = true; // .dds files in the textures folder uploaded in place of the game's; on by default
     bool farRooms = true; // draw one more room through doorways than the game does (first and third person)
     int hitReaction = 100; // percent of the first-person view's kick when a hit lands; 100 as before
     int f6Cycle = 0;
@@ -234,7 +243,11 @@ struct ModSettings {
     int cueSize = 100, cueOpacity = 100;            // the attack wind-up arc
     int fpDefense = 0, tpDefense = 0;               // automatic default, manual holds RMB
     int fpSwingSelection = 1, tpSwingSelection = 1; // mouse direction, or native facing
+    int threatMarkers = 1, threatOpacity = 35; // 0 off, 1 in combat stance only, 2 always; the markers' opacity
     int parryDirection = 0; // fp::ParryDirection: the game's parry, a right-mouse drag's, or the drag's only when it matches
+    // Controller buttons (fp::PadButton) for the mod's own actions. Y and the right-stick click do nothing in the
+    // Combat set of Steam's layout for Exanima; Guard (Manual defense's right mouse) and Swap shoulder start unbound.
+    int padKick = fp::padY, padJump = fp::padRS, padGuard = fp::padNone, padShoulder = fp::padNone;
     bool manualDefenseAvailable = false;            // runtime capability, not a saved row
     unsigned unavailable = 0, faulted = 0; // runtime: cap* features missing on this game build, or off after a fault
     bool scriptRuntimeAvailable = false;            // runtime capability: ScriptRuntime.dll is loaded
@@ -322,7 +335,6 @@ struct ModSettings {
         case setting::heldDetail: heldDetail = std::clamp(heldDetail + delta * 10, 0, 100); break;
         case setting::armourDetail: armourDetail = std::clamp(armourDetail + delta * 10, 0, 100); break;
         case setting::objectDetail: objectDetail = std::clamp(objectDetail + delta * 10, 0, 100); break;
-        case setting::levelDetail: levelDetail = std::clamp(levelDetail + delta * 10, 0, 100); break;
         case setting::woundDebug: woundDebug = !woundDebug; break;
         case setting::drawDistance: drawDistance = std::clamp(drawDistance + delta * 10, 0, 200); break;
         case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
@@ -330,6 +342,13 @@ struct ModSettings {
         case setting::fpKnockdown: fpKnockdown = fpKnockdown ? 0 : 1; break;
         case setting::kickStyle: kickStyle = kickStyle ? 0 : 1; break;
         case setting::parryDirection: parryDirection = (parryDirection + (delta < 0 ? 2 : 1)) % 3; break;
+        case setting::threatMarkers: threatMarkers = (threatMarkers + (delta < 0 ? 2 : 1)) % 3; break;
+        case setting::padKick: case setting::padJump: case setting::padGuard: case setting::padShoulder: {
+            int& button = row == setting::padKick ? padKick : row == setting::padJump ? padJump
+                          : row == setting::padGuard ? padGuard : padShoulder;
+            button = (button + (delta < 0 ? fp::padButtonCount - 1 : 1)) % fp::padButtonCount;
+            break;
+        }
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -505,7 +524,6 @@ struct ModSettings {
         case setting::heldDetail: return heldDetail ? std::to_wstring(heldDetail) + L"%" : L"Off";
         case setting::armourDetail: return armourDetail ? std::to_wstring(armourDetail) + L"%" : L"Off";
         case setting::objectDetail: return objectDetail ? std::to_wstring(objectDetail) + L"%" : L"Off";
-        case setting::levelDetail: return levelDetail ? std::to_wstring(levelDetail) + L"%" : L"Off";
         case setting::drawDistance: return drawDistance ? std::to_wstring(drawDistance) + L" m" : L"Off";
         case setting::objectLights: return objectLights >= 6 ? std::wstring(L"6 (game)") : std::to_wstring(objectLights);
         case setting::hitReaction:
@@ -617,10 +635,18 @@ struct ModSettings {
         }
         case setting::fpSwingSelection:
             return fpSwingSelection ? L"Mouse direction" : L"Native facing";
+        case setting::threatMarkers:
+            return threatMarkers == 0 ? L"Off" : threatMarkers == 2 ? L"Always" : L"Combat only";
+        case setting::threatOpacity:
+            return std::to_wstring(threatOpacity) + L"%";
         case setting::parryDirection:
             return parryDirection == fp::parryAssisted ? L"Drag: assisted"
                    : parryDirection == fp::parryStrict ? L"Drag: strict"
                                                        : L"Automatic (the game's)";
+        case setting::padKick: return fp::padButtonName(padKick);
+        case setting::padJump: return fp::padButtonName(padJump);
+        case setting::padGuard: return fp::padButtonName(padGuard);
+        case setting::padShoulder: return fp::padButtonName(padShoulder);
         case setting::tpSwingSelection:
             return tpSwingSelection ? L"Mouse direction" : L"Native facing";
         case setting::idleCrosshair:
@@ -733,8 +759,6 @@ struct ModSettings {
             if (row == setting::armourDetail) return L"Off until the game's own material data is decoded.";
         if constexpr (!objectMaterialDataDecoded)
             if (row == setting::objectDetail) return L"Off until the game's own material data is decoded.";
-        if (!materialDataDecoded && row == setting::levelDetail)
-            return L"Off until the game's own material data is decoded.";
         if (!helmetShapeDecoded && row == setting::helmetVisor)
             return L"Off until the helmet's own shape is used.";
         return nullptr;
@@ -766,6 +790,10 @@ inline int iniHelmet(const wchar_t* t) {
 inline const wchar_t* iniHelmetText(int v) {
     return v ? L"hide" : L"show";
 }
+inline int iniPadButton(const wchar_t* t) {
+    const int button = fp::padButtonFromText(t);
+    return button < 0 ? badText : button;
+}
 inline int iniHidden(const wchar_t* t) {
     return iniIs(t, L"hide") ? 1 : iniIs(t, L"show") ? 0 : badText;
 }
@@ -795,6 +823,12 @@ inline int iniKnockdownView(const wchar_t* text) {
 }
 inline const wchar_t* iniKnockdownViewText(int mode) {
     return mode ? L"third" : L"first";
+}
+inline int iniThreatMarkers(const wchar_t* text) {
+    return iniIs(text, L"off") ? 0 : iniIs(text, L"combat") ? 1 : iniIs(text, L"always") ? 2 : badText;
+}
+inline const wchar_t* iniThreatMarkersText(int mode) {
+    return mode == 0 ? L"off" : mode == 2 ? L"always" : L"combat";
 }
 inline int iniKickStyle(const wchar_t* text) {
     return iniIs(text, L"animated") ? 1 : iniIs(text, L"classic") ? 0 : badText;
@@ -1234,12 +1268,6 @@ inline const RowInfo& rowInfo(int row) {
         {setting::objectLights, L"Lights per object", RowInfo::number, &ModSettings::objectLights, nullptr,
          L"View", L"LightsPerObject", nullptr, nullptr,
          L"How many lights each object takes. The game uses six; the strongest are kept.", {1,6,1,5}},
-        {setting::levelDetail, L"Level detail", RowInfo::choice, &ModSettings::levelDetail, nullptr,
-         L"View", L"LevelDetail", nullptr, nullptr,
-         L"Fine surface detail on walls, floors and ceilings: within about 3 m stone grain and mortar, wood fibres, "
-         L"rusted metal, dirt and gravel, cracked plaster; out to about 8 m broad weathering and damp. People are "
-         L"left alone. It turns itself down as the frame rate drops below about "
-         L"55 fps and off below about 40, before anything else. Not in VR.", {0,100,5,20}},
         {setting::objectDetail, L"World object detail", RowInfo::choice, &ModSettings::objectDetail, nullptr,
          L"View", L"ObjectDetail", nullptr, nullptr,
          L"The same surface detail on loose items and placed objects within 6 m: weapons on the floor or a rack, "
@@ -1272,6 +1300,11 @@ inline const RowInfo& rowInfo(int row) {
          L"View", L"WoundDebug", nullptr, nullptr,
          L"Highlights all procedural wounds, blade blood, and floor spatters in vibrant neon colors (cyan for cuts and blades, "
          L"magenta for bruises, green for droplets) so they stand out distinctly from vanilla textures. Toggleable with F12."},
+        {setting::textureReplacements, L"Texture replacements", RowInfo::toggle, nullptr,
+         &ModSettings::textureReplacements, L"View", L"TextureReplacements", nullptr, nullptr,
+         L"Uses .dds files from the textures folder beside first-person.ini in place of the game textures of the "
+         L"same name (for example upscaled walls and floors). Off draws only the game's own textures. Takes "
+         L"effect from the next level load."},
         {setting::farRooms, L"Draw far rooms", RowInfo::toggle, nullptr, &ModSettings::farRooms,
          L"View", L"FarRooms", nullptr, nullptr,
          L"The game only draws rooms next to the one you're in, built for its overhead camera. This draws one "
@@ -1306,6 +1339,14 @@ inline const RowInfo& rowInfo(int row) {
          L"Classic plays the game's own kick. Animated plays the same kick (same gates and hit) but moves the "
          L"body like a motion-captured kick, chosen by what you hold: unarmed or one-handed kicks, or two-handed ones. "
          L"Experimental; when this game build cannot be checked for it, the kick stays Classic."},
+        {setting::threatMarkers, L"Threat markers", RowInfo::choice, &ModSettings::threatMarkers, nullptr,
+         L"View", L"ThreatMarkers", iniThreatMarkers, iniThreatMarkersText,
+         L"Small soft arcs round the screen centre point toward anyone fighting you who is off screen or near its "
+         L"edge: alive, within ten metres, with you as their target, and on guard or attacking. A marker brightens "
+         L"while that attacker's swing winds up. Combat only: while you are in combat stance. Needs this game build's "
+         L"combat update, as manual defense does."},
+        {setting::threatOpacity, L"Threat markers: opacity", RowInfo::number, &ModSettings::threatOpacity, nullptr,
+         L"View", L"ThreatOpacity", nullptr, nullptr, nullptr, {10,100,5,18}},
         {setting::parryDirection, L"Parry direction", RowInfo::choice, &ModSettings::parryDirection, nullptr,
          L"FirstPerson", L"ParryDirection", fp::parryDirectionFromText, fp::parryDirectionText,
          L"Needs Defense set to Manual; both views. While you hold right mouse the view stays still and a drag "
@@ -1313,6 +1354,25 @@ inline const RowInfo& rowInfo(int row) {
          L"attacker's swing. Drag: assisted plays the parry you drag to; a small drag leaves it to the game. "
          L"Drag: strict parries only when your drag matches the game's answer to that swing. The pose is "
          L"chosen when the parry starts. Reach, timing and gear still decide if it works."},
+        {setting::padKick, L"Controller: kick", RowInfo::choice, &ModSettings::padKick, nullptr, L"Controller",
+         L"Kick", iniPadButton, fp::padButtonText,
+         L"In combat, an Xbox-style controller button that plays the game's own kick, as the Kick key does. The "
+         L"mod reads the controller itself, so a button your Steam controller layout also uses still does the "
+         L"game's action too. Y and the right-stick click do nothing in combat in the game's own layout."},
+        {setting::padJump, L"Controller: jump", RowInfo::choice, &ModSettings::padJump, nullptr, L"Controller",
+         L"Jump", iniPadButton, fp::padButtonText,
+         L"An Xbox-style controller button that plays the game's own jump, as the Jump key does. The right-stick "
+         L"click does nothing anywhere in the game's own Steam controller layout."},
+        {setting::padGuard, L"Controller: guard", RowInfo::choice, &ModSettings::padGuard, nullptr, L"Controller",
+         L"Guard", iniPadButton, fp::padButtonText,
+         L"Needs Defense set to Manual. Held, it guards as holding right mouse does. With a Parry direction "
+         L"other than Automatic, push the right stick while guarding to pick the parry: up, left, right, "
+         L"down-left or down-right. Unbound by default: every button already does something in the game's "
+         L"own Steam layout, so pick one you do not need in combat."},
+        {setting::padShoulder, L"Controller: swap shoulder", RowInfo::choice, &ModSettings::padShoulder, nullptr,
+         L"Controller", L"SwapShoulder", iniPadButton, fp::padButtonText,
+         L"Third person: an Xbox-style controller button that moves the camera over your other shoulder, as the "
+         L"Swap shoulder key does. Unbound by default."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};
@@ -1378,6 +1438,13 @@ inline void ModSettings::normalize() {
     if (f6Cycle != 1) f6Cycle = 0;
     if (fpKnockdown != 0) fpKnockdown = 1;
     if (kickStyle != 1) kickStyle = 0;
+    // One button, one of the mod's actions: a later duplicate in this order is unbound.
+    int* const pads[] = {&padKick, &padJump, &padGuard, &padShoulder};
+    for (size_t i = 0; i < std::size(pads); ++i) {
+        if (*pads[i] < fp::padNone || *pads[i] >= fp::padButtonCount) *pads[i] = fp::padNone;
+        for (size_t j = 0; j < i; ++j)
+            if (*pads[i] && *pads[i] == *pads[j]) *pads[i] = fp::padNone;
+    }
     const ModSettings defaults;
     for (int r = 0; r < setting::count; ++r) {
         const RowInfo& i = rowInfo(r);
@@ -1387,7 +1454,8 @@ inline void ModSettings::normalize() {
             // An effect strength in percent; the old Subtle and Strong (1 and 2) are 50 and 100.
             int& v = this->*i.value;
             v = v == 1 ? 50 : v == 2 ? 100 : std::clamp(v, 0, 100);
-        } else if (i.kind == RowInfo::choice && (this->*i.value < 0 || this->*i.value > (r == setting::vrTurning ? 3 : 2)))
+        } else if (i.kind == RowInfo::choice && i.fromText != iniPadButton &&
+                   (this->*i.value < 0 || this->*i.value > (r == setting::vrTurning ? 3 : 2)))
             this->*i.value = defaults.*i.value;
     }
     headSteady = headRoll = headPitch = headYaw = headBob = fp::fixedHeadStabilization;
