@@ -21,3 +21,6 @@ Thumbs.db
 /game/
 /reference/
 /.tools/
+
+# Decoded game shaders (tools/extract_game_shaders.py): the game's own, never committed
+game-shaders/

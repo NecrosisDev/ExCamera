@@ -161,13 +161,17 @@ flipped. The blood thread's level lamps (`lampsInView`, branch tig8fi) depend on
     `form+0x264` into chunk 0x4000's payload, a different form offset, not yet tied together); (2) that
     `+0x180` on the held item's scene node is that item id. 0x118F80 passes `[rbx+0x180]` to the lookup, but
     rbx's class is not yet named.
-- **Skin texture unit roles (units 0/1/2 = diffuse/specular/normal), still UNPROVEN.**
-  - The game's shader sources are in Resource.rpk as `shading.flb`; its table lists `shading_f`/`_v`,
-    `shadesss_f`, `shadehar_f`, `shadetrn_f` and others. The bodies are packed or encoded, not plain GLSL.
-  - Dev builds now have `[Dev] ShaderDump=1`, which appends every source the game hands glShaderSource to
-    `shader-dump.glsl` beside first-person.ini. One short session with it shows which sampler each unit feeds,
-    and likely the light uniforms too.
-
+- **Skin texture unit roles: PROVEN, and now checked at every swap.**
+  - The game's shader sources are decoded from its own files (`tools/extract_game_shaders.py`). Resource.rpk ->
+    shading.flb share one pack format. Each body is dword-rotated by the key stream of 0x1FA4D0 (called from
+    0x1FA6F0, seed 0x2BCBE389). The main lit shader `shading_f` samples `DifTex`, `SpcTex`, `NrmTex`, `GlsTex`
+    and so on.
+  - Units: after linking, 0x2010C0 gives the samplers consecutive units in this order, each only if the
+    permutation flags at `renderer+8` have it: DifTex 0x20000, OpcTex 0x480000, EmiTex 0x80000, SpcTex
+    0x40000, NrmTex 0x200000, GlsTex 0x1000000, then DspTex, DrtTex, EnvMap, VoxelGI.
+  - So units 0/1/2 are diffuse/specular/normal exactly when the flags have those three and neither an opacity
+    nor an emissive map. `stoneSkinOriginals` (stone_skin.inl) now checks that on the live flags and leaves
+    any other material to the game's own draw. Wound skins and stone skin go through it.
 - **Headwear reads (e).**
   - **Descriptor: PROVEN.** The native part draw 0x6B8B0 reads `+0x68` as the descriptor:
     - `[+0]` is the element buffer, bound to 0x8893 when nonzero;
@@ -258,6 +262,23 @@ The item factory 0x20FB80 gives each layer of an item part its procedural materi
 `[table + index*9 + 0x8C]`, 12 (TSteelGen) when 0 (0x2103B8-0x2103F0), and the instance is stored at the layer's
 `+0x50` (0x2103FC). **Missing:** the link from a drawn mesh material (`node+0x1D0[i]`) back to its layer and
 procedural ID. That is the next step to bring the four detail rows back with the game's own materials.
+
+## The game's own shading, as decoded (for the reflections and AO work)
+
+- `shading_f`: `layout(std140) uniform Material { MatDif, MatSpc, MatEmi, MatDrt, ... }`. Specular: per light
+  a GGX-style term with roughness from `Gloss = 1 - MatSpc.w * texture(GlsTex).r` (or `1 - MatSpc.w`), plus
+  `speculargi`. It is multiplied by `texture(SpcTex).xyz` and `MatSpc.xyz` with a Fresnel factor `spf`. The
+  opaque path ends `FragColor = diffuse` with `diffuse.w = 1.0`.
+- Lights: `uniform vec4 Light[Lights*3]`, three vec4 per light, matching the renderer's packed `state+0x170`
+  uploaded at 0x200BBD.
+- Indirect light: `ambient` builds `amb` from `texture(VoxelGI, ...)` (`xyz` light, `w` occlusion), scaled by
+  `VXGIScl.w` and `Ambient`, and adds it to `diffuse` before the material colour multiplies in. That is the
+  game's own GI term, where screen-space AO belongs by construction.
+- Plan: (1) reflections take the game's own specular reflectance per pixel (`MatSpc.xyz * SpcTex`, and
+  roughness from `Gloss`), written into the opaque pass's alpha by a rewrite of the expanded `shading_f`, with
+  exact-text guards. (2) AO multiplies `amb` inside the same shader instead of the finished image. Both need
+  the expanded text the game hands to glShaderSource (the dev shader dump) to anchor the rewrite exactly,
+  plus the framebuffer alpha and blend checks.
 
 ## Not yet proven, not gated (for the audit thread)
 
