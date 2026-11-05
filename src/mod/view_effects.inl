@@ -4271,12 +4271,14 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform4f(u.at[uWorldUp], upX, upY, upZ, 0.f);
                 g.uniform1f(u.at[uWoundDebug], bloodDiagnose.load(std::memory_order_relaxed) ? 2.f
                                                : woundDebug.load(std::memory_order_relaxed) ? 1.f : 0.f);
+#if FP_DEV_TOOLS // the render audit is in dev builds only
                 if (renderAuditOn() && (owner->viewFrame % 60) == 0)
                     renderAuditLog("wound pass: box %.3f %.3f %.3f %.3f %s, wounds %u drips %u caps %u falls %u splats %u, layer %d (box %.0f..%.0f, %.0f..%.0f, %.0f..%.0f; centre %d %d; camera %.0f %.0f %.0f), up %.2f %.2f %.2f",
                                    box[0], box[1], box[2], box[3], scissored ? "scissored" : "full", wounds.count, wounds.drips,
                                    wounds.caps, wounds.falls, wounds.splats, bloodLayer ? 1 : 0, r.bloodBox[0], r.bloodBox[3],
                                    r.bloodBox[1], r.bloodBox[4], r.bloodBox[2], r.bloodBox[5], r.bloodMapCentre[0],
                                    r.bloodMapCentre[1], r.bloodMapCamera[0], r.bloodMapCamera[1], r.bloodMapCamera[2], upX, upY, upZ);
+#endif
                 {   // Wet blood's highlights come from the game's own lights.
                     float lamps[2][4]{}, lampColours[2][4]{};
                     lampsInView(request, projection.view, lamps, lampColours);
