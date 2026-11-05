@@ -710,70 +710,17 @@ static void publishStatus(FILE* f) {
     if (ok && closed)
         MoveFileExW(statusTempPath, statusPath, MOVEFILE_REPLACE_EXISTING);
 }
-// Fault notice: the window title is invisible in fullscreen. A topmost,
-// click-through, non-activating banner over the game window states the fault.
-// Owned and pumped by the worker thread only; it never takes focus and hides
-// while another application is in front. Code stays mapped until process exit.
-static HWND noticeWindow;
-static const wchar_t* noticeText = L"";
-static ULONGLONG noticeShownMs = 0, noticeLastTick = 0, noticeStarted = 0;
-static bool noticeVisible = false;
-static constexpr ULONGLONG noticeLifetimeMs = 120000;
-static ULONGLONG noticeVisibleMs = 10000; // Per notice: faults 10 s, F7 hints shorter.
-static std::atomic<unsigned> notices{0};
+// Mod messages. Every message the mod shows the player goes through modMessage, the one place to change
+// when the messages move elsewhere (an ExanimaLua console). They go to the game's own log: the engine log
+// procedure (DAT_1002AB6B0, FUN_100025D80; optional group engineLog, byte-exact), whose level 4 adds the
+// line to the engine's log and shows it on screen for 2 s + 50 ms a character (FUN_1000259A0, drawn every
+// frame by FUN_100025A50). The engine logs from the game thread only, so any thread queues here and the
+// frame hook delivers (deliverModMessages, frame.inl). Without that path (contract missing, the engine not
+// up, the frame hook gone) a message goes to excamera-messages.log beside first-person.ini; there is no window.
 enum class NoticeKind { info, warning, fault };
-static NoticeKind noticeKind = NoticeKind::fault;
-static LRESULT CALLBACK noticeProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
-    if (message == WM_NCHITTEST) return HTTRANSPARENT;
-    if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
-    if (message == WM_PAINT) {
-        PAINTSTRUCT ps;
-        HDC dc = BeginPaint(w, &ps);
-        RECT r;
-        GetClientRect(w, &r);
-        COLORREF fillColour = RGB(120, 18, 18), edgeColour = RGB(235, 200, 120),
-                 textColour = RGB(255, 246, 230);
-        if (noticeKind == NoticeKind::info) {
-            fillColour = RGB(16, 55, 82);
-            edgeColour = RGB(120, 190, 235);
-            textColour = RGB(240, 248, 255);
-        } else if (noticeKind == NoticeKind::warning) {
-            fillColour = RGB(84, 58, 10);
-            edgeColour = RGB(245, 200, 100);
-            textColour = RGB(255, 248, 232);
-        }
-        HBRUSH fill = CreateSolidBrush(fillColour);
-        FillRect(dc, &r, fill);
-        DeleteObject(fill);
-        HBRUSH edge = CreateSolidBrush(edgeColour);
-        FrameRect(dc, &r, edge);
-        DeleteObject(edge);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, textColour);
-        RECT text = r;
-        InflateRect(&text, -r.bottom / 4, -r.bottom / 10);
-        // One line when it fits, otherwise wrapped in a smaller font, centred either way.
-        for (int height = r.bottom * 9 / 20;; height = height * 3 / 4) {
-            HFONT font = CreateFontW(-height, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0,
-                                     L"Segoe UI");
-            HGDIOBJ old = SelectObject(dc, font);
-            RECT need = text;
-            DrawTextW(dc, noticeText, -1, &need, DT_CENTER | DT_WORDBREAK | DT_CALCRECT);
-            const bool fits = need.bottom - need.top <= text.bottom - text.top || height <= r.bottom / 5;
-            if (fits) {
-                RECT at = text;
-                at.top += (text.bottom - text.top - (need.bottom - need.top)) / 2;
-                DrawTextW(dc, noticeText, -1, &at, DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
-            }
-            SelectObject(dc, old);
-            DeleteObject(font);
-            if (fits) break;
-        }
-        EndPaint(w, &ps);
-        return 0;
-    }
-    return DefWindowProcW(w, message, wp, lp);
-}
+static std::atomic<unsigned> notices{0};
+static std::atomic<bool> engineLogAdmitted{false};
+static std::atomic<unsigned> modMessagesShown{0}, modMessagesLogged{0};
 static BOOL CALLBACK findWindow(HWND w, LPARAM out);
 [[maybe_unused]] static bool controlsNoticeSeen() {
     return !settingsPath[0] || GetPrivateProfileIntW(L"Launcher", L"ControlsSeen", 0, settingsPath) != 0;
@@ -781,82 +728,132 @@ static BOOL CALLBACK findWindow(HWND w, LPARAM out);
 [[maybe_unused]] static void markControlsNoticeSeen() {
     if (settingsPath[0]) WritePrivateProfileStringW(L"Launcher", L"ControlsSeen", L"1", settingsPath);
 }
-static bool showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000,
-                       NoticeKind kind = NoticeKind::fault) {
-    if (noticeWindow) {
-        DestroyWindow(noticeWindow);
-        noticeWindow = nullptr;
-        noticeVisible = false;
+// The engine's AnsiStrings: an FPC constant (reference count -1, never freed or written by the RTL) in
+// our memory; the engine copies the text before it returns.
+struct EngineText {
+    uint16_t codePage = 0, elementSize = 1;
+    uint32_t pad = 0;
+    int64_t references = -1, length = 0;
+    char text[512]{};
+};
+constexpr unsigned modMessageQueue = 8;
+struct ModMessage { NoticeKind kind; ULONGLONG at; char text[512]; };
+static SRWLOCK modMessageLock = SRWLOCK_INIT;
+static ModMessage modMessages[modMessageQueue];
+static unsigned modMessageHead = 0;
+static std::atomic<unsigned> modMessageCount{0};
+// Beside first-person.ini (Documents\ExCamera, or a portable test copy's own folder).
+static std::wstring settingsFolderFile(const wchar_t* name) {
+    std::wstring folder;
+    if (settingsPath[0]) {
+        folder = settingsPath;
+        folder.resize(folder.find_last_of(L"\\/") + 1);
+    } else {
+        const std::wstring documents = userDocumentsDir();
+        if (documents.empty()) return {};
+        folder = documents + L"\\ExCamera\\";
+        SHCreateDirectoryExW(nullptr, folder.c_str(), nullptr);
     }
-    // An early activation fault can precede the first window enumeration.
-    HWND window = hookedWindow.load(std::memory_order_acquire);
-    if (!window || !IsWindow(window)) {
-        window = nullptr;
-        EnumWindows(findWindow, reinterpret_cast<LPARAM>(&window));
-        hookedWindow.store(window, std::memory_order_release);
+    return folder + name;
+}
+static void modMessageToFile(NoticeKind kind, const char* text) {
+    static wchar_t kept[MAX_PATH]{}; // once the settings file is known; until then Documents\ExCamera
+    wchar_t early[MAX_PATH]{};
+    const wchar_t* path = kept;
+    if (!kept[0]) {
+        const std::wstring found = settingsFolderFile(L"excamera-messages.log");
+        if (found.empty() || found.size() >= MAX_PATH) return;
+        wcscpy_s(settingsPath[0] ? kept : early, found.c_str());
+        if (!settingsPath[0]) path = early;
     }
-    if (!window) return false;
-    static ATOM cls = 0;
-    if (!cls) {
-        WNDCLASSW wc{};
-        wc.lpfnWndProc = noticeProc;
-        wc.hInstance = module;
-        wc.lpszClassName = L"ExCameraNotice";
-        wc.hCursor = nullptr;
-        cls = RegisterClassW(&wc);
-        if (!cls) return false;
-    }
-    RECT g;
-    if (!GetWindowRect(window, &g)) return false;
-    const int gw = g.right - g.left, gh = g.bottom - g.top;
-    if (gw < 200 || gh < 100) return false;
-    const int width = gw * 4 / 5 < 1200 ? gw * 4 / 5 : 1200;
-    unsigned lines = 1;
-    for (const wchar_t* c = text; *c; ++c)
-        if (*c == L'\n' && ++lines == 3) break;
-    const int baseHeight = gh / 14 < 40 ? 40 : gh / 14;
-    const int height = baseHeight * int(lines);
-    noticeKind = kind;
-    noticeText = text;
-    noticeVisibleMs = visibleMs;
-    noticeWindow = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
-                                       WS_EX_TOOLWINDOW,
-                                   L"ExCameraNotice", text, WS_POPUP, g.left + (gw - width) / 2,
-                                   g.top + gh / 9, width, height, nullptr, nullptr, module, nullptr);
-    if (!noticeWindow) return false;
-    SetLayeredWindowAttributes(noticeWindow, 0, 235, LWA_ALPHA);
-    noticeVisible = false;
-    noticeShownMs = 0;
-    noticeStarted = noticeLastTick = GetTickCount64();
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char line[640];
+    snprintf(line, sizeof line, "%04u-%02u-%02u %02u:%02u:%02u %s %s\r\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+             t.wSecond, kind == NoticeKind::fault ? "FAULT" : kind == NoticeKind::warning ? "warning" : "info", text);
+    const HANDLE file = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(file, line, DWORD(strlen(line)), &written, nullptr);
+    CloseHandle(file);
+    modMessagesLogged.fetch_add(1, std::memory_order_relaxed);
+}
+// Any thread. Faults also go to the file: the hooks that would deliver them may be on their way out.
+static bool modMessage(NoticeKind kind, const wchar_t* text) {
+    char ascii[512];
+    fp::engineAscii(text, ascii, sizeof ascii);
     ++notices;
+    const bool native = engineLogAdmitted.load(std::memory_order_acquire);
+    if (kind == NoticeKind::fault || !native) modMessageToFile(kind, ascii);
+    if (!native) return false;
+    AcquireSRWLockExclusive(&modMessageLock);
+    if (modMessageCount.load(std::memory_order_relaxed) == modMessageQueue) { // the oldest goes to the file instead
+        modMessageToFile(modMessages[modMessageHead].kind, modMessages[modMessageHead].text);
+        modMessageHead = (modMessageHead + 1) % modMessageQueue;
+        modMessageCount.fetch_sub(1, std::memory_order_relaxed);
+    }
+    ModMessage& m = modMessages[(modMessageHead + modMessageCount.load(std::memory_order_relaxed)) % modMessageQueue];
+    m.kind = kind;
+    m.at = GetTickCount64();
+    strcpy_s(m.text, ascii);
+    modMessageCount.fetch_add(1, std::memory_order_release);
+    ReleaseSRWLockExclusive(&modMessageLock);
     return true;
 }
-// Returns false once the notice is gone. Visible time counts only while the
-// game is frontmost, so a fault during alt-tab is still seen on return.
+// The engine's log procedure, when it is the reviewed one (it is installed once the engine is up).
+using EngineLog = void (*)(int level, const char* source, const char* text);
+static EngineLog engineLogProcedure() {
+    if (!engineLogAdmitted.load(std::memory_order_acquire)) return nullptr;
+    const uintptr_t slot = optionalGameAt(fp::sig::engineLogger), procedure = optionalGameAt(fp::sig::engineLog);
+    if (!slot || !procedure || *(const uintptr_t*)slot != procedure) return nullptr;
+    return reinterpret_cast<EngineLog>(procedure);
+}
+// The game thread (the frame hook), outside every mod lock: hands the queue to the engine.
+static void deliverModMessages() {
+    if (!modMessageCount.load(std::memory_order_acquire)) return;
+    const EngineLog log = engineLogProcedure();
+    if (!log) return;
+    static EngineText source, line;
+    if (!source.length) {
+        strcpy_s(source.text, "ExCamera");
+        source.length = int64_t(strlen(source.text));
+    }
+    for (;;) {
+        ModMessage m;
+        AcquireSRWLockExclusive(&modMessageLock);
+        const bool any = modMessageCount.load(std::memory_order_relaxed) != 0;
+        if (any) {
+            m = modMessages[modMessageHead];
+            modMessageHead = (modMessageHead + 1) % modMessageQueue;
+            modMessageCount.fetch_sub(1, std::memory_order_relaxed);
+        }
+        ReleaseSRWLockExclusive(&modMessageLock);
+        if (!any) return;
+        strcpy_s(line.text, m.text);
+        line.length = int64_t(strlen(line.text));
+        __try {
+            log(4, source.text, line.text);
+            modMessagesShown.fetch_add(1, std::memory_order_relaxed);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            engineLogAdmitted.store(false, std::memory_order_release); // the file from now on
+            modMessageToFile(m.kind, m.text);
+            return;
+        }
+    }
+}
+// The worker: a message the game thread has not taken within five seconds (the frame hook is gone: the mod
+// stopped, or the game is not drawing) goes to the file. False: nothing is waiting.
 static bool pumpNotice() {
-    if (!noticeWindow) return false;
-    const ULONGLONG now = GetTickCount64();
-    if (noticeVisible) noticeShownMs += now - noticeLastTick;
-    noticeLastTick = now;
-    const HWND window = hookedWindow.load(std::memory_order_acquire);
-    const bool front = window && GetForegroundWindow() == window && !IsIconic(window);
-    if (noticeShownMs >= noticeVisibleMs || now - noticeStarted >= noticeLifetimeMs ||
-        !IsWindow(window)) {
-        DestroyWindow(noticeWindow);
-        noticeWindow = nullptr;
-        noticeVisible = false;
-    } else if (front != noticeVisible) {
-        ShowWindow(noticeWindow, front ? SW_SHOWNOACTIVATE : SW_HIDE);
-        noticeVisible = front;
-        if (front)
-            SetWindowPos(noticeWindow, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    AcquireSRWLockExclusive(&modMessageLock);
+    while (modMessageCount.load(std::memory_order_relaxed) && GetTickCount64() - modMessages[modMessageHead].at > 5000) {
+        modMessageToFile(modMessages[modMessageHead].kind, modMessages[modMessageHead].text);
+        modMessageHead = (modMessageHead + 1) % modMessageQueue;
+        modMessageCount.fetch_sub(1, std::memory_order_relaxed);
     }
-    MSG m;
-    while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
-        TranslateMessage(&m);
-        DispatchMessageW(&m);
-    }
-    return noticeWindow != nullptr;
+    const bool waiting = modMessageCount.load(std::memory_order_relaxed) != 0;
+    ReleaseSRWLockExclusive(&modMessageLock);
+    return waiting;
 }
 // The fault's specifics (which target, which hook) for first-person-status.json; empty when there are none.
 static char faultDetail[512]{};
@@ -899,7 +896,7 @@ static void reportFault(const char* reason, const char* hooks = "unknown",
         SendMessageTimeoutW(window, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(message), SMTO_ABORTIFHUNG | SMTO_BLOCK, 200,
                             &ignored);
     }
-    showNotice(notice ? notice : message + fp::faultTitlePrefix);
+    modMessage(NoticeKind::fault, notice ? notice : message + fp::faultTitlePrefix);
 }
 static std::atomic<unsigned> controlCalls{0}, pointCalls{0}, relaxedSteps{0};
 static volatile LONG navThread = 0, swapThread = 0;

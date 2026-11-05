@@ -255,9 +255,23 @@ void main() {
     if (raw >= skyDepth) return;
     vec3 p = viewPosition(uv, raw);
     vec3 n = viewNormal(uv, p);
-    // Floors, steps and tabletops only. A slope test, not a material mask.
+    // Floors, steps and tabletops only: the slope test.
     float surface = smoothstep(0.7, 0.92, dot(n, worldUp.xyz));
     if (surface <= 0.0) return;
+    // And by what the floor is, told from its colour as the level detail tells it (finishShader
+    // levelSurface): no buffer of the game's specular maps exists at this point, and a slope alone made
+    // every floor a mirror (bare wood and packed earth reflect almost nothing; dressed stone a little;
+    // metal plates most).
+    vec3 own = toLight(texture2D(sceneTex, uv).rgb);
+    float ownHi = max(own.r, max(own.g, own.b));
+    float ownSaturation = ownHi > 1e-4 ? (ownHi - min(own.r, min(own.g, own.b))) / ownHi : 0.0;
+    float ownStored = dot(toStored(own), vec3(0.2126, 0.7152, 0.0722));
+    bool warm = own.r > own.b * 1.2 && own.g > own.r * 0.45;
+    float reflectivity = warm && ownSaturation > 0.15 ? 0.12                                   // wood, earth
+                       : ownSaturation < 0.12 && own.b >= own.r * 0.95 && ownStored < 0.3 ? 1.0 // metal
+                       : ownSaturation < 0.12 && ownStored > 0.45 ? 0.2                         // plaster
+                       : 0.4;                                                                    // stone
+    surface *= reflectivity;
     vec3 toEye = normalize(-p);
     vec3 ray = reflect(-toEye, n);
     vec3 origin = p + n;
@@ -1088,7 +1102,7 @@ vec3 levelSurface(vec3 color) {
         // mortar, sandy and set back.
         vec3 around = 0.5 * (toLight(texture2D(sceneTex, uv + vec2(4.0 * texel.x, 0.0)).rgb) +
                              toLight(texture2D(sceneTex, uv + vec2(0.0, 4.0 * texel.y)).rgb));
-        float joint = smoothstep(0.82, 0.6, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
+        float joint = 1.0 - smoothstep(0.6, 0.82, luma / max(dot(around, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
         float pit = smoothstep(0.82, 0.94, grain.b) * 0.25;
         h = (grain.r - 0.5) * 0.2 - pit * 0.3 * (1.0 - joint) - 0.3 * joint;
         albedo = mix((0.96 + 0.08 * grain.g) * (1.0 - 0.12 * pit), 0.92 + 0.12 * grain.a, joint);
@@ -2625,6 +2639,211 @@ static bool prepareOffscreenTargets(gl::Api& g, fp::CueResources& r, const ViewR
     return true;
 }
 
+// Grows a screen box (uv) by the projection of a sphere (view-space centre, radius cm). The cube around
+// the sphere is projected corner by corner: centre +- radius scaled by the centre's depth alone
+// underestimates a sphere away from the middle of the view, which clipped blood near the screen edges
+// (it faded or cut off as the camera turned). False (box made full-screen) when it reaches the camera.
+static bool growScreenBox(const ViewEffectProjectionSnapshot& projection, const float* c, float reach, float* box) {
+    for (int corner = 0; corner < 8; ++corner) {
+        const float x = c[0] + (corner & 1 ? reach : -reach), y = c[1] + (corner & 2 ? reach : -reach);
+        const float depth = -(c[2] + (corner & 4 ? reach : -reach));
+        if (!(depth > 1.f)) {
+            box[0] = box[1] = 0.f;
+            box[2] = box[3] = 1.f;
+            return false;
+        }
+        const float sx = (projection.p0 * x / depth - projection.p8) * 0.5f + 0.5f;
+        const float sy = (projection.p5 * y / depth - projection.p9) * 0.5f + 0.5f;
+        box[0] = (std::min)(box[0], sx); box[1] = (std::min)(box[1], sy);
+        box[2] = (std::max)(box[2], sx); box[3] = (std::max)(box[3], sy);
+    }
+    return true;
+}
+
+// Render audit (--dev builds; [Dev] RenderAudit=1 in first-person.ini, read every two seconds).
+// Around each mod pass it compares the GL state and the game's texture-unit cache (0x6FC30: active
+// unit DAT_10049B5F0, 16 entries of object/target at DAT_10049B600) before and after, checks that the
+// cache agrees with GL (a disagreement makes the game skip a bind and draw with another texture), and
+// that the effect inputs are our own copies at the view's size. Findings go to
+// render-audit.log beside first-person.ini and the counts to the status file's render_audit.
+static std::atomic<unsigned> renderAuditAnomalies{0}, renderAuditCacheDesyncs{0}, renderAuditInputMismatches{0},
+    renderAuditStateLeaks{0}, renderAuditPasses{0};
+static std::atomic<bool> renderAuditActive{false};
+#if FP_DEV_TOOLS
+#define FP_RENDER_AUDIT 1
+constexpr unsigned renderAuditUnits = 16, renderAuditLineLimit = 4000;
+static unsigned renderAuditLines = 0;
+static ULONGLONG renderAuditReadAt = 0;
+static bool renderAuditOn() { // render thread
+    const ULONGLONG now = GetTickCount64();
+    if (now - renderAuditReadAt > 2000) {
+        renderAuditReadAt = now;
+        renderAuditActive.store(settingsPath[0] && GetPrivateProfileIntW(L"Dev", L"RenderAudit", 0, settingsPath) != 0,
+                                std::memory_order_relaxed);
+    }
+    return renderAuditActive.load(std::memory_order_relaxed);
+}
+static void renderAuditLog(const char* format, ...) {
+    if (renderAuditLines >= renderAuditLineLimit) return;
+    static std::wstring path;
+    if (path.empty()) path = settingsFolderFile(L"render-audit.log"); // beside first-person.ini
+    if (path.empty()) return;
+    char line[512];
+    const int head = snprintf(line, sizeof line, "%llu swap %ld: ", GetTickCount64(), InterlockedCompareExchange(&swapCalls, 0, 0));
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line + head, sizeof line - size_t(head) - 2, format, args);
+    va_end(args);
+    strcat_s(line, "\r\n");
+    const HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(file, line, DWORD(strlen(line)), &written, nullptr);
+    CloseHandle(file);
+    ++renderAuditLines;
+}
+struct RenderAuditState {
+    GLint active = 0, program = 0, drawFbo = 0, readFbo = 0, viewport[4]{}, scissorBox[4]{}, depthFunc = 0;
+    GLint texture2D[renderAuditUnits]{};
+    GLboolean scissor = 0, depthTest = 0, depthMask = 0, blend = 0, colorMask[4]{};
+    GLint blendFunc[6]{};
+    int cacheActive = -1;
+    unsigned char cache[renderAuditUnits * 16]{};
+    bool cacheRead = false;
+};
+static void renderAuditCapture(gl::Api& g, RenderAuditState& s) {
+    drainGl();
+    glGetIntegerv(glc::activeTexture, &s.active);
+    glGetIntegerv(glc::currentProgram, &s.program);
+    glGetIntegerv(glc::drawFramebufferBinding, &s.drawFbo);
+    glGetIntegerv(glc::readFramebufferBinding, &s.readFbo);
+    glGetIntegerv(GL_VIEWPORT, s.viewport);
+    glGetIntegerv(glc::scissorBox, s.scissorBox);
+    glGetIntegerv(glc::depthFunc, &s.depthFunc);
+    s.scissor = glIsEnabled(GL_SCISSOR_TEST);
+    s.depthTest = glIsEnabled(GL_DEPTH_TEST);
+    s.blend = glIsEnabled(GL_BLEND);
+    {
+        const GLenum queries[6] = {glc::blendSrcRgb, glc::blendDstRgb, glc::blendSrcAlpha, glc::blendDstAlpha,
+                                   glc::blendEquationRgb, glc::blendEquationAlpha};
+        for (int i = 0; i < 6; ++i) glGetIntegerv(queries[i], &s.blendFunc[i]);
+    }
+    glGetBooleanv(glc::depthWritemask, &s.depthMask);
+    glGetBooleanv(GL_COLOR_WRITEMASK, s.colorMask);
+    for (unsigned u = 0; u < renderAuditUnits; ++u) {
+        g.activeTexture(glc::texture0 + u);
+        glGetIntegerv(glc::textureBinding2D, &s.texture2D[u]);
+    }
+    g.activeTexture(GLenum(s.active));
+    const uintptr_t unitAt = optionalGameAt(fp::sig::textureUnitActive), cache = optionalGameAt(fp::sig::textureUnitCache);
+    s.cacheRead = unitAt && cache;
+    if (s.cacheRead) {
+        s.cacheActive = *(const int*)unitAt;
+        memcpy(s.cache, (const void*)cache, sizeof s.cache);
+    }
+    drainGl();
+}
+// The game's cache against GL: each 2D entry's object must be the texture GL has on that unit.
+static unsigned renderAuditCacheCheck(const RenderAuditState& s, const char* where) {
+    if (!s.cacheRead) return 0;
+    unsigned desyncs = 0;
+    if (s.cacheActive >= 0 && GLint(glc::texture0 + s.cacheActive) != s.active) {
+        renderAuditLog("%s: game active unit %d, GL active unit %d", where, s.cacheActive, s.active - GLint(glc::texture0));
+        ++desyncs;
+    }
+    for (unsigned u = 0; u < renderAuditUnits; ++u) {
+        const uintptr_t object = *(const uintptr_t*)(s.cache + u * 16);
+        const unsigned target = *(const unsigned*)(s.cache + u * 16 + 8);
+        if (!object || target != GL_TEXTURE_2D || !readable(object, field::texture::glName + 4)) continue;
+        const GLuint name = *(const GLuint*)(object + field::texture::glName);
+        if (name && GLint(name) != s.texture2D[u]) { // name 0: the game released it; its next bind rebinds
+            renderAuditLog("%s: unit %u game cache texture %u (object %p), GL has %d", where, u, name, (void*)object,
+                           s.texture2D[u]);
+            ++desyncs;
+        }
+    }
+    if (desyncs) renderAuditCacheDesyncs.fetch_add(desyncs, std::memory_order_relaxed);
+    return desyncs;
+}
+// Begin: the state the pass must leave; end: what it did leave.
+static bool renderAuditBegin(gl::Api& g, RenderAuditState& before, const char* pass) {
+    if (!g.activeTexture || !renderAuditOn()) return false;
+    renderAuditCapture(g, before);
+    char where[96];
+    snprintf(where, sizeof where, "before %s", pass);
+    renderAuditCacheCheck(before, where);
+    return true;
+}
+static void renderAuditEnd(gl::Api& g, const RenderAuditState& before, const char* pass) {
+    RenderAuditState after;
+    renderAuditCapture(g, after);
+    renderAuditPasses.fetch_add(1, std::memory_order_relaxed);
+    unsigned leaks = 0;
+    auto differs = [&](const char* what, long long was, long long now) {
+        if (was == now) return;
+        renderAuditLog("%s left %s %lld (was %lld)", pass, what, now, was);
+        ++leaks;
+    };
+    differs("active unit", before.active, after.active);
+    differs("program", before.program, after.program);
+    differs("draw framebuffer", before.drawFbo, after.drawFbo);
+    differs("read framebuffer", before.readFbo, after.readFbo);
+    for (int i = 0; i < 4; ++i) differs("viewport", before.viewport[i], after.viewport[i]);
+    for (int i = 0; i < 4; ++i) differs("scissor box", before.scissorBox[i], after.scissorBox[i]);
+    differs("scissor test", before.scissor, after.scissor);
+    differs("depth test", before.depthTest, after.depthTest);
+    differs("depth mask", before.depthMask, after.depthMask);
+    differs("depth func", before.depthFunc, after.depthFunc);
+    differs("blend", before.blend, after.blend);
+    for (int i = 0; i < 6; ++i) differs("blend function/equation", before.blendFunc[i], after.blendFunc[i]);
+    for (int i = 0; i < 4; ++i) differs("colour mask", before.colorMask[i], after.colorMask[i]);
+    for (unsigned u = 0; u < renderAuditUnits; ++u) {
+        if (before.texture2D[u] == after.texture2D[u]) continue;
+        renderAuditLog("%s left unit %u texture %d (was %d)", pass, u, after.texture2D[u], before.texture2D[u]);
+        ++leaks;
+    }
+    if (before.cacheRead && after.cacheRead &&
+        (before.cacheActive != after.cacheActive || memcmp(before.cache, after.cache, sizeof before.cache))) {
+        renderAuditLog("%s changed the game's texture-unit cache", pass);
+        ++leaks;
+    }
+    if (leaks) renderAuditStateLeaks.fetch_add(leaks, std::memory_order_relaxed);
+    char where[96];
+    snprintf(where, sizeof where, "after %s", pass);
+    const unsigned desyncs = renderAuditCacheCheck(after, where);
+    if (leaks || desyncs) renderAuditAnomalies.fetch_add(1, std::memory_order_relaxed);
+}
+// Each effect input must be our own texture at the view's size.
+static void auditViewInputs(gl::Api& g, fp::CueResources& r, const char* stage, const GLint* viewport) {
+    if (!renderAuditActive.load(std::memory_order_relaxed)) return;
+    const GLuint expected[2] = {r.viewColor, r.viewDepth};
+    GLint activeUnit = 0;
+    glGetIntegerv(glc::activeTexture, &activeUnit);
+    for (unsigned u = 0; u < 2; ++u) {
+        GLint bound = 0, width = 0, height = 0;
+        g.activeTexture(glc::texture0 + u);
+        glGetIntegerv(glc::textureBinding2D, &bound);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+        if (GLuint(bound) != expected[u] || !glIsTexture(GLuint(bound)) || width != viewport[2] || height != viewport[3]) {
+            renderAuditLog("%s: unit %u holds %d (%dx%d), expected %u (%dx%d)", stage, u, bound, width, height, expected[u],
+                           viewport[2], viewport[3]);
+            renderAuditInputMismatches.fetch_add(1, std::memory_order_relaxed);
+            renderAuditAnomalies.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    g.activeTexture(GLenum(activeUnit));
+    drainGl();
+}
+#else
+#define FP_RENDER_AUDIT 0
+struct RenderAuditState {};
+static bool renderAuditBegin(gl::Api&, RenderAuditState&, const char*) { return false; }
+static void renderAuditEnd(gl::Api&, const RenderAuditState&, const char*) {}
+static void auditViewInputs(gl::Api&, fp::CueResources&, const char*, const GLint*) {}
+#endif
+
 // cueLock held. Unsupported routing or matrices skip this frame only.
 static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
     ViewEffectProjectionSnapshot projection;
@@ -3086,6 +3305,19 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                                (r.halfWidth != viewport[2] || r.halfHeight != viewport[3]);
         // The composite reads each effect's blend when it has one, else this frame's result.
         GLuint results[2] = {r.halfTex[0], r.halfTex[1]};
+        // The occlusion, reflection and blend passes read the scene copy on unit 0 and the depth copy on
+        // unit 1 and bind neither themselves. The window copy above is a framebuffer blit, which binds no
+        // texture, so those units would still hold what the game's last draw bound through its unit cache
+        // (0x6FC30): a character's hair or skin maps, read as depth (a hair-atlas flash, black speckles).
+        g.activeTexture(glc::texture0);
+        g.bindTexture(GL_TEXTURE_2D, r.viewColor);
+        g.activeTexture(glc::texture1);
+        g.bindTexture(GL_TEXTURE_2D, r.viewDepth);
+        auditViewInputs(g, r, "occlusion/reflection inputs", viewport);
+        // The silhouette mask only when it was drawn for this view at this size (as the finish pass asks).
+        const bool resolveMask = r.silhouetteMask && (request.silhouette || request.heldSlots) &&
+            (request.offscreen ? r.silhouetteWidth == r.offscreenSceneWidth && r.silhouetteHeight == r.offscreenSceneHeight
+                               : r.silhouetteWidth == viewport[2] && r.silhouetteHeight == viewport[3]);
         if (aoMode || ssrMode) {
             setViewport(g, 0, 0, r.halfWidth, r.halfHeight);
             const float offset = temporal ? 5.588238f * float(frameIndex % 64) : 0.f;
@@ -3108,7 +3340,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform1i(u.at[uTaps], int(std::lround(temporal ? std::clamp(4.f + 2.f * aoMode, 4.f, 6.f)
                                                                     : std::clamp(4.f + 6.f * aoMode, 4.f, 10.f))));
                 g.uniform1f(u.at[uBounceOn], bounce ? 1.f : 0.f);
-                g.uniform1i(u.at[uDistanceHalf], 4);
+                g.uniform1i(u.at[uDistanceHalf], distances ? 4 : 1); // never a unit left with a game texture
                 g.uniform1f(u.at[uDistanceHalfOn], distances ? 1.f : 0.f);
                 g.uniform2f(u.at[uHalfSize], float(r.halfWidth), float(r.halfHeight));
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -3124,7 +3356,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform1i(u.at[uTaps], int(std::lround(temporal ? std::clamp(6.f + 4.f * ssrMode, 6.f, 10.f)
                                                                     : std::clamp(6.f + 12.f * ssrMode, 6.f, 18.f))));
                 g.uniform4f(u.at[uWorldUp], frame.worldUp[0], frame.worldUp[1], frame.worldUp[2], 0.f);
-                g.uniform1i(u.at[uDistanceHalf], 4);
+                g.uniform1i(u.at[uDistanceHalf], distances ? 4 : 1);
                 g.uniform1f(u.at[uDistanceHalfOn], distances ? 1.f : 0.f);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             }
@@ -3142,7 +3374,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniformMatrix4fv(u.at[uToPrevious], 1, 0, toPrevious);
                 g.uniform4f(u.at[uPreviousProjection], owner->previousProjection[0], owner->previousProjection[1],
                             owner->previousProjection[2], owner->previousProjection[3]);
-                if (r.silhouetteMask) {
+                if (resolveMask) {
                     g.activeTexture(glc::texture0 + 5);
                     g.bindTexture(GL_TEXTURE_2D, r.silhouetteMask);
                     g.uniform1i(u.at[uSilhouette], 5);
@@ -3251,41 +3483,24 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             float box[4] = {1.f, 1.f, 0.f, 0.f};
             for (unsigned k = 0; k < wounds.count; ++k) {
                 const float* c = wounds.a[k];
-                const float reach = c[3] + wounds.c[k][3] + 6.f, depth = -c[2];
-                if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
-                const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
-                const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
-                const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
-                const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
-                box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
-                box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
+                const float reach = c[3] + wounds.c[k][3] + 6.f;
+                if (!growScreenBox(projection, c, reach, box)) break;
             }
             // Each cap's disc.
             for (unsigned k = 0; k < wounds.caps && box[2] - box[0] < 1.f; ++k) {
                 const float* c = wounds.capA[k];
-                const float reach = c[3] * 1.5f, depth = -c[2];
-                if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
-                const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
-                const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
-                const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
-                const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
-                box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
-                box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
+                const float reach = c[3] * 1.5f;
+                if (!growScreenBox(projection, c, reach, box)) break;
             }
-            // Each drop's reach: from 20 to 200 cm below where it fell, three radii across.
+            // Each drop's reach, about a point 110 cm below where it fell: the shader paints floors 15 to 220 cm
+            // below it and walls from 120 cm below to 20 cm above it (130 cm from that point), 2.5 radii across.
             for (unsigned k = 0; k < wounds.drips && box[2] - box[0] < 1.f; ++k) {
                 const float* d = wounds.d[k];
                 const float radius = d[3] - 10.f * std::floor(d[3] / 10.f);
                 const float c[3] = {d[0] - upX * 110.f, d[1] - upY * 110.f,
                                     d[2] - upZ * 110.f};
-                const float reach = 90.f + radius * 3.f, depth = -c[2];
-                if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
-                const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
-                const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
-                const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
-                const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
-                box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
-                box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
+                const float reach = 130.f + radius * 3.f;
+                if (!growScreenBox(projection, c, reach, box)) break;
             }
             box[0] = std::clamp(box[0], 0.f, 1.f); box[1] = std::clamp(box[1], 0.f, 1.f);
             box[2] = std::clamp(box[2], 0.f, 1.f); box[3] = std::clamp(box[3], 0.f, 1.f);
@@ -3357,14 +3572,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 const float plume = b[3] < 0.5f && fires.smoke > 0.5f ? 3.2f : 1.f + 0.6f * fires.c[k][2] * fires.smoke;
                 const float top = height * plume, reach = top * 0.5f + a[3] * (1.f + 0.9f * (plume - 1.f));
                 const float c[3] = {a[0] + b[0] / height * top * 0.5f, a[1] + b[1] / height * top * 0.5f, a[2] + b[2] / height * top * 0.5f};
-                const float depth = -c[2];
-                if (!(depth - reach > 1.f)) { box[0] = box[1] = 0.f; box[2] = box[3] = 1.f; break; }
-                const float sx = (projection.p0 * c[0] / depth - projection.p8) * 0.5f + 0.5f;
-                const float sy = (projection.p5 * c[1] / depth - projection.p9) * 0.5f + 0.5f;
-                const float rx = std::abs(projection.p0) * reach / (depth - reach) * 0.5f;
-                const float ry = std::abs(projection.p5) * reach / (depth - reach) * 0.5f;
-                box[0] = (std::min)(box[0], sx - rx); box[1] = (std::min)(box[1], sy - ry);
-                box[2] = (std::max)(box[2], sx + rx); box[3] = (std::max)(box[3], sy + ry);
+                if (!growScreenBox(projection, c, reach, box)) break;
             }
             box[0] = std::clamp(box[0], 0.f, 1.f); box[1] = std::clamp(box[1], 0.f, 1.f);
             box[2] = std::clamp(box[2], 0.f, 1.f); box[3] = std::clamp(box[3], 0.f, 1.f);
@@ -3702,8 +3910,9 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
 // native material bind (0x73F20), the native per-node submit (material +80,
 // 0x201630) and the native part draw (part +90, 0x6B8B0), into a framebuffer of
 // our own whose depth is a copy of the scene's, with depth GREATER and blending
-// that writes 0 whatever the shader outputs. Every GL change the native calls make
-// goes through the game's own state caches; our changes are restored raw.
+// that writes 0 whatever the shader outputs. The native calls change GL through the
+// game's own state caches; where the replay restores GL raw (texture units, the active
+// unit) it restores those caches with it, so the two never disagree afterwards.
 // The main view's world pass, plain or Supersample (one camera pass per jittered sample);
 // not the multi-view pass (sampleLast above 0), whose batch never submits singly.
 // The same replay also draws the player's held items (weapons, a shield, a carried
@@ -4344,6 +4553,18 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
 
     // Everything changed below without the game's caches, read first.
     const uintptr_t priorMaterial = *(const uintptr_t*)gameAt(fp::sig::currentMaterial);
+    // The native material bind (0x73F20) binds units 0-4 through the game's texture-unit cache (0x6FC30:
+    // the active unit at DAT_10049B5F0, 16 entries of object and GL target at DAT_10049B600, a bind
+    // skipped when the entry already holds the object). The raw restore below puts GL back, so the cache
+    // must go back with it: left holding the replayed materials, the game skips its next bind of one of
+    // them, and with the active unit out of step its next bind lands on another unit.
+    const uintptr_t unitActiveAt = optionalGameAt(fp::sig::textureUnitActive);
+    const uintptr_t unitCacheAt = optionalGameAt(fp::sig::textureUnitCache);
+    if (!unitActiveAt || !unitCacheAt) return false;
+    constexpr unsigned cachedUnits = 16;
+    const int priorUnit = *(const int*)unitActiveAt;
+    unsigned char priorCache[cachedUnits * 16];
+    memcpy(priorCache, (const void*)unitCacheAt, sizeof priorCache);
     GLint priorProgram = 0, priorActiveTexture = 0, priorVao = 0, priorArrayBuffer = 0, priorElementBuffer = 0;
     glGetIntegerv(glc::currentProgram, &priorProgram);
     glGetIntegerv(glc::activeTexture, &priorActiveTexture);
@@ -4378,6 +4599,12 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
         for (unsigned i = 0; i < 6; ++i) glGetIntegerv(blendQueries[i], &values[i]);
     };
     readBlend(blending, blend);
+    // What the finally restores. blending/blend below are a working copy the loop re-reads after each
+    // material's bind; restoring those left the last replayed material's blending on for the game's
+    // next draws (translucent held items and gear, changing with what lies behind them).
+    const GLboolean savedBlending = blending;
+    GLint savedBlend[6];
+    memcpy(savedBlend, blend, sizeof savedBlend);
     if (glGetError() != GL_NO_ERROR) return false;
     const auto bind = (MaterialBind)gameAt(fp::sig::materialBind);
     const auto single = (SingleSubmit)gameAt(fp::sig::silhouetteSingleSubmit);
@@ -4559,6 +4786,21 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
             g.activeTexture(glc::texture0 + u);
             g.bindTexture(GL_TEXTURE_2D, GLuint(priorTextures[u]));
         }
+        // Units whose cache entry the replay changed get the prior entry's texture on its own target
+        // (a cube or 3D map is not covered by the 2D restore above), then the cache its prior bytes.
+        auto* const unitCache = (unsigned char*)unitCacheAt;
+        for (unsigned u = 0; u < cachedUnits; ++u) {
+            const unsigned char* const was = priorCache + u * 16;
+            if (!memcmp(unitCache + u * 16, was, 16)) continue;
+            const uintptr_t object = *(const uintptr_t*)was;
+            const GLenum target = *(const GLenum*)(was + 8);
+            if (object && target && readable(object, field::texture::glName + 4)) {
+                g.activeTexture(glc::texture0 + u);
+                g.bindTexture(target, *(const GLuint*)(object + field::texture::glName));
+            }
+        }
+        memcpy(unitCache, priorCache, sizeof priorCache);
+        *(int*)unitActiveAt = priorUnit;
         g.activeTexture(priorActiveTexture);
         g.useProgram(GLuint(priorProgram));
         g.bindVertexArray(GLuint(priorVao));
@@ -4570,9 +4812,9 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
         if (heldBlendColor) heldBlendColor(blendColor[0], blendColor[1], blendColor[2], blendColor[3]);
         g.bindFramebuffer(glc::framebuffer, GLuint(expected)); // the scene's own target (0, or the sampling target)
         setViewport(g, viewport[0], viewport[1], viewport[2], viewport[3]);
-        (blending ? glEnable : glDisable)(GL_BLEND);
-        g.blendEquationSeparate(GLenum(blend[4]), GLenum(blend[5]));
-        g.blendFuncSeparate(GLenum(blend[0]), GLenum(blend[1]), GLenum(blend[2]), GLenum(blend[3]));
+        (savedBlending ? glEnable : glDisable)(GL_BLEND);
+        g.blendEquationSeparate(GLenum(savedBlend[4]), GLenum(savedBlend[5]));
+        g.blendFuncSeparate(GLenum(savedBlend[0]), GLenum(savedBlend[1]), GLenum(savedBlend[2]), GLenum(savedBlend[3]));
         glDepthFunc(GLenum(depthFunc));
         glDepthMask(depthMask);
         (depthTest ? glEnable : glDisable)(GL_DEPTH_TEST);
@@ -4591,8 +4833,13 @@ static uint64_t drawSilhouetteMask(const SilhouetteScope& s) {
     AcquireSRWLockExclusive(&cueLock);
     ++cueGlDepth;
     __try {
-        if (!cueDeletesInFlight && !cueRetiring.load() && !cueBindingFailed.load() && !stopping)
+        if (!cueDeletesInFlight && !cueRetiring.load() && !cueBindingFailed.load() && !stopping) {
+            RenderAuditState auditBefore;
+            CueContext* const audited = FP_RENDER_AUDIT ? prepareCue() : nullptr;
+            const bool audit = audited && renderAuditBegin(audited->api, auditBefore, "held/silhouette replay");
             drawn = drawSilhouetteMaskOwned(s);
+            if (audit) renderAuditEnd(audited->api, auditBefore, "held/silhouette replay");
+        }
     } __finally {
         --cueGlDepth;
         ReleaseSRWLockExclusive(&cueLock);
@@ -5063,8 +5310,13 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
     AcquireSRWLockExclusive(&cueLock);
     ++cueGlDepth;
     __try {
-        if (!cueDeletesInFlight && !cueRetiring.load() && !cueBindingFailed.load() && !stopping)
+        if (!cueDeletesInFlight && !cueRetiring.load() && !cueBindingFailed.load() && !stopping) {
+            RenderAuditState auditBefore;
+            CueContext* const audited = FP_RENDER_AUDIT ? prepareCue() : nullptr;
+            const bool audit = audited && renderAuditBegin(audited->api, auditBefore, "screen effects");
             drawViewEffectsOwned(view, request);
+            if (audit) renderAuditEnd(audited->api, auditBefore, "screen effects");
+        }
     } __finally {
         --cueGlDepth;
         ReleaseSRWLockExclusive(&cueLock);

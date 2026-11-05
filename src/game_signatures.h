@@ -260,6 +260,10 @@ enum Target : uint16_t {
     xrStereoBatchQueue,
     kickGripClass,
     kickStanceClass,
+    textureUnitActive,
+    textureUnitCache,
+    engineLogger,
+    engineLog,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -517,6 +521,10 @@ inline constexpr const char* targetNames[targetCount] = {
     "xrStereoBatchQueue",
     "kickGripClass",
     "kickStanceClass",
+    "textureUnitActive",
+    "textureUnitCache",
+    "engineLogger",
+    "engineLog",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -774,6 +782,10 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "xrStereo",
     "kickClasses",
     "kickClasses",
+    "silhouette",
+    "silhouette",
+    "engineLog",
+    "engineLog",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
 // reference to a global or a vtable, or a call to the function).
@@ -1630,6 +1642,10 @@ inline constexpr Signature signatures[] = {
     {xrStereoBatchQueue, Kind::Relative, false, false, 2, 6, 0, 0x5B7480, "8B ?? ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 01 83 ?? ?? ?? ?? ?? 01 75 1B 89 ??"},
     {kickGripClass, Kind::Code, false, true, 0, 0, 0, 0x155250, "83 FA 01 75 07 BA 05 00 00 00 EB 1D 89 C8 25 F0 00 00 00 3D 90 00 00 00 75 07 BA 01 00 00 00 EB 08 83 E1 70 C1 E9 04 89 CA 21 D2 48 69 C2 B8 00 00 00 48 8D 15 ?? ?? ?? ?? 48 01 D0 C3"},
     {kickStanceClass, Kind::Code, false, false, 0, 0, 0, 0x152531, "8B 83 68 10 00 00 25 F0 00 00 00 83 F8 10 0F 8C AB 00 00 00 83 E8 10 74 16 83 E8 10 74 4D 83 E8 10 0F 84 84 00 00 00 E9 93 00 00 00 0F 1F 00 83 BB 20 09 00 00 01 7E 1E BF 04 00 00 00 C7 83 68 10 00 00 90 00 00 00 C7 83 98 11 00 00 06 00 00 00 E9 91 00 00 00 BF 01 00 00 00 C7 83 98 11 00 00 01 00 00 00 E9 7D 00 00 00 90 81 BB 68 10 00 00 21 05 00 00 75 0E BF 30 00 00 00 C6 83 09 13 00 00 01 EB 17 8B 83 68 10 00 00 83 E0 01 7E 07 BF 20 00 00 00 EB 05 BF 10 00 00 00 C7 83 98 11 00 00 02 00 00 00 EB 3F 0F 1F 00 BF 40 00 00 00 C7 83 98 11 00 00 02 00 00 00"},
+    {textureUnitCache, Kind::Relative, false, false, 21, 25, 0, 0x49B600, "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ?? 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D ?? ?? ?? ?? 74 14"},
+    {textureUnitActive, Kind::Relative, false, false, 38, 42, 0, 0x49B5F0, "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ?? 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D ?? ?? ?? ?? 74 14"},
+    {engineLogger, Kind::Relative, false, false, 10, 14, 0, 0x2AB6B0, "48 8D 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? 89 05 ?? ?? ?? ?? 89 05"},
+    {engineLog, Kind::Code, false, true, 0, 0, 0, 0x25D80, "55 48 89 E5 48 8D 64 24 A0 48 89 5D C8 89 CB 48 89 55 F8 4C 89 45 F0 48 8B 4D F8 E8 ?? ?? ?? ?? 48 8B 4D F0 E8 ?? ?? ?? ?? 48 C7 45 E8 00 00 00 00"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {

@@ -537,8 +537,8 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 !(gone && GetTickCount64() - gone >= 2000))
                 return 0;
             if (!layout.optionalGroupAvailable("nativeSettings")) {
-                showNotice(FP_SHOWN_NAME L": in-game Mod Settings is unavailable on this Exanima version; "
-                                         L"first-person.ini remains active.");
+                modMessage(NoticeKind::warning, FP_SHOWN_NAME L": in-game Mod Settings is unavailable on this Exanima version; "
+                                                L"first-person.ini remains active.");
                 return 0;
             }
             setCursorFreeBit(cursorFreeBit, !cursorFreeBitSet(cursorFreeBit));
@@ -560,7 +560,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                        next ? L"Debug ON (neon)" : L"Debug OFF (natural)",
                        wCount, dCount, bSat,
                        poseNames[pL], poseNames[pR]);
-            showNotice(msg, 3500, NoticeKind::info);
+            modMessage(NoticeKind::info, msg);
             return 0;
         }
         if (wp == VK_ESCAPE) releaseInput();
@@ -674,7 +674,7 @@ static bool cachedWindowClient(HWND w, RECT& client, RECT* screenClip = nullptr,
 static BOOL CALLBACK findWindow(HWND w, LPARAM out) {
     DWORD pid = 0;
     GetWindowThreadProcessId(w, &pid);
-    if (pid == GetCurrentProcessId() && w != noticeWindow && IsWindowVisible(w) && !GetWindow(w, GW_OWNER) &&
+    if (pid == GetCurrentProcessId() && IsWindowVisible(w) && !GetWindow(w, GW_OWNER) &&
         !consoleWindow(w)) {
         *reinterpret_cast<HWND*>(out) = w;
         return FALSE;

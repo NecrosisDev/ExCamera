@@ -675,6 +675,12 @@
       "rva": "0x155250",
       "optionalGroup": "kickClasses",
       "note": "Grip-table entry for a weapon's flag word 155250(flags, slot): slot 1 is entry 5, (flags & 0xF0) == 0x90 entry 1, else (flags & 0x70) >> 4 (0x1x one-handed, 0x2x two-handed right lead, 0x3x polearm left lead). Read-only: pins the class bits the Animated kick reads from character::gripFlags."
+    },
+    "engineLog": {
+      "rva": "0x25d80",
+      "note": "FUN_100025D80: the engine log procedure DAT_1002AB6B0 holds once the engine is up (level, source, text); level 4 logs and shows a timed line on screen",
+      "hook": false,
+      "optionalGroup": "engineLog"
     }
   },
   "returns": {
@@ -1123,6 +1129,21 @@
       "rva": "0x5b7480",
       "optionalGroup": "xrStereo",
       "note": "Native draw batch queue snapshotted around OpenXR replay"
+    },
+    "textureUnitActive": {
+      "rva": "0x49b5f0",
+      "note": "DAT_10049B5F0: the texture unit FUN_10006FC30 made active last (its cache; it calls glActiveTexture only on a change)",
+      "optionalGroup": "silhouette"
+    },
+    "textureUnitCache": {
+      "rva": "0x49b600",
+      "note": "DAT_10049B600: FUN_10006FC30's per-unit cache, 16 units of 16 bytes (+0 texture object, +8 GL target); a unit whose entry already holds the object is not bound again",
+      "optionalGroup": "silhouette"
+    },
+    "engineLogger": {
+      "rva": "0x2ab6b0",
+      "note": "DAT_1002AB6B0: the engine log procedure (level, source, text: AnsiStrings); FUN_100026CB0 stores FUN_100025D80 in it at 0x26D6F and about 370 call sites log through it",
+      "optionalGroup": "engineLog"
     }
   },
   "slots": {
@@ -1417,7 +1438,11 @@
     "xrStereoBatchFlag",
     "xrStereoBatchQueue",
     "kickGripClass",
-    "kickStanceClass"
+    "kickStanceClass",
+    "textureUnitActive",
+    "textureUnitCache",
+    "engineLogger",
+    "engineLog"
   ],
   "reviewed_signatures": [
     {
@@ -10670,6 +10695,50 @@
       "addend": 0,
       "known_rva": "0x152531",
       "pattern": "8B 83 68 10 00 00 25 F0 00 00 00 83 F8 10 0F 8C AB 00 00 00 83 E8 10 74 16 83 E8 10 74 4D 83 E8 10 0F 84 84 00 00 00 E9 93 00 00 00 0F 1F 00 83 BB 20 09 00 00 01 7E 1E BF 04 00 00 00 C7 83 68 10 00 00 90 00 00 00 C7 83 98 11 00 00 06 00 00 00 E9 91 00 00 00 BF 01 00 00 00 C7 83 98 11 00 00 01 00 00 00 E9 7D 00 00 00 90 81 BB 68 10 00 00 21 05 00 00 75 0E BF 30 00 00 00 C6 83 09 13 00 00 01 EB 17 8B 83 68 10 00 00 83 E0 01 7E 07 BF 20 00 00 00 EB 05 BF 10 00 00 00 C7 83 98 11 00 00 02 00 00 00 EB 3F 0F 1F 00 BF 40 00 00 00 C7 83 98 11 00 00 02 00 00 00"
+    },
+    {
+      "target": "textureUnitCache",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 21,
+      "insn_end": 25,
+      "addend": 0,
+      "known_rva": "0x49b600",
+      "pattern": "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ?? 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D ?? ?? ?? ?? 74 14"
+    },
+    {
+      "target": "textureUnitActive",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 38,
+      "insn_end": 42,
+      "addend": 0,
+      "known_rva": "0x49b5f0",
+      "pattern": "53 56 48 8D 64 24 D8 89 CB 48 89 D6 89 D8 48 C1 E0 04 48 8D 15 ?? ?? ?? ?? 48 3B 34 02 0F 84 E2 00 00 00 90 3B 1D ?? ?? ?? ?? 74 14"
+    },
+    {
+      "target": "engineLogger",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 10,
+      "insn_end": 14,
+      "addend": 0,
+      "known_rva": "0x2ab6b0",
+      "pattern": "48 8D 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? 89 05 ?? ?? ?? ?? 89 05"
+    },
+    {
+      "target": "engineLog",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x25d80",
+      "pattern": "55 48 89 E5 48 8D 64 24 A0 48 89 5D C8 89 CB 48 89 55 F8 4C 89 45 F0 48 8B 4D F8 E8 ?? ?? ?? ?? 48 8B 4D F0 E8 ?? ?? ?? ?? 48 C7 45 E8 00 00 00 00"
     }
   ]
 }
