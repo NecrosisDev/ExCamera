@@ -766,6 +766,11 @@
       "note": "FUN_1001FA120(vertex shader, fragment shader, geometry shader or 0): creates a program, binds the attribute locations (vPos 0, vTex 1, vNrm 2, vCol 3, vTx2 4, vTng 6, by the vertex-stream flags DAT_10049B510), links (0x1FA23B), then detaches every shader (glDetachShader at 0x1FA246, 0x1FA251, 0x1FA260); returns the program, or 0 (deleted) when the link failed. Hooked: the vertex shader's source is read before the call, while it is still attached, and kept by the program it returns, for the material-id program (mod/material_ids.inl)",
       "optionalGroup": "materialIds",
       "hook": true
+    },
+    "weaponBloodAdd": {
+      "rva": "0x1007c0",
+      "note": "TWeaponBlood.AddBlood(this, index + 1, amount): records at this+0x10, 0x18 apart, amount at +8, clamped 0..1 (layout witness, not hooked)",
+      "optionalGroup": "gameWeaponBlood"
     }
   },
   "returns": {
@@ -1274,6 +1279,11 @@
       "rva": "0x30fbd0",
       "note": "the string \"Error rendering weapon blood stains.\", referenced by the stain pass at 0x100CBB (witness)",
       "optionalGroup": "gameBloodStains"
+    },
+    "weaponBloodList": {
+      "rva": "0x4f0870",
+      "note": "the game's TWeaponBlood singleton (VMT 0x30F870): +8 count, +0x10 TBloodyWeapon records of 0x18 bytes (+0 weapon node, +8 amount 0..1); read by the stain pass, written by AddBlood 0x1007C0",
+      "optionalGroup": "gameWeaponBlood"
     }
   },
   "slots": {
@@ -1597,7 +1607,9 @@
     "gameBloodStainDrawReturn",
     "gameBloodStainBoundReturn",
     "gameBloodStainOtherReturn",
-    "gameBloodStainText"
+    "gameBloodStainText",
+    "weaponBloodList",
+    "weaponBloodAdd"
   ],
   "reviewed_signatures": [
     {
@@ -11334,6 +11346,28 @@
       "addend": 0,
       "known_rva": "0x30fbd0",
       "pattern": "81 78 08 BE 8A A3 49 74 19 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 04 00 00 00"
+    },
+    {
+      "target": "weaponBloodList",
+      "kind": "Relative",
+      "hook": false,
+      "entry": false,
+      "offset": 3,
+      "insn_end": 7,
+      "addend": 0,
+      "known_rva": "0x4f0870",
+      "pattern": "48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 55 F8 48 8B 92 88 09 00 00 89 82 7C 06 00 00"
+    },
+    {
+      "target": "weaponBloodAdd",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1007c0",
+      "pattern": "48 89 C8 0F 28 C2 48 8B 48 10 48 63 D2 48 6B C2 18 48 8D 44 01 E8 F3 0F 10 48 08 F3 0F 58 C8 F3 0F 11 48 08"
     }
   ]
 }

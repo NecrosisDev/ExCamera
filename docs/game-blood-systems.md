@@ -37,6 +37,20 @@ duplicates what this handler already does.
 | **Surface blood** (floors, walls) | No decal or splat-texture system found in this region: no class, string or texture pass for floor blood. The sprays are particles. | n/a | n/a | n/a | Our floor blood layer stays ours. It could take its splats from the spray records once the particle update and landing are traced. |
 | **Wounds** (cuts, gashes) | No wound decal, cut texture or texture swap on a hit was found. The game's visible injury is the vertex-alpha blood and dirt above, and the state values (health, bleed). | n/a | n/a | n/a | Our gashes, punctures and bruises (the skin bake) remain additions. They draw over the game's dirt, which stays. |
 
+## What ExCamera does with them
+
+- **Weapon blood (in use).** Each frame, every TWeaponBlood record with an amount above 0.01 gets an entry of
+  ours. The singleton is read through the reviewed signature weaponBloodList; group gameWeaponBlood is admitted
+  only with AddBlood 0x1007C0 matching its bytes, which witnesses the 0x18-byte records with the amount at +8.
+  - **Drips:** the blade drips at amount × 3 a second, more when it is steep. Each drop lowers the game's own
+    amount by [Wounds] BladeDrainPerDrop (default 0.01; 0 keeps the game's never-drying blood), and the game's
+    stains fade with it.
+  - **Cast-off:** a swing's cast-off takes the same per drop flung. It only happens in the holder's attack after
+    the commit point; the holder comes from the carrying character's weapons list.
+  - **Where drops leave:** the lowest of the spots our hits recorded on that blade, which run down the blade with
+    gravity; otherwise the blade's origin.
+  - **Replaced:** our earlier mass budget is gone.
+
 ## Not yet decoded (next reads)
 
 - 0x158AD0 → 0xD1A10 / 0xD32C0: the weapon blood path for item+0x67C == −2.
