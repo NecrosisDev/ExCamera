@@ -285,6 +285,33 @@ procedural ID. That is the next step to bring the four detail rows back with the
   _SKIN mesh keep their own sets, from their own factory (item rule above), and so their own layer IDs.
   Which exact 38-character name it is was not read here (it is runtime data).
 
+## Per-light uniform layout, decoded (blood thread, 0.9.5.2g; shader text not reproduced here)
+
+The lights pass (`lights`, included by `shading_f`) loops over `Lights` and reads `Light[3i]`, `[3i+1]`, `[3i+2]`;
+the packer is 0x1FF740-0x1FF9D8 (called from the submit 0x200770 at 0x2007AD as 0x1FF430(state, node) when the
+node has a light list, `node+0x1DC` >= 0, and state `+8 & 6`), uploaded by glUniform4fv(count 3 x state `+0xA8`,
+state `+0x170`) at 0x1FFFD8 / 0x200BBD. Each component, shader use against packer source:
+
+| vec4 | comp. | Shader use (lights / shading_f) | Packer source (0x1FF740-0x1FF9D8) | Status |
+|---|---|---|---|---|
+| A `[3i]` | xyz | point light: light position (world, compared with the fragment's world position); "Direct" light: the light direction | `+0x170` = 12 bytes from a table at `+0x40`, index light `+0x288` (0x1FF784-0x1FF7A1) | PROVEN position (point lights) |
+| A | w | point: shadow depth scale (`length × A.w`, the same product the shadow-map shader writes as depth with `LPos.w`); Direct: scales the shading term | `+0x17C`: type 2 = `[[+0x1C8]+0x2C0]+0x180`, else (k + `[+0x1C8]+0x238`) / (light `+0x2C` × node `+0x228`) (0x1FF82E-0x1FF8DB) | PROVEN use; source fields' names UNPROVEN |
+| B `[3i+1]` | xyz | the light's colour (`lCol` in the Lighting function: diffuse += lCol × w × N·L, specular += lCol × GGX × w) | raw `+0x210` colour × 1/state `+0x3B8` (0x19240) × (1 − `[+0x1C8]+0x234`) × state `+0x5B4` (0x19260) | PROVEN colour (not the linear `+0x278`) |
+| B | w | inverse range: attenuation = max(1 − distance × B.w, 0)^4 | light `+0x230` (0x1FF816) | PROVEN 1/range |
+| C `[3i+2]` | x | shadow sample spread (offset of the rotated shadow taps) | from `+0x238` (0x1FF834 / 0x1FF890) | PROVEN use |
+| C | y, z, w | a shaping factor on the light direction's y: f = max((2^((dir.y + (1 − dir.y) × C.y) × C.z) − 1) × C.w, 0), multiplied into the light | type 0x200: `[+0x1C8]+0x24C`, `+0x250`, `+0x248` (0x1FF901-0x1FF954); else three constants | PROVEN formula; meaning (spot or vertical falloff) UNPROVEN |
+
+- Lighting function (`shading_f`): GGX with a2 = Gloss², D = a2 / (N·H²(a2 − 1) + 1)², Smith-Schlick G with
+  k = (Gloss + 1)² / 8, times the Fresnel/scale `d`; diffuse adds lCol × w × N·L.
+- Shadows: Direct lights sample `Shadow{i}` at `vrSdw = SdwMat × world position` (vertex shader); point lights
+  sample a cube `Shadow{i}` along −light direction, depth `length × A.w`, with `SdwSmps` rotated taps of
+  radius C.x.
+- Ambient: `ambient` samples the `VoxelGI` 3D texture at `world × VXGIScl.xyz + VXGIPos`, around the normal,
+  `w` occlusion scaled by `VXGIScl.w`.
+- Capture for later use (blood thread): the pack is per drawn node, so state `+0xA8` and `+0x170` hold the
+  lights of the node being drawn at its material draw; the blood branch copies them there (dev audit line), and
+  nothing reads them yet.
+
 ## The game's own shading, as decoded (for the reflections and AO work)
 
 - `shading_f`: `layout(std140) uniform Material { MatDif, MatSpc, MatEmi, MatDrt, ... }`. Specular: per light
