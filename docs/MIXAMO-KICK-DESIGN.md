@@ -344,3 +344,29 @@ records the game's actual stance at each kick start per class (`kick_animated.st
 cm frame as 9.2, lead foot, shoulder twist), so the table can be confirmed or corrected from one play session per
 class. Two-handed axes, hammers and staves hold the hands farther apart on the haft than a hilt; if the Great Sword
 arms fight their grip, that class's two-handed sub-kinds move to lower body (needs the low flag bits, see 9.1).
+
+## 10. Toppling during the kick: what the game does to the legs (decode in progress)
+
+Everything below is read from the reviewed exe; nothing is implemented yet.
+
+* **Order each physics step** (`combatUpdate` 0x169200): `supportPosition` 0x163BB0 (0x16BB4C) → pose builder
+  0x1760F0 (0x16CFF0, our hook) → `motionUpdate` 0x178350 (0x16D021) → `contactFrame` 0x1603F0 (0x16DDD0) →
+  `supportSettle` 0x160070 only when +0x12EE is clear (0x16E014–0x16E04C) → `supportHeight` 0x16E1D0 every step
+  (0x16E058), which calls `standingLegs` 0x15F080. Our hook runs before `contactFrame` rewrites the contacts, so it
+  cannot change what `supportHeight` reads in the same step.
+* **Motion 13 forces both legs into support.** `contactFrame` jumps to 0x1612EB when the local bl is set, motion ==
+  13 (0x1612C9), character +0x12FC == 0, or state == 0x4000. That path sets every shin contact's flags (+0x340 → +0x10)
+  to exactly 2 (0x161325) and its anchor +0x24 to its local point +0x30 through the current frame (0x18870 is a 3×4
+  matrix × point; 0x16132C–0x161339); in state 0x300 below a progress threshold it clears bit 2 again
+  (0x161344–0x1613AD). The normal path (0x1613C0 on) is the stepping logic: per leg it reads bit 8 and character
+  +0x109C, clears bits 0xC (0x161436/0x16143E), updates the flags (0x161495) and copies anchor +0x3C to +0x24
+  (0x161498), then builds the support frame from character +0x3C (0x19AE0, 0x162380).
+* **What support (bit 2) changes**, in `supportHeight`: shin +0x40C = 2.0 for support without bit 4, 0 otherwise
+  (0x16E6E8–0x16E746; constants 0x2BAAA0, 0x31BF28); +0x40C is read by the rigid-body physics 0x80CD0–0x88230. The
+  ground query height is the contact's +0x90 minus 10 for a support, +0x90 otherwise (0x16EDA0–0x16EDF5), then
+  0x150FF0. Bit 2 is read again at 0x16F1A5. `standingLegs` targets each foot from anchor +0x24 (or lerp(+0x3C, +0x24)
+  with bit 4; 0x15F22E–0x15F300).
+* **Not decoded yet**: what +0x40C is to the physics (the readers in 0x80CD0–0x88230), the rest of `supportHeight`
+  (0x16F1A5 on, `heightForce` 0x16FDF0), and how the support height moves the pelvis. Until these are read, the
+  cause of the toppling is not proven, and there is no proven moment between `contactFrame` and `supportHeight` for a
+  fix: changing a kicking leg's flag would need a new hook there (a new signature target, to be reported first).
