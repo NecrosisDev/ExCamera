@@ -211,7 +211,8 @@ Chords need no knowledge of the game's part rest frames, and the clip's travel a
    leg length (character / clip), at most 10 cm from where it is per step.
 6. In the composition detour, each planned part's native local target is blended toward the clip's by the weight
    (rotation slerp; the pelvis's position too). Lower-body mode plans only the pelvis and legs.
-7. Arms: an arm whose hand holds something follows the clip at 60% (`heldArmWeight`); its grip joints stay native.
+7. Arms: in full-body mode the arms play the clip fully, holding something or not (Hunter: the clips are played as
+   authored; weapons whose hold does not match a set get lower-body mode instead). The grip joints stay native.
 
 ## 5. Balance (full body)
 
@@ -225,9 +226,9 @@ Chords need no knowledge of the game's part rest frames, and the clip's travel a
   (the kick ended while still blended, e.g. interrupted), `fell` (the state left upright during the kick or within
   1.5 s after), `last_clip`, `last_class`, `last_mode`, `last_mirrored`, `held_arm_steps`, `native_peak_progress`
   (where the game's own foot peaked, to tune the 0.35 hit point).
-* Hands and weapons: arms are driven at 60% when holding something. The grip joints are physical constraints, so
-  the weapon is carried, not dropped; it can clip the body or a shield when the clip's guard differs from the game's
-  hold. If that conflicts in play, the next step is to keep held arms native (weight 0) for that set.
+* Hands and weapons: arms play the clip fully. The grip joints are physical constraints, so the weapon is carried,
+  not dropped; it can clip the body or a shield where the clip's guard differs from the game's hold. A weapon whose
+  hold does not match its set belongs in lower-body mode (classRules); `held_arm_steps` counts armed steps.
 
 ## 6. Camera and views
 

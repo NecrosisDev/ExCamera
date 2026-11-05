@@ -255,9 +255,8 @@ static bool kickPlan(uintptr_t root) {
                        foreSlot[2] = {kk::leftForearm, kk::rightForearm};
         const auto held = reinterpret_cast<const uintptr_t*>(root + field::character::heldItems);
         for (unsigned side = 0; side < 2; ++side) {
-            const bool holding = held[1 - side] != 0;
-            if (holding) kickHeldArms.fetch_add(1, std::memory_order_relaxed);
-            const float w = weight * (holding ? kk::heldArmWeight : 1.f);
+            if (held[1 - side]) kickHeldArms.fetch_add(1, std::memory_order_relaxed); // played fully (Hunter): status only
+            const float w = weight;
             add(body.shoulder[side], body.chest.part, KickSite::motor,
                 kk::boneTarget(body.shoulder[side].pose.orientation, fp::xr::sub(body.upper[side].pose.position, body.shoulder[side].pose.position), f.v[shoulderSlot[side]]), w);
             add(body.upper[side], body.shoulder[side].part, KickSite::motor,

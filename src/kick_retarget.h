@@ -54,7 +54,6 @@ inline constexpr float hitProgress = .35f;  // native kick progress where the cl
 inline constexpr float blendIn = .12f, blendOut = .15f; // shares of the kick's progress spent fading in and out
 inline constexpr float maxPartStep = .35f;  // radians a target may lead the achieved part in one step (safety only)
 inline constexpr float maxHipStep = .10f;   // metres the hip target may lead the achieved hips in one step
-inline constexpr float heldArmWeight = .6f; // an arm holding something follows the clip this much (the grip stays native)
 
 inline Vec normalised(Vec v, Vec fallback = {0, -1, 0}) {
     const float n = fp::xr::length(v);
