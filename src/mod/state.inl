@@ -695,7 +695,7 @@ static void publishStatus(FILE* f) {
 // line to the engine's log and shows it on screen for 2 s + 50 ms a character (FUN_1000259A0, drawn every
 // frame by FUN_100025A50). The engine logs from the game thread only, so any thread queues here and the
 // frame hook delivers (deliverModMessages, frame.inl). Without that path (contract missing, the engine not
-// up, the frame hook gone) a message goes to Documents\ExCamera\excamera-messages.log; there is no window.
+// up, the frame hook gone) a message goes to excamera-messages.log beside first-person.ini; there is no window.
 enum class NoticeKind { info, warning, fault };
 static std::atomic<unsigned> notices{0};
 static std::atomic<bool> engineLogAdmitted{false};
@@ -734,13 +734,29 @@ static void modMessageText(const wchar_t* text, char* out, size_t size) {
     }
     out[n] = 0;
 }
-static void modMessageToFile(NoticeKind kind, const char* text) {
-    static wchar_t path[MAX_PATH]{};
-    if (!path[0]) {
+// Beside first-person.ini (Documents\ExCamera, or a portable test copy's own folder).
+static std::wstring settingsFolderFile(const wchar_t* name) {
+    std::wstring folder;
+    if (settingsPath[0]) {
+        folder = settingsPath;
+        folder.resize(folder.find_last_of(L"\\/") + 1);
+    } else {
         const std::wstring documents = userDocumentsDir();
-        if (documents.empty()) return;
-        SHCreateDirectoryExW(nullptr, (documents + L"\\ExCamera").c_str(), nullptr);
-        swprintf_s(path, L"%s\\ExCamera\\excamera-messages.log", documents.c_str());
+        if (documents.empty()) return {};
+        folder = documents + L"\\ExCamera\\";
+        SHCreateDirectoryExW(nullptr, folder.c_str(), nullptr);
+    }
+    return folder + name;
+}
+static void modMessageToFile(NoticeKind kind, const char* text) {
+    static wchar_t kept[MAX_PATH]{}; // once the settings file is known; until then Documents\ExCamera
+    wchar_t early[MAX_PATH]{};
+    const wchar_t* path = kept;
+    if (!kept[0]) {
+        const std::wstring found = settingsFolderFile(L"excamera-messages.log");
+        if (found.empty() || found.size() >= MAX_PATH) return;
+        wcscpy_s(settingsPath[0] ? kept : early, found.c_str());
+        if (!settingsPath[0]) path = early;
     }
     SYSTEMTIME t;
     GetLocalTime(&t);

@@ -2665,7 +2665,7 @@ static bool growScreenBox(const ViewEffectProjectionSnapshot& projection, const 
 // unit DAT_10049B5F0, 16 entries of object/target at DAT_10049B600) before and after, checks that the
 // cache agrees with GL (a disagreement makes the game skip a bind and draw with another texture), and
 // that the effect inputs are our own copies at the view's size. Findings go to
-// Documents\ExCamera\render-audit.log and the counts to the status file's render_audit.
+// render-audit.log beside first-person.ini and the counts to the status file's render_audit.
 static std::atomic<unsigned> renderAuditAnomalies{0}, renderAuditCacheDesyncs{0}, renderAuditInputMismatches{0},
     renderAuditStateLeaks{0}, renderAuditPasses{0};
 static std::atomic<bool> renderAuditActive{false};
@@ -2686,11 +2686,8 @@ static bool renderAuditOn() { // render thread
 static void renderAuditLog(const char* format, ...) {
     if (renderAuditLines >= renderAuditLineLimit) return;
     static std::wstring path;
-    if (path.empty()) {
-        const std::wstring documents = userDocumentsDir();
-        if (documents.empty()) return;
-        path = documents + L"\\ExCamera\\render-audit.log";
-    }
+    if (path.empty()) path = settingsFolderFile(L"render-audit.log"); // beside first-person.ini
+    if (path.empty()) return;
     char line[512];
     const int head = snprintf(line, sizeof line, "%llu swap %ld: ", GetTickCount64(), InterlockedCompareExchange(&swapCalls, 0, 0));
     va_list args;
