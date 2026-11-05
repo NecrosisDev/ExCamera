@@ -1167,7 +1167,7 @@ static void prepareAttackHeading(uintptr_t bh) {
         !(*reinterpret_cast<const unsigned*>(bh + field::behaviour::pressFlags) & 1u)) {
         const float body = *reinterpret_cast<const float*>(a.root + field::character::bodyHeading);
         if (std::isfinite(body)) {
-            const bool wide = *reinterpret_cast<const int*>(a.root + field::character::gripFlags) != 0;
+            const bool wide = *reinterpret_cast<const int*>(a.root + field::character::gripFlags) != 0; // the game's own test (C24C3)
             presented = requestedAttackHeading(a, heading, body, wide);
             if (attackSideKey && (keyState(attackSideKey) & 0x8000)) {
                 presented = fp::flippedSideHeading(presented, body, wide);
@@ -1740,7 +1740,7 @@ static fp::SwingHands swingHands(uintptr_t root, fp::OriginCue cue, int motion) 
     handCount = count;
     handGrip = int(grip);
     if (count < 1 || count > 2) return s;
-    s.alternate = (grip & 0x80) != 0;
+    s.alternate = (grip & 0x80) != 0; // the game's own test for the opposite family's slot (157AB3)
     const uintptr_t weapons[2] = {*reinterpret_cast<const uintptr_t*>(root + field::character::weapons),
                                   count > 1 ? *reinterpret_cast<const uintptr_t*>(root + field::character::weapons + 8) : 0};
     const uintptr_t held[2] = {*reinterpret_cast<const uintptr_t*>(root + field::character::heldItems),
@@ -1828,7 +1828,7 @@ static void publishCue(uintptr_t self) {
         in.alternateHeld = (*reinterpret_cast<const unsigned*>(gameAt(fp::sig::keyWord)) & 0x80) != 0;
         in.pressBlocked = *reinterpret_cast<const unsigned char*>(self + field::behaviour::pressBlocked) != 0;
         in.modifierHeld = attackSideKey && (GetAsyncKeyState(attackSideKey) & 0x8000);
-        in.wideThreshold = *reinterpret_cast<const int*>(root + field::character::gripFlags) != 0;
+        in.wideThreshold = *reinterpret_cast<const int*>(root + field::character::gripFlags) != 0; // the game's own test (C24C3)
         in.motion = *reinterpret_cast<const int*>(root + field::character::motion);
         in.clock = *reinterpret_cast<const unsigned*>(gameAt(fp::sig::gameClock));
         in.lastPress = *reinterpret_cast<const unsigned*>(self + field::behaviour::lastPressTime);

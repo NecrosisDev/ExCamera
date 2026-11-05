@@ -52,7 +52,7 @@ inline constexpr size_t heldItems = 0xE88;   // [2] what each hand holds
 inline constexpr size_t defenseIncomingMotion = 0xF5C; // int: native interception request, -1 absent
 inline constexpr size_t defenseActive = 0x12F3;        // u8: reactive defense owns constraints/posture
 inline constexpr size_t duckAmount = 0x100C; // float 0..1: the game's crouch, decays 0.02 a physics step
-inline constexpr size_t swingBits = 0x1018;  // bounce/block bits (& 0x26)
+inline constexpr size_t swingBits = 0x1018;  // contact bits 0x2 (158EF0, 15859D) and 0x4 (159A60 15C212..); 0x20 never set
 inline constexpr size_t gripFlags =
     0x1068; // 0x80: the opposite family uses slot 1; nonzero: the wide threshold
 inline constexpr size_t gripEntry = 0x1070;    // slot 0's entry in the grip table (gripTable)

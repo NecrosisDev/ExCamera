@@ -248,10 +248,12 @@ template <class Query> inline int pickClear(const float* head, const float* orig
     for (float& v : d) v /= len;
     return blocked(head, d, len) ? 0 : 1;
 }
-// Attack wind-up, fed on the behaviour tick from the native swing: motion root+0x9B8 (5-12 accepted),
-// progress root+0xA28 (negative during the start dwell; the hit lands past 0.30, or 0.40 for the thrust,
-// motion 11) and the bounce/block bits root+0x1018 & 0x26. There is no hold-to-charge in the game, so the
-// wind-up is the progress up to the hit. phase: 0 idle, 1 winding, 2 fading.
+// Attack wind-up, fed on the behaviour tick from the native swing (docs/GAME-FIELDS-AUDIT.md): motion root+0x9B8,
+// 5-12 being the attacks (motionPlay clears defense and calls 162E80 only for these, 179F60-7A); progress root+0xA28
+// ((elapsed - blend-in +A24) / clip length, 1761D7-F7, 174E00), whose commit point is 0.30, the game's own (defense
+// update 1669BA/1669CF, the parry window in 159A60 at 15B990/15BCAC); and the contact bits root+0x1018 & 0x6 (0x2 set
+// by 158EF0 and 157FF0 at 15859D, 0x4 by 159A60 at 15C212/15C242/15C26A), on which the arc ends. There is no
+// hold-to-charge in the game, so the wind-up is the progress up to the commit point. phase: 0 idle, 1 winding, 2 fading.
 struct Windup {
     int motion = 0, phase = 0;
     float p0 = 0, lastP = 0, fill = 0;
@@ -444,16 +446,16 @@ inline void windupStep(Windup& w, bool swinging, int motion, float p, unsigned b
         w.p0 = p < 0 ? p : 0;
         w.phase = 1;
         w.fill = 0;
-        w.bitsAtStart = bits & 0x26;
+        w.bitsAtStart = bits & 0x6;
     } // a new swing (or a chained one)
     w.lastP = p;
     if (w.phase != 1) return;
-    if ((bits & 0x26) & ~w.bitsAtStart) {
+    if ((bits & 0x6) & ~w.bitsAtStart) {
         w.phase = 2;
         w.fadeFrom = now;
         return;
-    } // bounced or blocked
-    const float strikeAt = motion == 11 ? 0.40f : 0.30f;
+    } // a contact bit came on: the swing met something
+    const float strikeAt = 0.30f; // the game's commit point
     if (p >= strikeAt) {
         w.fill = 1;
         w.phase = 2;

@@ -307,6 +307,10 @@ and the hips move as authored.
   0x152531, both whole-instruction code patterns in `tools/targets.json`, checked by `check_game.py` and at
   start-up). If a game update changes either, Animated is withheld and the kick stays Classic.
 
+The game's own names for these classes (table 0x2ED0F0, read at 0x258CE5; audit checklist 62c3d5b): One Handed
+(0x10), 2W Light (0x90), Two Handed / 2H Light / Greatsword (0x20), Polearm (0x30); shield path 1H & Shield /
+Shield C1 / Shield C2; special held 1H & Torch. See docs/GAME-FIELDS-AUDIT.md section 3.
+
 ### 9.2 The clips' arms and stances (measured from the converted clips)
 
 Hands from the mid-hip in cm (across to the left, up, forward); lead foot at the start.
