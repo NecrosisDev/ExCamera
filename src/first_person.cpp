@@ -102,6 +102,7 @@ static MH_STATUS disableStereoHooks() { return MH_OK; }
 #include "mod/state.inl"
 #include "mod/profiling.inl"
 #include "mod/input.inl"
+#include "mod/balance_shadow.inl"
 #include "mod/combat.inl"
 #include "mod/picking.inl"
 #include "mod/view.inl"

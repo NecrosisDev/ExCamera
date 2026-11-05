@@ -743,6 +743,12 @@
       "rva": "0x1eaee0",
       "note": "FUN_1001EAEE0(id, 0, 0): creates and caches (DAT_10056B030[id]) the procedural material of id 1-25 through the jump table at 0x32FC08; the factory stores its result at layer+0x50 (0x2103F0)",
       "optionalGroup": "materialIds"
+    },
+    "contactFrame": {
+      "rva": "0x1603f0",
+      "note": "FUN_1001603F0: per-step leg contacts, lean (uprightness +12B0) and step planner, called once from combatUpdate (0x16DDD0); read-only witness owner for the balance shadow",
+      "hook": false,
+      "optionalGroup": "balanceShadow"
     }
   },
   "returns": {
@@ -1534,7 +1540,8 @@
     "proceduralMaterial",
     "proceduralMaterials",
     "blendModeCache",
-    "programCache"
+    "programCache",
+    "contactFrame"
   ],
   "reviewed_signatures": [
     {
@@ -11128,6 +11135,17 @@
       "addend": 0,
       "known_rva": "0x58ec30",
       "pattern": "53 48 8D 64 24 E0 89 C8 3B 05 ?? ?? ?? ?? 74 10 89 C3 89 D9 FF 15 ?? ?? ?? ??"
+    },
+    {
+      "target": "contactFrame",
+      "kind": "Code",
+      "hook": false,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x1603f0",
+      "pattern": "53 57 56 41 54 41 55 48 8D A4 24 C0 FE FF FF 66 0F 7F B4 24 00 01 00 00 66 44 0F 7F 84 24 10 01 00 00"
     }
   ]
 }

@@ -279,6 +279,7 @@ enum Target : uint16_t {
     proceduralMaterials,
     blendModeCache,
     programCache,
+    contactFrame,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -555,6 +556,7 @@ inline constexpr const char* targetNames[targetCount] = {
     "proceduralMaterials",
     "blendModeCache",
     "programCache",
+    "contactFrame",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -831,6 +833,7 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "materialIds",
     "materialIds",
     "materialIds",
+    "balanceShadow",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
 // reference to a global or a vtable, or a call to the function).
@@ -1718,6 +1721,7 @@ inline constexpr Signature signatures[] = {
     {proceduralMaterials, Kind::Relative, false, false, 20, 24, 0, 0x56B030, "53 57 56 48 8D 64 24 E0 89 CB 44 88 C6 31 C0 89 D8 48 8D 15 ?? ?? ?? ??"},
     {blendModeCache, Kind::Relative, false, false, 13, 17, 0, 0x2AE250, "48 8D 64 24 D8 89 4C 24 20 89 C8 3B 05 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 90"},
     {programCache, Kind::Relative, false, false, 10, 14, 0, 0x58EC30, "53 48 8D 64 24 E0 89 C8 3B 05 ?? ?? ?? ?? 74 10 89 C3 89 D9 FF 15 ?? ?? ?? ??"},
+    {contactFrame, Kind::Code, false, true, 0, 0, 0, 0x1603F0, "53 57 56 41 54 41 55 48 8D A4 24 C0 FE FF FF 66 0F 7F B4 24 00 01 00 00 66 44 0F 7F 84 24 10 01 00 00"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {

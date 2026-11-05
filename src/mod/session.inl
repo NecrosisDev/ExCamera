@@ -1096,6 +1096,20 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("glove_bends", trackedGloveBends.load())
         .end();
 #endif
+    { // every build: the balance shadow (balance_shadow.inl), read-only
+        AcquireSRWLockShared(&shadowLock);
+        j.object("balance_shadow")
+            .str("state", balanceShadowReasonText())
+            .boolean("fault", balanceShadowFault.load())
+            .unum("steps", unsigned(shadowSteps))
+            .unum("player_steps", unsigned(shadowPlayerSteps))
+            .unum("game_physics_reports", shadowPhysicsReports)
+            .unum("flags_shown", shadowFlagsShown)
+            .unum("read_faults", shadowReadFaults.load());
+        for (unsigned e = 0; e < unsigned(bs::Event::count); ++e) j.unum(bs::eventNames[e], shadowTotals[e]);
+        j.end();
+        ReleaseSRWLockShared(&shadowLock);
+    }
     j.object("motions") // every build: the kick and the jump through the game's motion player
         .unum("kicks", motionKicks.load())
         .boolean("kick_fault", motionKickFault.load())
@@ -1445,6 +1459,7 @@ static DWORD runSession() {
         modMessage(NoticeKind::warning, FP_SHOWN_NAME L": untested Exanima version. Compatible game functions resolved; hold F7 if "
                                  L"anything looks wrong.");
     profileInitialize(); // Publish only after this instance owns successfully armed hooks.
+    balanceShadowStart(manualDefenseAvailability.load() == 1);
     bool viewFaultNoticed = false;
     for (;;) {
         InterlockedExchange(&active, 1);
@@ -1452,6 +1467,7 @@ static DWORD runSession() {
         for (int i = 0; !InterlockedCompareExchange(&stopping, 0, 0); i++) {
             Sleep(100);
             profilePulse();
+            balanceShadowPulse();
             devPulse();
             trackingReceiver.service(trackingEnabled.load());
             saveFov();
@@ -1537,6 +1553,7 @@ static DWORD runSession() {
             }
         }
         InterlockedExchange(&stopping, 1);
+        balanceShadowFlush(); // the summary as of the stop; it resumes if the mod is turned back on
         profileStop("mod_stopped");
         profilePulse(false);
         trackingReceiver.stop();

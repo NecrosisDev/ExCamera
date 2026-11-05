@@ -351,7 +351,12 @@ static void combatUpdate(uintptr_t root) {
         // released manual request BEFORE that admission, not in its later
         // reactive-defense callback after the first attack was already rejected.
         if (defensePermission(root)==DefensePermission::denied) withdrawDefense(root);
+        LARGE_INTEGER before{}, after{};
+        QueryPerformanceCounter(&before);
         originalCombatUpdate(root);
+        QueryPerformanceCounter(&after);
+        // Read-only: the balance shadow measures what the native update just decided (balance_shadow.inl).
+        if (!nestedActor) balanceShadowObserve(root, shadowMicroseconds(before, after));
         // Recheck the current physical/input owner after native code. UI, focus,
         // scene, actor and policy handoffs cannot carry an old hold forward.
         if (!nestedActor && !update.reactiveSeen && manualInterceptionReady(root)) defenseReactive(root);
