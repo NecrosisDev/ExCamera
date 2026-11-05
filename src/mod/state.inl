@@ -694,7 +694,11 @@ static void publishStatus(FILE* f) {
 // Owned and pumped by the worker thread only; it never takes focus and hides
 // while another application is in front. Code stays mapped until process exit.
 static HWND noticeWindow;
-static const wchar_t* noticeText = L"";
+// The banner paints its own copy: a caller may pass a stack buffer (the F12 line), which is gone by the
+// time WM_PAINT reads it. noticeSource keeps the caller's pointer for identity checks only (never read).
+static wchar_t noticeBuffer[1024] = L"";
+static const wchar_t* noticeText = noticeBuffer;
+static const wchar_t* noticeSource = nullptr;
 static ULONGLONG noticeShownMs = 0, noticeLastTick = 0, noticeStarted = 0;
 static bool noticeVisible = false;
 static constexpr ULONGLONG noticeLifetimeMs = 120000;
@@ -760,13 +764,25 @@ static BOOL CALLBACK findWindow(HWND w, LPARAM out);
 [[maybe_unused]] static void markControlsNoticeSeen() {
     if (settingsPath[0]) WritePrivateProfileStringW(L"Launcher", L"ControlsSeen", L"1", settingsPath);
 }
-static bool showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000,
-                       NoticeKind kind = NoticeKind::fault) {
-    if (noticeWindow) {
-        DestroyWindow(noticeWindow);
-        noticeWindow = nullptr;
-        noticeVisible = false;
-    }
+// A window belongs to the thread that created it: only that thread can destroy it, and a failed
+// DestroyWindow from another thread left a topmost banner over the desktop for good. The session worker
+// (noticeOwnerThread, set when it starts) is the only thread that creates, shows, hides and destroys the
+// banner; any other thread (the game's window procedure: F12, F8) queues its text for the next pump.
+static std::atomic<DWORD> noticeOwnerThread{0};
+static SRWLOCK noticePendingLock = SRWLOCK_INIT;
+static wchar_t noticePendingText[1024];
+static const wchar_t* noticePendingSource = nullptr;
+static ULONGLONG noticePendingMs = 0;
+static NoticeKind noticePendingKind = NoticeKind::fault;
+static std::atomic<bool> noticePending{false};
+static bool closeNotice() { // owner thread
+    if (noticeWindow && !DestroyWindow(noticeWindow) && IsWindow(noticeWindow)) return false;
+    noticeWindow = nullptr;
+    noticeVisible = false;
+    return true;
+}
+static bool createNotice(const wchar_t* text, ULONGLONG visibleMs, NoticeKind kind) {
+    if (!closeNotice()) return false;
     // An early activation fault can precede the first window enumeration.
     HWND window = hookedWindow.load(std::memory_order_acquire);
     if (!window || !IsWindow(window)) {
@@ -796,11 +812,12 @@ static bool showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000,
     const int baseHeight = gh / 14 < 40 ? 40 : gh / 14;
     const int height = baseHeight * int(lines);
     noticeKind = kind;
-    noticeText = text;
+    wcsncpy_s(noticeBuffer, text, _TRUNCATE);
+    noticeSource = text;
     noticeVisibleMs = visibleMs;
     noticeWindow = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
                                        WS_EX_TOOLWINDOW,
-                                   L"ExCameraNotice", text, WS_POPUP, g.left + (gw - width) / 2,
+                                   L"ExCameraNotice", noticeText, WS_POPUP, g.left + (gw - width) / 2,
                                    g.top + gh / 9, width, height, nullptr, nullptr, module, nullptr);
     if (!noticeWindow) return false;
     SetLayeredWindowAttributes(noticeWindow, 0, 235, LWA_ALPHA);
@@ -810,9 +827,39 @@ static bool showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000,
     ++notices;
     return true;
 }
+static bool showNotice(const wchar_t* text, ULONGLONG visibleMs = 10000, NoticeKind kind = NoticeKind::fault) {
+    const DWORD owner = noticeOwnerThread.load(std::memory_order_acquire);
+    if (!owner || owner == GetCurrentThreadId()) return createNotice(text, visibleMs, kind);
+    AcquireSRWLockExclusive(&noticePendingLock);
+    wcsncpy_s(noticePendingText, text, _TRUNCATE);
+    noticePendingSource = text;
+    noticePendingMs = visibleMs;
+    noticePendingKind = kind;
+    noticePending = true;
+    ReleaseSRWLockExclusive(&noticePendingLock);
+    return true;
+}
 // Returns false once the notice is gone. Visible time counts only while the
 // game is frontmost, so a fault during alt-tab is still seen on return.
 static bool pumpNotice() {
+    if (noticePending) { // a notice queued by another thread; created here, on the owner
+        wchar_t text[1024];
+        const wchar_t* source = nullptr;
+        ULONGLONG visibleMs = 0;
+        NoticeKind kind = NoticeKind::fault;
+        bool take = false;
+        AcquireSRWLockExclusive(&noticePendingLock);
+        if (noticePending) {
+            wcscpy_s(text, noticePendingText);
+            source = noticePendingSource;
+            visibleMs = noticePendingMs;
+            kind = noticePendingKind;
+            noticePending = false;
+            take = true;
+        }
+        ReleaseSRWLockExclusive(&noticePendingLock);
+        if (take && createNotice(text, visibleMs, kind)) noticeSource = source;
+    }
     if (!noticeWindow) return false;
     const ULONGLONG now = GetTickCount64();
     if (noticeVisible) noticeShownMs += now - noticeLastTick;
@@ -821,9 +868,7 @@ static bool pumpNotice() {
     const bool front = window && GetForegroundWindow() == window && !IsIconic(window);
     if (noticeShownMs >= noticeVisibleMs || now - noticeStarted >= noticeLifetimeMs ||
         !IsWindow(window)) {
-        DestroyWindow(noticeWindow);
-        noticeWindow = nullptr;
-        noticeVisible = false;
+        closeNotice();
     } else if (front != noticeVisible) {
         ShowWindow(noticeWindow, front ? SW_SHOWNOACTIVATE : SW_HIDE);
         noticeVisible = front;

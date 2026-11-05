@@ -221,7 +221,7 @@ static void stopKeyTick() {
     const fp::StopKey step = fp::stopKeyStep(press, release, GetTickCount64(), gameWindow() != nullptr);
     if (step == fp::StopKey::idle) return;
     if (step == fp::StopKey::holding) {
-        if (!noticeWindow || noticeText != stopHoldHint) showNotice(stopHoldHint, 3000);
+        if (!noticeWindow || noticeSource != stopHoldHint) showNotice(stopHoldHint, 3000);
         return;
     }
     if (!stopPress.compare_exchange_strong(press, 0)) return; // A new press arrived: decide it next tick.
@@ -236,11 +236,7 @@ static void stopKeyTick() {
         showNotice(L"F7 ignored. Hold F7 for one second to stop " FP_SHOWN_NAME L".", 4000);
         return;
     }
-    if (noticeWindow && noticeText == stopHoldHint) {
-        DestroyWindow(noticeWindow);
-        noticeWindow = nullptr;
-        noticeVisible = false;
-    } // cancel: focus lost
+    if (noticeWindow && noticeSource == stopHoldHint) closeNotice(); // cancel: focus lost
 }
 // Stopped cleanly: the window procedure is gone, so F6 is read from the key
 // state, only while a window of the game is frontmost. A key already held at
@@ -1531,6 +1527,7 @@ static void finishSessionWorker(bool (*noticePump)() = pumpNotice) {
 }
 static DWORD WINAPI run(void*) {
     AddVectoredExceptionHandler(1, recordFault); // never removed: the DLL stays mapped
+    noticeOwnerThread.store(GetCurrentThreadId(), std::memory_order_release); // the banner's only owner
     const DWORD result = runSession();
     profileStop("session_ended");
     profilePulse(false);
