@@ -582,7 +582,7 @@ uniform vec4 heldDetail;   // x: strength, 0 when off
 // Per held item or body part (a row each, 40 rows of 16 texels): texels 0-2 the rows taking view
 // space to its own space (cm); 3 the view-space direction to the game lights near it, w how sure;
 // 4 their colour (rgb, brightest 1) and the item's strength (a, 0 off); 5-8 blood spots in its
-// own space, w the amount (fraction) plus wetness in tenths; 9 its wear and dirt (0..1), how many
+// own space, w the amount (fraction) plus wetness in hundredths; 9 its wear and dirt (0..1), how many
 // blood spots it carries (z), and whether wear and dirt were read (w); 10 what it is (x: 0 held,
 // 1 worn, 2 a loose item or placed object).
 uniform sampler2D heldData;
@@ -807,7 +807,8 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     vec3 p = viewPosition(uv, raw);
     float range = -p.z;
     float itemDepth = heldDatum(slot, 10.0).y;
-    if (itemDepth > 0.0 && abs(range - itemDepth) > 85.0) return color;
+    // Within the item's own reach of its origin's depth (as q below): a blade pointing at the camera runs that far.
+    if (itemDepth > 0.0 && abs(range - itemDepth) > 175.0) return color;
     vec3 q = vec3(dot(rowX, vec4(p, 1.0)), dot(rowY, vec4(p, 1.0)), dot(rowZ, vec4(p, 1.0)));
     if (dot(q, q) > 175.0 * 175.0) return color;
     float footprint = 2.0 * range * texel.y / projection.y; // cm a pixel spans here
@@ -981,45 +982,29 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
         tint = mix(tint, tint * (1.2 + 0.15 * mix(1.0, grind, resolved(0.12, footprint))), honed);
     }
 )glsl" R"glsl(    // Blood from its hits, laid where a blade carries it: a thin film along the cutting edge that drew it,
-    // dragged across the flat in streaks by the cut, beaded on the edge itself, and while wet running down
-    // the steel towards whichever end hangs lower. It is a liquid layer over the metal (see the end of this
+    // dragged across the flat in streaks by the cut, beaded on the edge itself while wet, and run along the
+    // steel towards the grip. All of it in the blade's own frame, so none of it moves with the view. It is a liquid layer over the metal (see the end of this
     // function), so it is shaped here and coloured, lit and made glossy there.
     float cover = 0.0, wet = 0.0, thick = 0.0;
     if (condition.z > 0.5) {
-        // The item's own frame: the surface's normal, the way across the blade on it, and which way is down.
-        vec3 nl = normalize(vec3(dot(rowX.xyz, n), dot(rowY.xyz, n), dot(rowZ.xyz, n)));
-        vec3 ul = vec3(dot(rowX.xyz, worldUp.xyz), dot(rowY.xyz, worldUp.xyz), dot(rowZ.xyz, worldUp.xyz));
-        ul /= max(length(ul), 1e-4);
-        vec3 across = cross(nl, vec3(0.0, 0.0, 1.0));
-        across = dot(across, across) > 1e-3 ? normalize(across) : vec3(1.0, 0.0, 0.0);
-        vec3 down = -ul + nl * dot(ul, nl); // down, along the surface
-        float slope = length(down);
-        down = slope > 1e-3 ? down / slope : vec3(0.0, 0.0, -1.0);
-        vec3 runSide = cross(nl, down);
-        // A blade's edge: near its outline (6 same-item taps about 1.2 cm out and 6 at 0.4 cm), up close.
-        float edgeNear = 0.0;
         bool blade = metal > 0.5 && abs(slotKind - 1.0) > 0.5; // held or lying about, not worn plate
-        if (blade && closeUp) {
-            float outside = 0.0;
-            vec2 direction = vec2(0.0, 1.0);
-            float far = clamp(1.2 * pixelsPerCm, 2.0, 28.0), nearer = clamp(0.4 * pixelsPerCm, 1.0, 9.0);
-            for (int i = 0; i < 6; ++i) {
-                outside += 1.0 - sameItem(uv + direction * texel * far, slot);
-                outside += 1.5 * (1.0 - sameItem(uv + direction * texel * nearer, slot));
-                direction = goldenTurn * direction;
-            }
-            edgeNear = smoothstep(0.4, 3.0, outside);
-        }
-        float u = dot(q, across);
         for (int k = 0; k < 4; ++k) {
             if (float(k) >= condition.z) break; // condition.z: how many spots this item carries
             vec4 spot = heldDatum(slot, 5.0 + float(k));
             if (spot.w <= 0.0) continue;
-            float amount = fract(spot.w), wetness = floor(spot.w) * 0.1;
+            float amount = fract(spot.w), wetness = floor(spot.w) * 0.01;
             float seed = fract(dot(spot.xyz, vec3(0.131, 0.217, 0.073))) * 40.0;
             vec3 d = q - spot.xyz;
             float here, bead = 0.0, run = 0.0;
             if (blade) {
+                // The edge that bit, in the blade's own frame (z along its length, the centre line at x = y = 0):
+                // the side the hit lay off the centre line, about as far out as it lay. All in item space, so
+                // it stays put however the blade is seen; a hit on the centre line films the whole width.
+                float off = length(spot.xy);
+                vec2 e = off > 0.4 ? spot.xy / off : vec2(1.0, 0.0);
+                float edgeAt = clamp(off, 1.2, 4.0);
+                float u = dot(q.xy, e);
+                float edgeNear = off > 0.4 ? smoothstep(edgeAt - 2.2, edgeAt - 0.6, u) : 0.8;
                 // Along the length: a ragged span either side of where it bit, longer for a heavier wound.
                 float span = 2.5 + 8.0 * amount;
                 float ragged = (solidNoise(vec3(u * 0.7, q.z * 0.9, seed)) - 0.5) * 3.0;
@@ -1027,27 +1012,25 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
                 // Streaks the cut dragged from the edge across the flat, leaning along the blade.
                 float streak = solidNoise(vec3((q.z - 0.55 * u) * 2.4, (u + 0.55 * q.z) * 0.3, seed + 7.0));
                 float tail = smoothstep(0.42, 0.72, streak) * (0.4 + 0.6 * amount);
-                float band = closeUp ? edgeNear : 0.6; // further out the edge is below a pixel: a light film
-                here = along * max(band, tail) * (0.55 + 0.45 * amount);
+                here = along * max(edgeNear, tail) * (0.55 + 0.45 * amount);
                 // Beads strung along the edge while wet: round drops a few mm across.
                 float cell = q.z * 1.3 + seed;
                 float bf = fract(cell) - 0.5;
                 bead = (1.0 - smoothstep(0.12, 0.3, abs(bf))) * step(0.45, fract(sin(floor(cell) * 12.9898 + seed) * 43758.5453)) *
                        smoothstep(0.7, 0.95, edgeNear) * along * wetness;
-                // Runs: two thin rivulets leaving the smear downhill while the blood is wet and the steel
-                // steep; each ends in a fatter bead.
-                if (wetness > 0.0 && slope > 0.25) {
-                    float t = dot(d, down), side = dot(d, runSide);
-                    for (int r = 0; r < 2; ++r) {
-                        float fr = float(r);
-                        float offset = (fract(sin(seed * 3.1 + fr * 7.7) * 43758.5453) - 0.5) * span * 0.5;
-                        float len = (1.5 + 7.0 * amount) * wetness * smoothstep(0.25, 0.9, slope) *
-                                    (0.6 + 0.4 * fract(sin(seed + fr * 3.3) * 9631.17));
-                        float tip = smoothstep(len * 0.75, len, t);
-                        float width = 0.12 + 0.1 * tip;
-                        float line = 1.0 - smoothstep(width * 0.5, width, abs(side - offset - 0.15 * sin(t * 0.8 + fr)));
-                        run = max(run, line * step(0.0, t) * (1.0 - smoothstep(len * 0.9, len, t)) * (1.0 + 0.6 * tip));
-                    }
+                // Runs: two thin rivulets leaving the smear along the blade towards the grip, where blood on a
+                // raised blade goes, each ending in a fatter bead. Laid in the blade's own frame, so they stay put
+                // as it swings; they reach their length in the first seconds and dry where they stopped.
+                float grow = 1.0 - smoothstep(0.9, 1.0, wetness);
+                float t = -d.z;
+                for (int r = 0; r < 2; ++r) {
+                    float fr = float(r);
+                    float from = edgeAt - 0.5 - 1.6 * fract(sin(seed * 3.1 + fr * 7.7) * 43758.5453);
+                    float len = (1.5 + 7.0 * amount) * grow * (0.6 + 0.4 * fract(sin(seed + fr * 3.3) * 9631.17));
+                    float tip = smoothstep(len * 0.75, len, t);
+                    float width = 0.12 + 0.1 * tip;
+                    float line = 1.0 - smoothstep(width * 0.5, width, abs(u - from - 0.15 * sin(t * 0.8 + fr)));
+                    run = max(run, line * step(0.0, t) * (1.0 - smoothstep(len * 0.9, len, t)) * (1.0 + 0.6 * tip));
                 }
             } else {
                 // A haft, a grip, a shield: a blot soaked into the surface, ragged at the rim.

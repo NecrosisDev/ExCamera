@@ -386,6 +386,30 @@ static bool meshPose(uintptr_t node, float* pose) {
     return std::isfinite(pose[9] + pose[10] + pose[11]);
 }
 
+static bool sectorOriginOf(uintptr_t node, float* origin); // view_effects.inl
+// A hit point in a weapon mesh's own frame. The mesh's drawn pose is sector-local and whether the hit
+// point is too is not established here, so both readings are tried and the one that lands on the weapon
+// (nearest its centre line, within its length) wins; false when neither reads.
+static bool weaponLocal(uintptr_t node, const float* pose, const float* point, float* local) {
+    float origin[3]{};
+    const bool sector = sectorOriginOf(node, origin) && (origin[0] || origin[1] || origin[2]);
+    float best = 0.f;
+    bool found = false;
+    for (int candidate = 0; candidate < (sector ? 2 : 1); ++candidate) {
+        float p[3], l[3];
+        for (int i = 0; i < 3; ++i) p[i] = point[i] - (candidate ? origin[i] : 0.f);
+        if (!intoPose(pose, p, true, l)) continue;
+        const float beyond = l[2] < -30.f ? -30.f - l[2] : l[2] > 160.f ? l[2] - 160.f : 0.f;
+        const float score = l[0] * l[0] + l[1] * l[1] + beyond * beyond;
+        if (!found || score < best) {
+            best = score;
+            memcpy(local, l, sizeof l);
+            found = true;
+        }
+    }
+    return found;
+}
+
 static uintptr_t strikingWeaponNode(const CharacterHitRecord& h) {
     // Version 2 records name the delivering weapon's rigid body; its mesh node is at +0x18.
     if (h.weapon && readable(uintptr_t(h.weapon), field::bodyPart::meshNode + 8)) {
@@ -417,7 +441,7 @@ static uintptr_t strikingWeaponNode(const CharacterHitRecord& h) {
             if (!readable(weapon, field::bodyPart::meshNode + 8)) continue;
             const uintptr_t node = *(const uintptr_t*)(weapon + field::bodyPart::meshNode);
             float pose[12], local[3];
-            if (!meshPose(node, pose) || !intoPose(pose, h.point, true, local)) continue;
+            if (!meshPose(node, pose) || !weaponLocal(node, pose, h.point, local)) continue;
             // Along its own length (z), from just behind the grip to past any blade's tip.
             if (local[2] < -30.f || local[2] > 160.f) continue;
             const float off = std::sqrt(local[0] * local[0] + local[1] * local[1]);
@@ -437,7 +461,7 @@ static void addWeaponBlood(const CharacterHitRecord& h) {
     float pose[12], local[3];
     __try {
         node = strikingWeaponNode(h);
-        if (!node || !meshPose(node, pose) || !intoPose(pose, h.point, true, local)) return;
+        if (!node || !meshPose(node, pose) || !weaponLocal(node, pose, h.point, local)) return;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         woundFaults.fetch_add(1, std::memory_order_relaxed);
         return;
@@ -469,7 +493,7 @@ static void addWeaponBlood(const CharacterHitRecord& h) {
 }
 
 // A held mesh's blood for the held-item pass: item-space centre, and in w the amount (the fraction)
-// plus how wet it still is, drying over two minutes, as tenths in the whole part (0 for none).
+// plus how wet it still is, drying over two minutes, as hundredths in the whole part (0 for none).
 static void weaponBloodFor(uintptr_t node, float (*out)[4]) {
     for (unsigned k = 0; k < bloodSpotsPerWeapon; ++k) out[k][0] = out[k][1] = out[k][2] = out[k][3] = 0.f;
     AcquireSRWLockShared(&woundLock);
@@ -482,7 +506,7 @@ static void weaponBloodFor(uintptr_t node, float (*out)[4]) {
             out[k][0] = w.local[k][0];
             out[k][1] = w.local[k][1];
             out[k][2] = w.local[k][2];
-            out[k][3] = std::clamp(w.amount[k], 0.01f, 0.99f) + std::round(wet * 10.f);
+            out[k][3] = std::clamp(w.amount[k], 0.01f, 0.99f) + std::round(wet * 100.f);
         }
     }
     ReleaseSRWLockShared(&woundLock);
