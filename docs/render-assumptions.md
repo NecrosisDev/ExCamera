@@ -408,6 +408,21 @@ Each ships on its own once proven; the rest stay off.
   get their factory set from 0x20AC10, called by the item creators 0x107600 and 0x13FB60 (and 0xE66D0,
   0x25BAB0, 0x296C40); that every worn piece is created that way is UNPROVEN, and a piece without ids simply
   gets no detail (`material_id_misses`). Body skin is not composed there and gets none.
+- **World objects** (own commit 2e5b8b3): loose items and placed objects in reach go through the same lookup.
+  An object whose colour texture the item composer built gets ids; any other (a placed prop drawn with a level
+  material) gets none and no detail.
+- **Level detail: the game has no per-surface material type to read** (PROVEN where looked, 2026-11-05):
+  - Footsteps play the character's own step sound (`character+0xF00`, loaded at 0x172D90 from the character
+    record `+0xAF8 -> +0x144`), and add the wet step (`StpWet`, 0x172D43) only when the foot is below the
+    level's water height (`character+0x1000 -> +0x1DAC` against the foot `+0x40`, 0x161C5F..0x161C7E). Nothing
+    asks the floor what it is made of.
+  - Physics collisions sound by the moving body's own set (`WodCol` default at 0x154268; a stone block's `Stn`
+    set at 0x14A789), not by the surface hit.
+  - Level geometry draws with plain `TMaterial` (VMT 0x2FFE10): its textures (+0x48..+0x68) and shader feature
+    flags; the procedural ids above belong to the item composer only (`TProcMaterial`, VMT 0x32FE78).
+  - So Level detail cannot pick wood, stone or plaster from game data. It stays off. What the game does have
+    per pixel for level surfaces is its specular and gloss data (`MatSpc` x `SpcTex`, `GlsTex`), which says how
+    shiny a surface is, not what it is made of.
 - **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),
   parts drawn with ids and misses. Parallax (`Mat.TexDsp`) items read ids at the unshifted texcoord.
 
