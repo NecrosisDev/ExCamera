@@ -1234,10 +1234,10 @@ inline const RowInfo& rowInfo(int row) {
         {setting::fingerPosesOthers, L"Finger poses: others", RowInfo::toggle, nullptr, &ModSettings::fingerPosesOthers,
          L"View", L"FingerPosesOthers", nullptr, nullptr,
          L"The same finger poses for every other character in the level, in play."},
-        {setting::conditionEffects, L"Hurt and winded", RowInfo::toggle, nullptr, &ModSettings::conditionEffects,
+        {setting::conditionEffects, L"Hurt and eye adjustment", RowInfo::toggle, nullptr, &ModSettings::conditionEffects,
          L"View", L"ConditionEffects", nullptr, nullptr,
          L"Below half health the view loses colour and darkens at the edges, and the eyes take a moment to adjust "
-         L"between light and darkness. Uses the game's own health (the yellow part of the left bar)."},
+         L"between light and darkness. Uses the health the game's own health bar shows."},
         {setting::lightSmoothing, L"Smooth lighting", RowInfo::toggle, nullptr, &ModSettings::lightSmoothing,
          L"View", L"SmoothLighting", nullptr, nullptr,
          L"Reads the game's bounce-light grid smoothly, so strong lights such as the arena's red torches fall off in "

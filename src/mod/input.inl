@@ -1826,7 +1826,7 @@ static void publishCue(uintptr_t self) {
     if (attackCue && getAim(self, a)) {
         in.owned = true;
         in.combat = *reinterpret_cast<const unsigned char*>(root + field::character::combatStance) != 0;
-        in.upright = (*reinterpret_cast<const unsigned*>(root + field::character::stateFlags) & 0x40204) == 0;
+        in.upright = !fp::reactionState(*reinterpret_cast<const unsigned*>(root + field::character::stateFlags)); // not down, dead or staggered (169BE6)
         in.attackHeld = (*reinterpret_cast<const unsigned*>(gameAt(fp::sig::buttonWord)) & 1) != 0;
         in.alternateHeld = (*reinterpret_cast<const unsigned*>(gameAt(fp::sig::keyWord)) & 0x80) != 0;
         in.pressBlocked = *reinterpret_cast<const unsigned char*>(self + field::behaviour::pressBlocked) != 0;

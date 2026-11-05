@@ -5175,6 +5175,7 @@ static bool sectorOriginOf(uintptr_t node, float* origin) {
 static void heldLightFor(uintptr_t node, uintptr_t sector, HeldPose& h) {
     memset(h.light, 0, sizeof h.light);
     h.lightColour[0] = h.lightColour[1] = h.lightColour[2] = 1.f;
+    if constexpr (!unprovenRenderReads) return; // light-node fields unproven (render-assumptions.md): the default light
     const LightList& list = lightsOf(sector);
     float item[3];
     for (int i = 0; i < 3; ++i) item[i] = h.pose[9 + i] + h.sectorOrigin[i];
@@ -5237,6 +5238,7 @@ static void heldLightFor(uintptr_t node, uintptr_t sector, HeldPose& h) {
 static std::atomic<unsigned> heldConditionReads{0};
 static void heldConditionOf(uintptr_t node, bool apparel, float* out) {
     out[0] = out[1] = out[2] = out[3] = 0.f;
+    if constexpr (!unprovenRenderReads) return; // item record layout unproven (render-assumptions.md): read as unknown
     if (!node || !layout.optionalGroupAvailable("itemCondition") || !readable(node, 0x184)) return;
     const uint32_t id = *(const uint32_t*)(node + 0x180);
     if (!id) return;
@@ -5709,28 +5711,26 @@ static bool playerCapsule(ViewRequest& request) {
     return true;
 }
 
-// Hurt ramps from half health to a tenth (current health +D58 over its maximum). The winded look is off: the game
-// keeps no stamina or exertion value (the blue bar is magic), so nothing proven drives it.
+// Hurt ramps from half health to a tenth. Health is what the HUD's left bar fills to: +D58 (the HUD draws its
+// interpolated copy +D70, written from +D58 at 0x17A1F7) over the bar's whole length +103C (0x13E327-0x13E32F).
+// There is no winded part: the blue bar +D74/+D78 the HUD draws is magic, spent only by spell and power effects
+// through 0x17A640 (docs/GAME-FIELDS-AUDIT.md), and no game code keeps a stamina value; the shader's winded input
+// stays 0.
 constexpr float hurtStart = 0.5f, hurtSpan = 0.4f;
-constexpr bool conditionHealthProven = false;
 static void readCondition(ViewRequest& request) {
     float health = 0.f, healthMax = 0.f;
     __try {
         const uintptr_t root = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
         if (!root) return;
-        health = *(const float*)(root + field::character::health);
+        health = *(const float*)(root + field::character::health); // +D58: current health (see above)
         healthMax = *(const float*)(root + field::character::healthMax);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return;
     }
-    // Off until +D58 and +103C are proven (docs/GAME-FIELDS-AUDIT.md section 4): nothing unproven drives the view.
-    if constexpr (conditionHealthProven) {
-        if (std::isfinite(health) && std::isfinite(healthMax) && healthMax > 0.f) {
-            const float t = std::clamp((hurtStart - health / healthMax) / hurtSpan, 0.f, 1.f);
-            request.hurt = t * t * (3.f - 2.f * t);
-        }
+    if (std::isfinite(health) && std::isfinite(healthMax) && healthMax > 0.f) {
+        const float t = std::clamp((hurtStart - health / healthMax) / hurtSpan, 0.f, 1.f);
+        request.hurt = t * t * (3.f - 2.f * t);
     }
-    request.winded = 0.f; // off: no decoded exertion value (docs/GAME-FIELDS-AUDIT.md)
     const float flash = playerDamageFlash.load(std::memory_order_relaxed);
     request.damageFlash = flash;
     if (flash > 0.f) {
@@ -5747,6 +5747,7 @@ static std::atomic<unsigned> levelPeopleSeen{0};
 // items use (collectHeldLights; rebuilt from the player's sector at most every half second), for
 // level detail: strength = intensity x colour brightness x the light's own range falloff.
 static void levelLightsFor(ViewRequest& request) {
+    if constexpr (!unprovenRenderReads) return; // light-node fields unproven (render-assumptions.md): no lamps
     __try {
         const uintptr_t player = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
         const uintptr_t mesh = player && readable(player, field::character::sceneNode + 8)
@@ -5918,7 +5919,40 @@ static bool rewriteCompiles(GLuint shader, const char* text) {
     return ok != 0;
 }
 
+#if FP_DEV_TOOLS
+// Dev builds, [Dev] ShaderDump=1: every shader source the game hands the driver from here on, as it is,
+// appended to shader-dump.glsl beside first-person.ini. The game ships them packed in Resource.rpk
+// (shading.flb); this is how the render assumptions read what its shaders do with each texture unit.
+static void dumpGameShader(GLuint shader, GLsizei count, const char* const* strings, const GLint* lengths) {
+    static int enabled = -1;
+    static unsigned dumped = 0;
+    if (enabled < 0) enabled = settingsPath[0] && GetPrivateProfileIntW(L"Dev", L"ShaderDump", 0, settingsPath) ? 1 : 0;
+    if (!enabled || !strings || count <= 0 || count >= 256 || dumped >= 2000) return;
+    static std::wstring path;
+    if (path.empty()) path = settingsFolderFile(L"shader-dump.glsl");
+    const HANDLE file = path.empty() ? INVALID_HANDLE_VALUE
+                                     : CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                                                   FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    char head[96];
+    const int n = snprintf(head, sizeof head, "\r\n// ==== shader %u (GL name %u, %d parts) ====\r\n", dumped++, shader, count);
+    DWORD written = 0;
+    WriteFile(file, head, DWORD(n), &written, nullptr);
+    for (GLsizei k = 0; k < count; ++k) {
+        if (!strings[k]) continue;
+        const size_t length = lengths && lengths[k] >= 0 ? size_t(lengths[k]) : strlen(strings[k]);
+        WriteFile(file, strings[k], DWORD(length), &written, nullptr);
+    }
+    CloseHandle(file);
+}
+static void dumpGameShaderGuarded(GLuint shader, GLsizei count, const char* const* strings, const GLint* lengths) {
+    __try { dumpGameShader(shader, count, strings, lengths); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+#endif
 static void APIENTRY smoothShaderSource(GLuint shader, GLsizei count, const char* const* strings, const GLint* lengths) {
+#if FP_DEV_TOOLS
+    dumpGameShaderGuarded(shader, count, strings, lengths);
+#endif
     if (lightSmoothing.load(std::memory_order_relaxed) && strings && count > 0 && count < 256) {
         try {
             std::string text;
