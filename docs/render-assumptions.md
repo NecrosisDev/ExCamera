@@ -308,7 +308,19 @@ procedural ID. That is the next step to bring the four detail rows back with the
   `node+0x180` (it stays off). The chain to the factory is then: `node+0x184` -> 0x103DB0 lookup -> record ->
   chunk 0x100000 (the factory name; 0x10766B-0x107691) -> the factory list `DAT_5B2140` searched by name
   (0x20AC10). The per-instance variant bytes the factory uses (`factory+0x178`) are written at build time,
-  so for a given node they must be re-derived from its own record (not yet traced).
+  so for a given node they must be re-derived from its own record:
+- **Per-item variant choice (PROVEN).**
+  - 0x20AC10 finds the record's chunk 0x4000 (0x20AE42) and passes its payload (`chunk+8`) to 0x20D470 as the
+    item's instance data: seeds at `+4/+8` (to `factory+0x160/+0x164`); condition bytes `+0xC` -> `factory+0x170`,
+    `+0xD` -> `+0x168`, `+0xE` -> `+0x16C`, each byte × a constant (0x20AE5C-0x20AEBE).
+  - When `payload[0] & 0x10000000`, 0x20D470 sets each channel's variant `factory+0x178[ch] =
+    payload[0x50 + ch]`, clamped to the channel's variant count `+0xA8` (0x20D602-0x20D64B); otherwise it draws
+    them from the seeds.
+  - The first build of an item without stored variants sets `0x30000000` and calls 0x20DBB0 (0x20AEE6-0x20AEFC),
+    which presumably stores them (its body was not read).
+  - So for a node: `node+0x184` -> record -> chunk 0x4000 -> if flagged, variant of channel `ch` =
+    `payload[0x50+ch]`. The condition bytes the gated read uses are the same chunk's `+0x14..+0x16`
+    (`payload+0xC..+0xE`), which feed the factory.
 
 ## The game's own shading, as decoded (for the reflections and AO work)
 
