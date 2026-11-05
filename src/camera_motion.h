@@ -542,6 +542,46 @@ inline KnockdownViewStep knockdownViewStep(KnockdownView& k, bool enabled, int m
     k.presses = f6Presses;
     return back ? KnockdownViewStep::toFirst : KnockdownViewStep::none;
 }
+// The jump's upward push, spread over physics steps: a one-step push was taken straight back by the game's balance
+// (about an inch of rise). Each new physics step adds jumpStepSpeed until jumpPushSteps have passed or the body
+// has risen jumpRiseCapCm; a missed run of steps (no input poll for a while), a different character or scene,
+// death, or a knockdown ends it. jumpPushStep returns how many steps of push to add now.
+inline constexpr int jumpPushSteps = 8;
+inline constexpr float jumpStepSpeed = 120.f, jumpRiseCapCm = 20.f; // cm/s a step; cm
+inline constexpr unsigned jumpStepGap = 3;                          // more steps than this between polls: stop
+struct JumpPush {
+    bool active = false;
+    uintptr_t root = 0, scene = 0;
+    unsigned lastStep = 0;
+    int left = 0;
+    float startY = 0.f, risen = 0.f;
+    static JumpPush start(uintptr_t root, uintptr_t scene, unsigned step, float y) {
+        JumpPush p;
+        p.active = std::isfinite(y);
+        p.root = root;
+        p.scene = scene;
+        p.lastStep = step;
+        p.left = jumpPushSteps;
+        p.startY = y;
+        return p;
+    }
+};
+inline int jumpPushStep(JumpPush& p, bool owned, uintptr_t root, uintptr_t scene, unsigned step, float y,
+                        unsigned stateFlags, bool dead) {
+    if (!p.active) return 0;
+    const unsigned passed = step - p.lastStep;
+    const bool stop = !owned || root != p.root || scene != p.scene || dead || (stateFlags & (0xac0u | 0xa00u)) ||
+                      !std::isfinite(y) || passed > jumpStepGap;
+    if (!stop && std::isfinite(y)) p.risen = std::fmax(p.risen, y - p.startY);
+    if (stop || p.left <= 0 || p.risen >= jumpRiseCapCm) {
+        p.active = false;
+        return 0;
+    }
+    p.lastStep = step;
+    const int n = int(passed) < p.left ? int(passed) : p.left;
+    p.left -= n;
+    return n;
+}
 // The half-size of the box the camera is kept clear by (cm): bigger than the near plane's own rectangle, so
 // a wall beside the view never comes inside the near plane and shows through.
 inline constexpr float tpCameraRadius = 12.f;

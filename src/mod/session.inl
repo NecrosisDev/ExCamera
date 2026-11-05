@@ -1057,7 +1057,9 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("kicks", motionKicks.load())
         .boolean("kick_fault", motionKickFault.load())
         .unum("jumps", motionJumps.load())
-        .boolean("jump_fault", motionJumpFault.load());
+        .boolean("jump_fault", motionJumpFault.load())
+        .unum("jump_push_steps", jumpPushApplied.load())
+        .fixed("jump_last_rise_cm", double(jumpPushRiseMm.load()) / 10.0, 1);
     for (const bool jump : {false, true}) { // refused key presses by reason (fp::MotionRefusal)
         j.object(jump ? "jump_refused" : "kick_refused");
         for (size_t r = 0; r < size_t(fp::MotionRefusal::count); ++r)

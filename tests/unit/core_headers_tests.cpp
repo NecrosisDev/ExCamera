@@ -169,6 +169,9 @@ bool input_motion_refusals() {
     CHECK(fp::motionGate(false, false, 0, false, NAN, 100.f, .5f, false, false) == R::stamina);
     CHECK(fp::motionGate(false, false, 0, false, 90.f, 0.f, .5f, false, false) == R::stamina);
     CHECK(fp::motionGate(false, false, 0, false, 90.f, 100.f, .8f, true, false) == R::notInStance);
+    // The kick wants both feet planted: state 8 (upright, one foot) refuses it, 0 plays.
+    CHECK(fp::motionGate(false, false, 8, false, 90.f, 100.f, .8f, true, true, true) == R::notUpright);
+    CHECK(fp::motionGate(false, false, 0, false, 90.f, 100.f, .8f, true, true, true) == play);
     // Notices: something to do for the player's reasons, silence for the others; kick and jump each name theirs.
     for (R r : {R::busy, R::notUpright, R::stamina, R::notInStance, R::cursorFree, R::gameKey, R::unavailable, R::fault}) {
         CHECK(fp::motionRefusalNotice(false, r) != nullptr);
@@ -444,6 +447,38 @@ bool camera_motion_knockdown_view() {
     CHECK(fp::knockdownViewStep(chose, true, 0, knocked, 0, 1, 150) == Step::none); // F6 to first
     CHECK(fp::knockdownViewStep(chose, true, 1, knocked, 0, 2, 180) == Step::none); // F6 to third
     CHECK(fp::knockdownViewStep(chose, true, 1, knocked, dead, 2, 200) == Step::none);
+    return true;
+}
+
+bool camera_motion_jump_push() {
+    // Spread over physics steps: one step per new step, several when a poll is late, never past the budget.
+    auto p = fp::JumpPush::start(0x1000, 0x2000, 100, 50.f);
+    CHECK(p.active && p.left == fp::jumpPushSteps);
+    p.left -= 1; // the first step is pushed at the press
+    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 100, 50.f, 0, false) == 0); // no new step yet
+    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 101, 51.f, 0, false) == 1);
+    CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 103, 53.f, 0x40000, false) == 2); // falling bits are fine
+    int total = 4; // the press, then 1 and 2
+    for (unsigned s = 104; p.active; ++s) total += fp::jumpPushStep(p, true, 0x1000, 0x2000, s, 55.f, 0, false);
+    CHECK(total == fp::jumpPushSteps);
+    // The rise cap ends it early.
+    auto high = fp::JumpPush::start(0x1000, 0x2000, 0, 0.f);
+    CHECK(fp::jumpPushStep(high, true, 0x1000, 0x2000, 1, 5.f, 0, false) == 1);
+    CHECK(fp::jumpPushStep(high, true, 0x1000, 0x2000, 2, fp::jumpRiseCapCm, 0, false) == 0 && !high.active);
+    CHECK(near_equal(high.risen, fp::jumpRiseCapCm));
+    // Each cancel: not owned, another character or scene, death, a knockdown, a long gap, a bad height.
+    struct Case { bool owned; uintptr_t root, scene; unsigned step; float y; unsigned state; bool dead; };
+    const Case cancels[] = {{false, 0x1000, 0x2000, 1, 0.f, 0, false}, {true, 0x1001, 0x2000, 1, 0.f, 0, false},
+                            {true, 0x1000, 0x2001, 1, 0.f, 0, false},  {true, 0x1000, 0x2000, 1, 0.f, 0, true},
+                            {true, 0x1000, 0x2000, 1, 0.f, 0x80, false}, {true, 0x1000, 0x2000, 1, 0.f, 0x800, false},
+                            {true, 0x1000, 0x2000, 1 + fp::jumpStepGap, 0.f, 0, false},
+                            {true, 0x1000, 0x2000, 1, NAN, 0, false}};
+    for (const Case& c : cancels) {
+        auto q = fp::JumpPush::start(0x1000, 0x2000, 0, 0.f);
+        CHECK(fp::jumpPushStep(q, c.owned, c.root, c.scene, c.step, c.y, c.state, c.dead) == 0);
+        CHECK(!q.active);
+    }
+    CHECK(!fp::JumpPush::start(0x1000, 0x2000, 0, NAN).active);
     return true;
 }
 
@@ -978,6 +1013,7 @@ int main() {
         {"camera motion shoulder slide", camera_motion_shoulder_slide},
         {"camera motion look-follow framing", camera_motion_look_follow_framing},
         {"camera motion knockdown view", camera_motion_knockdown_view},
+        {"camera motion jump push", camera_motion_jump_push},
         {"hook health menu immunity and stalled pollInput",
          hook_health_menu_immunity_and_stalled_poll_input},
         {"PointerSet and JsonOut formatting", pointer_set_and_status_json_formatting},

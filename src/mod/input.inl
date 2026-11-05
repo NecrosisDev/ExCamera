@@ -2,6 +2,7 @@
 // Part of first_person.cpp (one translation unit): included there, in order.
 static void fingerPosesTick(uintptr_t root); // xr_bones.inl: the held-item finger poses, after the drive
 static void motionKeysTick(uintptr_t root);  // motions.inl: the kick and jump keys
+static void motionJumpTick(uintptr_t root, bool owned); // motions.inl: the jump's push over physics steps
 
 static std::atomic<unsigned> dropSpots{0}; // accepted close-view query outputs
 
@@ -1230,6 +1231,7 @@ static void inputProfileBody() {
     sampleHeldBindings(owned, sample);
     trackedControllerInput(root, bh, owned);
     fingerPosesTick(root);
+    motionJumpTick(root, owned);
     if (owned) motionKeysTick(root);
     combatInput(root, bh, owned, sample);
     if (owned) prepareAttackHeading(bh);

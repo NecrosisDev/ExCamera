@@ -997,11 +997,12 @@ inline constexpr const char* motionRefusalNames[] = {"unavailable", "fault",  "t
 static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(MotionRefusal::count));
 // The refusal for a player already found eligible as a character (root readable, the controlled one); `none`
 // (count) when the clip may play. state: the character's state flags, 0 or 8 is upright and free.
+// planted: both feet on the ground (state 0 only; 8 is upright but not both feet), for the kick.
 inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, bool dead, float stamina,
-                                float staminaMax, float share, bool needStance, bool inStance) {
+                                float staminaMax, float share, bool needStance, bool inStance, bool planted = false) {
     if (cursorFree) return MotionRefusal::cursorFree;
     if (busyMotion) return MotionRefusal::busy;
-    if (state != 0 && state != 8) return MotionRefusal::notUpright;
+    if (state != 0 && (state != 8 || planted)) return MotionRefusal::notUpright;
     if (dead) return MotionRefusal::dead;
     if (!(std::isfinite(stamina) && std::isfinite(staminaMax) && staminaMax > 0 && stamina >= share * staminaMax))
         return MotionRefusal::stamina;
