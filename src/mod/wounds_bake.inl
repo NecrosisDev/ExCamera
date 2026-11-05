@@ -7,8 +7,10 @@
 // .data 0x2E9F30: vPos 0, vTex 1, vNrm 2, vCol 3, vTx2 4, vTng 6, vDlt 7, at 0x1FA164-0x1FA232); the game's
 // shading_v.glsl reads vTex as its texcoord. Texture units: the shared stoneSkinOriginals check (map flags at
 // renderer +8, binder 0x2010C0) is what the bake's draw uses. Still not shown by game code: what selects body
-// skin among a face's +2F8 bits (a packed word: 0x577CA tests 0x1F0000, 0x1C7BF8 repacks 0xFF, 0x70000, 0x180000
-// and 0xE00000; the bake takes the whole word == 0), and,
+// skin among a face's +2F8 bits (a packed word; 0x577CA tests 0x1F0000; the 0xFF/0x70000/0x180000/0xE00000 repack
+// at 0x1C7BF8 belongs to a grid object, +2E8 its dimensions, not a mesh node; no game code found buckets mesh faces
+// by any of these fields, the faces of a material being its own vertex range; all unproven flags, and the bake
+// takes the whole word == 0), and,
 // formerly, which texture unit the skin program samples for each map at draw time (the binder 0x20112B-0x2012AB hands
 // out units in the order DifTex, OpcTex, EmiTex, SpcTex, NrmTex, GlsTex, DspTex, EnvMap to the maps present;
 // names at .rdata 0x335218/0x335238/0x335258, table .data 0x2E9F70), and the Injuries addon's severed bits.
@@ -1159,6 +1161,26 @@ static void woundSkinDiagnose(uintptr_t node, uintptr_t material, bool bind) {
     GLint program = 0, priorUnit = 0;
     glGetIntegerv(0x8B8D /* CURRENT_PROGRAM */, &program);
     renderAuditLog("skin witness: node %p material %p program %d", (void*)node, (void*)material, program);
+    // The game's skin marking (0x207240): a material whose definition [mat+D0] has a 38-character name (byte +208
+    // == 0x26) receives the character's shared skin set (mat+100) and a new definition (mat+D0, 0x207436). Whether
+    // that rule can still be read at draw time is what these lines show: each material's definition, its name
+    // length and name, and its set, so skin materials can be told by a value the game itself leaves behind.
+    const int lastMaterial = *(int*)(node + 0x1c8);
+    const uintptr_t table = *(uintptr_t*)(node + 0x1d0);
+    for (int i = 0; i <= lastMaterial && i < 16 && readable(table, size_t(i + 1) * 8); ++i) {
+        const uintptr_t m = *(uintptr_t*)(table + size_t(i) * 8);
+        const uintptr_t def = m && readable(m, 0x108) ? *(uintptr_t*)(m + 0xd0) : 0;
+        const uintptr_t set = m && readable(m, 0x108) ? *(uintptr_t*)(m + 0x100) : 0;
+        unsigned length = 0;
+        char name[40]{};
+        if (def && readable(def, 0x209 + 39)) {
+            length = *(unsigned char*)(def + 0x208);
+            memcpy(name, (const void*)(def + 0x209), (std::min)(length, 39u));
+        }
+        renderAuditLog("skin witness: material[%d] %p%s: definition %p name length %u \"%s\", set %p, faces %d..%d", i,
+                       (void*)m, m == material ? " (this draw)" : "", (void*)def, length, name, (void*)set,
+                       m && readable(m, 0xb8) ? *(int*)(m + 0xb0) : -1, m && readable(m, 0xb8) ? *(int*)(m + 0xb4) : -1);
+    }
     GLuint originals[3]{};
     const bool set = stoneSkinOriginals(material, originals);
     renderAuditLog("skin witness: material set +10/+18/+20 = %u %u %u%s", originals[0], originals[1], originals[2],
