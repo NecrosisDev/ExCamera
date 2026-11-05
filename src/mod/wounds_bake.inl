@@ -1161,6 +1161,26 @@ static void woundSkinDiagnose(uintptr_t node, uintptr_t material, bool bind) {
     GLint program = 0, priorUnit = 0;
     glGetIntegerv(0x8B8D /* CURRENT_PROGRAM */, &program);
     renderAuditLog("skin witness: node %p material %p program %d", (void*)node, (void*)material, program);
+    // The game's skin marking (0x207240): a material whose definition [mat+D0] has a 38-character name (byte +208
+    // == 0x26) receives the character's shared skin set (mat+100) and a new definition (mat+D0, 0x207436). Whether
+    // that rule can still be read at draw time is what these lines show: each material's definition, its name
+    // length and name, and its set, so skin materials can be told by a value the game itself leaves behind.
+    const int lastMaterial = *(int*)(node + 0x1c8);
+    const uintptr_t table = *(uintptr_t*)(node + 0x1d0);
+    for (int i = 0; i <= lastMaterial && i < 16 && readable(table, size_t(i + 1) * 8); ++i) {
+        const uintptr_t m = *(uintptr_t*)(table + size_t(i) * 8);
+        const uintptr_t def = m && readable(m, 0x108) ? *(uintptr_t*)(m + 0xd0) : 0;
+        const uintptr_t set = m && readable(m, 0x108) ? *(uintptr_t*)(m + 0x100) : 0;
+        unsigned length = 0;
+        char name[40]{};
+        if (def && readable(def, 0x209 + 39)) {
+            length = *(unsigned char*)(def + 0x208);
+            memcpy(name, (const void*)(def + 0x209), (std::min)(length, 39u));
+        }
+        renderAuditLog("skin witness: material[%d] %p%s: definition %p name length %u \"%s\", set %p, faces %d..%d", i,
+                       (void*)m, m == material ? " (this draw)" : "", (void*)def, length, name, (void*)set,
+                       m && readable(m, 0xb8) ? *(int*)(m + 0xb0) : -1, m && readable(m, 0xb8) ? *(int*)(m + 0xb4) : -1);
+    }
     GLuint originals[3]{};
     const bool set = stoneSkinOriginals(material, originals);
     renderAuditLog("skin witness: material set +10/+18/+20 = %u %u %u%s", originals[0], originals[1], originals[2],
