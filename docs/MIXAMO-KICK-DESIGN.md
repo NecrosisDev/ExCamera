@@ -366,7 +366,10 @@ Everything below is read from the reviewed exe; nothing is implemented yet.
   ground query height is the contact's +0x90 minus 10 for a support, +0x90 otherwise (0x16EDA0–0x16EDF5), then
   0x150FF0. Bit 2 is read again at 0x16F1A5. `standingLegs` targets each foot from anchor +0x24 (or lerp(+0x3C, +0x24)
   with bit 4; 0x15F22E–0x15F300).
-* **Not decoded yet**: what +0x40C is to the physics (the readers in 0x80CD0–0x88230), the rest of `supportHeight`
+* **Shin +0x40C is the part's ground-contact grip**: 0x84BD0 walks the part's own physics contacts (+0x348 count,
+  entries at +0x34C, stride 0x30, normal at +0x20) and scales each one's response by +0x40C × k × (a·n.y² + b)
+  (0x84C08–0x84CF7). A shin in the air has no ground contacts, so the grip the kick gives the lifted leg does nothing.
+* **Not decoded yet**: the rest of `supportHeight`
   (0x16F1A5 on, `heightForce` 0x16FDF0), and how the support height moves the pelvis. Until these are read, the
   cause of the toppling is not proven, and there is no proven moment between `contactFrame` and `supportHeight` for a
   fix: changing a kicking leg's flag would need a new hook there (a new signature target, to be reported first).
