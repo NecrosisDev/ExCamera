@@ -129,6 +129,7 @@ enum : int {
     swapShoulderKey,
     tpLookFollow,
     fpKnockdown,
+    parryDirection,
     count
 };
 }
@@ -166,7 +167,7 @@ inline unsigned rowCapability(int row) {
     case setting::bladeDrag: case setting::stabSink: case setting::bladeGain: return capBlades;
     case setting::kickKey: return capKick;
     case setting::jumpKey: return capJump;
-    case setting::fpDefense: case setting::tpDefense: return capManualDefense;
+    case setting::fpDefense: case setting::tpDefense: case setting::parryDirection: return capManualDefense;
     default: return 0;
     }
 }
@@ -220,6 +221,7 @@ struct ModSettings {
     int cueSize = 100, cueOpacity = 100;            // the attack wind-up arc
     int fpDefense = 0, tpDefense = 0;               // automatic default, manual holds RMB
     int fpSwingSelection = 1, tpSwingSelection = 1; // mouse direction, or native facing
+    int parryDirection = 0; // fp::ParryDirection: the game's parry, a right-mouse drag's, or the drag's only when it matches
     bool manualDefenseAvailable = false;            // runtime capability, not a saved row
     unsigned unavailable = 0, faulted = 0; // runtime: cap* features missing on this game build, or off after a fault
     bool scriptRuntimeAvailable = false;            // runtime capability: ScriptRuntime.dll is loaded
@@ -315,6 +317,7 @@ struct ModSettings {
         case setting::objectLights: objectLights = std::clamp(objectLights + delta, 1, 6); break;
         case setting::f6Cycle: f6Cycle = f6Cycle ? 0 : 1; break;
         case setting::fpKnockdown: fpKnockdown = fpKnockdown ? 0 : 1; break;
+        case setting::parryDirection: parryDirection = (parryDirection + (delta < 0 ? 2 : 1)) % 3; break;
         case setting::trackingKey:
             if (delta) {
                 do { trackingKey = nextKey(trackingKey, delta); }
@@ -602,6 +605,10 @@ struct ModSettings {
         }
         case setting::fpSwingSelection:
             return fpSwingSelection ? L"Mouse direction" : L"Native facing";
+        case setting::parryDirection:
+            return parryDirection == fp::parryAssisted ? L"Drag: assisted"
+                   : parryDirection == fp::parryStrict ? L"Drag: strict"
+                                                       : L"Automatic (the game's)";
         case setting::tpSwingSelection:
             return tpSwingSelection ? L"Mouse direction" : L"Native facing";
         case setting::idleCrosshair:
@@ -1267,6 +1274,13 @@ inline const RowInfo& rowInfo(int row) {
          L"Show third person: when you are knocked down in first person, the view goes to third person so you see "
          L"where you fell, and back to first person a moment after you are up. Pressing F6 meanwhile keeps your "
          L"choice; death never switches. Stay in first person keeps the view in your eyes."},
+        {setting::parryDirection, L"Parry direction", RowInfo::choice, &ModSettings::parryDirection, nullptr,
+         L"FirstPerson", L"ParryDirection", fp::parryDirectionFromText, fp::parryDirectionText,
+         L"Needs Defense set to Manual; both views. While you hold right mouse the view stays still and a drag "
+         L"picks the parry: up, left, right, down-left or down-right. Automatic: the game picks it from the "
+         L"attacker's swing. Drag: assisted plays the parry you drag to; a small drag leaves it to the game. "
+         L"Drag: strict parries only when your drag matches the game's answer to that swing. The pose is "
+         L"chosen when the parry starts. Reach, timing and gear still decide if it works."},
     };
     static const RowInfo none{-1,      L"",     RowInfo::toggle, nullptr, nullptr,
                               nullptr, nullptr, nullptr,         nullptr, nullptr};

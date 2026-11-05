@@ -65,6 +65,7 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.farRooms = farRooms.load();
     s.f6Cycle = f6Cycle.load();
     s.fpKnockdown = fpKnockdown.load();
+    s.parryDirection = parryDirectionMode.load();
     s.hitReaction = hitReactionPercent.load();
     s.headSteady = headSteady.load();
     s.rawMouse = rawMouse;
@@ -203,6 +204,7 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     farRooms = s.farRooms;
     f6Cycle = s.f6Cycle;
     fpKnockdown = s.fpKnockdown;
+    parryDirectionMode = s.parryDirection;
     hitReactionPercent = s.hitReaction;
     headSteady = s.headSteady;
     if (rawMouse != s.rawMouse) rawWanted = s.rawMouse;
