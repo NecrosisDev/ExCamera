@@ -357,7 +357,8 @@ static bool otherHooksCheckView(const fp::ImageView& file) {
         !admitHeadwearRenderEntries(file) ||
         !admitViewEffectsEntries(file) ||
         !admitSilhouetteEntries(file) ||
-        !admitMaterialIdsEntries(file)) {
+        !admitMaterialIdsEntries(file) ||
+        !admitTextureReplaceEntries(file)) {
         otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
         return false;
     }
@@ -896,6 +897,12 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("material_id_program_failures", matid::idProgramsFailed.load());
     j.unum("material_id_parts", materialIdParts.load());
     j.unum("material_id_misses", materialIdMisses.load());
+    // Texture replacements (texture_replace.inl): files found, uploaded in place, refused (reason of the last).
+    j.boolean("texture_replace_hooked", texrep::hooked.load());
+    j.unum("texture_replace_files", texrep::files.load());
+    j.unum("texture_replaced", texrep::replaced.load());
+    j.unum("texture_replace_refused", texrep::refused.load());
+    j.str("texture_replace_last_failure", texrep::lastFailure);
     j.unum("held_lights_seen", heldLightsSeen.load());
     j.unum("held_others", heldOthers.load());
     j.unum("weapon_blood_taken", weaponBloodTaken.load());
@@ -1457,6 +1464,7 @@ static DWORD runSession() {
     }
     createViewEffectsHook();
     createMaterialIdsHook(); // after it: needs the silhouette hook
+    createTextureReplaceHook();
     createNodeMoveHook();
     createRoomViewHook();
     createManualPageHook();

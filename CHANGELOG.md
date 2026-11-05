@@ -23,6 +23,7 @@ v0.3.0 (revision 60)
 - Removed the mod's Screen-space reflections: the game already draws its own reflections from each surface's specular data, and ours added a second, guessed one on top. An old `View/ScreenSpaceReflections` value is ignored.
 - Held-item detail takes each pixel's material from the game's own item textures (the procedural material of every layer the game composes), no longer from colour. Armour, object and level detail stay off until they are rebuilt the same way.
 - World object detail uses the same data for objects the game composes; other props get no detail.
+- Texture replacements: .dds files named after a game texture, in a textures folder beside first-person.ini, are uploaded in its place through the game's own texture upload (same block format, full mip chain). F8 row "Texture replacements", on by default.
 - Removed Level detail: the game keeps no per-surface material for level geometry, so it could only guess from colour. An old `View/LevelDetail` value is ignored.
 - Armour and clothing detail is back on the same data: worn pieces take each pixel's material from the game's own composed textures. Object and level detail stay off.
 - Contact shadows now darken evenly instead of fading out on bright pixels; they are a visual addition on top of the game's own occlusion.
