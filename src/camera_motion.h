@@ -468,9 +468,10 @@ inline void headingToward(const float* body, const float* point, float yaw, floa
         d[2] = std::cos(yaw);
     }
 }
-// Dead: character+DF4 is a state value, and the death routine 156480 writes 0x800 (1564D6; also 167EDF). Proven
-// (docs/GAME-FIELDS-AUDIT.md). character+DF8 bit 0x100 is not death: 17B100 sets it for a spell-hit stun.
-inline constexpr unsigned deadState = 0x800;
+// Dead (either state): character+DF4 is a state value; the death routine 156480 stores 0x800 (1564D6, also 167EDF)
+// and 156D20, called from 167ED0, then stores 0xA00 (156E48; also F12C4, 1A0A95). The game itself tests DF4 & 0x800,
+// which only those two stored values pass. character+DF8 bit 0x100 is not death: 17B100 sets it for a spell-hit stun.
+inline constexpr bool deadState(unsigned stateFlags) { return (stateFlags & 0x800) != 0; }
 // Down, for the third-person follow: held 0.3 s after it clears so getting up does not flicker. NOT PROVEN: the mask
 // below treats the state value as bits; only 0x800 (dead) is decoded. Listed in docs/GAME-FIELDS-AUDIT.md.
 inline constexpr unsigned knockdownStateBits = 0xac0 | 0x40204 | 0xa00;
@@ -480,7 +481,7 @@ struct KnockdownFollow {
     unsigned long long clearSince = 0;
 };
 inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned long long ms) {
-    if ((stateFlags & knockdownStateBits) || stateFlags == deadState) {
+    if ((stateFlags & knockdownStateBits) || deadState(stateFlags)) {
         k.down = true;
         k.clearSince = 0;
         return true;
@@ -499,7 +500,7 @@ inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned long
 // follows such a switch goes back to first person at once, so the next life does not start in third. Never
 // against the player: an F6 during the knockdown keeps the view it chose.
 // f6Presses is a counter of F6 view changes; the caller applies the returned step. down and dead come from the
-// caller: dead is stateFlags == deadState; no knocked-down state value is proven yet, so the mod passes down = false
+// caller: dead is deadState(stateFlags); no knocked-down state value is proven yet, so the mod passes down = false
 // and the switch stays inert (docs/GAME-FIELDS-AUDIT.md).
 inline constexpr unsigned long long knockdownViewSettleMs = 400;
 struct KnockdownView {

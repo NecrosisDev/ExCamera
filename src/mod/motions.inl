@@ -86,7 +86,7 @@ static void motionJumpTick(uintptr_t root, bool owned) {
         jumpPush, owned && readableRoot, root, *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene)), playerSteps.load(),
         readableRoot ? reinterpret_cast<const float*>(root + field::character::position)[1] : NAN,
         readableRoot ? *reinterpret_cast<unsigned*>(root + field::character::stateFlags) : 0,
-        readableRoot && *reinterpret_cast<unsigned*>(root + field::character::stateFlags) == fp::deadState);
+        readableRoot && fp::deadState(*reinterpret_cast<unsigned*>(root + field::character::stateFlags)));
     jumpPushRiseMm.store(unsigned(std::fmax(0.f, jumpPush.risen) * 10.f), std::memory_order_relaxed);
     if (steps > 0 && motionJumpPush(root, bladeStepHz(), steps)) jumpPushApplied.fetch_add(unsigned(steps), std::memory_order_relaxed);
     else if (steps > 0) jumpPush.active = false;

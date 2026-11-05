@@ -689,7 +689,7 @@ static bool playerContext(uintptr_t behavior) {
         return false;
     const uintptr_t root = *reinterpret_cast<const uintptr_t*>(behavior + field::behaviour::character);
     if (!root || root != *reinterpret_cast<const uintptr_t*>(gameAt(fp::sig::playerRoot))) return false;
-    if (*reinterpret_cast<const unsigned*>(root + field::character::stateFlags) == fp::deadState ||
+    if (fp::deadState(*reinterpret_cast<const unsigned*>(root + field::character::stateFlags)) ||
         *reinterpret_cast<const unsigned char*>(behavior + field::behaviour::inactive))
         return false;
     const uintptr_t view = *reinterpret_cast<const uintptr_t*>(behavior + field::behaviour::view),
@@ -1507,7 +1507,7 @@ static bool bodyCalm(uintptr_t root, uintptr_t head) {
         !*reinterpret_cast<const unsigned char*>(root + field::character::physicsLive))
         return false;
     const unsigned state = *reinterpret_cast<const unsigned*>(root + field::character::stateFlags);
-    if ((state & (0xac0 | 0x40204 | 0xa00)) || state == fp::deadState) // the mask: NOT PROVEN (GAME-FIELDS-AUDIT.md)
+    if ((state & (0xac0 | 0x40204 | 0xa00)) || fp::deadState(state)) // the mask: NOT PROVEN (GAME-FIELDS-AUDIT.md)
         return false;
     const float balance = *reinterpret_cast<const float*>(root + field::character::balance),
                 most = *reinterpret_cast<const float*>(root + field::character::balanceMax);

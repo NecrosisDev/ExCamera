@@ -111,7 +111,7 @@ inline bool cameraEntryYaw(uintptr_t root, uintptr_t sector, float& yaw) noexcep
         addSectorOrigin((const float*)(root + field::character::position), sector, selfWorld);
         const uintptr_t opponent = *(uintptr_t*)(root + field::character::aimOpponent);
         if (opponent && opponent != root && readable(opponent, field::character::stateFlags + 4) &&
-            *(unsigned*)(opponent + field::character::stateFlags) != fp::deadState) {
+            !fp::deadState(*(unsigned*)(opponent + field::character::stateFlags))) {
             const uintptr_t otherSector = characterSector(opponent);
             if (readable(otherSector, field::sector::origin + 12)) {
                 float otherWorld[3];
@@ -406,7 +406,7 @@ inline uintptr_t navLocked(void* self, float offset) {
         if (shown < 2 && readable(root + field::character::stateFlags, 4)) {
             // No knocked-down state value is proven (docs/GAME-FIELDS-AUDIT.md): down = false keeps the switch inert.
             const auto step = fp::knockdownViewStep(knockdownView, fpKnockdown.load() == 1, shown, false,
-                                                    *(unsigned*)(root + field::character::stateFlags) == fp::deadState,
+                                                    fp::deadState(*(unsigned*)(root + field::character::stateFlags)),
                                                     f6Presses.load(), GetTickCount64());
             if (step != fp::KnockdownViewStep::none)
                 knockdownViewRequest = step == fp::KnockdownViewStep::toThird ? 1 : 2;

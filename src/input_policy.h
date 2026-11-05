@@ -997,15 +997,14 @@ static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(M
 // (count) when the clip may play.
 // The gates (decoded in docs/GAME-FIELDS-AUDIT.md). busyMotion: character+9B8 is an attack the game's own starts
 // play (5 + n at 157240, 8 + n at 157700, 0xB at 157DC0, 0xC at 157BF0), the kick (0xD) or the jump (0x12).
-// state: character+DF4, a value: 0x800 is dead (156480 at 1564D6); anything but the base 0 is one of the game's
+// state: character+DF4, a value: & 0x800 is dead (0x800 or 0xA00, the game's own test); anything but the base 0 is one of the game's
 // own reactions (8 while defending or in motion 4, 16B168/16B1B1; 0x8000 while motion 0xD plays, 16B09C).
 // balance: below balanceMax - 0.05 the game itself starts its recover motion (169B99 -> 179810), so a kick or jump
 // would be cut at once. No health, magic or stance requirement.
-inline constexpr unsigned deadStateValue = 0x800;
 inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, float balance, float balanceMax) {
     if (cursorFree) return MotionRefusal::cursorFree;
     if (busyMotion) return MotionRefusal::busy;
-    if (state == deadStateValue) return MotionRefusal::dead;
+    if (state & 0x800) return MotionRefusal::dead;
     if (state != 0) return MotionRefusal::otherState;
     if (!(std::isfinite(balance) && std::isfinite(balanceMax) && balance >= balanceMax - 0.05f)) return MotionRefusal::balance;
     return MotionRefusal::count;
