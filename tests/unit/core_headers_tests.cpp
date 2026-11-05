@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -150,6 +151,34 @@ bool input_game_binding_keys() {
     CHECK(!fp::gameUsesKey(VK_CONTROL, bindings));
     CHECK(!fp::gameUsesKey('G', bindings));
     CHECK(!fp::gameUsesKey(0, bindings));
+    return true;
+}
+
+bool input_motion_refusals() {
+    using R = fp::MotionRefusal;
+    constexpr R play = R::count;
+    // Standing, free, stamina enough, in stance: plays.
+    CHECK(fp::motionGate(false, false, 0, false, 90.f, 100.f, .8f, true, true) == play);
+    CHECK(fp::motionGate(false, false, 8, false, 50.f, 100.f, .5f, false, false) == play);
+    // Each reason, in the checks' order.
+    CHECK(fp::motionGate(true, true, 4, true, 0.f, 100.f, .8f, true, false) == R::cursorFree);
+    CHECK(fp::motionGate(false, true, 4, true, 0.f, 100.f, .8f, true, false) == R::busy);
+    CHECK(fp::motionGate(false, false, 4, true, 0.f, 100.f, .8f, true, false) == R::notUpright);
+    CHECK(fp::motionGate(false, false, 0, true, 0.f, 100.f, .8f, true, false) == R::dead);
+    CHECK(fp::motionGate(false, false, 0, false, 79.f, 100.f, .8f, true, true) == R::stamina);
+    CHECK(fp::motionGate(false, false, 0, false, NAN, 100.f, .5f, false, false) == R::stamina);
+    CHECK(fp::motionGate(false, false, 0, false, 90.f, 0.f, .5f, false, false) == R::stamina);
+    CHECK(fp::motionGate(false, false, 0, false, 90.f, 100.f, .8f, true, false) == R::notInStance);
+    // Notices: something to do for the player's reasons, silence for the others; kick and jump each name theirs.
+    for (R r : {R::busy, R::notUpright, R::stamina, R::notInStance, R::cursorFree, R::gameKey, R::unavailable, R::fault}) {
+        CHECK(fp::motionRefusalNotice(false, r) != nullptr);
+        CHECK(std::wcsncmp(fp::motionRefusalNotice(false, r), L"Kick", 4) == 0);
+        CHECK(std::wcsncmp(fp::motionRefusalNotice(true, r), L"Jump", 4) == 0);
+    }
+    for (R r : {R::tooSoon, R::dead, R::notPlayer, R::count})
+        CHECK(fp::motionRefusalNotice(false, r) == nullptr && fp::motionRefusalNotice(true, r) == nullptr);
+    CHECK(std::wcsstr(fp::motionRefusalNotice(false, R::gameKey), L"Alt") != nullptr);
+    CHECK(std::strcmp(fp::motionRefusalNames[size_t(R::notUpright)], "moving") == 0);
     return true;
 }
 
@@ -942,6 +971,7 @@ int main() {
         {"input combat cues, cursor, and ray helpers", input_combat_cues_cursor_and_ray_helpers},
         {"input F6 cycle policy", input_f6_cycle_policy},
         {"input cursor panels", input_cursor_panels},
+        {"input motion refusals", input_motion_refusals},
         {"input game binding keys", input_game_binding_keys},
         {"camera motion FOV, AimBox, NearPlane, and eye stabilization",
          camera_motion_fov_aimbox_nearplane_and_eye_stabilization},

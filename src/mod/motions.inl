@@ -11,16 +11,19 @@ static constexpr uint64_t kickRepeatMs = 300, jumpRepeatMs = 900;
 static constexpr float kickStaminaShare = .8f; // the chooser's own floor for a kick
 static constexpr float jumpStaminaShare = .5f;
 static constexpr float jumpTakeoffSpeed = 240.f; // cm/s of upward push: about a 30 cm jump
-// The shared gates: the player root, in play, upright and free, alive, not in an attack, a kick or a jump.
-static bool motionPlayable(uintptr_t root, float staminaShare) {
-    if (!root || !readable(root, 0x1300) || root != *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) || uiOpen() || cursorFreeNow()) return false;
+// The shared gates: the player root, in play, upright and free, alive, not in an attack, a kick or a jump; the
+// kick also wants the fighting stance. The refusal, or MotionRefusal::count when the clip may play.
+static fp::MotionRefusal motionPlayable(uintptr_t root, float staminaShare, bool needStance) {
+    if (!root || !readable(root, 0x1300) || root != *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)))
+        return fp::MotionRefusal::notPlayer;
     const int motion = *reinterpret_cast<int*>(root + field::character::motion);
-    const unsigned state = *reinterpret_cast<unsigned*>(root + field::character::stateFlags);
-    const float stamina = *reinterpret_cast<float*>(root + field::character::stamina), staminaMax = *reinterpret_cast<float*>(root + field::character::staminaMax);
-    if (motion == kickMotion || motion == jumpMotion || (motion >= attackFamilyFirst && motion <= attackFamilyLast)) return false;
-    if (state != 0 && state != 8) return false;                                                   // upright and free
-    if (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100) return false;  // dead
-    return std::isfinite(stamina) && std::isfinite(staminaMax) && staminaMax > 0 && stamina >= staminaShare * staminaMax;
+    return fp::motionGate(uiOpen() || cursorFreeNow(),
+                          motion == kickMotion || motion == jumpMotion || (motion >= attackFamilyFirst && motion <= attackFamilyLast),
+                          *reinterpret_cast<unsigned*>(root + field::character::stateFlags),
+                          (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100) != 0,
+                          *reinterpret_cast<float*>(root + field::character::stamina),
+                          *reinterpret_cast<float*>(root + field::character::staminaMax), staminaShare, needStance,
+                          *reinterpret_cast<unsigned char*>(root + field::character::combatStance) != 0);
 }
 static bool motionKickCall(uintptr_t root) { // SEH-only frame
     __try {
@@ -44,27 +47,38 @@ static bool motionJumpCall(uintptr_t root, float stepHz) { // SEH-only frame
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { motionJumpFault = true; return false; }
 }
-// A kick: in the fighting stance only, as the chooser kicks.
-static bool motionKick(uintptr_t root) {
-    if (motionKickFault.load() || !layout.optionalGroupAvailable("kick")) return false;
+// A kick: in the fighting stance only, as the chooser kicks. why: the refusal when it returns false.
+static bool motionKick(uintptr_t root, fp::MotionRefusal* why = nullptr) {
+    auto refuse = [&](fp::MotionRefusal r) { if (why) *why = r; return false; };
+    if (motionKickFault.load()) return refuse(fp::MotionRefusal::fault);
+    if (!layout.optionalGroupAvailable("kick")) return refuse(fp::MotionRefusal::unavailable);
     const uint64_t now = GetTickCount64();
-    if (now - motionKickLast < kickRepeatMs || !motionPlayable(root, kickStaminaShare) || !*(unsigned char*)(root + field::character::combatStance)) return false;
+    if (now - motionKickLast < kickRepeatMs) return refuse(fp::MotionRefusal::tooSoon);
+    if (const auto r = motionPlayable(root, kickStaminaShare, true); r != fp::MotionRefusal::count) return refuse(r);
     motionKickLast = now;
-    if (!motionKickCall(root)) return false;
+    if (!motionKickCall(root)) return refuse(fp::MotionRefusal::fault);
     motionKicks.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
-static bool motionJump(uintptr_t root) {
-    if (motionJumpFault.load() || !layout.optionalGroupAvailable("jump") || !layout.optionalGroupAvailable("kick")) return false; // the motion player sits in the kick group
+static bool motionJump(uintptr_t root, fp::MotionRefusal* why = nullptr) {
+    auto refuse = [&](fp::MotionRefusal r) { if (why) *why = r; return false; };
+    if (motionJumpFault.load()) return refuse(fp::MotionRefusal::fault);
+    if (!layout.optionalGroupAvailable("jump") || !layout.optionalGroupAvailable("kick"))
+        return refuse(fp::MotionRefusal::unavailable); // the motion player sits in the kick group
     const uint64_t now = GetTickCount64();
-    if (now - motionJumpLast < jumpRepeatMs || !motionPlayable(root, jumpStaminaShare)) return false;
+    if (now - motionJumpLast < jumpRepeatMs) return refuse(fp::MotionRefusal::tooSoon);
+    if (const auto r = motionPlayable(root, jumpStaminaShare, false); r != fp::MotionRefusal::count) return refuse(r);
     motionJumpLast = now;
-    if (!motionJumpCall(root, bladeStepHz())) return false;
+    if (!motionJumpCall(root, bladeStepHz())) return refuse(fp::MotionRefusal::fault);
     motionJumps.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
-// The keys: their presses are claimed by the window handler (input.inl) and taken here on the game thread.
+// The keys: their presses are claimed by the window handler (input.inl) and taken here on the game thread. A
+// refused press is counted and, where the player can do something about it, told (motionRefused).
 static void motionKeysTick(uintptr_t root) {
-    if (motionKickRequested.exchange(false) && kickKey.load(std::memory_order_relaxed)) motionKick(root);
-    if (motionJumpRequested.exchange(false) && jumpKey.load(std::memory_order_relaxed)) motionJump(root);
+    fp::MotionRefusal why = fp::MotionRefusal::count;
+    if (motionKickRequested.exchange(false) && kickKey.load(std::memory_order_relaxed) && !motionKick(root, &why))
+        motionRefused(false, why);
+    if (motionJumpRequested.exchange(false) && jumpKey.load(std::memory_order_relaxed) && !motionJump(root, &why))
+        motionRefused(true, why);
 }

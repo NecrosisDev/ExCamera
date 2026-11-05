@@ -2,6 +2,7 @@
 
 Unreleased
 
+- A Kick or Jump key press that does nothing now says why in a short message (at most every 3 seconds): stand still in the fighting stance with most of your stamina for Kick, stand still with half your stamina for Jump, not while the pointer is free, or that the key belongs to the game's own Controls. first-person-status.json counts each reason (kick_refused, jump_refused).
 - Alt + left mouse stabs again when Kick or Jump was bound to Alt. The game uses Alt for its thrust, and those keys took it away from the game. Kick, Jump and Swap shoulder now leave any key the game's Controls use to the game, and Settings refuses such a key for them. If you had Kick on Alt, choose another key for it.
 - After an arena fight you can look around again while the result window (Next Fight) is up, so you can walk over and loot your opponent. To click Next Fight or the other result buttons, press Cursor Look (the game's binding, Space by default) to free the pointer, and press it again to look around.
 - Portable copy: put an empty portable.txt beside ExCamera.exe and the DLL, and that copy keeps its settings in first-person.ini beside it instead of Documents\ExCamera (for testing without touching your own settings). Safe start in such a copy backs up and resets that file.

@@ -1057,8 +1057,14 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .unum("kicks", motionKicks.load())
         .boolean("kick_fault", motionKickFault.load())
         .unum("jumps", motionJumps.load())
-        .boolean("jump_fault", motionJumpFault.load())
-        .end();
+        .boolean("jump_fault", motionJumpFault.load());
+    for (const bool jump : {false, true}) { // refused key presses by reason (fp::MotionRefusal)
+        j.object(jump ? "jump_refused" : "kick_refused");
+        for (size_t r = 0; r < size_t(fp::MotionRefusal::count); ++r)
+            j.unum(fp::motionRefusalNames[r], (jump ? jumpRefusals : kickRefusals)[r].load());
+        j.end();
+    }
+    j.end();
     j.object("blade") // every build: the drawn edge and the sinking thrust on the game's impact path
         .boolean("ready", bladeReady.load())
         .unum("drags", bladeDrags.load())
@@ -1366,6 +1372,18 @@ static DWORD runSession() {
                     FP_SHOWN_NAME L": view feature error. Helmet handling stopped; first person continues.");
             }
             stopKeyTick();
+            { // a refused kick or jump key press: say why, at most once every 3 s
+                static ULONGLONG lastMotionNotice = 0;
+                int pending = motionNoticePending.load();
+                if (pending && GetTickCount64() - lastMotionNotice >= 3000 && motionNoticePending.compare_exchange_strong(pending, 0)) {
+                    const bool jump = (pending & motionNoticeJump) != 0;
+                    const auto reason = fp::MotionRefusal((pending & 0xFF) - 1);
+                    if (const wchar_t* text = fp::motionRefusalNotice(jump, reason)) {
+                        showNotice(text, 3000, NoticeKind::info);
+                        lastMotionNotice = GetTickCount64();
+                    }
+                }
+            }
             { // a two-way F6 still held at f6HoldMs: the game's camera, without waiting for the key-up
                 ULONGLONG start = f6HoldStart.load();
                 if (start && GetTickCount64() - start >= fp::f6HoldMs && f6HoldStart.compare_exchange_strong(start, 0))

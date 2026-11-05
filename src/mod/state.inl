@@ -1070,6 +1070,15 @@ static std::atomic<int> rotateHeldKey{0x02};
 static std::atomic<int> kickKey{0}, jumpKey{0}; // motions.inl; unbound until the player picks a key
 static std::atomic<int> swapShoulderKey{0}; // [Input] SwapShoulderKey: third person, the other shoulder
 static std::atomic<bool> motionKickRequested{false}, motionJumpRequested{false}; // a key press claimed by the window handler, taken on the game thread
+// Refused key presses by fp::MotionRefusal (status file), and the newest refusal for the worker's notice:
+// 1 + reason, plus motionNoticeJump for the jump (0 none).
+static std::atomic<unsigned> kickRefusals[size_t(fp::MotionRefusal::count)]{}, jumpRefusals[size_t(fp::MotionRefusal::count)]{};
+static std::atomic<int> motionNoticePending{0};
+static constexpr int motionNoticeJump = 0x100;
+static void motionRefused(bool jump, fp::MotionRefusal reason) {
+    (jump ? jumpRefusals : kickRefusals)[size_t(reason)].fetch_add(1, std::memory_order_relaxed);
+    if (fp::motionRefusalNotice(jump, reason)) motionNoticePending = (jump ? motionNoticeJump : 0) + 1 + int(reason);
+}
 // Preserve legacy INI preferences only. Explicit leaning is disabled; these
 // values never claim input or change torso pose.
 static std::atomic<int> leanKey{0x12};

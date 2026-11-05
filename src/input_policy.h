@@ -987,6 +987,52 @@ inline bool gameUsesKey(unsigned key, const unsigned (&bindings)[N]) {
         if (sameKey(key, bound)) return true;
     return false;
 }
+// Why a kick or jump key press played nothing (motions.inl): counted in the status file, and for the reasons a
+// player can act on, said in a short notice. The checks are motionPlayable's, in its order, then the kick's stance.
+enum class MotionRefusal { unavailable, fault, tooSoon, notPlayer, cursorFree, busy, notUpright, dead, stamina,
+                           notInStance, gameKey, count };
+inline constexpr const char* motionRefusalNames[] = {"unavailable", "fault",  "too_soon", "not_player",
+                                                     "cursor_free", "busy",   "moving",   "dead",
+                                                     "stamina",     "stance", "game_key"};
+static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(MotionRefusal::count));
+// The refusal for a player already found eligible as a character (root readable, the controlled one); `none`
+// (count) when the clip may play. state: the character's state flags, 0 or 8 is upright and free.
+inline MotionRefusal motionGate(bool cursorFree, bool busyMotion, unsigned state, bool dead, float stamina,
+                                float staminaMax, float share, bool needStance, bool inStance) {
+    if (cursorFree) return MotionRefusal::cursorFree;
+    if (busyMotion) return MotionRefusal::busy;
+    if (state != 0 && state != 8) return MotionRefusal::notUpright;
+    if (dead) return MotionRefusal::dead;
+    if (!(std::isfinite(stamina) && std::isfinite(staminaMax) && staminaMax > 0 && stamina >= share * staminaMax))
+        return MotionRefusal::stamina;
+    if (needStance && !inStance) return MotionRefusal::notInStance;
+    return MotionRefusal::count;
+}
+// The notice for a refused key press, or nullptr where there is nothing to tell (too soon after the last one,
+// dead, not the player). Static text: the notice window keeps the pointer.
+inline const wchar_t* motionRefusalNotice(bool jump, MotionRefusal r) {
+    switch (r) {
+    case MotionRefusal::busy:
+    case MotionRefusal::notUpright:
+    case MotionRefusal::stamina:
+    case MotionRefusal::notInStance:
+        return jump ? L"Jump: stand still and upright, with at least half your stamina."
+                    : L"Kick: stand still in your fighting stance, with most of your stamina (80%).";
+    case MotionRefusal::cursorFree:
+        return jump ? L"Jump: not while the pointer is free (a menu, the inventory or Cursor Look)."
+                    : L"Kick: not while the pointer is free (a menu, the inventory or Cursor Look).";
+    case MotionRefusal::gameKey:
+        return jump ? L"Jump: that key is one of the game's own Controls. Choose another in Settings > Controls > Keys."
+                    : L"Kick: that key is one of the game's own Controls (Alt makes a thrust). Choose another in "
+                      L"Settings > Controls > Keys.";
+    case MotionRefusal::unavailable:
+        return jump ? L"Jump is not available on this game version." : L"Kick is not available on this game version.";
+    case MotionRefusal::fault:
+        return jump ? L"Jump turned off after an error. Restart the game to retry."
+                    : L"Kick turned off after an error. Restart the game to retry.";
+    default: return nullptr;
+    }
+}
 // The game's own windows that free the pointer by themselves (overlay.inl windowFreeStep), by the form's kind
 // tag (+0xB8): inventory/loot/container, the arena merchant and arsenal, the arena/company screens, and an
 // item description. The arena's post-fight result form (Next Fight) is not one of them, whatever its tag: the

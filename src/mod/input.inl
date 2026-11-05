@@ -362,9 +362,20 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
                 inputOwner.windowClaim(bindingKey);
                 return xbutton ? TRUE : 0;
             }
-            // The kick and jump keys: the game never sees them, so a key the game itself uses stays the game's.
+            // The kick and jump keys: the game never sees them, so a key the game itself uses stays the game's
+            // (counted, and said once a session: the press also does the game's own action).
             if (canTake && bindingKey && (bindingKey == kickKey.load() || bindingKey == jumpKey.load()) &&
-                !gameBindingKey(unsigned(bindingKey))) {
+                gameBindingKey(unsigned(bindingKey))) {
+                static bool told[2] = {};
+                for (const bool jump : {false, true}) {
+                    if (bindingKey != (jump ? jumpKey : kickKey).load()) continue;
+                    if (told[jump]) (jump ? jumpRefusals : kickRefusals)[size_t(fp::MotionRefusal::gameKey)].fetch_add(1);
+                    else {
+                        told[jump] = true;
+                        motionRefused(jump, fp::MotionRefusal::gameKey);
+                    }
+                }
+            } else if (canTake && bindingKey && (bindingKey == kickKey.load() || bindingKey == jumpKey.load())) {
                 inputOwner.windowClaim(bindingKey);
                 if (bindingKey == kickKey.load()) motionKickRequested = true;
                 if (bindingKey == jumpKey.load()) motionJumpRequested = true;
