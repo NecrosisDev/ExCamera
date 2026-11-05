@@ -250,8 +250,10 @@ template <class Query> inline int pickClear(const float* head, const float* orig
 }
 // Attack wind-up, fed on the behaviour tick from the native swing (docs/GAME-FIELDS-AUDIT.md): motion root+0x9B8,
 // 5-12 being the attacks (motionPlay clears defense and calls 162E80 only for these, 179F60-7A); progress root+0xA28
-// ((elapsed - blend-in +A24) / clip length, 1761D7-F7, 174E00), whose commit point is 0.30, the game's own (defense
-// update 1669BA/1669CF, the parry window in 159A60 at 15B990/15BCAC); and the contact bits root+0x1018 & 0x6 (0x2 set
+// ((elapsed - blend-in +A24) / clip length, 1761D7-F7, 174E00), whose commit point is the game's own: 0.30 (defense
+// update 1669BA/1669CF, the parry window in 159A60 at 15B990/15BCAC), 0.4 for motion 11, the Stab (defense update
+// 1674FA-16750B, 16778D-16779A; motion names: the game's motion-set table in Resource.rpk at 0x19582826); and the
+// contact bits root+0x1018 & 0x6 (0x2 set
 // by 158EF0 and 157FF0 at 15859D, 0x4 by 159A60 at 15C212/15C242/15C26A), on which the arc ends. There is no
 // hold-to-charge in the game, so the wind-up is the progress up to the commit point. phase: 0 idle, 1 winding, 2 fading.
 struct Windup {
@@ -455,7 +457,7 @@ inline void windupStep(Windup& w, bool swinging, int motion, float p, unsigned b
         w.fadeFrom = now;
         return;
     } // a contact bit came on: the swing met something
-    const float strikeAt = 0.30f; // the game's commit point
+    const float strikeAt = motion == 11 ? 0.40f : 0.30f; // the game's commit points (Stab 0.4, 1674FA)
     if (p >= strikeAt) {
         w.fill = 1;
         w.phase = 2;
