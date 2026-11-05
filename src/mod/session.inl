@@ -356,7 +356,8 @@ static bool otherHooksCheckView(const fp::ImageView& file) {
         !admitHeldThrowEntries(file) ||
         !admitHeadwearRenderEntries(file) ||
         !admitViewEffectsEntries(file) ||
-        !admitSilhouetteEntries(file)) {
+        !admitSilhouetteEntries(file) ||
+        !admitMaterialIdsEntries(file)) {
         otherHooksNotice[0] = 0; // Do not reuse a previous successful chaining notice for this restart.
         return false;
     }
@@ -864,7 +865,19 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("wound_skin_draws", woundSkinDraws.load());
     j.unum("wound_skin_faults", woundSkinFaults.load());
     j.boolean("wound_hits_linked", characterHits.load() != nullptr);
-    j.unum("held_texture_reads", heldTextureReads.load());
+    // The game's material ids (material_ids.inl): textures composed and replayed, parts drawn with ids.
+    j.boolean("material_ids_hooked", matid::hooked.load());
+    j.unum("material_id_builds", matid::builds.load());
+    j.unum("material_id_layers", matid::layersReplayed.load());
+    j.unum("material_id_skips", matid::skipped.load());
+    j.str("material_id_last_skip", matid::lastSkip.load());
+    j.unum("material_id_faults", matid::faults.load());
+    j.unum("material_id_dropped", matid::dropped.load());
+    j.unum("material_id_other_context", matid::otherContext.load());
+    j.unum("material_id_programs", matid::idProgramsBuilt.load());
+    j.unum("material_id_program_failures", matid::idProgramsFailed.load());
+    j.unum("material_id_parts", materialIdParts.load());
+    j.unum("material_id_misses", materialIdMisses.load());
     j.unum("held_lights_seen", heldLightsSeen.load());
     j.unum("held_others", heldOthers.load());
     j.unum("weapon_blood_taken", weaponBloodTaken.load());
@@ -1406,6 +1419,7 @@ static DWORD runSession() {
         return 3;
     }
     createViewEffectsHook();
+    createMaterialIdsHook(); // after it: needs the silhouette hook
     createNodeMoveHook();
     createRoomViewHook();
     createManualPageHook();

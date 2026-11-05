@@ -110,6 +110,7 @@ static MH_STATUS disableStereoHooks() { return MH_OK; }
 #include "mod/wounds.inl"
 #include "mod/fire.inl"
 #include "mod/view_effects.inl"
+#include "mod/material_ids.inl"
 #include "mod/frame.inl"
 #include "mod/headwear_render.inl"
 #include "mod/stone_skin.inl"

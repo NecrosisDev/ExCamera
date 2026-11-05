@@ -682,7 +682,24 @@ float mailHeight(vec3 q, vec3 facing, float footprint, out float ring) {
 
 )glsl" R"glsl(// code: the part's material from its texture, 0 unknown, 1 steel, 2 wood, 3 leather, 4 other, 5 mail.
 // rowX..rowZ: the rows taking view space to the item's own space.
-vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float code, float strength, vec4 lightInfo, vec3 lightTint,
+// The game's procedural material id at a held pixel (the mask's A, material_ids.inl; ids from 0x1EAEE0's jump
+// table, docs/render-assumptions.md) as one of our looks: 0 steel, 1 wood, 2 leather, 3 cloth, 4 mail, 5 paint;
+// -1 for none (255), the base (0) and the two with no look of ours (23 gemstone, 24 resin).
+float lookOf(float id) {
+    if (id < 0.5 || id > 25.5) return -1.0;
+    if (id < 6.5) return 3.0;   // 1-6 cloth: basic, fine, silk, velvet, padded
+    if (id < 10.5) return 2.0;  // 7-10 leather, suede
+    if (id < 11.5) return 4.0;  // 11 steel chain
+    if (id < 13.5) return 0.0;  // 12 steel, 13 plate
+    if (id < 14.5) return 5.0;  // 14 painted steel
+    if (id < 16.5) return 0.0;  // 15 plate, 16 blade
+    if (id < 18.5) return 1.0;  // 17-18 wood
+    if (id < 22.5) return 0.0;  // 19 iron, 20-21 copper, 22 wired grip
+    if (id < 24.5) return -1.0; // 23 gemstone, 24 resin
+    return 5.0;                 // 25 painted planks
+}
+
+vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float kind, float strength, vec4 lightInfo, vec3 lightTint,
                  float maskEdge) {
     float raw = texture2D(depthTex, uv).r;
     if (raw >= skyDepth) return color;
@@ -709,27 +726,10 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     // chips, grind lines and blood rims below instead of a fetch each.
     vec4 shared = texture3D(heldNoise, (q * 1.6 + 31.0) * 0.0625);
     float slotKind = heldDatum(slot, 10.0).x;
-    // The tint and light: 0.6 cm around, at least 2 pixels; the wider average
-    // tells this spot's colour from the item's as a whole (up close only).
+    // The tint and light: 0.6 cm around, at least 2 pixels.
     vec3 base = itemAverage(texel * clamp(0.6 * pixelsPerCm, 2.0, 10.0), slot, closeUp ? 4.0 : 3.0);
-    vec3 wide = closeUp ? itemAverage(texel * clamp(2.5 * pixelsPerCm, 6.0, 40.0), slot, 3.0) : base;
     vec3 light = toLight(color);
-    // kind: 0 steel, 1 wood, 2 leather, 3 other, 4 mail, told from the item's texture colours (a heuristic, not
-    // the game's material). Unknown (the texture could not be read)
-    // falls back to this spot's own colour, which torchlight can tint.
-    bool warm = base.r > base.b * 1.15 && base.g > base.r * 0.45; // brown, not a strong red
-    float kind = code - 1.0;
-    if (slotKind < 0.5 && kind > 2.5) kind = 0.0; // held weapons/items are steel (0), wood (1), leather (2); never mail or cloth
-    if (kind < -0.5)
-        kind = saturationOf(base) < 0.25 ? 0.0 : !warm ? 3.0 :
-               dot(base, vec3(0.2126, 0.7152, 0.0722)) < 0.04 ? 2.0 : 1.0;
-    // A texture mostly steel can still have a wooden grip and the other way round:
-    // a spot clearly warmer than the item's average is wood or leather, clearly
-    // greyer is steel.
-    float warmer = saturationOf(base) - saturationOf(wide);
-    if (kind < 0.5 && warmer > 0.12 && warm) kind = dot(base, vec3(0.2126, 0.7152, 0.0722)) <
-                                                     dot(wide, vec3(0.2126, 0.7152, 0.0722)) ? 2.0 : 1.0;
-    else if (kind > 0.5 && kind < 2.5 && warmer < -0.12) kind = 0.0;
+    // kind: the look of the game's own material at this texel (lookOf), never this spot's colour.
     float albedo = 1.0, h = 0.0, shine = 0.0, sharpness = 8.0, metal = 0.0, painted = 0.0, paintGrain = 0.5;
     if (kind < 0.5) {
         float brush;
@@ -759,15 +759,15 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
         albedo = (0.95 + 0.25 * h) * (1.0 - 0.45 * groove);
         shine = 0.35;
         sharpness = 16.0;
-    } else if (kind > 3.5) {
+    } else if (kind > 3.5 && kind < 4.5) {
         float ring;
         h = mailHeight(q, vec3(dot(rowX.xyz, n), dot(rowY.xyz, n), dot(rowZ.xyz, n)), footprint, ring);
         albedo = 0.35 + 0.75 * ring;
         shine = 1.2;
         sharpness = 30.0;
         metal = 1.0;
-    } else if (saturationOf(base) > 0.35) {
-        // Strongly coloured: paint (a shield's face), brushed on over wood.
+    } else if (kind > 4.5) {
+        // The game's painted materials (painted steel, painted planks): paint brushed on.
         float strokes = solidNoise(vec3(q.x * 1.5, q.y * 6.0, q.z * 1.5) + 53.0);
         h = 0.3 * woodHeight(q, footprint, paintGrain) + 0.2 * (strokes - 0.5);
         albedo = 0.92 + 0.16 * strokes;
@@ -1131,14 +1131,16 @@ void main() {
     float maskCode = floor(texture2D(silhouette, uv).g * 255.0 + 0.5);
     float maskEdge = fwidth(maskCode);
     if (heldDetail.x > 0.0) {
-        // G: 1 + slot * 6 + the part's material (0 unknown, 1 steel, 2 wood, 3 leather, 4 other, 5 mail), of 255.
-        float code = floor(texture2D(silhouette, uv).g * 255.0 + 0.5) - 1.0;
-        if (code >= 0.0 && code < 240.0) {
+        // G: 1 + slot * 6, of 255; A: the game's material id at this texel (255 none).
+        vec4 held = texture2D(silhouette, uv);
+        float code = floor(held.g * 255.0 + 0.5) - 1.0;
+        float kind = lookOf(floor(held.a * 255.0 + 0.5));
+        if (code >= 0.0 && code < 240.0 && kind > -0.5) {
             float slot = floor(code / 6.0);
             vec4 tint = heldDatum(slot, 4.0);
             if (tint.a > 0.0)
                 color = heldSurface(color, heldDatum(slot, 0.0), heldDatum(slot, 1.0), heldDatum(slot, 2.0), slot,
-                                    code - 6.0 * slot, tint.a, heldDatum(slot, 3.0), tint.rgb, maskEdge);
+                                    kind, tint.a, heldDatum(slot, 3.0), tint.rgb, maskEdge);
         }
     }
     // Level surfaces: pixels no held item, worn gear or world object claims, near the camera.
@@ -4839,126 +4841,6 @@ static bool silhouettePart(const SilhouetteScope& s, const SilhouetteEntry& e, u
            readable(e.material, 0x88) && *(const uintptr_t*)(e.material + 0x80) == gameAt(fp::sig::headwearSubmit);
 }
 
-// A held part's material, from the average colour of the texture its material
-// binds on unit 0 (unlit, so torchlight cannot fool it), as the mask code the
-// finish shader reads: 0 unknown, 0.15 steel, 0.25 wood, 0.35 leather, 0.45 other.
-// Read back once per texture from a small mip level (<= 64 x 64 when mipmapped, capped at 256 x 256); cueLock held.
-struct HeldTextureKind { GLuint texture; GLint width; float code; };
-static HeldTextureKind heldTextureKinds[128];
-static unsigned heldTextureKindNext = 0;
-static std::atomic<unsigned> heldTextureReads{0};
-static float heldMaterialCode(gl::Api& g, bool isApparel) {
-    GLint unit = 0, texture = 0, packBuffer = 0, pack[3]{};
-    bool packChanged = false;
-    glGetIntegerv(glc::activeTexture, &unit);
-    g.activeTexture(glc::texture0);
-    glGetIntegerv(glc::textureBinding2D, &texture);
-    float code = 0.f;
-    __try {
-        GLint mip0Width = 0, width = 0, height = 0;
-        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &mip0Width);
-        if (glGetError() != GL_NO_ERROR || texture <= 0 || mip0Width <= 0) __leave;
-        for (const HeldTextureKind& k : heldTextureKinds)
-            if (k.texture == GLuint(texture) && k.width == mip0Width) {
-                code = k.code;
-                __leave;
-            }
-        // Walk mip levels to find the highest existing mip <= 64 x 64 (or smallest existing mip).
-        int level = 0;
-        for (int l = 0; l < 13; ++l) {
-            GLint w = 0, h = 0;
-            glGetTexLevelParameteriv(GL_TEXTURE_2D, l, GL_TEXTURE_WIDTH, &w);
-            glGetTexLevelParameteriv(GL_TEXTURE_2D, l, GL_TEXTURE_HEIGHT, &h);
-            if (w <= 0 || h <= 0) break;
-            level = l;
-            width = w;
-            height = h;
-            if (w <= 64 && h <= 64) break;
-        }
-        if (glGetError() != GL_NO_ERROR || width <= 0 || height <= 0 || width * height > 256 * 256) {
-            heldTextureKinds[heldTextureKindNext++ % 128] = {GLuint(texture), mip0Width, 0.f};
-            __leave;
-        }
-        glGetIntegerv(glc::pixelPackBufferBinding, &packBuffer);
-        glGetIntegerv(glc::packRowLength, &pack[0]);
-        glGetIntegerv(glc::packSkipRows, &pack[1]);
-        glGetIntegerv(glc::packSkipPixels, &pack[2]);
-        if (packBuffer != 0) {
-            g.bindBuffer(glc::pixelPackBuffer, 0);
-            packChanged = true;
-        }
-        for (unsigned i = 0; i < 3; ++i)
-            if (pack[i] != 0) {
-                glPixelStorei(glc::packRowLength + i, 0);
-                packChanged = true;
-            }
-        static unsigned char pixels[256 * 256 * 4];
-        glGetTexImage(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-        if (glGetError() != GL_NO_ERROR) {
-            heldTextureKinds[heldTextureKindNext++ % 128] = {GLuint(texture), mip0Width, 0.f};
-            __leave;
-        }
-        heldTextureReads.fetch_add(1, std::memory_order_relaxed);
-        double sum[3]{}, contrast = 0;
-        unsigned count = 0;
-        for (int i = 0; i < width * height; ++i) {
-            const unsigned char* px = pixels + size_t(i) * 4;
-            if (px[3] < 128) continue; // cut-out holes
-            for (int c = 0; c < 3; ++c) sum[c] += px[c] / 255.0;
-            if ((i + 1) % width) contrast += std::abs(int(px[1]) - int(px[5])) / 255.0; // to the right neighbour
-            ++count;
-        }
-        if (count) {
-            const float r = float(sum[0] / count), gr = float(sum[1] / count), b = float(sum[2] / count);
-            const float hi = (std::max)(r, (std::max)(gr, b)), lo = (std::min)(r, (std::min)(gr, b));
-            const float saturation = hi > 1e-4f ? (hi - lo) / hi : 0.f;
-            const float luma = 0.2126f * r + 0.7152f * gr + 0.0722f * b;
-            // Held weapons/items are steel (0.15), never mail (0.55). Only apparel with prominent ring contrast (> 0.18) is mail.
-            if (saturation < 0.22f) code = (isApparel && contrast / count > 0.18f) ? 0.55f : 0.15f; // grey: mail or steel
-            // Warm brown (not a strong red or a paint): leather when dark, else wood.
-            else if (r > b * 1.2f && gr > r * 0.45f && saturation < 0.8f) code = luma < 0.22f ? 0.35f : 0.25f;
-            else code = 0.45f;                                     // cloth, paint, anything else
-        }
-        heldTextureKinds[heldTextureKindNext++ % 128] = {GLuint(texture), mip0Width, code};
-    } __finally {
-        if (packChanged) {
-            if (packBuffer != 0) g.bindBuffer(glc::pixelPackBuffer, GLuint(packBuffer));
-            for (unsigned i = 0; i < 3; ++i)
-                if (pack[i] != 0) glPixelStorei(glc::packRowLength + i, pack[i]);
-        }
-        g.activeTexture(GLenum(unit));
-        drainGl();
-    }
-    return code;
-}
-
-// The same, remembered per native material (and the texture object in its first
-// slot, +0x48, so a reused material address re-reads): a known part costs no GL
-// queries at all, only a lookup.
-struct HeldMaterialKind { uintptr_t material, texture; float code; bool valid; };
-static HeldMaterialKind heldMaterialKinds[64];
-static unsigned heldMaterialKindNext = 0;
-static float heldMaterialCodeFor(gl::Api& g, uintptr_t material, bool isApparel = false) {
-    const uintptr_t texture = readable(material, 0x50) ? *(const uintptr_t*)(material + 0x48) : 0;
-    for (const HeldMaterialKind& k : heldMaterialKinds)
-        if (k.valid && k.material == material && k.texture == texture) return k.code;
-    const float code = heldMaterialCode(g, isApparel);
-    if (material) heldMaterialKinds[heldMaterialKindNext++ % 64] = {material, texture, code, true};
-    return code;
-}
-
-// PROOF STATE of the game's lights (dev note, 0.9.5.2g; nothing here is read until proven):
-// - TLightSource: VMT 0x2FCF40, 0x2E8 bytes; the only code storing kind 5 at +8 is its constructor 0x518D0.
-//   Update 0x51EB0: +278 = sRGB-to-linear(+210 colour) (0x269D50) scaled by sqrt(+220)*+21C (0x19260);
-//   +2A4 = +224 range (or a constant when +21C is tiny); +268 |= 2 range changed, |= 4.
-// - Per-mesh list: mesh +1DC head, +1E0 0x18-byte entries (+0 weight, +8 next, +C active, +10 the light),
-//   at most min(global +1F0, 6) (0x26F420; queue 0x26F230).
-// - Upload FOUND: 0x1FF462-0x1FF9D8 packs up to six lights into renderer state +170 as three vec4 a light
-//   (0x30 stride): +170 position from the light's +288 index into a 0xC-stride table +40 (w +17C), +180 the
-//   RAW colour +210 scaled by 1/state+3B8 and (1 - [+1C8]+234) * state+5B4 (w = +230), +190 from +238, +194..+19C
-//   cone values from [+1C8]+24C/+250/+248 for type 0x200; then glUniform4fv(location [[r13+C]+8], 3 * count
-//   state+A8, state+170) at 0x1FFFD8 and 0x200BBD (headwearNative_200770). Not yet shown: that the object
-//   packed there is the TLightSource (field names past +210), the uniform's name, and what +2A4/+278 feed.
 // The game lights (TLightSource, scene kind 5) near a held item, read only, for its
 // surface's light direction. Static reading only (review:
 // work/verification/excamera-held-light-review.md): placed and dynamic lights hang
@@ -5161,9 +5043,13 @@ static HeldNodeCache& heldNodeCache(uintptr_t node) {
 
 using BlendColor = void(APIENTRY*)(GLfloat, GLfloat, GLfloat, GLfloat);
 static BlendColor heldBlendColor = nullptr;
+static std::atomic<unsigned> materialIdParts{0}, materialIdMisses{0};
 
 // cueLock held, inside the camera pass, default framebuffer bound. Returns the
 // bodyMaskReady / heldMaskSlot bits of what was drawn.
+static bool drawMaterialIds(gl::Api& g, uintptr_t unitCacheAt, void (*draw)(uintptr_t), uintptr_t argument); // material_ids.inl
+constexpr unsigned materialIdUnit = 14; // matid::ownUnitA: the replay puts it back
+
 static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
     GLint framebuffer = -1, readFramebuffer = -1, viewport[4]{};
     drainGl();
@@ -5218,11 +5104,13 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
     glGetIntegerv(glc::vertexArrayBinding, &priorVao);
     glGetIntegerv(glc::arrayBufferBinding, &priorArrayBuffer);
     glGetIntegerv(glc::elementArrayBufferBinding, &priorElementBuffer);
-    GLint priorTextures[8]{};
+    GLint priorTextures[8]{}, priorIdUnit = 0;
     for (int u = 0; u < 8; ++u) {
         g.activeTexture(glc::texture0 + u);
         glGetIntegerv(glc::textureBinding2D, &priorTextures[u]);
     }
+    g.activeTexture(glc::texture0 + materialIdUnit);
+    glGetIntegerv(glc::textureBinding2D, &priorIdUnit);
     g.activeTexture(priorActiveTexture);
     GLint unitTexture = 0, depthFunc = 0, blend[6]{};
     GLboolean depthMask = 0, colorMask[4]{}, depthTest = 0, blending = 0, scissor = 0, offsetFill = 0;
@@ -5364,8 +5252,6 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                     slot.valid = true;
                 }
             }
-            const float material = colourMaterialGuesses && held && heldBlendColor
-                                       ? heldMaterialCodeFor(g, e.material, e.slot >= int(s.heldCount)) : 0.f;
             // The single path submits (uniforms) then draws. A multi-sample entry is replayed as its
             // first sample only, through the single-sample submit (0x200770, which the dispatcher
             // calls when there is one sample) at sample 0's viewport: one draw instead of one per sample.
@@ -5390,8 +5276,8 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                 draw(drawArgument);
                 drawn |= bodyMaskReady;
             }
-            if (held && heldBlendColor) { // G: where the slot shows, as 1 + slot * 6 + material (cleared 1 times the constant)
-                const float code = float(1 + e.slot * 6 + int(material * 10.f)) / 255.f;
+            if (held && heldBlendColor) { // G: where the slot shows, as 1 + slot * 6 (cleared 1 times the constant)
+                const float code = float(1 + e.slot * 6) / 255.f;
                 glColorMask(0, 1, 0, 0);
                 glDepthFunc(GL_LEQUAL);
                 glEnable(GL_POLYGON_OFFSET_FILL);
@@ -5399,6 +5285,10 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                 g.blendFuncSeparate(GL_ZERO, 0x8001 /*CONSTANT_COLOR*/, GL_ZERO, 0x8001);
                 draw(drawArgument);
                 drawn |= heldMaskSlot << e.slot;
+                // A: the game's material id at each of the part's texels (material_ids.inl); left 255 (none)
+                // when its colour texture has no ids.
+                if (drawMaterialIds(g, unitCacheAt, draw, drawArgument)) materialIdParts.fetch_add(1, std::memory_order_relaxed);
+                else materialIdMisses.fetch_add(1, std::memory_order_relaxed);
             }
         }
         if (const GLenum error = glGetError(); error != GL_NO_ERROR) {
@@ -5444,6 +5334,8 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
             g.activeTexture(glc::texture0 + u);
             g.bindTexture(GL_TEXTURE_2D, GLuint(priorTextures[u]));
         }
+        g.activeTexture(glc::texture0 + materialIdUnit);
+        g.bindTexture(GL_TEXTURE_2D, GLuint(priorIdUnit));
         // Units whose cache entry the replay changed get the prior entry's texture on its own target
         // (a cube or 3D map is not covered by the 2D restore above), then the cache its prior bytes.
         auto* const unitCache = (unsigned char*)unitCacheAt;
@@ -5555,13 +5447,15 @@ static void silhouettePass(uintptr_t camera) {
 }
 
 static bool worldInDefaultFramebuffer(uintptr_t view);
+static bool materialIdsReady(); // material_ids.inl: the composer hook is in
 // The main view's world pass in third person with the ghost on (body: true), or
 // in either view with the held-item detail on (body: false).
 static bool silhouetteWanted(uintptr_t view, bool body = true) {
     const bool consumer = body ? viewMode.load() == 1 && playerGhost.load(std::memory_order_relaxed)
-                               : colourMaterialGuesses && viewMode.load() < 2 && (heldDetail.load(std::memory_order_relaxed) > 0.f ||
-                                                         armourDetail.load(std::memory_order_relaxed) > 0.f ||
-                                                         objectDetail.load(std::memory_order_relaxed) > 0.f);
+                               : panel::heldMaterialDataDecoded && materialIdsReady() && viewMode.load() < 2 &&
+                                     (heldDetail.load(std::memory_order_relaxed) > 0.f ||
+                                      (panel::materialDataDecoded && (armourDetail.load(std::memory_order_relaxed) > 0.f ||
+                                                                      objectDetail.load(std::memory_order_relaxed) > 0.f)));
     return silhouetteHooked && silhouetteSubmitHooked() && consumer && InterlockedCompareExchange(&active, 0, 0) &&
            InterlockedCompareExchange(&cameraReady, 0, 0) && !InterlockedCompareExchange(&stopping, 0, 0) &&
            !(viewEffectsUnavailable.load(std::memory_order_relaxed) & viewFaulted) &&
@@ -5964,8 +5858,8 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
     request.heldSlots = (eye != nullptr) == maskEye ? (mask >> 1) & ((uint64_t(1) << heldSlotLimit) - 1) : 0;
     if (request.heldSlots) {
         request.detail = heldDetail.load(std::memory_order_relaxed);
-        request.armour = armourDetail.load(std::memory_order_relaxed);
-        request.objects = objectDetail.load(std::memory_order_relaxed);
+        request.armour = panel::materialDataDecoded ? armourDetail.load(std::memory_order_relaxed) : 0.f;
+        request.objects = panel::materialDataDecoded ? objectDetail.load(std::memory_order_relaxed) : 0.f;
         memcpy(request.held, heldMaskPoses, sizeof request.held);
     }
     levelDetailFor(request);
@@ -6085,8 +5979,9 @@ static void armSilhouette(uintptr_t view, SilhouetteScope& scope) {
         scope.body = silhouetteWanted(view, true);
         const bool held = silhouetteWanted(view, false);
         if (scope.body || held) scope.root = supersampleRenderScope.root;
-        scope.apparel = held && armourDetail.load(std::memory_order_relaxed) > 0.f;
-        scope.objects = held && objectDetail.load(std::memory_order_relaxed) > 0.f;
+        // Worn gear and objects wait for their own step of the material rebuild (docs/render-assumptions.md).
+        scope.apparel = panel::materialDataDecoded && held && armourDetail.load(std::memory_order_relaxed) > 0.f;
+        scope.objects = panel::materialDataDecoded && held && objectDetail.load(std::memory_order_relaxed) > 0.f;
         if (scope.root) {
             const uintptr_t mesh = readable(scope.root, field::character::sceneNode + 8)
                                        ? *(const uintptr_t*)(scope.root + field::character::sceneNode) : 0;
