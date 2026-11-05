@@ -1,8 +1,15 @@
 // OFF by default (unprovenRenderReads). Proven and witnessed (headwearRender group): node +218 is a
 // TSkinController2 (+8 node, +10 bone count, +18 bone nodes, +20 48-byte inverse binds; skinController::boneLoop),
 // +290 the faces (three dword vertex indices; meshNode::faces), +2F8 one dword per face (meshNode::faceValues).
-// Still not shown by game code: that face value 0 is body skin, that UVs are attribute 0x10 in format 0xF20010,
-// and which texture unit the skin program samples for each map at draw time (the binder 0x20112B-0x2012AB hands
+// UVs PROVEN: the witnessed mesh build headwearNative_5e340 copies the attribute record (node +280, 0x18 bytes,
+// format at +4, stream at +8 into node +270) whose format & 0xFFFF == 0x10 into the vertex layout's 0x10 slot
+// (0x5E4E0-0x5E56E), and the program binder 0x1FA181 binds layout bit 0x10 to "vTex" at location 1 (names table
+// .data 0x2E9F30: vPos 0, vTex 1, vNrm 2, vCol 3, vTx2 4, vTng 6, vDlt 7, at 0x1FA164-0x1FA232); the game's
+// shading_v.glsl reads vTex as its texcoord. Texture units: the shared stoneSkinOriginals check (map flags at
+// renderer +8, binder 0x2010C0) is what the bake's draw uses. Still not shown by game code: what selects body
+// skin among a face's +2F8 bits (a packed word: 0x577CA tests 0x1F0000, 0x1C7BF8 repacks 0xFF, 0x70000, 0x180000
+// and 0xE00000; the bake takes the whole word == 0), and,
+// formerly, which texture unit the skin program samples for each map at draw time (the binder 0x20112B-0x2012AB hands
 // out units in the order DifTex, OpcTex, EmiTex, SpcTex, NrmTex, GlsTex, DspTex, EnvMap to the maps present;
 // names at .rdata 0x335218/0x335238/0x335258, table .data 0x2E9F70), and the Injuries addon's severed bits.
 // The dev build's skin witness (woundSkinDiagnose, render-audit log) records the three open facts on a real
