@@ -71,34 +71,23 @@ static bool waitTick() {
     Sleep(100);
     return true;
 }
-static BOOL CALLBACK findGameWindow(HWND w, LPARAM data) {
-    auto values = (DWORD*)data;
-    DWORD pid = 0;
-    GetWindowThreadProcessId(w, &pid);
-    wchar_t c[32]{};
-    const bool console =
-        GetClassNameW(w, c, 32) &&
-        !wcscmp(c, L"ConsoleWindowClass"); // EMTK's framework console reports the game's process too
-    if (pid == values[0] && IsWindowVisible(w) && !GetWindow(w, GW_OWNER) && !console) {
-        values[1] = 1;
-        return FALSE;
-    }
-    return TRUE;
-}
+// Ready to attach as soon as the game's own module and kernel32 are mapped: before it creates its GL context and
+// links its first shader programs, which the mod's linker hook must see (mod/material_ids.inl: a program linked
+// before it has no recoverable vertex source when the game deletes both shaders, as 0x1FACF0 and 0x1FAD60 do).
+// The mod itself then waits for opengl32 and the game's window (waitForGame) before anything else.
 static bool ready(DWORD pid) {
-    bool gl = false;
+    bool game = false, kernel = false;
     HANDLE s = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
     MODULEENTRY32W m{};
     m.dwSize = sizeof m;
     if (s != INVALID_HANDLE_VALUE) {
         if (Module32FirstW(s, &m)) do {
-                if (!_wcsicmp(m.szModule, L"opengl32.dll")) gl = true;
+                if (!_wcsicmp(m.szModule, L"Exanima.exe")) game = true;
+                if (!_wcsicmp(m.szModule, L"kernel32.dll")) kernel = true;
             } while (Module32NextW(s, &m));
         CloseHandle(s);
     }
-    DWORD values[2] = {pid, 0};
-    EnumWindows(findGameWindow, (LPARAM)values);
-    return gl && values[1];
+    return game && kernel;
 }
 // The game build: every target the DLL uses must resolve by signature (game_layout.h). The DLL checks
 // again in the game; this is so an unsupported version is reported before anything is loaded into it.
