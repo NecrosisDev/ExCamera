@@ -2868,12 +2868,17 @@ static void toView(const float* m, const float* p, float* out) {
     for (int i = 0; i < 3; ++i) out[i] = p[0] * m[i] + p[1] * m[4 + i] + p[2] * m[8 + i] + m[12 + i];
 }
 
-// The lights the game drew meshes with in the last quarter second (MeshLights, wounds.inl), into view space for
-// gameLighting: the union over the captured meshes (characters and their gear, as the material-draw hook sees
-// them), each light once, the six that bring the most light to the mesh they were packed for (colour luma x the
-// game's range falloff at that mesh; a Direct light by its luma). Whether the packed positions are sector-local
-// or global is not established, so as for held items both readings are tried: the mesh's own origin by the one
-// in reach of the camera, each point light by the one nearer that mesh. Returns the count; up: world +Y in view.
+// The lights the game drew the characters with (MeshLights, wounds.inl: every skinned mesh the submit packs in
+// the colour pass, each kept meshLightsKeepMs after its last capture), into view space for gameLighting. One set
+// for the frame: the union, each light once, ranked by the light it brings to the mesh it was packed for (colour
+// luma x the game's range falloff there; a Direct light by its luma). The chosen six change only when a different
+// ranking has held for gameLightsSettleFrames frames running, or when none of the chosen lights is captured any
+// more, so the set does not flip frame to frame. Positions and colours are each frame's newest. Every wound and
+// pool takes this one set (APPROXIMATION: the game lights each mesh with its own list). Whether the packed
+// positions are sector-local or global is not established, so as for held items both readings are tried: the
+// mesh's own origin by the one in reach of the camera, each point light by the one nearer that mesh. Returns the
+// count; up: world +Y in view.
+constexpr unsigned gameLightsSettleFrames = 12;
 #if FP_DEV_TOOLS
 static bool renderAuditOn();
 static void renderAuditLog(const char* format, ...);
@@ -2890,7 +2895,7 @@ static unsigned gameLightsInView(const float* view, float (&out)[18][4], float (
     const ULONGLONG now = GetTickCount64();
     AcquireSRWLockShared(&meshLightsLock);
     for (const MeshLights& m : meshLights) {
-        if (!m.node || now - m.tick > 250) continue;
+        if (!m.node || now - m.tick > meshLightsKeepMs) continue;
         float nodeView[3]{}, best = 5000.f * 5000.f;
         bool placed = false;
         for (int candidate = 0; candidate < (m.sectorKnown ? 2 : 1); ++candidate) {
@@ -2954,15 +2959,54 @@ static unsigned gameLightsInView(const float* view, float (&out)[18][4], float (
         }
     }
     ReleaseSRWLockShared(&meshLightsLock);
-    for (unsigned k = 0; k < count; ++k) memcpy(out[k * 3], picks[k].light, sizeof picks[k].light);
+    // Hysteresis: keep the chosen sources until another ranking holds for gameLightsSettleFrames frames, or none of
+    // them is captured now.
+    static uintptr_t chosen[6]{}, pending[6]{};
+    static unsigned chosenCount = 0, pendingCount = 0, pendingFrames = 0;
+    auto sameSet = [](const uintptr_t* a, unsigned an, const Pick* b, unsigned bn) {
+        if (an != bn) return false;
+        for (unsigned i = 0; i < an; ++i) {
+            bool found = false;
+            for (unsigned j = 0; j < bn && !found; ++j) found = a[i] == b[j].source;
+            if (!found) return false;
+        }
+        return true;
+    };
+    unsigned present = 0;
+    for (unsigned i = 0; i < chosenCount; ++i)
+        for (unsigned j = 0; j < count; ++j) present += chosen[i] == picks[j].source ? 1 : 0;
+    if (!sameSet(chosen, chosenCount, picks, count)) {
+        if (sameSet(pending, pendingCount, picks, count)) ++pendingFrames;
+        else {
+            pendingCount = count;
+            for (unsigned k = 0; k < count; ++k) pending[k] = picks[k].source;
+            pendingFrames = 1;
+        }
+        if (pendingFrames >= gameLightsSettleFrames || (chosenCount && !present) || !chosenCount) {
+            chosenCount = count;
+            for (unsigned k = 0; k < count; ++k) chosen[k] = picks[k].source;
+            pendingFrames = 0;
+            gameLightsSetChanges.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else {
+        pendingFrames = 0;
+    }
+    // The chosen sources still captured, in their newest reading.
+    unsigned shown = 0;
+    for (unsigned i = 0; i < chosenCount; ++i)
+        for (unsigned j = 0; j < count; ++j)
+            if (chosen[i] == picks[j].source) memcpy(out[shown++ * 3], picks[j].light, sizeof picks[j].light);
+    count = shown;
+    if (!count) gameLightsFallbackFrames.fetch_add(1, std::memory_order_relaxed);
     gameLightsUsed.store(count, std::memory_order_relaxed);
 #if FP_DEV_TOOLS
     static ULONGLONG logged = 0;
     if (renderAuditOn() && now - logged > 1000) {
         logged = now;
-        renderAuditLog("blood lights: %u in use (captures %u, mismatches %u; point readings raw %u, sector %u); "
-                       "first: %s at %.1f %.1f %.1f, colour %.3f %.3f %.3f, 1/range %.5f",
+        renderAuditLog("blood lights: %u in use (captures %u, mismatches %u; point readings raw %u, sector %u; set changes %u, "
+                       "fixed-light frames %u); first: %s at %.1f %.1f %.1f, colour %.3f %.3f %.3f, 1/range %.5f",
                        count, meshLightsCaptured.load(), meshLightsMismatched.load(), readings[0], readings[1],
+                       gameLightsSetChanges.load(), gameLightsFallbackFrames.load(),
                        count ? (out[0][3] > 0.5f ? "Direct" : "point") : "none", out[0][0], out[0][1], out[0][2],
                        out[1][0], out[1][1], out[1][2], out[1][3]);
     }

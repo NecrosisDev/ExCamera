@@ -1390,9 +1390,12 @@ static void woundSkinDiagnose(uintptr_t node, uintptr_t material, bool bind) {
     }
 }
 #endif
-// The lights the game drew a node with, copied at its material draw into MeshLights (wounds.inl, where the
-// state's layout is cited). The copy is used only when the state was packed for this node: the submit writes
-// [node+130] to state +A0 before packing, so a different value there means another node's lights.
+// The lights the game drew a node with, copied right after its submit into MeshLights (wounds.inl, where the
+// state's layout is cited). The hooked submit 0x201630 calls 0x200770 (at 0x201666), which writes [node+130] to
+// state +A0 and packs the node's lights, or clears the count when the node has no light list (0x2007B7-0x200834);
+// so after it returns the state holds this node's lights. The copy is used only when +A0 equals the node's +130
+// (the other branch, 0x1FFBA0, packs another renderer's state). Every skinned mesh (a skin controller at +218
+// whose +8 is the node: characters) in the colour pass, once per node per pass (its first material).
 static void captureMeshLights(uintptr_t node) {
     const uintptr_t renderer = *(const uintptr_t*)gameAt(fp::sig::headwearWorldRenderer);
     if (!node || !readable(renderer, 0x170 + 18 * 16) || !readable(node, 0x138) ||
@@ -1436,8 +1439,15 @@ static void captureMeshLights(uintptr_t node) {
 #endif
 }
 
+static void captureSubmittedLights(uintptr_t node, int) {
+    __try {
+        const uintptr_t skin = *(const uintptr_t*)(node + 0x218);
+        if (!skin || *(const uintptr_t*)(skin + 8) != node) return; // not a skinned mesh
+        captureMeshLights(node);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
 static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind) {
-    __try { captureMeshLights(node); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 #if FP_DEV_TOOLS
     __try { woundSkinDiagnose(node, material, bind); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 #endif

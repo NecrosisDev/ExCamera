@@ -38,6 +38,7 @@ static bool stoneSkinDraw(uintptr_t node, uintptr_t material, bool bind, bool ow
 // Wound skins (wounds_bake.inl, included after stone_skin.inl) too.
 static bool woundSkinSubmission(uintptr_t node);
 static bool woundSkinDraw(uintptr_t node, uintptr_t material, bool bind);
+static void captureSubmittedLights(uintptr_t node, int index); // wounds_bake.inl: the lights the submit packed
 // The player's own skinned mesh stays with the headwear path in first person; its native body
 // runs take the stone maps there (cueLock held for all three).
 struct StoneSwap {
@@ -865,6 +866,7 @@ inline void wearSubmitBody(uintptr_t node, int index, uintptr_t caller) {
         if (sampled) wearScope.submission = submitted;
         if (single || sampled) noteSilhouetteSubmission(node, index, sampled);
         fp::profile::invoke<fp::profile::Hook::wearSubmitNative>(originalWearSubmit, node, index);
+        if (wearScope.colourPass && index == 0) captureSubmittedLights(node, index);
         completed = true;
     } __finally {
         wearScope.submission = previous;

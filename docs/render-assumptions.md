@@ -505,12 +505,12 @@ game's lights loop and Lighting function above applied to each captured light. W
 |---|---|---|
 | Per-light colour, range falloff (1 − d·B.w)⁴, C.yzw factor on the world-y of the direction, Direct vs point | the packed lights as captured, the shader's formulas | PROVEN (formulas and Direct as above) |
 | GGX, k, d | the game's Lighting function | PROVEN formula; the blood's Gloss (0.07 pools and drops, 0.08 blades, 0.07-0.14 cuts) is ours |
-| Which lights | the union of the lights packed for the meshes drawn in the last 250 ms that pass the material-draw hook (characters and their gear), each light once, the six that bring most light to the mesh they were packed for | APPROXIMATION: the game lights each mesh with its own list; a pool on the floor takes the lights of the bodies near it, not the floor mesh's list |
+| Which lights | captured right after the hooked submit 0x201630 (which calls the packer's 0x200770 at 0x201666) for every skinned mesh in the colour pass, so every character the game draws, each kept 3 s; the union, each light once, the six that bring most light to the mesh they were packed for; the chosen six change only when another ranking holds for 12 passes running or none of them is captured any more | APPROXIMATION: the game lights each mesh with its own list; every wound and pool takes this one set, and a pool on the floor takes the bodies' lights, not the floor mesh's list. The 0.3.0 playtest build captured at the material draw instead, which saw only the player's body: there every character's blood took the player's lights |
 | Space | both readings (raw, + the mesh's sector origin) tried: the mesh's by the camera's reach, each point light's by nearness to its mesh | APPROXIMATION, as for held items; the audit counts which reading won |
 | Absolute level | the brightness the game already drew at the spot; the lights give the share (divided by the sum of luma × w) | APPROXIMATION: the game's absolute light units are not mapped to the picture |
 | Shadows | not sampled: every light counts as unshadowed (A.w and C.x unused) | NOT DONE (cube maps per light) |
 | Ambient | a fixed 0.3 floor on the cut and the drops; pools keep the drawn picture | NOT DONE: the VoxelGI texture and VXGIScl/VXGIPos are not in the captured state |
 | Fresnel | the liquid's own Schlick (F0 0.02) in place of MatSpc × spf | ours (the blood's material) |
 
-With no lights captured in the last 250 ms the terms use the fixed light from above. The old kind-5 light-node path
+With no lights captured in the last 3 s the terms use the fixed light from above (counted per pass in first-person-status.json, blood_light_fixed_frames, with blood_light_set_changes). The old kind-5 light-node path
 (levelLightsFor, lampsInView) is removed; level detail keeps its fixed light.

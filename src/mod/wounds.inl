@@ -1328,11 +1328,15 @@ struct MeshLights {
     float sector[3]{};     // its sector's origin
     bool sectorKnown = false;
 };
-constexpr unsigned meshLightsLimit = 16;
+constexpr unsigned meshLightsLimit = 64;
+constexpr ULONGLONG meshLightsKeepMs = 3000; // a character's last good set stands this long without a new capture
 static MeshLights meshLights[meshLightsLimit];
 static unsigned meshLightsNext = 0;
 static SRWLOCK meshLightsLock = SRWLOCK_INIT;
 static std::atomic<unsigned> meshLightsCaptured{0}, meshLightsMismatched{0}, gameLightsUsed{0};
+// Per-frame stability of the blood's light set: frames on the fixed light (nothing captured), and how often
+// the chosen set changed.
+static std::atomic<unsigned> gameLightsFallbackFrames{0}, gameLightsSetChanges{0};
 
 static void createWoundHooks() {
     if (!layout.optionalGroupAvailable("wounds")) return;

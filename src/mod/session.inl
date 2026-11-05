@@ -879,6 +879,8 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("mesh_lights_captured", meshLightsCaptured.load());
     j.unum("mesh_lights_mismatched", meshLightsMismatched.load());
     j.unum("blood_game_lights", gameLightsUsed.load());
+    j.unum("blood_light_set_changes", gameLightsSetChanges.load());
+    j.unum("blood_light_fixed_frames", gameLightsFallbackFrames.load());
     j.boolean("wound_hits_linked", characterHits.load() != nullptr);
     // The game's material ids (material_ids.inl): textures composed and replayed, parts drawn with ids.
     j.boolean("material_ids_hooked", matid::hooked.load());
