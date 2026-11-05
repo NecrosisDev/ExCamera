@@ -308,10 +308,13 @@ static void addWound(const CharacterHitRecord& h) {
         cameraImpactRoll.store(std::clamp(cameraImpactRoll.load(std::memory_order_relaxed) + kickRoll, -0.06f, 0.06f), std::memory_order_relaxed);
     }
     if (!std::isfinite(healthMax) || healthMax < 0.05f) healthMax = 1.f;
-    // PROVISIONAL(2026-10-22, size from damage: a third of full health fills the scale; tune after
-    // a first look in game, ratify-by: 2026-11-05)
-    w.severity = kind == woundCrush ? std::clamp(0.35f + 0.8f * balance, 0.35f, 1.f)
-                                    : std::clamp(0.35f + 2.f * health / healthMax, 0.35f, 1.f);
+    // Size from what the blow took: the damage routine (0x159700, 0x159783-0x1597C5) lowers the +D5C value
+    // by 0.2 times its third argument, and +D5C over +103C is the fraction the game's own healthFraction
+    // (0x185A00) divides out. So this is the share of that value the blow removed, 0 to 1, and a blow
+    // taking all of it fills the scale. (It read the raw argument before, five times too large, so most
+    // hits came out at full size.)
+    const float taken = std::clamp(0.2f * health / healthMax, 0.f, 1.f);
+    w.severity = kind == woundCrush ? std::clamp(0.35f + 0.8f * balance, 0.35f, 1.f) : 0.35f + 0.65f * taken;
     w.kind = kind;
     __try {
         const int index = *(const int*)(w.part + field::bodyPart::index);
@@ -1086,6 +1089,9 @@ static void recordNativeHit(uintptr_t victim, uintptr_t attacker, float health, 
     ReleaseSRWLockExclusive(&woundLock);
 }
 
+// The damage routine 0x159700: it lowers +D58 by 0.1 times its second argument (0.05 times when +DF8 has
+// 0x800000) and +D5C by 0.2 times its third (0x15972E-0x1597C5). The names below are the record's; what the
+// two values mean beyond that arithmetic is not established here.
 static unsigned char bodyDamageDetour(uintptr_t character, float balance, float health, char canFall) {
     const auto result = originalBodyDamage(character, balance, health, canFall);
     __try {
