@@ -879,7 +879,31 @@ inline void wearSubmit(uintptr_t node, int index) {
     fp::profile::invoke<fp::profile::Hook::wearSubmit>(wearSubmitBody, node, index, caller);
 }
 
+static void markGameBloodStain(gl::Api& g, fp::CueResources& r, void (*native)(uintptr_t), uintptr_t material); // view_effects.inl
+// A draw of the game's own weapon blood stain pass (its three return sites, gameBloodStains group): drawn as the game
+// asked, then once more into the coverage the finish pass keeps (view_effects.inl markGameBloodStain).
+static bool gameBloodStainDraw(uintptr_t material, bool bind, uintptr_t caller) {
+    if (!layout.optionalGroupAvailable("gameBloodStains") || cueGlDepth || wearDrawing ||
+        (caller != optionalGameAt(fp::sig::gameBloodStainDrawReturn) && caller != optionalGameAt(fp::sig::gameBloodStainBoundReturn) &&
+         caller != optionalGameAt(fp::sig::gameBloodStainOtherReturn)))
+        return false;
+    const WearDraw native = bind ? originalWearDraw : originalWearDrawBound;
+    fp::profile::invoke<fp::profile::Hook::wearDrawNative>(native, material);
+    if (!ownedNativeSwap(cueCurrentDC())) return true;
+    AcquireSRWLockExclusive(&cueLock);
+    ++cueGlDepth;
+    __try {
+        auto* owner = prepareCue();
+        if (owner && !owner->failed) markGameBloodStain(owner->api, owner->resources, native, material);
+    } __finally {
+        --cueGlDepth;
+        ReleaseSRWLockExclusive(&cueLock);
+    }
+    return true;
+}
+
 inline void wearDrawBody(uintptr_t material, bool bind, uintptr_t caller) {
+    if (gameBloodStainDraw(material, bind, caller)) return;
     const WearSubmission submitted = bind ? wearScope.pending : wearScope.submission;
     wearScope.pending = {};
     const uintptr_t expected = gameAt(bind ? fp::sig::headwearDrawReturn : fp::sig::headwearDrawBoundReturn);

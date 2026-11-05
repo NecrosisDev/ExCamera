@@ -98,6 +98,11 @@ struct CueResources {
     // The player's hidden body (third person): a mask drawn during the camera pass, its
     // own copy of the scene depth to test against, and their framebuffer.
     unsigned silhouetteFbo = 0, silhouetteMask = 0, silhouetteDepth = 0;
+    // The game's own weapon blood stains (view_effects.inl markGameBloodStain): where its stain pass drew this frame
+    // (alpha), our framebuffer over it, its program that marks those pixels 254 in the mask, and the frame state.
+    unsigned gameBloodTex = 0, gameBloodFbo = 0, gameBloodKeepProgram = 0;
+    int gameBloodWidth = 0, gameBloodHeight = 0;
+    bool gameBloodDrawn = false, gameBloodClear = true;
     int silhouetteWidth = 0, silhouetteHeight = 0;
     // Held-item surfaces: four channels of tiling smooth noise in a small mipmapped 3D texture.
     unsigned heldNoise = 0;
@@ -112,6 +117,7 @@ struct CueResources {
         return viewVao || viewVbo || viewColor || viewDepth || viewDepthPrevious || offscreenFbo ||
                offscreenDepthFbo || timerQueries[0][0] ||
                timerQueries[1][0] || timerQueries[2][0] || timerQueries[3][0] || aoProgram || dofProgram || finishProgram || woundProgram || fireProgram || woundFbo || woundQuadVao || woundQuadVbo || bloodMapTex || bloodMapFbo || bloodSplatProgram ||
+               gameBloodTex || gameBloodFbo || gameBloodKeepProgram ||
                compositeProgram || resolveProgram || chainTex || chainFbo[0] || chainFbo[1] || dofCompositeProgram || dofFbo || dofTex || distanceProgram || distanceFbo || distanceTex || halfFbo || halfTex ||
                historyFbo[0] || historyFbo[1] || historyTex[0] || historyTex[1] ||
                focusBuffers[0] || focusBuffers[1] || focusFences[0] || focusFences[1] || meterProgram || meterFbo ||
@@ -212,6 +218,14 @@ struct CueResources {
         chainTex = 0;
         chainWidth = chainHeight = 0;
     }
+    template <class Api> void retireGameBlood(Api& g) {
+        if (gameBloodFbo) g.deleteFramebuffers(1, &gameBloodFbo);
+        if (gameBloodTex) g.deleteTextures(1, &gameBloodTex);
+        gameBloodFbo = gameBloodTex = 0;
+        gameBloodWidth = gameBloodHeight = 0;
+        gameBloodDrawn = false;
+        gameBloodClear = true;
+    }
     template <class Api> void retireSilhouette(Api& g) {
         if (silhouetteFbo) g.deleteFramebuffers(1, &silhouetteFbo);
         silhouetteFbo = 0;
@@ -254,6 +268,8 @@ struct CueResources {
         retireProgram(g, woundProgram);
         retireProgram(g, fireProgram);
         retireProgram(g, bloodSplatProgram);
+        retireProgram(g, gameBloodKeepProgram);
+        retireGameBlood(g);
         if (bloodMapFbo && g.deleteFramebuffers) g.deleteFramebuffers(1, &bloodMapFbo);
         if (bloodMapTex) g.deleteTextures(1, &bloodMapTex);
         bloodMapFbo = bloodMapTex = 0;

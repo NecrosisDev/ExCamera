@@ -897,6 +897,10 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("blood_game_lights", gameLightsUsed.load());
     j.unum("blood_light_set_changes", gameLightsSetChanges.load());
     j.unum("blood_light_fixed_frames", gameLightsFallbackFrames.load());
+    // The game's own weapon blood stains kept as drawn (254 in the held mask): stain draws marked, skipped, frames kept.
+    j.unum("game_blood_stain_draws", gameBloodStainDraws.load());
+    j.unum("game_blood_stain_skips", gameBloodStainSkips.load());
+    j.unum("game_blood_kept_frames", gameBloodKeptFrames.load());
     j.boolean("wound_hits_linked", characterHits.load() != nullptr);
     // The game's material ids (material_ids.inl): textures composed and replayed, parts drawn with ids.
     j.boolean("material_ids_hooked", matid::hooked.load());

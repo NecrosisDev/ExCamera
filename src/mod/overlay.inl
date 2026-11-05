@@ -260,7 +260,7 @@ struct CueContext {
     bool aoAttempted = false, dofAttempted = false, finishAttempted = false,
          compositeAttempted = false, resolveAttempted = false, dofCompositeAttempted = false,
          meterAttempted = false, distanceAttempted = false, woundAttempted = false, fireAttempted = false,
-         bloodSplatAttempted = false;
+         bloodSplatAttempted = false, gameBloodAttempted = false;
     // Occlusion blending over frames: the camera of the last blended frame.
     unsigned viewFrame = 1;      // counts blended frames; history written in frame f is usable in f + 1
     ULONGLONG previousTick = 0;  // when the last blended frame was drawn
