@@ -591,6 +591,10 @@ class ShaderSourceTests(unittest.TestCase):
         self.assertIn('bloodFilm', sources['woundShader'])
         self.assertIn('gl_FragColor', sources['woundShader'])
 
+    def test_reversed_smoothstep_edges_are_flagged(self):
+        found = check_shaders.reversed_smoothsteps({'x': 'a = smoothstep(0.2, 0.8, t);\nb = smoothstep(1.0, 0.55, t);'})
+        self.assertEqual(found, ['x line 2: b = smoothstep(1.0, 0.55, t);'])
+
 
 if __name__ == '__main__':
     unittest.main()

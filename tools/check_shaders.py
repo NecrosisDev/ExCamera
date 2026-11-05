@@ -204,6 +204,21 @@ def _with_lines(parts: list[str], log: str) -> str:
     return '\n'.join(out)
 
 
+_SMOOTHSTEP = re.compile(r'smoothstep\(\s*(-?\d+(?:\.\d*)?)\s*,\s*(-?\d+(?:\.\d*)?)\s*,')
+
+
+def reversed_smoothsteps(sources: dict[str, str]) -> list[str]:
+    """smoothstep calls whose literal edges run backwards: GLSL leaves edge0 >= edge1 undefined, and while
+    NVIDIA returns the mirrored curve, other drivers need not. Written 1.0 - smoothstep(b, a, x) instead."""
+    found = []
+    for name, text in sources.items():
+        for m in _SMOOTHSTEP.finditer(text):
+            if float(m.group(1)) >= float(m.group(2)):
+                line = text.count('\n', 0, m.start()) + 1
+                found.append(f'{name} line {line}: {text.splitlines()[line - 1].strip()}')
+    return found
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('-v', '--verbose', action='store_true', help='print driver warnings for programs that pass')
@@ -240,6 +255,8 @@ def main(argv=None) -> int:
         else:
             print(_with_lines([], llog or 'program did not link'))
     gl.close()
+    for warning in reversed_smoothsteps(sources):
+        print(f'[warn] reversed smoothstep edges (undefined in GLSL): {warning}')
     print(f'Result: {len(jobs) - failed}/{len(jobs)} programs build')
     return 1 if failed else 0
 
