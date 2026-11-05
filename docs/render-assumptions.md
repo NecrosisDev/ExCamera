@@ -221,11 +221,20 @@ under the release rule they are off unless proven (`colourMaterialGuesses = fals
 |---|---|---|
 | Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Off**: the held/worn/object mask replay and the texture readback do not run, so these three detail rows draw nothing |
 | Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Off**: level detail draws nothing |
-| Reflections (`ssrShader`, 478b214) | Floor reflectivity by colour class | **Left as is** pending Hunter's answer on using the game's specular maps (plan: shininess in the alpha channel) |
+| Reflections (`ssrShader`) | Floor reflectivity by colour class (478b214) | **Removed.** Reflections are off and greyed out until the game's own specular data feeds them (Hunter: yes; plan below) |
+| Helmet view (`finishShader` visor) | "Anything within 18 cm of the eye is helmet" (a depth guess) | **Off**, greyed out, until the helmet's own geometry shapes it |
+| See yourself through walls | A capsule of 25 cm radius standing in for the body, both as the fallback ghost and to ignore the body's own limbs | **Replaced**: the ghost is drawn only from the game's body draw (mask R), and a second channel (B) marks where the body itself is the nearest surface, from the same draw. No capsule. Needs an in-game check |
 | Wound marks (`woundShader`) | A grey, unsaturated surface is metal (smears, no soak) | Blood thread's code; they turned their gear metal-vs-cloth guess off in bc00466 |
 
-Not material guesses, and kept: eye adaptation (the image's brightness, our design), the AO "bright pixels are
-direct light" rule (shading choice), the helmet view (depth within 18 cm of the eye), hurt (proven health).
+Still in use, and why (each is a choice about how an effect looks, not a claim about game data, except the
+first, which is listed for a decision):
+- **Ambient occlusion's "bright pixels are direct light" rule** (`shadeSurfaces`: darkening fades out above a
+  luminance of 0.3-0.7). It stands in for knowing which light is indirect. The game's indirect light is its
+  voxel GI volume (`VoxelGI`, the sampler Smooth lighting already rewrites), so the by-construction version
+  is to apply occlusion to that term inside the game's shader. **UNPROVEN as data; decision needed:** keep,
+  or move AO into the game's shader through the existing hook.
+- Eye adaptation: the image's own brightness (our design). Hurt: proven health. Edge smoothing, depth of
+  field and the fire look: image filters, our design. Wounds and blood: the blood thread's.
 To bring the material-based ones back: decode the material type the game itself keeps per material or part,
 then flip `panel::materialDataDecoded` (settings_model.h).
 
