@@ -490,6 +490,19 @@ bool camera_motion_knockdown_view() {
     return true;
 }
 
+bool settings_open_only_on_f8() {
+    // The mask bits as state.inl defines them: F8's own, Cursor Look's, an open game window's.
+    const unsigned f8 = 1u << 0, cursorLook = 1u << 1, window = 1u << 2;
+    CHECK(fp::settingsWindowWanted(f8, f8, true, false));
+    CHECK(fp::settingsWindowWanted(f8, f8, false, true));             // at the title
+    CHECK(!fp::settingsWindowWanted(f8, f8, false, false));           // neither in play nor at the title
+    CHECK(!fp::settingsWindowWanted(window, f8, true, false));         // the inventory open
+    CHECK(!fp::settingsWindowWanted(cursorLook, f8, true, false));     // Cursor Look
+    CHECK(!fp::settingsWindowWanted(window | cursorLook, f8, true, true));
+    CHECK(fp::settingsWindowWanted(window | f8, f8, true, false));     // F8 with the inventory open
+    return true;
+}
+
 bool camera_motion_jump_push() {
     // One takeoff speed from the game's gravity: v = sqrt(2 g h).
     const float v = fp::jumpTakeoffSpeed(), hz = 83.f;
@@ -1118,6 +1131,7 @@ static bool texture_formats_from_the_game_table() {
 
 int main() {
     return run_tests({
+        {"settings open only on F8", settings_open_only_on_f8},
         {"controller buttons and stick parry", controller_buttons_and_stick_parry},
         {"input ButtonHandoff and RawLook", input_button_handoff_and_raw_look},
         {"input angle wrapping and vrTurningFromText", input_angle_wrapping_and_vr_turning_text},

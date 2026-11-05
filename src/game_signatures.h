@@ -289,6 +289,8 @@ enum Target : uint16_t {
     gameBloodStainBoundReturn,
     gameBloodStainOtherReturn,
     gameBloodStainText,
+    weaponBloodList,
+    weaponBloodAdd,
     targetCount
 };
 inline constexpr const char* targetNames[targetCount] = {
@@ -575,6 +577,8 @@ inline constexpr const char* targetNames[targetCount] = {
     "gameBloodStainBoundReturn",
     "gameBloodStainOtherReturn",
     "gameBloodStainText",
+    "weaponBloodList",
+    "weaponBloodAdd",
 };
 // A missing member withholds every address in its optional capability group.
 inline constexpr const char* targetOptionalGroups[targetCount] = {
@@ -861,6 +865,8 @@ inline constexpr const char* targetOptionalGroups[targetCount] = {
     "gameBloodStains",
     "gameBloodStains",
     "gameBloodStains",
+    "gameWeaponBlood",
+    "gameWeaponBlood",
 };
 // Code: resolves to match + offset + addend. Relative: to match + insnEnd + int32 at (match + offset) + addend (a RIP-relative
 // reference to a global or a vtable, or a call to the function).
@@ -1761,6 +1767,8 @@ inline constexpr Signature signatures[] = {
     {gameBloodStainBoundReturn, Kind::Code, false, false, 18, 0, 0, 0x100BCD, "48 8B 06 48 8B 80 D0 01 00 00 48 8B 08 E8 ?? ?? ?? ?? 3B 7D E4 0F 8F"},
     {gameBloodStainOtherReturn, Kind::Code, false, false, 18, 0, 0, 0x100C24, "48 8B 06 48 8B 80 D0 01 00 00 48 8B 08 E8 ?? ?? ?? ?? 3B 5D E8 0F 8F"},
     {gameBloodStainText, Kind::Relative, false, false, 12, 16, 0, 0x30FBD0, "81 78 08 BE 8A A3 49 74 19 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? B9 04 00 00 00"},
+    {weaponBloodList, Kind::Relative, false, false, 3, 7, 0, 0x4F0870, "48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 55 F8 48 8B 92 88 09 00 00 89 82 7C 06 00 00"},
+    {weaponBloodAdd, Kind::Code, false, true, 0, 0, 0, 0x1007C0, "48 89 C8 0F 28 C2 48 8B 48 10 48 63 D2 48 6B C2 18 48 8D 44 01 E8 F3 0F 10 48 08 F3 0F 58 C8 F3 0F 11 48 08"},
 };
 // A slot must hold the resolved function: proof the vtable and the function belong together.
 struct SlotCheck {

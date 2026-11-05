@@ -901,6 +901,8 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("game_blood_stain_draws", gameBloodStainDraws.load());
     j.unum("game_blood_stain_skips", gameBloodStainSkips.load());
     j.unum("game_blood_kept_frames", gameBloodKeptFrames.load());
+    j.unum("game_blood_other_samples", gameBloodOtherSamples.load());
+    j.unum("game_blood_size_mismatches", gameBloodSizeMismatches.load());
     j.boolean("wound_hits_linked", characterHits.load() != nullptr);
     // The game's material ids (material_ids.inl): textures composed and replayed, parts drawn with ids.
     j.boolean("material_ids_hooked", matid::hooked.load());
@@ -1581,8 +1583,8 @@ static DWORD runSession() {
                     aim.valid = false;
                     ReleaseSRWLockExclusive(&aimLock);
                 } // no nav frame ended the blend (parked, loading): end it as F6 did
-                f8WindowTick(cursorFreeNow() &&
-                                 (InterlockedCompareExchange(&active, 0, 0) || title),
+                f8WindowTick(fp::settingsWindowWanted(cursorFreeMask.load(std::memory_order_relaxed), cursorFreeBit,
+                                                      InterlockedCompareExchange(&active, 0, 0) != 0, title),
                              gameWindow() != nullptr);
             }
             rehookWindow();

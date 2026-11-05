@@ -1133,6 +1133,13 @@ inline F6Step f6ReleaseStep(uint64_t heldMs, int mode) {
 // the F6 press that re-armed the mod (polled) may still
 // arrive as WM_KEYDOWN after the window procedure is back; ignore F6 that soon.
 inline constexpr uint64_t rearmF6GuardMs = 250;
+// Whether the worker should hold the mod's Settings open: only F8's own free-pointer reason (bit settingsBit of
+// the cursor-free mask), never another one. An open inventory, trade or arena window (the window reason) and the
+// game's Cursor Look (the right-mouse reason) also free the pointer; taking any free pointer as a request opened
+// Settings with the inventory and with the Cursor Look key.
+inline bool settingsWindowWanted(unsigned freeMask, unsigned settingsBit, bool inPlay, bool atTitle) {
+    return (freeMask & settingsBit) != 0 && (inPlay || atTitle);
+}
 inline bool rearmF6Accepted(uint64_t now, uint64_t rearmedAt) {
     return !rearmedAt || now - rearmedAt >= rearmF6GuardMs;
 }

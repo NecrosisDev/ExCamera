@@ -37,6 +37,48 @@ duplicates what this handler already does.
 | **Surface blood** (floors, walls) | No decal or splat-texture system found in this region: no class, string or texture pass for floor blood. The sprays are particles. | n/a | n/a | n/a | Our floor blood layer stays ours. It could take its splats from the spray records once the particle update and landing are traced. |
 | **Wounds** (cuts, gashes) | No wound decal, cut texture or texture swap on a hit was found. The game's visible injury is the vertex-alpha blood and dirt above, and the state values (health, bleed). | n/a | n/a | n/a | Our gashes, punctures and bruises (the skin bake) remain additions. They draw over the game's dirt, which stays. |
 
+## What ExCamera does with them
+
+- **Weapon blood (in use).** Each frame, every TWeaponBlood record with an amount above 0.01 gets an entry of
+  ours. The singleton is read through the reviewed signature weaponBloodList; group gameWeaponBlood is admitted
+  only with AddBlood 0x1007C0 matching its bytes, which witnesses the 0x18-byte records with the amount at +8.
+  - **Drips:** the blade drips at amount × 3 a second, more when it is steep. Each drop lowers the game's own
+    amount by [Wounds] BladeDrainPerDrop (default 0.01; 0 keeps the game's never-drying blood), and the game's
+    stains fade with it.
+  - **Cast-off:** a swing's cast-off takes the same per drop flung. It only happens in the holder's attack after
+    the commit point; the holder comes from the carrying character's weapons list.
+  - **Where drops leave:** the lowest of the spots our hits recorded on that blade, which run down the blade with
+    gravity; otherwise the blade's origin.
+  - **Replaced:** our earlier mass budget is gone.
+
+## The weapon stain pass: when it runs, and why it flickered under our camera
+
+- **When it runs** (traced by the render thread). 0x1005B6 registers the stain callback 0x100820 into the
+  camera's list at +0x18. The camera pass 0x4F750 runs that list at 0x4F877: after the opaque lists, before the
+  highlight pass 0x4FACF where our mask replay sits, and per sample under Supersample. Our view effects run after
+  the whole view (0xA0CE0 / 0x4B6D0), from a blit that already holds the frame's stains, so none of our copies,
+  history or composites can make it alternate.
+- **What it sets** (its GL entry points, named from the loader: 0x498690 glDepthMask, 0x498E90 glUniform1f,
+  0x498F40 glUniform4fv, 0x498FB0 glUniformMatrix4fv, 0x498610 glViewport):
+  - glDepthMask(0) at 0x10084C, and 1 again at 0x100CE3. No depth func, polygon offset or cull of its own: it
+    inherits the camera pass's state.
+  - It beats the weapon's own depth only by nudging the projection. It saves sample 0's P[10] (0x1008EE), writes
+    P[10] + 1e-5 (the double at 0x30FBA0, 0x100925) into every sample's matrix (0x100938), recomposes the
+    view-projection with 0x18C70 (0x100972), and restores it at 0x100C50-0x100CA7. That moves the stain 1e-5
+    nearer in NDC. (The camera pass uses the same trick for its later lists: +0.002 and +2e-5 at 0x4F8F5 /
+    0x4F94E.)
+  - Per weapon it composes nudged view-projection × the node's +0xA0 on the CPU in floats (0x18C70 at
+    0x100AAC / 0x100B9B), uploads it, and draws the weapon's first material again (0x6B8B0 / 0x6B7F0).
+- **Why it flickered with our camera.** The nudge is fixed in NDC. The difference between the stain's
+  CPU-composed matrix and the weapon draw's own path grows as the weapon gets nearer the eye, roughly as world
+  coordinate size × float epsilon / distance. With the blade about 30 cm from the eye in first person, that
+  difference is about the size of the 1e-5 nudge, so the depth test passes on some frames and fails on others.
+  At the stock camera's distance it is far smaller. The arithmetic is an estimate; the nudge, the path and the
+  missing offset are read from the code.
+- **Fix** (headwear_render.inl gameBloodStainDraw). Around each stain draw only, a polygon offset toward the eye
+  (factor −1, units −256, about 1.5e-5 of a 24-bit depth range), with the game's own polygon-offset state put
+  back after. A dev audit line logs the depth func and the offsets in effect at the stain draw.
+
 ## Not yet decoded (next reads)
 
 - 0x158AD0 → 0xD1A10 / 0xD32C0: the weapon blood path for item+0x67C == −2.
