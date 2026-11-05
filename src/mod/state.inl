@@ -275,6 +275,8 @@ static std::atomic<bool> hideSwingCrosshair{false};
 // [View] IdleCrosshair=rmb|always: out of combat the crosshair shows only while Cursor Look frees the cursor.
 static std::atomic<bool> idleCrosshairAlways{false};
 static std::atomic<bool> woundDebug{false};
+// F12 a second time: the blood passes paint what they tested instead of blood (see woundShader's diagnostics).
+static std::atomic<bool> bloodDiagnose{false};
 // Polish features & diagnostics state
 static std::atomic<unsigned> trackedPlayerVerticesLeft{0}, trackedPlayerVerticesRight{0};
 static std::atomic<int> trackedPlayerPoseLeft{0}, trackedPlayerPoseRight{0};

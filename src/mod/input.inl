@@ -505,8 +505,11 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (wp == VK_F12) {
-            const bool next = !woundDebug.load(std::memory_order_relaxed);
+            // Off -> neon marks -> diagnostics (what each blood test decided, as colours) -> off.
+            const bool wasNeon = woundDebug.load(std::memory_order_relaxed), wasDiag = bloodDiagnose.load(std::memory_order_relaxed);
+            const bool next = !wasNeon && !wasDiag, diag = wasNeon && !wasDiag;
             woundDebug.store(next, std::memory_order_relaxed);
+            bloodDiagnose.store(diag, std::memory_order_relaxed);
             const wchar_t* poseNames[] = { L"Open", L"Fist", L"Hilt", L"Hold", L"Flat", L"Limp" };
             const int pL = std::clamp(trackedPlayerPoseLeft.load(), 0, 5);
             const int pR = std::clamp(trackedPlayerPoseRight.load(), 0, 5);
@@ -516,7 +519,7 @@ static LRESULT CALLBACK windowProc(HWND w, UINT message, WPARAM wp, LPARAM lp) {
             wchar_t msg[256];
             swprintf_s(msg, L"%s: %s | Wounds: %u | Drips: %u | Blood: %d%% | Hands: [L:%s R:%s]",
                        FP_SHOWN_NAME,
-                       next ? L"Debug ON (neon)" : L"Debug OFF (natural)",
+                       next ? L"Debug ON (neon)" : diag ? L"Debug DIAGNOSTICS (green ok, yellow out of window, magenta height, cyan not a floor, blue box)" : L"Debug OFF (natural)",
                        wCount, dCount, bSat,
                        poseNames[pL], poseNames[pR]);
             modMessage(NoticeKind::info, msg);
