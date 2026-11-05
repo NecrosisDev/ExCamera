@@ -494,8 +494,9 @@ inline bool knockdownStep(KnockdownFollow& k, unsigned stateFlags, unsigned life
     return k.down;
 }
 // First person while knocked down ("Show third person"): the view goes to third person as a knockdown starts and
-// back to first once the character has been up for knockdownViewSettleMs. Never for a death (and a death keeps
-// whatever view it found), and never against the player: an F6 during the knockdown keeps the view it chose.
+// back to first once the character has been up for knockdownViewSettleMs. Never for a death, and a death that
+// follows such a switch goes back to first person at once, so the next life does not start in third. Never
+// against the player: an F6 during the knockdown keeps the view it chose.
 // f6Presses is a counter of F6 view changes; the caller applies the returned step.
 inline constexpr unsigned long long knockdownViewSettleMs = 400;
 struct KnockdownView {
@@ -509,9 +510,10 @@ inline KnockdownViewStep knockdownViewStep(KnockdownView& k, bool enabled, int m
     const bool pressed = f6Presses != k.presses;
     k.presses = f6Presses;
     if (lifeFlags & deadLifeBit) {
+        const bool back = k.switched && !pressed && mode == 1;
         k = KnockdownView{};
         k.presses = f6Presses;
-        return KnockdownViewStep::none;
+        return back ? KnockdownViewStep::toFirst : KnockdownViewStep::none;
     }
     if (stateFlags & knockdownStateBits) {
         k.upSince = 0;

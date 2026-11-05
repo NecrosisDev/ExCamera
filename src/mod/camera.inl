@@ -391,12 +391,16 @@ inline uintptr_t navLocked(void* self, float offset) {
     const uintptr_t worldScene = *(uintptr_t*)gameAt(fp::sig::currentScene);
     if (viewMode.load() < 2 && updateCameraEntry(root, head, worldScene, scene)) wasLive = false;
     { // Knocked down in first person: ask the worker for third person, and back after getting up.
+        // A new character (a respawn, the next arena round) or a new scene ends any knockdown in progress: if
+        // the switch put the view in third person, go back to first.
         static fp::KnockdownView knockdownView;
-        static uintptr_t knockdownRoot = 0;
-        if (knockdownRoot != root) {
+        static uintptr_t knockdownRoot = 0, knockdownScene = 0;
+        if (knockdownRoot != root || knockdownScene != worldScene) {
+            if (knockdownOwnsView.load()) knockdownViewRequest = 2;
             knockdownView = fp::KnockdownView{};
             knockdownView.presses = f6Presses.load();
             knockdownRoot = root;
+            knockdownScene = worldScene;
         }
         const int shown = viewMode.load();
         if (shown < 2 && readable(root + field::character::stateFlags, 4) && readable(root + field::character::lifeFlags, 4)) {

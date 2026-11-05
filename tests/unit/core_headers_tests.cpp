@@ -362,14 +362,23 @@ bool camera_motion_knockdown_view() {
     CHECK(fp::knockdownViewStep(manual, true, 0, 0, 0, 5, 2000) == Step::none);
     CHECK(fp::knockdownViewStep(manual, true, 0, knocked, 0, 5, 3000) == Step::toThird); // a new knockdown
 
-    // Death never switches, and keeps the view it found.
+    // Death never switches to third person.
     fp::KnockdownView death;
     CHECK(fp::knockdownViewStep(death, true, 0, knocked, dead, 0, 100) == Step::none);
+    CHECK(fp::knockdownViewStep(death, true, 0, knocked, dead, 0, 200) == Step::none);
+    // A death after the switch goes back to first person at once (the next life must not start in third),
+    // and only once.
     fp::KnockdownView fell;
     CHECK(fp::knockdownViewStep(fell, true, 0, knocked, 0, 0, 100) == Step::toThird);
-    CHECK(fp::knockdownViewStep(fell, true, 1, knocked, dead, 0, 200) == Step::none);
-    CHECK(fp::knockdownViewStep(fell, true, 1, 0, 0, 0, 300) == Step::none);
-    CHECK(fp::knockdownViewStep(fell, true, 1, 0, 0, 0, 2000) == Step::none);
+    CHECK(fp::knockdownViewStep(fell, true, 1, knocked, dead, 0, 200) == Step::toFirst);
+    CHECK(fp::knockdownViewStep(fell, true, 0, knocked, dead, 0, 300) == Step::none);
+    CHECK(fp::knockdownViewStep(fell, true, 0, 0, 0, 0, 2000) == Step::none);
+    // ...but not when the player chose third person with F6 during the knockdown.
+    fp::KnockdownView chose;
+    CHECK(fp::knockdownViewStep(chose, true, 0, knocked, 0, 0, 100) == Step::toThird);
+    CHECK(fp::knockdownViewStep(chose, true, 0, knocked, 0, 1, 150) == Step::none); // F6 to first
+    CHECK(fp::knockdownViewStep(chose, true, 1, knocked, 0, 2, 180) == Step::none); // F6 to third
+    CHECK(fp::knockdownViewStep(chose, true, 1, knocked, dead, 2, 200) == Step::none);
     return true;
 }
 

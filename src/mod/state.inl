@@ -315,6 +315,9 @@ static std::atomic<ULONGLONG> f6HoldStart{0};
 // knockdownViewRequest 1 to third person, 2 back to first, 0 nothing pending.
 static std::atomic<unsigned> f6Presses{0};
 static std::atomic<int> fpKnockdown{1}, knockdownViewRequest{0};
+// Third person is the knockdown switch's doing, not the player's: set when the worker applies it, cleared by any
+// F6 view change and by the switch back. While set, a new character or scene goes back to first person.
+static std::atomic<bool> knockdownOwnsView{false};
 // [VR] rows: eye separation in mm (0: the headset's own), game units per metre, render mode.
 static std::atomic<uintptr_t> nativeSettingsFaultAt{0};
 static std::atomic<unsigned> nativeSettingsDispatches{0}, nativeSettingsSteps{0}, nativeSettingsRefused{0},

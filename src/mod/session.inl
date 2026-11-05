@@ -446,6 +446,7 @@ static void hookHealthTick() {
 static bool rearm(const wchar_t* executable) {
     setActivationPhase(fp::ActivationPhase::starting);
     viewMode = 0;                 // a fresh session starts in first person
+    knockdownOwnsView = false;
     rearmedAt = GetTickCount64(); // before the window procedure returns (a queued F6 must not toggle)
     if (!otherHooksCheck(executable)) {
         reportFault("rearm_native_conflict", "removed", "not_required",
@@ -1367,10 +1368,13 @@ static DWORD runSession() {
                     applyF6Step(fp::f6ReleaseStep(GetTickCount64() - start, viewMode.load()));
             }
             // The camera's knockdown switch, applied here like F6 (input released) but not counted as one.
-            if (const int want = knockdownViewRequest.exchange(0); want && f6Running() &&
-                viewMode.load() == (want == 1 ? 0 : 1)) {
-                viewMode = want == 1 ? 1 : 0;
-                releaseInput();
+            if (const int want = knockdownViewRequest.exchange(0)) {
+                if (f6Running() && viewMode.load() == (want == 1 ? 0 : 1)) {
+                    viewMode = want == 1 ? 1 : 0;
+                    releaseInput();
+                    knockdownOwnsView = want == 1;
+                } else if (want == 2)
+                    knockdownOwnsView = false; // already left third person some other way
             }
             hookHealthTick();
             if (i % 10 == 0) {
