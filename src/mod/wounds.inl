@@ -86,7 +86,7 @@ struct WoundUniforms {
     unsigned count = 0;
     unsigned drips = 0;      // blood drops on the floor, below
     bool burning = false;    // a character in view is burnt (the skin bake has work)
-    float d[woundDripShown][4]; // a drop: view-space point it fell from; w: radius (cm) + 10 x dryness step (0..9)
+    float d[woundDripShown][4]; // a drop: view-space point it fell from; w: 256 x radius (tenths of a cm) + dryness (0..255)
     unsigned caps = 0;          // flesh caps on severed limbs: stump and end
     float capA[8][4], capB[8][4]; // centre (view space), radius (cm); facing (view space), 0 stump / 1 the severed end
     bool any() const { return count || drips || burning || caps; }
@@ -723,7 +723,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         }
         if (!found) continue;
         const float dry = (std::min)(age / woundDripDrySeconds, 1.f);
-        s.w = d.radius + 10.f * std::floor(dry * 9.f);
+        s.w = 256.f * std::round(d.radius * 10.f) + std::floor(dry * 255.f); // radius in tenths; dryness in 256 steps
         drops[dropCount++] = s;
     }
     activeDripsCount.store(dropCount, std::memory_order_relaxed);

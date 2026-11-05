@@ -1289,7 +1289,7 @@ uniform vec4 woundC[12];   // severity 0..1, seed (negative: the skin part is ba
                            // length of the blood runs (cm)
 uniform float woundCount;
 uniform vec4 woundRect;    // screen box (uv min xy, max zw) that holds every wound's reach; outside it nothing to do
-uniform vec4 dripA[32];    // a drop of blood: view-space point it fell from; w: radius (cm) + 10 x dryness step (0..9)
+uniform vec4 dripA[32];    // a drop of blood: view-space point it fell from; w: 256 x radius (tenths of a cm) + dryness (0..255)
 uniform float dripCount;
 uniform vec4 capA[8];      // a flesh cap on a severed limb: view-space centre; w: radius (cm)
 uniform vec4 capB[8];      // its facing (view space); w: 0 the stump, 1 the severed end
@@ -1402,8 +1402,6 @@ vec3 woundMarks(vec3 color) {
         float a, taper, wobble, x, inside, lip, smear;
         woundCutShape(q, A.w, C.z, seed, a, taper, wobble, x, inside, lip);
         float facing = dot(worldUp.xyz, s) * sign(q.y - wobble); // the lip facing up catches the light
-        // Wet blood is bright red; dried blood goes dark brown.
-        vec3 blood = mix(vec3(0.3, 0.08, 0.05), vec3(0.32, 0.02, 0.018), aux);
         vec3 cut = woundCutSkinTint(q, a, x, inside, lip, severity, aux, seed, facing, smear);
         // Through cloth or padding: a ragged slit with frayed threads at its edge and the dark wound behind,
         // and blood soaking outward through the weave, wider the longer the wound bleeds, with a dried rim.
@@ -1476,7 +1474,7 @@ vec3 woundMarks(vec3 color) {
     for (int j = 0; j < 32; ++j) {
         if (float(j) >= dripCount) break;
         vec4 D = dripA[j];
-        float dryStep = floor(D.w / 10.0), radius = D.w - 10.0 * dryStep, dry = dryStep / 9.0;
+        float radius = floor(D.w / 256.0) * 0.1, dry = (D.w - 256.0 * floor(D.w / 256.0)) / 255.0;
         vec3 d = p - D.xyz;
         float h = dot(d, uFloor);
         vec3 spread = vec3(0.0);
@@ -3617,7 +3615,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
             // below it and walls from 120 cm below to 20 cm above it (130 cm from that point), 2.5 radii across.
             for (unsigned k = 0; k < wounds.drips && box[2] - box[0] < 1.f; ++k) {
                 const float* d = wounds.d[k];
-                const float radius = d[3] - 10.f * std::floor(d[3] / 10.f);
+                const float radius = std::floor(d[3] / 256.f) * 0.1f;
                 const float c[3] = {d[0] - upX * 110.f, d[1] - upY * 110.f,
                                     d[2] - upZ * 110.f};
                 const float reach = 130.f + radius * 3.f;
