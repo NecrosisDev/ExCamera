@@ -60,8 +60,8 @@ namespace character {
     inline size_t healthRestorable = fp::game::character::healthRestorable;
     inline size_t healthMax = fp::game::character::healthMax;
     inline size_t transform = fp::game::character::transform;
-    inline size_t stamina = fp::game::character::stamina;
-    inline size_t staminaCeiling = fp::game::character::staminaCeiling;
+    inline size_t magic = fp::game::character::magic;
+    inline size_t magicCeiling = fp::game::character::magicCeiling;
 }
 namespace behaviour {
     inline size_t character = fp::game::behaviour::character;
@@ -609,8 +609,8 @@ inline void resetLiveOffsets() noexcept {
     light::kind = fp::game::light::kind;
     shadowMap::dirty = fp::game::shadowMap::dirty;
     shadowMap::needed = fp::game::shadowMap::needed;
-    character::stamina = fp::game::character::stamina;
-    character::staminaCeiling = fp::game::character::staminaCeiling;
+    character::magic = fp::game::character::magic;
+    character::magicCeiling = fp::game::character::magicCeiling;
     bodyPart::poseForward = fp::game::bodyPart::poseForward;
     bodyPart::poseOrigin = fp::game::bodyPart::poseOrigin;
     bindings::stride = fp::game::bindings::stride;
@@ -1038,7 +1038,7 @@ inline constexpr FieldContract fields[] = {
     {"light::kind", 155, 0xFC, "C0 02 00 00 8B 81 60 02 00 00 48 6B C0 0C 48 8B 54 01 40 48 89 55 E8 8B 44 01 48 89", nullptr},
     {"shadowMap::dirty", 155, 0x14C, "01 0F 1F 00 8B 56 10 8B 46 14 21 D0 76 26 48 8B 05 ?? ?? ?? ?? 48 89 46 70 48 8D 55", nullptr},
     {"shadowMap::needed", 155, 0x14F, "00 8B 56 10 8B 46 14 21 D0 76 26 48 8B 05 ?? ?? ?? ?? 48 89 46 70 48 8D 55 E8 48 89", nullptr},
-    {"character::stamina", 156, 0x2AE, "48 8B 05 ?? ?? ?? ?? 8B 80 78 0D 00 00 89 44 24 20 48 8B 05 ?? ?? ?? ?? F3 0F 10 98 74 0D 00 00", "viewEffects"},
+    {"character::magic", 156, 0x2AE, "48 8B 05 ?? ?? ?? ?? 8B 80 78 0D 00 00 89 44 24 20 48 8B 05 ?? ?? ?? ?? F3 0F 10 98 74 0D 00 00", "viewEffects"},
     {"bindings::slot0", 29, 0x7E, "EB 0A C7 05 ?? ?? ?? ?? 00 00 00 00 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 85 C0", nullptr, sig::movementKeys, 14, 18, 0, 4},
     {"bindings::slot1", 29, 0xC1, "EB 07 83 25 ?? ?? ?? ?? FB 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 85 C0 7D 09", nullptr, sig::movementKeys, 11, 15, 16, 4},
     {"bindings::slot2", 29, 0xA1, "EB 07 83 25 ?? ?? ?? ?? FE 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 66 85 C0 7D 09", nullptr, sig::movementKeys, 11, 15, 32, 4},
@@ -1382,8 +1382,8 @@ inline constexpr std::array<FieldOffsetBinding, 242> fieldBindings = {{
     {255u, 4u, 608, false, game::light::kind, &game::live::light::kind},
     {256u, 4u, 16, false, game::shadowMap::dirty, &game::live::shadowMap::dirty},
     {257u, 4u, 20, false, game::shadowMap::needed, &game::live::shadowMap::needed},
-    {258u, 24u, 3444, false, game::character::stamina, &game::live::character::stamina},
-    {258u, 7u, 3448, false, game::character::staminaCeiling, &game::live::character::staminaCeiling},
+    {258u, 24u, 3444, false, game::character::magic, &game::live::character::magic},
+    {258u, 7u, 3448, false, game::character::magicCeiling, &game::live::character::magicCeiling},
 }};
 inline constexpr std::array<ClosureCallee, 115> closureCallees = {{
     {"callee_1240", "FF 25 ?? ?? ?? ??"},
@@ -2406,8 +2406,8 @@ static_assert(game::light::shadow == 0x2C0, "Review native contract after changi
 static_assert(game::light::kind == 0x260, "Review native contract after changing light::kind");
 static_assert(game::shadowMap::dirty == 0x10, "Review native contract after changing shadowMap::dirty");
 static_assert(game::shadowMap::needed == 0x14, "Review native contract after changing shadowMap::needed");
-static_assert(game::character::stamina == 0xD74, "Review native contract after changing character::stamina");
-static_assert(game::character::staminaCeiling == 0xD78, "Review native contract after changing character::staminaCeiling");
+static_assert(game::character::magic == 0xD74, "Review native contract after changing character::magic");
+static_assert(game::character::magicCeiling == 0xD78, "Review native contract after changing character::magicCeiling");
 static_assert(game::bodyPart::poseForward == 0x2B8, "Review native contract after changing bodyPart::poseForward");
 static_assert(game::bodyPart::poseOrigin == 0x2C4, "Review native contract after changing bodyPart::poseOrigin");
 static_assert(game::bindings::stride == 0x10, "Review native contract after changing bindings::stride");

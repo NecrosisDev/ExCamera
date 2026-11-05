@@ -606,7 +606,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         uintptr_t ownerNode = 0;
         bool alive = true, ownerGone = false;
         __try {
-            alive = (*(const unsigned*)(owner + field::character::lifeFlags) & 0x100) == 0;
+            alive = !fp::deadState(*(const unsigned*)(owner + field::character::stateFlags));
             if (mendCount || brokenCount) ownerNode = *(const uintptr_t*)(owner + field::character::sceneNode);
             (void)*(const volatile float*)(owner + woundCharacterBleed);
         } __except (EXCEPTION_EXECUTE_HANDLER) {

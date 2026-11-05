@@ -1,5 +1,6 @@
-// The kick and the jump, every build. The kick: the game's own motion player started on its unused kick clip
-// (0xD), behind the gates the attack chooser would apply and a few of our own. The jump plays no clip: every part
+// The kick and the jump, every build. The kick: the game's own motion player started on motion 0xD, which the game
+// handles itself (16B06F: state 0x8000; 1612C9: no leg-support check) but no game code is known to start, behind
+// the gates in fp::motionGate (docs/GAME-FIELDS-AUDIT.md). The jump plays no clip: every part
 // of the body gets an upward push through the game's own rigid-body push (89240, a Verlet velocity change per
 // physics step) for several steps (fp::jumpPushStep), so the game's airborne and landing handling takes over.
 // Triggered by a key (unbound until the
@@ -13,16 +14,17 @@ static constexpr int kickMotion = 0xD, kickBlendMs = 200, jumpMotion = 0x12, att
 static constexpr uint64_t kickRepeatMs = 300, jumpRepeatMs = 900;
 static fp::JumpPush jumpPush; // game thread: the push in progress (fp::jumpPushStep)
 static std::atomic<unsigned> jumpPushApplied{0}, jumpPushRiseMm{0}; // status: push steps added, last rise
-// The shared gates (fp::motionGate): the player root, the pointer captured, upright, alive, not already in an attack,
-// a kick or a jump. The refusal, or MotionRefusal::count when the clip may play.
-static fp::MotionRefusal motionPlayable(uintptr_t root, bool planted = false) {
+// The shared gates (fp::motionGate): the player root, the pointer captured, the game's base state, alive, not already
+// in an attack, a kick or a jump. The refusal, or MotionRefusal::count when the clip may play.
+static fp::MotionRefusal motionPlayable(uintptr_t root) {
     if (!root || !readable(root, 0x1300) || root != *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)))
         return fp::MotionRefusal::notPlayer;
     const int motion = *reinterpret_cast<int*>(root + field::character::motion);
     return fp::motionGate(uiOpen() || cursorFreeNow(),
                           motion == kickMotion || motion == jumpMotion || (motion >= attackFamilyFirst && motion <= attackFamilyLast),
                           *reinterpret_cast<unsigned*>(root + field::character::stateFlags),
-                          (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100) != 0, planted);
+                          *reinterpret_cast<float*>(root + field::character::balance),
+                          *reinterpret_cast<float*>(root + field::character::balanceMax));
 }
 static bool motionKickCall(uintptr_t root) { // SEH-only frame
     __try {
@@ -47,14 +49,14 @@ static bool motionJumpPush(uintptr_t root, float stepHz, int steps) {
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { motionJumpFault = true; return false; }
 }
-// A kick: on both feet. why: the refusal when it returns false.
+// A kick. why: the refusal when it returns false.
 static bool motionKick(uintptr_t root, fp::MotionRefusal* why = nullptr) {
     auto refuse = [&](fp::MotionRefusal r) { if (why) *why = r; return false; };
     if (motionKickFault.load()) return refuse(fp::MotionRefusal::fault);
     if (!layout.optionalGroupAvailable("kick")) return refuse(fp::MotionRefusal::unavailable);
     const uint64_t now = GetTickCount64();
     if (now - motionKickLast < kickRepeatMs) return refuse(fp::MotionRefusal::tooSoon);
-    if (const auto r = motionPlayable(root, true); r != fp::MotionRefusal::count) return refuse(r);
+    if (const auto r = motionPlayable(root); r != fp::MotionRefusal::count) return refuse(r);
     motionKickLast = now;
     if (!motionKickCall(root)) return refuse(fp::MotionRefusal::fault);
     motionKicks.fetch_add(1, std::memory_order_relaxed);
@@ -85,7 +87,7 @@ static void motionJumpTick(uintptr_t root, bool owned) {
         jumpPush, owned && readableRoot, root, *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene)), playerSteps.load(),
         readableRoot ? reinterpret_cast<const float*>(root + field::character::position)[1] : NAN,
         readableRoot ? *reinterpret_cast<unsigned*>(root + field::character::stateFlags) : 0,
-        readableRoot && (*reinterpret_cast<unsigned*>(root + field::character::lifeFlags) & 0x100) != 0);
+        readableRoot && fp::deadState(*reinterpret_cast<unsigned*>(root + field::character::stateFlags)));
     jumpPushRiseMm.store(unsigned(std::fmax(0.f, jumpPush.risen) * 10.f), std::memory_order_relaxed);
     if (steps > 0 && motionJumpPush(root, bladeStepHz(), steps)) jumpPushApplied.fetch_add(unsigned(steps), std::memory_order_relaxed);
     else if (steps > 0) jumpPush.active = false;

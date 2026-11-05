@@ -4658,7 +4658,7 @@
       "displacement_bytes": 1
     },
     {
-      "name": "character::stamina",
+      "name": "character::magic",
       "value": "0xd74",
       "owner": "hudBars",
       "instruction": "0x13e3b6",
@@ -4669,17 +4669,17 @@
       "displacement_offset": 28,
       "displacement_bytes": 4,
       "optional_group": "viewEffects",
-      "provenance": "The HUD (13E0F0) reads the player (global) and passes float +D74 as the fill of the blue bar to 13C470, which draws it as a 0..1 fraction of the bar width. 17A640 spends stamina against it."
+      "provenance": "The HUD (13E0F0) passes float +D74 as the fill of the blue bar to 13C470 (a 0..1 fraction of the bar). Magic: 17A640 spends it (callers 232060 \"Error charging blast effect.\", 236620 and 23CC30 \"PowerUsed\"), 17A6B0 refills it toward +D78."
     },
     {
-      "name": "character::staminaCeiling",
+      "name": "character::magicCeiling",
       "value": "0xd78",
       "owner": "hudBars",
       "instruction": "0x13e3a5",
       "width": 4,
-      "witness": "character::stamina",
+      "witness": "character::magic",
       "native_instruction": "mov eax, dword ptr [rax + 0xd78]",
-      "provenance": "In the same reviewed window: the blue bar's second mark, how far stamina can refill (0..1)."
+      "provenance": "In the same reviewed window: the blue bar's second mark, how far magic refills (0..1); 17A6B0 lowers it."
     }
   ],
   "references": [

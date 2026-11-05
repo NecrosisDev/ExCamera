@@ -276,7 +276,7 @@ struct ModSettings {
     bool holdHeading = true, autoRecenter = true;
     int edgeSoftness = fp::defaultAimEdgeSoftness; // percent of oval radius used to feather camera turning
     int leanKey = 0x12; // held, the mouse leans the upper body (virtual-key code; 0 unbound)
-    int kickKey = 0, jumpKey = 0; // the game's unused kick and jump clips (virtual-key codes; 0 unbound, the default)
+    int kickKey = 0, jumpKey = 0; // the kick (motion 0xD) and the jump push (virtual-key codes; 0 unbound, the default)
     int swapShoulderKey = 0; // third person: puts the camera over the other shoulder (virtual-key code; 0 unbound)
     int rotateHeldKey =
         0x02; // the key that turns a held object (virtual-key code; 0 unbound) // in combat the crosshair moves inside a box; the view turns at its edge // camera lag, hide what is in the way, knockdown follow // closer and centred in combat; third person's own field of view (0 = as first person)
@@ -965,7 +965,7 @@ inline const RowInfo& rowInfo(int row) {
          L"distance use the same shifted eye position. Headwear that blocks the first-person view is hidden; "
          L"its shadow remains."},
         {setting::kickKey, L"Kick", RowInfo::keyList, &ModSettings::kickKey, nullptr, L"Input", L"KickKey", fp::heldKeyFromText, nullptr,
-         L"Plays the game's own kick, which it never uses itself: standing on both feet, not mid-swing, in or out of the "
+         L"Plays the kick motion through the game's own motion player: not mid-swing or reacting to a hit, in or out of the "
          L"fighting stance. Unbound until you pick a key; the game does not see that key while it is bound here, "
          L"so a key the game's Controls use (Alt makes a thrust) is refused and does not kick."},
         {setting::jumpKey, L"Jump", RowInfo::keyList, &ModSettings::jumpKey, nullptr, L"Input", L"JumpKey", fp::heldKeyFromText, nullptr,
@@ -1143,12 +1143,12 @@ inline const RowInfo& rowInfo(int row) {
          L"Slides the hand along a held weapon's hilt: positive towards the blade, negative towards the pommel.", {-10,10,1,20}},
         {setting::vrKick, L"VR: kick", RowInfo::choice, &ModSettings::vrKick, nullptr, L"VR",
          L"Kick", fp::vrKickFromText, fp::vrKickText,
-         L"Experimental. On: pressing a stick in plays the game's own kick, standing on both feet and not mid-swing. "
-         L"The game never plays this clip itself, so a hit lands by foot contact only."},
+         L"Experimental. On: pressing a stick in plays the game's own kick, when not mid-swing or reacting to a hit. "
+         L"A hit lands by foot contact only."},
         {setting::vrJump, L"VR: jump", RowInfo::choice, &ModSettings::vrJump, nullptr, L"VR",
          L"Jump", fp::vrKickFromText, fp::vrKickText,
          L"On, standing: hopping in real life plays the game's own jump and pushes your body up, when upright and "
-         L"not mid-swing. The game never jumps by itself, so landing is its ordinary physics."},
+         L"not mid-swing. Landing is the game's ordinary physics."},
         {setting::vrWeaponWeight, L"VR: weapon weight", RowInfo::choice, &ModSettings::vrWeaponWeight, nullptr, L"VR",
          L"WeaponWeight", fp::vrKickFromText, fp::vrKickText,
          L"On: a held weapon follows your hands with a lag set by its own heft, so a heavy axe trails a fast swing and a "
@@ -1236,9 +1236,8 @@ inline const RowInfo& rowInfo(int row) {
          L"The same finger poses for every other character in the level, in play."},
         {setting::conditionEffects, L"Hurt and winded", RowInfo::toggle, nullptr, &ModSettings::conditionEffects,
          L"View", L"ConditionEffects", nullptr, nullptr,
-         L"Below half health the view loses colour and darkens at the edges; when out of breath the edges darken "
-         L"with each breath, and the eyes take a moment to adjust between light and darkness. Uses the game's own "
-         L"health (the yellow bar) and stamina (the blue bar)."},
+         L"Below half health the view loses colour and darkens at the edges, and the eyes take a moment to adjust "
+         L"between light and darkness. Uses the game's own health (the yellow part of the left bar)."},
         {setting::lightSmoothing, L"Smooth lighting", RowInfo::toggle, nullptr, &ModSettings::lightSmoothing,
          L"View", L"SmoothLighting", nullptr, nullptr,
          L"Reads the game's bounce-light grid smoothly, so strong lights such as the arena's red torches fall off in "

@@ -5709,32 +5709,28 @@ static bool playerCapsule(ViewRequest& request) {
     return true;
 }
 
-// Hurt ramps from half health to a tenth. Winded starts 0.05 below the stamina
-// ceiling (where the game switches to its low-stamina idle), is full 0.5 below
-// it, and pulses with a breath every two seconds.
-constexpr float hurtStart = 0.5f, hurtSpan = 0.4f, windedGap = 0.05f, windedSpan = 0.45f, breathPeriodMs = 2000.f;
+// Hurt ramps from half health to a tenth (current health +D58 over its maximum). The winded look is off: the game
+// keeps no stamina or exertion value (the blue bar is magic), so nothing proven drives it.
+constexpr float hurtStart = 0.5f, hurtSpan = 0.4f;
+constexpr bool conditionHealthProven = false;
 static void readCondition(ViewRequest& request) {
-    float health = 0.f, healthMax = 0.f, stamina = 0.f, ceiling = 0.f;
+    float health = 0.f, healthMax = 0.f;
     __try {
         const uintptr_t root = *(const uintptr_t*)gameAt(fp::sig::playerRoot);
         if (!root) return;
         health = *(const float*)(root + field::character::health);
         healthMax = *(const float*)(root + field::character::healthMax);
-        stamina = *(const float*)(root + field::character::stamina);
-        ceiling = *(const float*)(root + field::character::staminaCeiling);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return;
     }
-    if (std::isfinite(health) && std::isfinite(healthMax) && healthMax > 0.f) {
-        const float t = std::clamp((hurtStart - health / healthMax) / hurtSpan, 0.f, 1.f);
-        request.hurt = t * t * (3.f - 2.f * t);
+    // Off until +D58 and +103C are proven (docs/GAME-FIELDS-AUDIT.md section 4): nothing unproven drives the view.
+    if constexpr (conditionHealthProven) {
+        if (std::isfinite(health) && std::isfinite(healthMax) && healthMax > 0.f) {
+            const float t = std::clamp((hurtStart - health / healthMax) / hurtSpan, 0.f, 1.f);
+            request.hurt = t * t * (3.f - 2.f * t);
+        }
     }
-    if (std::isfinite(stamina) && std::isfinite(ceiling)) {
-        const float shortfall = std::clamp((ceiling - windedGap - stamina) / windedSpan, 0.f, 1.f);
-        const float phase = float(GetTickCount64() % ULONGLONG(breathPeriodMs)) / breathPeriodMs;
-        const float breath = 0.5f + 0.5f * std::sin(6.2831853f * phase);
-        request.winded = shortfall * (0.6f + 0.4f * breath);
-    }
+    request.winded = 0.f; // off: no decoded exertion value (docs/GAME-FIELDS-AUDIT.md)
     const float flash = playerDamageFlash.load(std::memory_order_relaxed);
     request.damageFlash = flash;
     if (flash > 0.f) {

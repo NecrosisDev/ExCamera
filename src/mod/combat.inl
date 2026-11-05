@@ -9,7 +9,7 @@ static bool ordinaryCombat(uintptr_t root, uintptr_t bh) {
     if (root != *(uintptr_t*)gameAt(fp::sig::playerRoot) ||
         *(uintptr_t*)(bh + field::behaviour::character) != root ||
         *(unsigned char*)(bh + field::behaviour::inactive) ||
-        (*(unsigned*)(root + field::character::lifeFlags) & 0x100u) ||
+        fp::deadState(*(unsigned*)(root + field::character::stateFlags)) ||
         !*(unsigned char*)(root + field::character::combatStance) ||
         *(unsigned*)(root + field::character::stateFlags) == 0x20 ||
         *(uintptr_t*)(root + field::character::actionCallback) ||
