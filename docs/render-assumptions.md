@@ -49,7 +49,7 @@ mismatches, 0 cache desyncs caused by mod passes, one state leak (replay blend, 
 | Held item detail (`View/HeldItemDetail`) — **material from game data (2026-11-05), not yet seen in game** | Same replay mask; held node `renderTransform`, `sector+0x64` origin; per-texel material id from the game's item composer (`materialIds` group, mod/material_ids.inl), drawn into the mask's A with the game's own vertex shader | Replay PROVEN; `sceneNode::renderTransform`, `sector::origin` WITNESSED; material ids PROVEN (composer decode below, whole-body contracts); the look per material is OURS | as above | Core PROVEN. **Light** (light-node `+0x210/+0x21C/+0x224`, sector list `+0x130`, origin `+0x64`): UNPROVEN, **gated off**. **Wear and dirt** (item record: `node+0x180` id, database rows `+0x10/+0x18`, row `+0x8/+0xC`): UNPROVEN, **gated off**. Weapon blood spot source: see Wounds |
 | Armour and clothing detail (`View/ArmourDetail`) — **off: colour material guess** | Same as held items, for worn pieces | as above | as above | as above (same gates) |
 | World object detail (`View/ObjectDetail`) — **off: colour material guess** | Same, for nearby placed objects | as above | as above | as above (same gates) |
-| Level detail (`View/LevelDetail`) — **off: colour material guess** | People within 4 m (`worldObject::characters`); the two nearest lamps (light-node fields) | Roster WITNESSED; lamps UNPROVEN | audit clean | Surface detail PROVEN (image only, OURS). **Lamps gated off** |
+| Level detail (was `View/LevelDetail`) | — | — | — | **Removed** (Hunter, 2026-11-05): the game keeps no per-surface material for level geometry (see "Level detail" under Steps 2-4); the row, ini key, shader path and its people/lamp reads are gone. An old `LevelDetail` value is never read. Level surfaces will be handled by replacing the textures the game draws, not by a screen-space pass |
 | Draw distance (`View/DrawDistance`) | Clears the frustum bits on sector meshes | PROVEN (0x58EFB; see "Witnessed fields re-checked") | no GL | PROVEN |
 | Lights per object (`View/LightsPerObject`) | Writes `lightEntry::active` on per-node light lists and restores at the swap | PROVEN (0x26F420; see "Witnessed fields re-checked") | no GL | PROVEN |
 | Finger poses (`View/FingerPoses`, `FingerPosesOthers`) | Bone register 0xD39B0 and skin arrays | `skin+0x10/+0x18/+0x20`, `node+0x17C` PROVEN in 0xD39B0 | no GL | Data PROVEN; pose choice OURS; animation side for the audit thread |
@@ -227,7 +227,7 @@ under the release rule they are off unless proven (`colourMaterialGuesses = fals
 | Where | Guess | State |
 |---|---|---|
 | Held, armour and object detail (`heldSurface`, view_effects.inl) | Material kind (steel, wood, leather, mail, paint, cloth) from the item texture's average colour (CPU readback of the game's unit-0 texture, `heldMaterialCode`), the pixel's saturation and warmth, and the blade-vs-haft split from a spot being warmer or greyer than the item average | **Removed** (2026-11-05): held items take each texel's material from the game (step 2-4 below); the readback and every colour rule are deleted. Armour and object detail stay off until their step |
-| Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Off**: level detail draws nothing |
+| Level detail (`levelSurface`) | Wood, earth, metal, plaster or stone from the pixel's colour, brightness and facing | **Removed** with the whole effect (2026-11-05) |
 | Reflections (`ssrShader`) | Floor reflectivity by colour class (478b214) | **Removed**, with the whole Reflections effect (Hunter, 2026-11-05): the game's own reflections stay |
 | Helmet view (`finishShader` visor) | "Anything within 18 cm of the eye is helmet" (a depth guess) | **Off**, greyed out, until the helmet's own geometry shapes it |
 | See yourself through walls | A capsule of 25 cm radius standing in for the body, both as the fallback ghost and to ignore the body's own limbs | **Replaced**: the ghost is drawn only from the game's body draw (mask R), and a second channel (B) marks where the body itself is the nearest surface, from the same draw. No capsule. Needs an in-game check |
@@ -458,7 +458,7 @@ Each ships on its own once proven; the rest stay off.
     set at 0x14A789), not by the surface hit.
   - Level geometry draws with plain `TMaterial` (VMT 0x2FFE10): its textures (+0x48..+0x68) and shader feature
     flags; the procedural ids above belong to the item composer only (`TProcMaterial`, VMT 0x32FE78).
-  - So Level detail cannot pick wood, stone or plaster from game data. It stays off. What the game does have
+  - So Level detail could not pick wood, stone or plaster from game data. It is removed (Hunter, 2026-11-05). What the game does have
     per pixel for level surfaces is its specular and gloss data (`MatSpc` x `SpcTex`, `GlsTex`), which says how
     shiny a surface is, not what it is made of.
 - **Not verified in game.** Status fields `material_id_*` report builds, layers, skips (with the last reason),

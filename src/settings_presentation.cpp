@@ -219,8 +219,6 @@ std::wstring settingValue(const ModSettings& settings, int id) {
         return settings.armourDetail ? std::to_wstring(settings.armourDetail) + L"%" : L"Off";
     case setting::objectDetail:
         return settings.objectDetail ? std::to_wstring(settings.objectDetail) + L"%" : L"Off";
-    case setting::levelDetail:
-        return settings.levelDetail ? std::to_wstring(settings.levelDetail) + L"%" : L"Off";
     case setting::woundMarks:
     case setting::woundDebug:
         return L"";
@@ -350,7 +348,6 @@ const wchar_t* settingLabel(int id) {
     case setting::heldDetail: return L"Held items";
     case setting::armourDetail: return L"Armour";
     case setting::objectDetail: return L"Objects";
-    case setting::levelDetail: return L"Level";
     case setting::woundMarks: return L"Wounds";
     case setting::woundDebug: return L"Wound debug";
     case setting::drawDistance: return L"Draw distance";
@@ -463,7 +460,6 @@ const wchar_t* settingTip(int id) {
     case setting::heldDetail: return L"Scratches, metal grain, pits and worn edges on what you hold. It reshapes existing light only, so an unlit blade stays dark.";
     case setting::armourDetail: return L"Plate, mail rings, leather grain and padding detail on worn gear within 6 m. Costs more than held items.";
     case setting::objectDetail: return L"The same detail on loose items, racks, chests, doors and furniture within 6 m. Off by default: it can draw thin dark lines across furniture.";
-    case setting::levelDetail: return L"Fine surface detail on nearby walls, floors and ceilings. Turns itself down when the frame rate drops.";
     case setting::woundMarks: return L"Cuts, stab holes and bruises stay on bodies where weapons got through, with blood running from fresh cuts.";
     case setting::woundDebug: return L"Highlights all procedural wounds, blade blood, and floor spatters in vibrant neon colors (cyan/magenta/green). Toggle with F12.";
     case setting::drawDistance: return L"Small props and far people past this distance aren't drawn; big things stay longer. Off draws everything.";

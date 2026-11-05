@@ -57,7 +57,6 @@ static panel::ModSettings readLiveSettings() { // caller holds settingsLock
     s.heldDetail = int(std::lround(heldDetail.load() * 100.f));
     s.armourDetail = int(std::lround(armourDetail.load() * 100.f));
     s.objectDetail = int(std::lround(objectDetail.load() * 100.f));
-    s.levelDetail = int(std::lround(levelDetail.load() * 100.f));
     s.drawDistance = drawDistanceM.load();
     s.objectLights = objectLightCap.load();
     s.woundMarks = woundMarks.load() > 0.f;
@@ -196,7 +195,6 @@ static void writeLiveSettings(const panel::ModSettings& requested) {
     heldDetail = effectStrength(s.heldDetail);
     armourDetail = effectStrength(s.armourDetail);
     objectDetail = effectStrength(s.objectDetail);
-    levelDetail = effectStrength(s.levelDetail);
     drawDistanceM = s.drawDistance;
     objectLightCap = s.objectLights;
     woundMarks = s.woundMarks ? 1.f : 0.f;
