@@ -771,6 +771,12 @@
       "rva": "0x1007c0",
       "note": "TWeaponBlood.AddBlood(this, index + 1, amount): records at this+0x10, 0x18 apart, amount at +8, clamped 0..1 (layout witness, not hooked)",
       "optionalGroup": "gameWeaponBlood"
+    },
+    "bloodJob": {
+      "rva": "0x158a90",
+      "note": "the deferred job that applies a hit's blood to a mesh node's vertex alpha (record {node, point, direction, amount}; calls 0x62DA0), queued by 0x158D70 on 0x499990; hooked in dev builds only to record its thread",
+      "optionalGroup": "gameBloodJob",
+      "hook": true
     }
   },
   "returns": {
@@ -1609,7 +1615,8 @@
     "gameBloodStainOtherReturn",
     "gameBloodStainText",
     "weaponBloodList",
-    "weaponBloodAdd"
+    "weaponBloodAdd",
+    "bloodJob"
   ],
   "reviewed_signatures": [
     {
@@ -11368,6 +11375,17 @@
       "addend": 0,
       "known_rva": "0x1007c0",
       "pattern": "48 89 C8 0F 28 C2 48 8B 48 10 48 63 D2 48 6B C2 18 48 8D 44 01 E8 F3 0F 10 48 08 F3 0F 58 C8 F3 0F 11 48 08"
+    },
+    {
+      "target": "bloodJob",
+      "kind": "Code",
+      "hook": true,
+      "entry": true,
+      "offset": 0,
+      "insn_end": 0,
+      "addend": 0,
+      "known_rva": "0x158a90",
+      "pattern": "53 56 48 8D 64 24 D8 48 89 CB 40 30 F6 48 89 D8 F3 0F 10 40 20 4C 8D 40 14 48 8D 50 08"
     }
   ]
 }
