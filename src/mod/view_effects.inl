@@ -354,9 +354,16 @@ void main() {
     }
     now = clamp(now, low, high);
     gl_FragColor = now;
+    // Held items, worn gear and objects in the mask take no occlusion or reflection from these passes. They
+    // were kept out of the blend over frames (they move with the camera, so their history trails), which left
+    // them this frame's raw result: a few taps whose noise turns every frame (frameOffset), so the item's
+    // surface and the blood on it flickered. The held-item detail shades them itself.
     if (silhouetteOn > 0.5) {
         float maskCode = floor(texture2D(silhouette, uv).g * 255.0 + 0.5) - 1.0;
-        if (maskCode >= 0.0 && maskCode < 240.0) return;
+        if (maskCode >= 0.0 && maskCode < 240.0) {
+            gl_FragColor = vec4(0.0);
+            return;
+        }
     }
     float raw = texture2D(depthTex, uv).r;
     if (raw >= skyDepth || historyWeight <= 0.0) return;
@@ -3391,6 +3398,9 @@ static bool bloodLayerUpdate(gl::Api& g, fp::CueResources& r, const ViewProgramU
 static std::atomic<unsigned> renderAuditAnomalies{0}, renderAuditCacheDesyncs{0}, renderAuditInputMismatches{0},
     renderAuditStateLeaks{0}, renderAuditPasses{0};
 static std::atomic<bool> renderAuditActive{false};
+// Why this frame's world pass left no held-item mask (render audit only; nullptr once one was drawn).
+static thread_local const char* heldMaskWhy = nullptr;
+static thread_local unsigned heldMaskGlError = 0;
 #if FP_DEV_TOOLS
 #define FP_RENDER_AUDIT 1
 constexpr unsigned renderAuditUnits = 16, renderAuditLineLimit = 4000;
@@ -3560,6 +3570,7 @@ static void auditViewInputs(gl::Api& g, fp::CueResources& r, const char* stage, 
 }
 #else
 #define FP_RENDER_AUDIT 0
+static void renderAuditLog(const char*, ...) {}
 struct RenderAuditState {};
 static bool renderAuditBegin(gl::Api&, RenderAuditState&, const char*) { return false; }
 static void renderAuditEnd(gl::Api&, const RenderAuditState&, const char*) {}
@@ -4469,6 +4480,10 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                     if (!(strength > 0.f)) continue;
                     if (!heldViewFrame(projection.view, h, itemFrame, &itemDepth)) {
                         heldDetailUnanchored.fetch_add(1, std::memory_order_relaxed);
+                        if (renderAuditActive.load(std::memory_order_relaxed))
+                            renderAuditLog("held slot %u unanchored (%s): origin %.0f %.0f %.0f, sector %.0f %.0f %.0f",
+                                           k, h.object ? "object" : h.apparel ? "worn" : "held", h.pose[9], h.pose[10],
+                                           h.pose[11], h.sectorOrigin[0], h.sectorOrigin[1], h.sectorOrigin[2]);
                         continue;
                     }
                     for (int a = 0; a < 3; ++a) {
@@ -5295,11 +5310,15 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
     // (offset by a pixel); the mask takes the target's size and is drawn as sample 0.
     const GLint expected = offscreenPassArmed ? offscreenSceneFramebuffer : 0;
     if (glGetError() != GL_NO_ERROR || framebuffer != expected || readFramebuffer != expected ||
-        (offscreenPassArmed && !expected) || viewport[2] < 32 || viewport[3] < 32)
+        (offscreenPassArmed && !expected) || viewport[2] < 32 || viewport[3] < 32) {
+        heldMaskWhy = "the highlight pass ran with another framebuffer or a tiny viewport";
         return false;
+    }
     if (!offscreenPassArmed && (!hookedWindow || !GetClientRect(hookedWindow, &client) || viewport[0] != 0 ||
-                                viewport[1] != 0 || viewport[2] != client.right || viewport[3] != client.bottom))
+                                viewport[1] != 0 || viewport[2] != client.right || viewport[3] != client.bottom)) {
+        heldMaskWhy = "the highlight pass's viewport is not the window's";
         return false;
+    }
     auto* owner = prepareCue();
     if (!owner) return false;
     auto& g = owner->api;
@@ -5309,7 +5328,10 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
         owner->viewApiFailed = !loadViewEffectsApi(g);
         if (owner->viewApiFailed) noteViewEffectFailure(viewApiMissing, "OpenGL 3.2 entry points missing");
     }
-    if (owner->viewApiFailed || owner->viewTargetsFailed || !cueOutputReady(g)) return false;
+    if (owner->viewApiFailed || owner->viewTargetsFailed || !cueOutputReady(g)) {
+        heldMaskWhy = "the view-effect API or targets failed, or another output is active";
+        return false;
+    }
 
     // Everything changed below without the game's caches, read first.
     const uintptr_t priorMaterial = *(const uintptr_t*)gameAt(fp::sig::currentMaterial);
@@ -5507,7 +5529,11 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                 drawn |= heldMaskSlot << e.slot;
             }
         }
-        if (glGetError() != GL_NO_ERROR) drawn = 0;
+        if (const GLenum error = glGetError(); error != GL_NO_ERROR) {
+            drawn = 0;
+            heldMaskWhy = "a GL error during the replay";
+            heldMaskGlError = error;
+        }
         // The poses the held items and body parts were drawn with, for their detail frames.
         for (unsigned k = 0; k < s.slotCount; ++k) {
             if (!(drawn & (heldMaskSlot << k))) continue;
@@ -5583,12 +5609,20 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
         glClearColor(clear[0], clear[1], clear[2], clear[3]);
         drainGl();
     }
-    if (drawn) silhouetteReplays.fetch_add(1, std::memory_order_relaxed);
+    if (drawn) {
+        silhouetteReplays.fetch_add(1, std::memory_order_relaxed);
+        heldMaskWhy = nullptr;
+    } else if (!heldMaskWhy) {
+        heldMaskWhy = "the replay drew no part (none visible, or every part refused)";
+    }
     return drawn;
 }
 
 static uint64_t drawSilhouetteMask(const SilhouetteScope& s) {
-    if (!supersampleViewMatches() || (*(const int*)gameAt(fp::sig::sampleLast) != 0) != offscreenPassArmed) return 0;
+    if (!supersampleViewMatches() || (*(const int*)gameAt(fp::sig::sampleLast) != 0) != offscreenPassArmed) {
+        heldMaskWhy = "the highlight pass was not the main view's sample";
+        return 0;
+    }
     uint64_t drawn = 0;
     AcquireSRWLockExclusive(&cueLock);
     ++cueGlDepth;
@@ -5629,6 +5663,8 @@ static void silhouettePassBody(uintptr_t camera, uintptr_t caller) {
     // With Supersample the world is drawn once per jittered sample into the default
     // framebuffer and the last sample's depth stays for the finish pass, so only the
     // last sample's camera pass draws the mask (index + 1 == count; 0 and 1 otherwise).
+    if (s && s->armed && !s->count && caller == gameAt(fp::sig::silhouettePassReturn))
+        heldMaskWhy = "no player, held or worn part was submitted in the world pass";
     if (s && s->armed && s->count && caller == gameAt(fp::sig::silhouettePassReturn)) {
         __try {
             // Offscreen sampling draws up to four samples a pass (index = first sample of the pass).
@@ -6007,7 +6043,13 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
             maskEye = lastMaskEye;
             ++missed;
             heldMaskReused.fetch_add(1, std::memory_order_relaxed);
+            if (!eye && renderAuditActive.load(std::memory_order_relaxed))
+                renderAuditLog("held mask: none drawn, reusing the last (%u): %s gl 0x%X", missed,
+                               heldMaskWhy ? heldMaskWhy : "?", heldMaskGlError);
         } else {
+            if (!eye && lastMask && renderAuditActive.load(std::memory_order_relaxed))
+                renderAuditLog("held mask: none drawn and reuse spent, held detail off this frame: %s gl 0x%X",
+                               heldMaskWhy ? heldMaskWhy : "?", heldMaskGlError);
             lastMask = 0;
         }
     }
@@ -6132,6 +6174,8 @@ static void armSilhouette(uintptr_t view, SilhouetteScope& scope) {
     scope.count = scope.heldCount = scope.slotCount = 0;
     scope.root = 0;
     silhouetteMaskReady = 0;
+    heldMaskWhy = "the world pass did not reach the highlight pass";
+    heldMaskGlError = 0;
     __try {
         scope.body = silhouetteWanted(view, true);
         const bool held = silhouetteWanted(view, false);
@@ -6149,6 +6193,8 @@ static void armSilhouette(uintptr_t view, SilhouetteScope& scope) {
         if (scope.body || scope.heldCount || scope.apparel || scope.objects) {
             scope.armed = true;
             silhouetteScope = &scope;
+        } else {
+            heldMaskWhy = "nothing wanted the mask (no held item, and gear and object detail off)";
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         silhouetteFaults.fetch_add(1, std::memory_order_relaxed);
