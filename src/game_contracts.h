@@ -811,6 +811,8 @@ inline constexpr ContractOwner owners[] = {
     {"roomClassify", sig::roomClassify, "53 57 56 41 54 41 55 41 56 41 57 48 8D 64 24 90 48 89 4C 24 20 49 89 D7 C6 44 24 68 01 48 8B 44", 0},
     {"characterBleed", sig::targetCount, "53 48 8D 64 24 B0 66 0F 7F 74 24 30 66 44 0F 7F 44 24 40 48 89 CB 8B 83 F4 0D 00 00 25 00 0A 00", 0},
     {"characterDie", sig::targetCount, "55 48 89 E5 48 8D 64 24 90 66 0F 7F 75 C0 48 89 4D F8 48 C7 45 E0 00 00 00 00 48 C7 45 E8 00 00 00 00 90 48 8B 45 F8 8B 80 F4 0D 00 00 25 00 08 00 00", 0},
+    {"weaponDataBuild", sig::targetCount, "53 57 56 41 54 41 55 48 8D 64 24 D0 66 0F 7F 74 24 20 49 89 CD 49 89 D4 49 83 BD E0 06 00 00 00 75 1E 49 8D 8D E0 06 00 00 BA 70 00 00 00 E8 ?? ?? ?? ??", 0},
+    {"weaponDataOf", sig::targetCount, "48 8B 81 E0 06 00 00 EB 1E 0F 1F 80 00 00 00 00 48 8B 89 28 04 00 00 48 3B 89 28 04 00 00 74 0C 48 8B 81 E0 06 00 00 48 85 C0 74 E4 C3", 0},
 };
 inline constexpr FieldContract fields[] = {
     {"character::sceneNode", 9, 0x3F9, "89 44 24 40 48 8B 73 28 48 8B 46 18 48 8B 80 30 01 00 00 48 8D 50 64 48 8D 4C 24 38", nullptr},
@@ -1179,6 +1181,8 @@ inline constexpr FieldContract fields[] = {
     {"bodyPart::armourRows", 140, 0x149C, "48 8B 53 08 8B 45 D0 48 6B C0 18 48 8D 84 02 90 06 00 00 F3 0F 10 00", "xrPhysicalContacts"},
     {"physicalImpact::thrustMotion", 140, 0xC4, "48 8B 45 F8 83 B8 B8 09 00 00 0B 75 18 48 8B 80 F8 0A 00 00 8B 40 1C 83 E0 08 75 09 C6 85 EC FE FF FF 01 EB 07 C6 85 EC FE FF FF 00 80 BD EC FE FF FF 00 74 48 48 8B 45 F8 48 8B 80 38 0C 00 00 48 05 AC 02 00 00 48 8D 55 DC F3 0F 10 02 F3 0F 59 00 F3 0F 10 4A 04 F3 0F 59 48 04 F3 0F 58 C8 F3 0F 10 42 08 F3 0F 59 40 08 F3 0F 58 C1 F3 0F 59 05 ?? ?? ?? ??", "wounds"},
     {"characterDie::deadState", 158, 0x23, "48 8B 45 F8 8B 80 F4 0D 00 00 25 00 08 00 00 0F 87 10 04 00 00 48 8B 55 F8 83 A2 F8 0D 00 00 DF 90 48 8B 4D F8 BA 02 00 00 00 E8 ?? ?? ?? ?? 48 8B 45 F8 C7 80 F4 0D 00 00 00 08 00 00", "wounds"},
+    {"weaponDataBuild::damageTypes", 159, 0x11A, "41 80 7C 04 37 00 76 3D 89 D8 48 6B C0 06 41 0F B6 44 04 37 F2 0F 2A C0 F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? F2 0F 5A C0 F3 0F 11 46 2C EB 09 8B 05 ?? ?? ?? ?? 89 46 2C 89 D8 48 6B C0 06 41 80 7C 04 38 00 76 3D 89 D8 48 6B C0 06 41 0F B6 44 04 38 F2 0F 2A C0 F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? F2 0F 5A C0 F3 0F 11 46 30 EB 09 8B 05 ?? ?? ?? ?? 89 46 30 89 D8 48 6B C0 06 41 80 7C 04 39 00 76 3D 89 D8 48 6B C0 06 41 0F B6 44 04 39 F2 0F 2A C0 F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? E8 ?? ?? ?? ?? F2 0F 59 05 ?? ?? ?? ?? F2 0F 5A C0 F3 0F 11 46 34 EB 09 8B 05 ?? ?? ?? ?? 89 46 34", "wounds"},
+    {"weaponDataOf::walk", 160, 0x0, "48 8B 81 E0 06 00 00 EB 1E 0F 1F 80 00 00 00 00 48 8B 89 28 04 00 00 48 3B 89 28 04 00 00 74 0C 48 8B 81 E0 06 00 00 48 85 C0 74 E4 C3", "wounds"},
 };
 inline constexpr std::array<FieldOffsetBinding, 252> fieldBindings = {{
     {0u, 8u, 24, false, game::character::sceneNode, &game::live::character::sceneNode},

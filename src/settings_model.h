@@ -1164,10 +1164,10 @@ inline const RowInfo& rowInfo(int row) {
          L"round gradients instead of squares. Takes effect from the next level load."},
         {setting::woundMarks, L"Wounds", RowInfo::toggle, nullptr, &ModSettings::woundMarks,
          L"View", L"Wounds", nullptr, nullptr,
-         L"Where a blow does damage, the character keeps a mark that moves with the limb: a puncture for a "
-         L"thrust, an open wound otherwise, sized by how much the blow took, with blood running from it while "
-         L"it bleeds. A blow that does no damage leaves nothing. Whether a wound shows on cloth or metal is "
-         L"judged from the colour on screen."},
+         L"Where a blow does damage, the character keeps a mark that moves with the limb: a gash, a bruise or "
+         L"a puncture, by the striking weapon's slash, crush and pierce values (its stats sheet; a thrust always "
+         L"punctures), sized by how much the blow took, with blood running from it while it bleeds. A blow that "
+         L"does no damage leaves nothing. Whether a wound shows on cloth or metal is judged from the colour on screen."},
         {setting::woundDebug, L"Wound debug highlight", RowInfo::toggle, nullptr, &ModSettings::woundDebug,
          L"View", L"WoundDebug", nullptr, nullptr,
          L"Highlights all procedural wounds, blade blood, and floor spatters in vibrant neon colors (cyan for cuts and blades, "
