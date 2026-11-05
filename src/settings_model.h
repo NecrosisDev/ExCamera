@@ -127,6 +127,15 @@ enum : int {
     count
 };
 }
+// Whether the game's own material data (steel, wood, leather...) is decoded; until it is, the held, armour,
+// object and level detail rows are inactive and their effects draw nothing (colourMaterialGuesses, wounds.inl).
+inline constexpr bool materialDataDecoded = false;
+// Whether the game's per-surface shininess (its specular data) is read; until it is, Screen-space reflections are
+// inactive and do not run (they had weighted floors by colour, a guess).
+inline constexpr bool surfaceShininessDecoded = false;
+// Whether the helmet view is shaped by the helmet's own geometry; until it is, Helmet view is inactive (it had
+// treated anything within 18 cm of the eye as helmet).
+inline constexpr bool helmetShapeDecoded = false;
 inline bool fixedSetting(int row) {
     switch (row) {
     case setting::headSteady: case setting::headRoll: case setting::headPitch:
@@ -652,6 +661,15 @@ struct ModSettings {
         if ((row == setting::cueSize || row == setting::cueOpacity || row == setting::cueThrust) &&
             !attackCue)
             return L"Enable Attack wind-up arc to use this setting.";
+        // These four choose each surface's material from its colour, a guess, not game data; they stay off
+        // until the game's own material data is decoded (docs/render-assumptions.md, mod/wounds.inl).
+        if (!materialDataDecoded && (row == setting::heldDetail || row == setting::armourDetail ||
+                                     row == setting::objectDetail || row == setting::levelDetail))
+            return L"Off until the game's own material data is decoded.";
+        if (!surfaceShininessDecoded && row == setting::screenSpaceReflections)
+            return L"Off until the game's own surface shininess is read.";
+        if (!helmetShapeDecoded && row == setting::helmetVisor)
+            return L"Off until the helmet's own shape is used.";
         return nullptr;
     }
     // Every value in its range (an ini can hold anything): numbers clamped as their - and + do, unknown choices

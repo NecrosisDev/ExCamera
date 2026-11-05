@@ -158,8 +158,16 @@ static bool stoneSkinTextures(fp::CueResources& r, const StoneGl& s) {
     return ok;
 }
 
-// The material's own diffuse/specular/normal, as the submit bound them on units 0..2.
+// The material's own diffuse/specular/normal, as the submit bound them on units 0..2. The game's shaders take
+// their samplers on consecutive units in the order DifTex, OpcTex, EmiTex, SpcTex, NrmTex, GlsTex... for the
+// textures the current permutation has (0x2010C0; flags at renderer +8: DifTex 0x20000, OpcTex 0x480000,
+// EmiTex 0x80000, SpcTex 0x40000, NrmTex 0x200000). Units 0/1/2 are diffuse/specular/normal only when the
+// permutation has those three and no opacity or emissive map: anything else keeps the game's own draw.
 static bool stoneSkinOriginals(uintptr_t material, GLuint* names) {
+    const uintptr_t renderer = *(const uintptr_t*)gameAt(fp::sig::headwearWorldRenderer);
+    if (!readable(renderer, 0x10)) return false;
+    const unsigned flags = *(const unsigned*)(renderer + 8);
+    if ((flags & 0x260000u) != 0x260000u || (flags & (0x480000u | 0x80000u))) return false;
     if (!readable(material, 0x108)) return false;
     const uintptr_t set = *(uintptr_t*)(material + 0x100);
     if (!readable(set, 0x28)) return false;

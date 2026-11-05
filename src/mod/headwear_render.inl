@@ -576,6 +576,9 @@ inline bool captureWearGl(const WearPlan& plan, const WearGl& api, WearGlState& 
     if (mount) {
         GLint sample = 0;
         if (*(int*)gameAt(fp::sig::sampleLast) > 0) {
+            // The sample-index uniform at +0x14 is unproven (render-assumptions.md): with several samples the
+            // mount is not attempted and the native draw stays (the location at +0 is proven, 0x200B73).
+            if constexpr (!unprovenRenderReads) return false;
             const GLint sampleLocation = *(GLint*)(uniforms + 0x14);
             if (sampleLocation < 0) return false;
             api.uniformInt(GLuint(state.program), sampleLocation, &sample);

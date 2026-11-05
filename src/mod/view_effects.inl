@@ -256,23 +256,11 @@ void main() {
     if (raw >= skyDepth) return;
     vec3 p = viewPosition(uv, raw);
     vec3 n = viewNormal(uv, p);
-    // Floors, steps and tabletops only: the slope test.
+    // Floors, steps and tabletops only: the slope test. How reflective a surface is must come from the
+    // game's own specular data (render-assumptions.md); until that path exists the pass is off
+    // (panel::surfaceShininessDecoded).
     float surface = smoothstep(0.7, 0.92, dot(n, worldUp.xyz));
     if (surface <= 0.0) return;
-    // And by what the floor is, told from its colour as the level detail tells it (finishShader
-    // levelSurface): no buffer of the game's specular maps exists at this point, and a slope alone made
-    // every floor a mirror (bare wood and packed earth reflect almost nothing; dressed stone a little;
-    // metal plates most).
-    vec3 own = toLight(texture2D(sceneTex, uv).rgb);
-    float ownHi = max(own.r, max(own.g, own.b));
-    float ownSaturation = ownHi > 1e-4 ? (ownHi - min(own.r, min(own.g, own.b))) / ownHi : 0.0;
-    float ownStored = dot(toStored(own), vec3(0.2126, 0.7152, 0.0722));
-    bool warm = own.r > own.b * 1.2 && own.g > own.r * 0.45;
-    float reflectivity = warm && ownSaturation > 0.15 ? 0.12                                   // wood, earth
-                       : ownSaturation < 0.12 && own.b >= own.r * 0.95 && ownStored < 0.3 ? 1.0 // metal
-                       : ownSaturation < 0.12 && ownStored > 0.45 ? 0.2                         // plaster
-                       : 0.4;                                                                    // stone
-    surface *= reflectivity;
     vec3 toEye = normalize(-p);
     vec3 ray = reflect(-toEye, n);
     vec3 origin = p + n;
@@ -1279,13 +1267,9 @@ void main() {
     if (exposure != 1.0) color = toStored(min(toLight(color) * exposure, vec3(1.0)));
     vec4 marks = texture2D(silhouette, uv);
     if (silhouetteOn > 0.5 && marks.r < 0.5 && marks.g > 0.995) {
-        // The body's own limbs also hide each other; count only what stands
-        // outside the body's capsule, a wall or a pillar, and not a held item
-        // showing at this pixel (G, B, A: where each held item shows).
-        vec3 scene = viewPosition(uv, min(texture2D(depthTex, uv).r, skyDepth));
-        vec3 axis = ghostB.xyz - ghostA.xyz;
-        vec3 nearest = ghostA.xyz + axis * clamp(dot(scene - ghostA.xyz, axis) / dot(axis, axis), 0.0, 1.0);
-        if (length(scene - nearest) > ghostA.w + 10.0) {
+        // The body's own limbs also hide each other: only where the nearest surface is not the body itself
+        // (B, drawn from the body's own geometry), and not a held item showing here (G).
+        if (marks.b > 0.5) {
             // A faint body, brighter at its outline so the shape reads against any wall.
             vec2 away = 2.0 * texel;
             float edge = max(max(texture2D(silhouette, uv + vec2(away.x, 0.0)).r, texture2D(silhouette, uv - vec2(away.x, 0.0)).r),
@@ -5536,7 +5520,8 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                     slot.valid = true;
                 }
             }
-            const float material = held && heldBlendColor ? heldMaterialCodeFor(g, e.material, e.slot >= int(s.heldCount)) : 0.f;
+            const float material = colourMaterialGuesses && held && heldBlendColor
+                                       ? heldMaterialCodeFor(g, e.material, e.slot >= int(s.heldCount)) : 0.f;
             // The single path submits (uniforms) then draws. A multi-sample entry is replayed as its
             // first sample only, through the single-sample submit (0x200770, which the dispatcher
             // calls when there is one sample) at sample 0's viewport: one draw instead of one per sample.
@@ -5552,6 +5537,12 @@ static uint64_t drawSilhouetteMaskOwned(const SilhouetteScope& s) {
                 glColorMask(1, 0, 0, 0);
                 glDepthFunc(GL_GREATER);
                 glDisable(GL_POLYGON_OFFSET_FILL);
+                draw(drawArgument);
+                // B: where the body itself is the nearest surface, so its own limbs hiding each other are
+                // not shown as through a wall (this replaced a capsule of a guessed radius).
+                glColorMask(0, 0, 1, 0);
+                glDepthFunc(GL_LEQUAL);
+                glEnable(GL_POLYGON_OFFSET_FILL);
                 draw(drawArgument);
                 drawn |= bodyMaskReady;
             }
@@ -5724,7 +5715,7 @@ static bool worldInDefaultFramebuffer(uintptr_t view);
 // in either view with the held-item detail on (body: false).
 static bool silhouetteWanted(uintptr_t view, bool body = true) {
     const bool consumer = body ? viewMode.load() == 1 && playerGhost.load(std::memory_order_relaxed)
-                               : viewMode.load() < 2 && (heldDetail.load(std::memory_order_relaxed) > 0.f ||
+                               : colourMaterialGuesses && viewMode.load() < 2 && (heldDetail.load(std::memory_order_relaxed) > 0.f ||
                                                          armourDetail.load(std::memory_order_relaxed) > 0.f ||
                                                          objectDetail.load(std::memory_order_relaxed) > 0.f);
     return silhouetteHooked && silhouetteSubmitHooked() && consumer && InterlockedCompareExchange(&active, 0, 0) &&
@@ -5836,6 +5827,7 @@ static void levelDetailFor(ViewRequest& request) {
         InterlockedCompareExchange(&stopping, 0, 0)) return;
     const float wanted = levelDetail.load(std::memory_order_relaxed);
     if (!(wanted > 0.f) || request.eye) return; // desktop view only (a headset's two eyes would double it)
+    if constexpr (!colourMaterialGuesses) return; // material from colour: off until proven (wounds.inl)
     const float period = viewCpuFrameMs.load(std::memory_order_relaxed);
     const float target = period > 0.f ? 1.f - std::clamp((period - 18.f) / 7.f, 0.f, 1.f) : 1.f;
     float scale = levelDetailScale.load(std::memory_order_relaxed);
@@ -5955,7 +5947,40 @@ static bool rewriteCompiles(GLuint shader, const char* text) {
     return ok != 0;
 }
 
+#if FP_DEV_TOOLS
+// Dev builds, [Dev] ShaderDump=1: every shader source the game hands the driver from here on, as it is,
+// appended to shader-dump.glsl beside first-person.ini. The game ships them packed in Resource.rpk
+// (shading.flb); this is how the render assumptions read what its shaders do with each texture unit.
+static void dumpGameShader(GLuint shader, GLsizei count, const char* const* strings, const GLint* lengths) {
+    static int enabled = -1;
+    static unsigned dumped = 0;
+    if (enabled < 0) enabled = settingsPath[0] && GetPrivateProfileIntW(L"Dev", L"ShaderDump", 0, settingsPath) ? 1 : 0;
+    if (!enabled || !strings || count <= 0 || count >= 256 || dumped >= 2000) return;
+    static std::wstring path;
+    if (path.empty()) path = settingsFolderFile(L"shader-dump.glsl");
+    const HANDLE file = path.empty() ? INVALID_HANDLE_VALUE
+                                     : CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS,
+                                                   FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    char head[96];
+    const int n = snprintf(head, sizeof head, "\r\n// ==== shader %u (GL name %u, %d parts) ====\r\n", dumped++, shader, count);
+    DWORD written = 0;
+    WriteFile(file, head, DWORD(n), &written, nullptr);
+    for (GLsizei k = 0; k < count; ++k) {
+        if (!strings[k]) continue;
+        const size_t length = lengths && lengths[k] >= 0 ? size_t(lengths[k]) : strlen(strings[k]);
+        WriteFile(file, strings[k], DWORD(length), &written, nullptr);
+    }
+    CloseHandle(file);
+}
+static void dumpGameShaderGuarded(GLuint shader, GLsizei count, const char* const* strings, const GLint* lengths) {
+    __try { dumpGameShader(shader, count, strings, lengths); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+#endif
 static void APIENTRY smoothShaderSource(GLuint shader, GLsizei count, const char* const* strings, const GLint* lengths) {
+#if FP_DEV_TOOLS
+    dumpGameShaderGuarded(shader, count, strings, lengths);
+#endif
     if (lightSmoothing.load(std::memory_order_relaxed) && strings && count > 0 && count < 256) {
         try {
             std::string text;
@@ -6044,7 +6069,8 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
     ViewRequest request = eye ? *eye : ViewRequest{};
     request.ao = ambientOcclusion.load(std::memory_order_relaxed);
     request.dof = mode == 0 && !eye ? depthOfField.load(std::memory_order_relaxed) : 0;
-    request.ssr = !eye ? screenSpaceReflections.load(std::memory_order_relaxed) : 0;
+    // Reflections need the game's per-surface shininess, not yet read: off until then (settings_model.h).
+    request.ssr = !eye && panel::surfaceShininessDecoded ? screenSpaceReflections.load(std::memory_order_relaxed) : 0;
     // Supersample already averages jittered samples across every edge.
     const bool supersampled = viewEffectsSupersampled || presentingOffscreen;
     request.smooth = supersampled ? 0.f : edgeSmoothing.load(std::memory_order_relaxed);
@@ -6053,7 +6079,9 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
     // A worn helmet: a piece hung on the head, or head pieces of the body skin seen in the last half second.
     const bool helmetWorn = headWearNodes.load() > 0 ||
                             GetTickCount64() - headwearSeen.load(std::memory_order_relaxed) < 500;
-    request.visor = mode == 0 && helmetWorn ? helmetVisor.load(std::memory_order_relaxed) : 0.f;
+    // The helmet's shade was shaped by "anything within 18 cm of the eye is helmet", a depth guess, not the
+    // helmet's own geometry: off until it is (settings_model.h panel::helmetShapeDecoded).
+    request.visor = panel::helmetShapeDecoded && mode == 0 && helmetWorn ? helmetVisor.load(std::memory_order_relaxed) : 0.f;
     request.visorHidden = helmetMode.load() == fp::HelmetMode::hide;
     request.ghostStrength = playerGhost.load(std::memory_order_relaxed);
     request.ghost = !eye && mode == 1 && request.ghostStrength > 0.f && playerCapsule(request);
@@ -6087,6 +6115,9 @@ static void presentViewEffects(uintptr_t view, const ViewRequest* eye = nullptr)
         }
     }
     request.silhouette = request.ghost && !maskEye && (mask & bodyMaskReady);
+    // The ghost is drawn only from the game's own body draw (the mask). Without it the old fallback drew a
+    // capsule of a guessed radius, which is not the body.
+    if (!request.silhouette) request.ghost = false;
     // Held-item and armour detail: the slots the replay drew this frame, in this view's own mask (the desktop's,
     // first or third person, or a VR eye's, drawn by that eye's replay).
     request.heldSlots = (eye != nullptr) == maskEye ? (mask >> 1) & ((uint64_t(1) << heldSlotLimit) - 1) : 0;
