@@ -995,7 +995,9 @@ vec3 heldSurface(vec3 color, vec4 rowX, vec4 rowY, vec4 rowZ, float slot, float 
     // function), so it is shaped here and coloured, lit and made glossy there.
     float cover = 0.0, wet = 0.0, thick = 0.0;
     if (condition.z > 0.5) {
-        bool blade = metal > 0.5 && abs(slotKind - 1.0) > 0.5; // held or lying about, not worn plate
+        // Blade or not is not read from the game yet (the item's material id link is the render thread's work);
+        // until it is, every carried item takes the plain soaked blot below, nothing judged from its colours.
+        bool blade = false;
         for (int k = 0; k < 4; ++k) {
             if (float(k) >= condition.z) break; // condition.z: how many spots this item carries
             vec4 spot = heldDatum(slot, 5.0 + float(k));
@@ -1353,6 +1355,7 @@ uniform vec4 worldUp;      // world +Y in view space; w unused
 uniform vec4 woundA[12];   // a wound's view-space centre; w: half length, cm (a bruise's radius)
 uniform vec4 woundB[12];   // the blade's path, view space; w: kind (1 cut, 2 crush, 3 thrust) + 0.98 x a cut's
                            // wetness or a bruise's age, 0..1
+uniform vec4 woundM[12];   // x: the struck surface's material id (the game's factory 0x1EAEE0, 1..25), 0 unknown
 uniform vec4 woundC[12];   // severity 0..1, seed (negative: the skin part is baked into the skin texture), half width (cm),
                            // length of the blood runs (cm)
 uniform float woundCount;
@@ -1643,7 +1646,22 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
     }
 }
 
-)glsl" R"glsl(vec3 woundMarks(vec3 color) {
+)glsl" R"glsl(// The game's material ids (the factory 0x1EAEE0's switch at 0x1EAF13, each case creating one class) into how
+// blood behaves on them: 1 cloth soaks (1 TClothBasic, 2 TClothFine, 3 TClothSilk, 4 TClothVelvet, 5-6
+// TClothPadded1/2), 2 leather (7 TLeatherA02, 8 TLeatherA01, 9-10 TSuedeA01), 3 metal beads (11 TSteelChain,
+// 12 TSteelGen, 13 and 15 TSteelPlate2, 14 TSteelPainted, 16 TSteelBlade, 19 TIronGen, 20 TCopperAlloy,
+// 21 TCopperSatin), 4 wood (17 TWoodFineA, 18 TWoodRoughA, 25 TPlanksPainted); 0 anything else or unknown
+// (22 TWiredGripA01, 23 TGemstone, 24 TResin): a plain stain.
+float woundMaterialFamily(float id) {
+    if (id < 0.5) return 0.0;
+    if (id < 6.5) return 1.0;
+    if (id < 10.5) return 2.0;
+    if (id < 16.5 || (id > 18.5 && id < 21.5)) return 3.0;
+    if (id < 18.5 || (id > 24.5 && id < 25.5)) return 4.0;
+    return 0.0;
+}
+
+vec3 woundMarks(vec3 color) {
     if (uv.x < woundRect.x || uv.y < woundRect.y || uv.x > woundRect.z || uv.y > woundRect.w) return color;
     float raw = texture2D(depthTex, uv).r;
     if (capCount > 0.0) {
@@ -1656,7 +1674,6 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
     bool near = false;
     vec3 tint = vec3(1.0);
     float wet = 0.0;
-    float grey = 0.0;
     vec3 tilt = vec3(0.0); // the liquid's own slope (its meniscus), along the surface, view space
     for (int i = 0; i < 12; ++i) {
         if (float(i) >= woundCount) break;
@@ -1667,26 +1684,17 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
         if (!near) {
             n = viewNormal(uv, p);
             near = true;
-            // A grey, unsaturated surface is taken for metal: it takes blood smears and runs but no tear or soak.
-            // A screen heuristic from the pixel's colour, not a game value: the game's own material is not read.
-            vec3 base = toLight(color);
-            float brightest = max(base.r, max(base.g, base.b)), darkest = min(base.r, min(base.g, base.b));
-            grey = 1.0 - smoothstep(0.08, 0.2, (brightest - darkest) / max(brightest, 1e-4));
         }
         // The hit point lies on the body, so a surface well in front of it along its normal is an outer
         // layer: cloth, padding or armour (inferred from geometry; a loose collision shape can blur it).
         float off = dot(d, n);
         float layer = smoothstep(0.6, 1.6, off);
-        // Metal or cloth was guessed from the pixel's colour (grey: metal), not read from the game; until the game's
-        // own material is shown, gear takes a neutral stain instead (gearFromScreen false, as unprovenRenderReads).
-        // Proof state: the game's material classes exist (TClothBasic 0x32FF90 .. TSteelBlade 0x331228, base VMT
-        // 0x32FF88, 0x230 bytes), made only by the singleton factory 0x1EAEE0 (index 1..25, cache .data 0x56B030),
-        // called from the layer setup 0x207740 (layer +0x50 the class, +0x58 its index) for entries of [X+508]
-        // (callers 0xE9C84/0xEFCE2, X unidentified). Not shown: which entry is which worn piece, or any reader of the
-        // class in the draw or armour code (the armour block 0x15B2BE-0x15B7BD calls only maths helpers).
-        const bool gearFromScreen = false;
-        float metal = gearFromScreen ? layer * grey : 0.0, cloth = gearFromScreen ? layer * (1.0 - grey) : 0.0;
-        float gear = gearFromScreen ? 0.0 : layer;
+        // What the outer layer is made of comes only from the game: woundM[i].x, the material id of the struck
+        // surface (woundMaterialFamily). 0, unknown until that link is proven, gives a plain stain; nothing is
+        // guessed from the picture.
+        float family = woundMaterialFamily(woundM[i].x);
+        float cloth = layer * (family == 1.0 ? 1.0 : 0.0), metal = layer * (family == 3.0 ? 1.0 : 0.0);
+        float gear = layer - cloth - metal;
         // Only the surface at the wound: something a few cm off it (another limb, a wall behind) is left alone.
         float stick = 1.0 - smoothstep(2.0 + 2.5 * layer, 4.5 + 2.5 * layer, abs(off));
         if (stick <= 0.0) continue;
@@ -1799,9 +1807,6 @@ void capSheets(vec3 p, inout vec3 tint, inout float wet, inout bool near, inout 
             if (!near) {
                 n = viewNormal(uv, p);
                 near = true;
-                vec3 base = toLight(color);
-                float brightest = max(base.r, max(base.g, base.b)), darkest = min(base.r, min(base.g, base.b));
-                grey = 1.0 - smoothstep(0.08, 0.2, (brightest - darkest) / max(brightest, 1e-4));
             }
             if (abs(dot(n, uFloor)) < 0.45) {
                 float normDist = abs(dot(d, n));
@@ -2135,7 +2140,7 @@ enum ViewUniform : unsigned {
     uAoHalf, uSsrHalf, uHalfSize, uAoStrength, uSsrOn, uBounceOn, uBounceStrength, uSharpen, uPreviousDepth, uSurfacesOn, uSsrSize, uDofOn, uDistanceHalf, uDistanceHalfOn,
     uFrameOffset, uCurrent, uHistory, uToPrevious, uPreviousProjection, uHistoryWeight, uDofHalf, uCells, uExposure,
     uSilhouette, uSilhouetteOn, uHeldDetail, uHeldNoise, uHeldData, uLevelDetail, uLevelRow0, uLevelRow1, uLevelRow2, uLevelPeople, uLevelLight, uLevelLightColour,
-    uWoundA, uWoundB, uWoundC, uWoundCount, uWoundRect, uDripA, uDripCount,
+    uWoundA, uWoundB, uWoundC, uWoundM, uWoundCount, uWoundRect, uDripA, uDripCount,
     uFireA, uFireB, uFireC, uFireCount, uFireRect, uFireLook, uFireRight, uFireNoise, uCapA, uCapB, uCapCount, uWoundDebug,
     uBloodMap, uBloodMapInfo, uBloodMapTime, uSplatA, uSplatB, uSplatC, uFallA, uFallB, uFallCount, viewUniformCount
 };
@@ -2145,7 +2150,7 @@ static const char* const viewUniformNames[viewUniformCount] = {
     "aoHalf", "ssrHalf", "halfSize", "aoStrength", "ssrOn", "bounceOn", "bounceStrength", "sharpen", "previousDepth", "surfacesOn", "ssrSize", "dofOn", "distanceHalf", "distanceHalfOn",
     "frameOffset", "current", "history", "toPrevious", "previousProjection", "historyWeight", "dofHalf", "cells", "exposure",
     "silhouette", "silhouetteOn", "heldDetail", "heldNoise", "heldData", "levelDetail", "levelRow0", "levelRow1", "levelRow2", "levelPeople", "levelLight", "levelLightColour",
-    "woundA", "woundB", "woundC", "woundCount", "woundRect", "dripA", "dripCount",
+    "woundA", "woundB", "woundC", "woundM", "woundCount", "woundRect", "dripA", "dripCount",
     "fireA", "fireB", "fireC", "fireCount", "fireRect", "fireLook", "fireRight", "fireNoise", "capA", "capB", "capCount", "woundDebug",
     "bloodMap", "bloodMapInfo", "bloodMapTime", "splatA", "splatB", "splatC", "fallA", "fallB", "fallCount"};
 struct ViewProgramUniforms { GLint at[viewUniformCount]; };
@@ -4306,6 +4311,7 @@ static void drawViewEffectsOwned(uintptr_t view, const ViewRequest& request) {
                 g.uniform4fv(u.at[uWoundA], GLsizei(wounds.count), &wounds.a[0][0]);
                 g.uniform4fv(u.at[uWoundB], GLsizei(wounds.count), &wounds.b[0][0]);
                 g.uniform4fv(u.at[uWoundC], GLsizei(wounds.count), &wounds.c[0][0]);
+                g.uniform4fv(u.at[uWoundM], GLsizei(wounds.count), &wounds.m[0][0]);
                 g.uniform4f(u.at[uWoundRect], box[0], box[1], box[2], box[3]);
                 g.uniform1f(u.at[uDripCount], float(wounds.drips));
                 if (wounds.drips) g.uniform4fv(u.at[uDripA], GLsizei(wounds.drips), &wounds.d[0][0]);
