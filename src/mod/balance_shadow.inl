@@ -146,9 +146,12 @@ static bool shadowRead(uintptr_t root, ShadowRead& r) {
                     r.legDown[i] = (flags & 2) && std::isfinite(at[1]) && std::isfinite(ground) && at[1] <= ground + 20;
                     r.legs = unsigned(i) + 1;
                 }
-                // A support contact within 20 units of its ground: the game's own "foot down" test without its
-                // small per-contact offset (supportHeight 0x16F84B-0x16F872).
-                if (!(flags & 2) || !std::isfinite(at[1]) || !std::isfinite(ground) || at[1] > ground + 20) continue;
+                // A contact on the ground: the game's own "foot down" test (supportHeight 0x16F84B-0x16F872):
+                // within 20 units of its ground (30 x scale while walking; 30 here) and bit 0x20 clear, without the
+                // small per-contact offset +94. Not the support bit 2: the walking legs (0x15F950) leave a planted
+                // foot without it, which left walking fighters with no base of support (2026-11-05 logs).
+                const float reach = *reinterpret_cast<const uint8_t*>(root + field::character::walking) ? 30.f : 20.f;
+                if ((flags & 0x20) || !std::isfinite(at[1]) || !std::isfinite(ground) || at[1] > ground + reach) continue;
                 if (r.feet < 64) r.foot[r.feet++] = {at[0], at[2]};
                 loaded[loadedCount++] = shin;
                 groundSum += ground;

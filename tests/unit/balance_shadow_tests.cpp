@@ -130,6 +130,14 @@ bool conditions_report_once_after_their_duration() {
     b::GameState pushed;
     pushed.jumping = true; // and so does the mod's own jump, which plays no clip
     CHECK(!(run(modJump, pushed, m, 200) & b::Tracker::bit(b::Event::floating)));
+    b::Tracker hang; // the push ends at take-off; the flight after it is still the jump
+    run(hang, pushed, m, 3);
+    b::GameState air; // no foot down, no clip
+    CHECK(!(run(hang, air, m, 200) & b::Tracker::bit(b::Event::floating)));
+    b::GameState landed;
+    landed.footDown = true;
+    hang.feed(landed, m); // back on the ground: floating counts again
+    CHECK(run(hang, air, m, b::floatingSteps) & b::Tracker::bit(b::Event::floating));
     return true;
 }
 

@@ -225,6 +225,7 @@ struct Tracker {
     unsigned lastStumbleSteps = 0;
     float lastStumbleDepth = 0;  // of the stumble that just ended in a recovery, for the logs
     unsigned airborne = 0;       // upright steps in a row with no foot down
+    bool jumpAir = false;        // in the air since a jump push started: the whole flight, not just the push
     bool lastFallAirborne = false; // the fall just reported came while airborne
     unsigned lastState = 0;
     bool seen = false, stuckReported = false;
@@ -242,9 +243,11 @@ struct Tracker {
 
         if (standing && !g.footDown) ++airborne;
         else if (g.footDown) airborne = 0;
+        if (g.jumping) jumpAir = true;
+        else if (g.footDown || !standing) jumpAir = false;
 
         // Floating: upright, nothing under the feet, and not falling. A jump is excluded.
-        if (m.valid && standing && !g.footDown && !g.jumping && g.motion != jumpMotion && m.velocity.y > notDropping) {
+        if (m.valid && standing && !g.footDown && !jumpAir && g.motion != jumpMotion && m.velocity.y > notDropping) {
             if (++floating == floatingSteps) events |= bit(Event::floating);
         } else floating = 0;
 

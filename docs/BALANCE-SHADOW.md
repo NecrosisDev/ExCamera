@@ -47,9 +47,7 @@ If a game update moves any of them, the shadow switches itself off; nothing else
 * **Velocity:** from the node history, at 83 steps a second (the game's own constant).
 * **Capture point:** the centre of mass plus velocity ÷ √(g / height), with g = 980.665 cm/s² (the game's own
   gravity; 1 unit = 1 cm).
-* **Base of support:** the outline of the loaded feet. That's every support contact within 20 units of its ground,
-  plus every node of the parts hanging from that shin. **Margin** is how far the capture point is inside that
-  outline (negative = outside).
+* **Base of support:** the outline of the feet on the ground. That's every leg contact within 20 units of its ground (30 while walking) with bit 0x20 clear, which is the game's own foot-down test in `supportHeight`, plus every node of the parts hanging from that shin. **Margin** is how far the capture point is inside that outline (negative = outside). The support bit 2 isn't used: the walking legs leave planted feet without it.
 * **Shake:** how much each node's acceleration **reverses** from one step to the next (√max(0, −a(t)·a(t−1))),
   with the whole body's own acceleration removed. Jitter flips direction every step. A sword swing, a step or a
   hit pushes the same way for several steps and counts for nothing. (The first version counted any acceleration,
@@ -65,7 +63,7 @@ A condition is reported once when it reaches its duration, and again only after 
 |---|---|---|
 | `non_finite` | yes | a node position is NaN or infinite (bad maths) |
 | `flung` | yes | a node moves faster than 30 m/s |
-| `floating` | yes | upright, no foot down, not dropping faster than 0.5 m/s, for 0.5 s; jumps excluded (the game's Jump clip and the mod's own jump push) |
+| `floating` | yes | upright, no foot down, not dropping faster than 0.5 m/s, for 0.5 s; jumps excluded (the game's Jump clip, and the whole flight of the mod's own jump from its push until a foot is down) |
 | `shaking` | yes | upright and nearly still (< 0.3 m/s), shake over 4000 cm/s² for 0.25 s |
 | `stuck_down` | yes | on the ground or getting up for 15 s while alive |
 | `failed_get_up` | yes | getting up (0x300) went back to lying (0x200) |
