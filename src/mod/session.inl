@@ -902,6 +902,10 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
     j.unum("game_blood_stain_draws", gameBloodStainDraws.load());
     j.unum("game_blood_stain_skips", gameBloodStainSkips.load());
     j.unum("game_blood_kept_frames", gameBloodKeptFrames.load());
+    // The game stain program's Fade (weapon node +0x238): draws read, draws above 0.25, and the largest seen.
+    j.unum("game_blood_fade_draws", gameBloodFadeDraws.load());
+    j.unum("game_blood_faded_draws", gameBloodFaded.load());
+    j.real("game_blood_fade_max", double(gameBloodFadeMax.load()), 3);
     j.unum("game_blood_other_samples", gameBloodOtherSamples.load());
     j.unum("game_blood_size_mismatches", gameBloodSizeMismatches.load());
     j.boolean("wound_hits_linked", characterHits.load() != nullptr);

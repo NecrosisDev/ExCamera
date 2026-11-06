@@ -1231,25 +1231,36 @@ vec4 bloodLayerAt(vec3 p, out float why) {
     return vec4(s.a * landed, dry, tx / (2.0 * cm) * landed, tz / (2.0 * cm) * landed);
 }
 )glsl" R"glsl(// Whether the surface at p is a floor the layer may paint: facing up, and flat about a hand's width round it
-// along at least one screen axis (both neighbours at the same world height). A body lying in a pool, a foot
-// or a shield faces up in places but is curved, so it is left alone; floor right beside a body still passes
-// along the axis that runs past it. All of it in world height, so it holds at any viewing angle.
+// along at least one screen axis. A body lying in a pool, a foot or a shield faces up in places but is curved, so
+// it is left alone; floor right beside a body still passes along the axis that runs past it. Everything is
+// measured in world space between points a hand's width apart, so it holds at any viewing angle. A normal rebuilt
+// from adjacent pixels' depths (viewNormal) turns noisy when the floor is seen at a grazing angle, and an absolute
+// height tolerance scaled by the pixel's size across the view ignores how far along the floor a pixel reaches
+// there: with both, floor blood failed by patches as the camera pitched and turned.
 bool layerFloorAt(vec3 p, vec3 n) {
-    if (dot(n, normalize(worldUp.xyz)) < 0.8) return false;
-    float footprint = 2.0 * -p.z * texel.y / projection.y; // cm a pixel spans here
+    float footprint = 2.0 * -p.z * texel.y / projection.y; // cm a pixel spans across the view here
     float reach = clamp(7.0 / max(footprint, 1e-3), 2.0, 40.0);
-    float h = dot(levelRow1, vec4(p, 1.0));
-    float tolerance = 1.2 + 0.5 * footprint;
-    vec2 axis = vec2(texel.x * reach, 0.0);
-    bool level = false;
+    vec3 here = vec3(dot(levelRow0, vec4(p, 1.0)), dot(levelRow1, vec4(p, 1.0)), dot(levelRow2, vec4(p, 1.0)));
+    vec3 across[2];
+    bool level = false, ok[2];
     for (int a = 0; a < 2; ++a) {
-        vec2 o = a == 0 ? axis : vec2(0.0, texel.y * reach);
+        vec2 o = a == 0 ? vec2(texel.x * reach, 0.0) : vec2(0.0, texel.y * reach);
         float ra = texture2D(depthTex, uv + o).r, rb = texture2D(depthTex, uv - o).r;
-        float ha = dot(levelRow1, vec4(viewPosition(uv + o, ra), 1.0));
-        float hb = dot(levelRow1, vec4(viewPosition(uv - o, rb), 1.0));
-        level = level || (ra < skyDepth && rb < skyDepth && abs(ha - h) < tolerance && abs(hb - h) < tolerance);
+        vec4 pa = vec4(viewPosition(uv + o, ra), 1.0), pb = vec4(viewPosition(uv - o, rb), 1.0);
+        vec3 wa = vec3(dot(levelRow0, pa), dot(levelRow1, pa), dot(levelRow2, pa));
+        vec3 wb = vec3(dot(levelRow0, pb), dot(levelRow1, pb), dot(levelRow2, pb));
+        // Level: each neighbour within 1.2 cm, plus a gentle 8% slope over the ground it lies away.
+        float da = length((wa - here).xz), db = length((wb - here).xz);
+        ok[a] = ra < skyDepth && rb < skyDepth && abs(wa.y - here.y) < 1.2 + 0.08 * da && abs(wb.y - here.y) < 1.2 + 0.08 * db;
+        level = level || ok[a];
+        across[a] = wa - wb;
     }
-    return level;
+    if (!level) return false;
+    // Facing up, from the world points a hand's width apart along the two axes (not adjacent pixels).
+    vec3 up = cross(across[0], across[1]);
+    float size = length(up);
+    if (size < 1e-4) return dot(n, normalize(worldUp.xyz)) >= 0.8;
+    return abs(up.y) / size >= 0.8;
 }
 // A drop in the air where the view ray passes within its radius, in front of the scene: a dark, glossy bead
 // drawn out along its motion. Returns its colour with coverage in w (0 none).
