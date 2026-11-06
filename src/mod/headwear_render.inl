@@ -885,6 +885,27 @@ static void markGameBloodStain(gl::Api& g, fp::CueResources& r, void (*native)(u
 // Toward the eye: slope factor and units (units x the depth buffer's resolution, so -256 is about 1.5e-5 of a
 // 24-bit buffer's range, a little more than the error it covers at first-person range).
 constexpr GLfloat gameBloodStainOffsetFactor = -1.f, gameBloodStainOffsetUnits = -256.f;
+static std::atomic<unsigned> gameBloodFadeDraws{0}, gameBloodFaded{0};
+static std::atomic<float> gameBloodFadeLast{0.f}, gameBloodFadeMax{0.f};
+using GetUniformLocationFn = GLint(APIENTRY*)(GLuint, const char*);
+static void noteGameBloodFade() {
+    static GetUniformLocationFn location = nullptr;
+    static bool tried = false;
+    if (!tried) { tried = true; loadGl(location, "glGetUniformLocation"); }
+    if (!location || !matid::loadExtra()) return;
+    GLint program = 0;
+    glGetIntegerv(0x8B8D /*CURRENT_PROGRAM*/, &program);
+    if (program <= 0) return;
+    const GLint at = location(GLuint(program), "Fade");
+    if (at < 0) return;
+    float fade = 0.f;
+    matid::extra.getUniformfv(GLuint(program), at, &fade);
+    if (!std::isfinite(fade)) return;
+    gameBloodFadeDraws.fetch_add(1, std::memory_order_relaxed);
+    if (fade > 0.25f) gameBloodFaded.fetch_add(1, std::memory_order_relaxed);
+    gameBloodFadeLast.store(fade, std::memory_order_relaxed);
+    if (fade > gameBloodFadeMax.load(std::memory_order_relaxed)) gameBloodFadeMax.store(fade, std::memory_order_relaxed);
+}
 static bool gameBloodStainDraw(uintptr_t material, bool bind, uintptr_t caller) {
     if (!layout.optionalGroupAvailable("gameBloodStains") || cueGlDepth || wearDrawing ||
         (caller != optionalGameAt(fp::sig::gameBloodStainDrawReturn) && caller != optionalGameAt(fp::sig::gameBloodStainBoundReturn) &&
@@ -905,6 +926,11 @@ static bool gameBloodStainDraw(uintptr_t material, bool bind, uintptr_t caller) 
     glGetFloatv(GL_POLYGON_OFFSET_UNITS, &offset[1]);
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(gameBloodStainOffsetFactor, gameBloodStainOffsetUnits);
+    // The stain program (its text at .rdata 0x30F970 / 0x30FA60) writes alpha 1 and fades the blood texture toward
+    // white by its uniform Fade, which the stain pass sets from the weapon node's +0x238 (glUniform1f at 0x100A44);
+    // nothing else in it depends on the view. Fade as this draw has it, counted when above 0.25 (the stain mostly
+    // washed out), to show whether the game itself fades the stain as the camera turns.
+    __try { noteGameBloodFade(); } __except (EXCEPTION_EXECUTE_HANDLER) {}
     fp::profile::invoke<fp::profile::Hook::wearDrawNative>(native, material);
 #if FP_DEV_TOOLS
     {
@@ -913,9 +939,9 @@ static bool gameBloodStainDraw(uintptr_t material, bool bind, uintptr_t caller) 
             logged = GetTickCount64();
             GLint func = 0;
             glGetIntegerv(0x0B74 /*DEPTH_FUNC*/, &func);
-            renderAuditLog("game blood stain draw: depth test %d, func 0x%X, the game's offset %s (%.2f, %.2f), ours (%.1f, %.1f)",
+            renderAuditLog("game blood stain draw: depth test %d, func 0x%X, the game's offset %s (%.2f, %.2f), ours (%.1f, %.1f), Fade %.3f",
                            int(glIsEnabled(GL_DEPTH_TEST)), func, offsetFill ? "on" : "off", offset[0], offset[1],
-                           gameBloodStainOffsetFactor, gameBloodStainOffsetUnits);
+                           gameBloodStainOffsetFactor, gameBloodStainOffsetUnits, gameBloodFadeLast.load());
         }
     }
 #endif
