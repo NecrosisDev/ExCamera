@@ -438,7 +438,7 @@ constexpr unsigned bloodWeaponLimit = 16, bloodSpotsPerWeapon = 4;
 // gameWeaponBlood with AddBlood 0x1007C0 as the layout witness) keeps per weapon node a record of 0x18 bytes, +0 the
 // node, +8 the amount 0..1, which the hit handler raises (AddBlood at 0x15C88C, v x 0.5) and the stain pass draws
 // from (docs/game-blood-systems.md). The game never lowers it. Ours, by Hunter's design: the blade drips in
-// proportion to that amount (weaponDropsPerAmount a second at 1, more when the blade is steep), each drop taking
+// proportion to the blood that shows (the square root of that amount, as the stain pass slides its texture) (weaponDropsPerAmount a second at 1, more when the blade is steep), each drop taking
 // [Wounds] BladeDrainPerDrop of it (default 0.01; 0 keeps the game's own never-drying blood), and a swing's
 // cast-off takes the same per drop flung, so the stains fade as the blood leaves. Where a drop leaves: the lowest
 // of the spots our hits recorded on that blade (run down it with gravity along the item's long axis), else the
@@ -973,8 +973,12 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         const float downAlong = axisLength > 1e-4f ? -wpose[7] / axisLength : 0.f;
         float* gameAmount = nullptr;
         __try { gameAmount = gameWeaponBloodAmount(wb.node); } __except (EXCEPTION_EXECUTE_HANDLER) { gameAmount = nullptr; }
-        const float mass = gameAmount && std::isfinite(*gameAmount) ? std::clamp(*gameAmount, 0.f, 1.f) : 0.f;
-        if (mass > maxWeaponSaturation) maxWeaponSaturation = mass;
+        const float amount = gameAmount && std::isfinite(*gameAmount) ? std::clamp(*gameAmount, 0.f, 1.f) : 0.f;
+        if (amount > maxWeaponSaturation) maxWeaponSaturation = amount;
+        // How much blood shows: the stain pass slides its blood texture along the blade by sqrt(amount) (bldpos.w =
+        // -e[+0xC] * (1 - sqrt(e[+8]) * e[+0x10]), 0x1009EB-0x100A19), so the visible run grows as its square root.
+        // Drips, runs and cast-off follow what shows.
+        const float mass = std::sqrt(amount);
         const float drain = weaponDrainPerDrop();
         // Where its drops leave: the lowest of the spots our hits put on it, run down the blade with gravity.
         int lowest = -1;
@@ -989,7 +993,7 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
         }
         const float origin[3] = {0.f, 0.f, 0.f};
         const float* from = lowest >= 0 ? wb.local[lowest] : origin;
-        if (fadeDt > 0.f && mass > 0.01f) {
+        if (fadeDt > 0.f && amount > 0.01f) {
             wb.drip[0] += fadeDt * mass * weaponDropsPerAmount * (0.3f + 0.7f * std::fabs(downAlong));
             if (wb.drip[0] >= 1.f) {
                 wb.drip[0] -= 1.f;
@@ -1019,8 +1023,8 @@ static void woundViewUniforms(const float* view, WoundUniforms& out) {
             memcpy(wb.lastAt, wpose + 9, sizeof wb.lastAt);
             wb.lastTick = now;
             wb.castCooldown = (std::max)(wb.castCooldown - fadeDt, 0.f);
-            if (!wb.holder && mass > 0.01f) wb.holder = weaponHolderOf(wb.node);
-            if (had && dt > 0.004f && dt < 0.2f && mass > 0.1f) {
+            if (!wb.holder && amount > 0.01f) wb.holder = weaponHolderOf(wb.node);
+            if (had && dt > 0.004f && dt < 0.2f && amount > 0.01f) {
                 for (float& c : v) c /= dt;
                 const float speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
                 const float flat = std::sqrt(v[0] * v[0] + v[2] * v[2]);
