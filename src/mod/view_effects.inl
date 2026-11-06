@@ -1776,11 +1776,14 @@ void main() {
 // The floor blood layer's marks (bloodLayerUpdate): each is drawn into the layer's texture over its own
 // texel box (the quad's uv is the layer's), thickness adding in alpha, the source height and the time
 // taking the maximum in red and green, so a wet mark re-wets whatever it lands on.
-// The game's weapon blood stains kept as drawn: where its stain pass covered (sceneTex: our coverage texture,
-// alpha), the mask's alpha becomes 254, which the finish pass's held detail and the wound pass leave alone.
+// The game's weapon blood stains kept as drawn. The stain program multiplies the framebuffer by its colour
+// (glBlendFunc(ZERO, SRC_COLOR); the blood texture mixed toward white by Fade, alpha always 1), so our re-issue of
+// its draws onto white leaves in sceneTex exactly what it multiplied by: white where there is no blood. Where that
+// darkens the image by more than 3% (blood), the mask's alpha becomes 254, which the finish pass's held detail and
+// the wound pass leave alone; bare steel keeps its detail.
 static const char* const gameBloodKeepShader = R"glsl(
 void main() {
-    if (texture2D(sceneTex, uv).a < 0.05) discard;
+    if (1.0 - dot(texture2D(sceneTex, uv).rgb, vec3(0.2126, 0.7152, 0.0722)) < 0.03) discard;
     gl_FragColor = vec4(0.0, 0.0, 0.0, 254.0 / 255.0);
 }
 )glsl";
@@ -4884,9 +4887,10 @@ static bool prepareSilhouetteTargets(gl::Api& g, fp::CueResources& r, int width,
 // The game's own weapon blood stains (its stain pass, the function round 0x1009C0-0x100CE3 with "Error rendering
 // weapon blood stains.": per bloody weapon a uniform from its blood, then the weapon's first material drawn again
 // through 0x6B8B0 / 0x6B7F0, returning to 0x100ADE / 0x100BCD / 0x100C24). Each of those draws is issued once more,
-// as the game set it up, into our coverage texture (alpha, MAX-blended) with the scene's own depth attachment, so
-// only what the stain pass really covered is marked. Before the finish pass that coverage becomes 254 in the held
-// mask's alpha (markGameBloodKept), which the held detail and the wound pass leave exactly as the game drew it.
+// as the game set it up (its program, uniforms and multiply blend), into a white texture of ours with the scene's
+// own depth attachment, so what is left there is the darkening the stain applied, pixel by pixel. Before the finish
+// pass the blood part of it becomes 254 in the held mask's alpha (markGameBloodKept), which the held detail and the
+// wound pass leave exactly as the game drew it.
 static std::atomic<unsigned> gameBloodStainDraws{0}, gameBloodStainSkips{0}, gameBloodKeptFrames{0}, gameBloodOtherSamples{0},
     gameBloodSizeMismatches{0};
 static void markGameBloodStain(gl::Api& g, fp::CueResources& r, void (*native)(uintptr_t), uintptr_t material) {
@@ -4943,15 +4947,16 @@ static void markGameBloodStain(gl::Api& g, fp::CueResources& r, void (*native)(u
         if (r.gameBloodClear) {
             glDisable(GL_SCISSOR_TEST);
             glColorMask(1, 1, 1, 1);
-            glClearColor(0.f, 0.f, 0.f, 0.f);
+            glClearColor(1.f, 1.f, 1.f, 1.f); // white: nothing multiplied yet
             glClear(GL_COLOR_BUFFER_BIT);
             r.gameBloodClear = false;
             if (scissor) glEnable(GL_SCISSOR_TEST);
         }
-        glColorMask(0, 0, 0, 1);
+        // The game's own multiply (ZERO, SRC_COLOR) on colour, as its stain pass draws it.
+        glColorMask(1, 1, 1, 0);
         glEnable(GL_BLEND);
-        g.blendEquationSeparate(glc::funcAdd, glc::funcMax);
-        g.blendFuncSeparate(GL_ZERO, GL_ONE, GL_ONE, GL_ONE);
+        g.blendEquationSeparate(glc::funcAdd, glc::funcAdd);
+        g.blendFuncSeparate(GL_ZERO, GL_SRC_COLOR, GL_ZERO, GL_ONE);
         native(material);
         r.gameBloodDrawn = true;
         gameBloodStainDraws.fetch_add(1, std::memory_order_relaxed);
