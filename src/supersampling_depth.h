@@ -92,8 +92,12 @@ inline bool correctSampleDepth(const float input[16], float stockNear, float far
         if (roundingOnly(original, base)) return false;
         adjustedDelta = scale * authored;
         // An offset is a constant NDC shift at any near; scaled by a 3 cm/100 cm near ratio, decal and blood
-        // offsets (+1e-5) fall to about one 24-bit depth step and z-fight. Keep at least 16 steps.
-        constexpr double minimumOffset = 16.0 / (1 << 23);
+        // offsets (+1e-5) fell to about one 24-bit depth step and z-fought. The game's small nudges are margins
+        // against the rounding between two draw paths (the weapon stain's CPU-composed matrix, 0x100925, against
+        // the weapon's own draw), and that rounding does not shrink with the near plane, so an authored addition
+        // keeps at least the game's own smallest margin, 1e-5 in NDC (never more than it authored). Large ones
+        // (the camera pass's +0.002, 0x4F8F5) still scale, so they do not reach metres further at a short near.
+        constexpr double minimumOffset = 1e-5;
         const double floor = (std::min)(std::fabs(authored), minimumOffset);
         if (std::fabs(adjustedDelta) < floor) adjustedDelta = std::copysign(floor, authored);
     }
