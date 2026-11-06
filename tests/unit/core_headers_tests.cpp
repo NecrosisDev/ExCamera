@@ -1,9 +1,11 @@
+#include <array>
 #include "camera_motion.h"
 #include "engine_text.h"
 #include "texture_formats.h"
 #include "gamepad.h"
 #include "hook_health.h"
 #include "input_policy.h"
+#include "supersampling_depth.h"
 #include "native_contracts.h"
 #include "pointer_set.h"
 #include "status_json.h"
@@ -487,6 +489,39 @@ bool camera_motion_knockdown_view() {
     CHECK(fp::knockdownViewStep(chose, true, 0, knocked, false, 1, 150) == Step::none); // F6 to first
     CHECK(fp::knockdownViewStep(chose, true, 1, knocked, false, 2, 180) == Step::none); // F6 to third
     CHECK(fp::knockdownViewStep(chose, true, 1, knocked, dead, 2, 200) == Step::none);
+    return true;
+}
+
+bool sample_depth_keeps_the_games_small_nudges() {
+    // An infinite-far perspective (0x1DD50's form) at our near, against the game's stock near: P14 = -2 near,
+    // the unbiased P10 = -1. The three authored nudges the game adds to P10: the weapon stain's +1e-5 (0x100925),
+    // the camera pass's +2e-5 (0x4F94E) and +0.002 (0x4F8F5).
+    const float stockNear = 100.f, ourNear = 3.f;
+    auto projection = [&](float p10) {
+        std::array<float, 16> m{};
+        m[0] = 1.2f, m[5] = 1.6f, m[10] = p10, m[11] = -1.f, m[14] = -2.f * ourNear;
+        return m;
+    };
+    std::array<float, 16> out{};
+    // No nudge: nothing changes.
+    auto plain = projection(-1.f);
+    CHECK(!fp::correctSampleDepth(plain.data(), stockNear, 0.f, false, 0.f, 1.f, out.data()));
+    // +1e-5: scaled by 3/100 it would fall to 3e-7 (about one depth step); it keeps its authored 1e-5.
+    auto stain = projection(-1.f + 1e-5f);
+    CHECK(!fp::correctSampleDepth(stain.data(), stockNear, 0.f, false, 0.f, 1.f, out.data()));
+    CHECK(out[10] == stain[10]);
+    // +2e-5: scaled to 6e-7, raised to the 1e-5 floor, never above what was authored.
+    auto pass = projection(-1.f + 2e-5f);
+    CHECK(fp::correctSampleDepth(pass.data(), stockNear, 0.f, false, 0.f, 1.f, out.data()));
+    CHECK(std::fabs((out[10] + 1.f) - 1e-5f) < 2e-7f);
+    // +0.002: scaled as before, to 6e-5 (above the floor), so it does not reach metres further at our near.
+    auto big = projection(-1.f + .002f);
+    CHECK(fp::correctSampleDepth(big.data(), stockNear, 0.f, false, 0.f, 1.f, out.data()));
+    CHECK(std::fabs((out[10] + 1.f) - 6e-5f) < 2e-7f);
+    // A negative nudge keeps its sign.
+    auto down = projection(-1.f - 2e-5f);
+    CHECK(fp::correctSampleDepth(down.data(), stockNear, 0.f, false, 0.f, 1.f, out.data()));
+    CHECK(out[10] < -1.f && std::fabs((out[10] + 1.f) + 1e-5f) < 2e-7f);
     return true;
 }
 
@@ -1143,6 +1178,7 @@ static bool texture_formats_from_the_game_table() {
 
 int main() {
     return run_tests({
+        {"sample depth keeps the game's small nudges", sample_depth_keeps_the_games_small_nudges},
         {"settings open only on F8", settings_open_only_on_f8},
         {"controller buttons and stick parry", controller_buttons_and_stick_parry},
         {"input ButtonHandoff and RawLook", input_button_handoff_and_raw_look},
