@@ -1241,6 +1241,12 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
                 if (const unsigned n = kickBodyRefusals[k].load())
                     reasons += (reasons.empty() ? "" : "; ") + std::to_string(k) + ": " + std::to_string(n);
             j.str("refused_body_reasons", reasons.c_str());
+            j.unum("node_ownership_fails", kickNodeOwnershipFails.load());
+            j.unum("sector_fails", kickSectorFails.load());
+            // parts[0] as the pelvis check saw it: role, flags, and bits 1 the player's, 2 own root, 4 own parent
+            j.num("first_part_role", kickFirstPartRole.load());
+            j.unum("first_part_flags", kickFirstPartFlags.load());
+            j.unum("first_part_bits", kickFirstPartBits.load());
         }
         j.object("stance_by_class"); // the game's stance at each class's last kick start: hands (cm), lead foot, twist
         for (size_t c = 0; c < size_t(fp::kick::WeaponClass::count); ++c) {

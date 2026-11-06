@@ -47,16 +47,30 @@ static bool kickOwned(uintptr_t part, uintptr_t root) {
     return part && readable(part, 0x600) && *reinterpret_cast<uintptr_t*>(part + field::bodyPart::character) == root;
 }
 static uintptr_t kickParentOf(uintptr_t part) { return *reinterpret_cast<uintptr_t*>(part + field::bodyPart::parentPart); }
-static XrPosef kickPartPose(uintptr_t part) {
+// A part's pose in world metres; false (counted, no throw: this runs every step of a kick) when its mesh node does
+// not name it back (node ownership) or the node's sector cannot be read.
+static std::atomic<unsigned> kickNodeOwnershipFails{0}, kickSectorFails{0};
+static bool kickPartPose(uintptr_t part, XrPosef& out) {
     fp::xr::NativePose pose{};
     memcpy(pose.data(), reinterpret_cast<void*>(part + field::bodyPart::pose), 48);
     const auto node = *reinterpret_cast<uintptr_t*>(part + field::bodyPart::meshNode);
-    if (!readable(node, field::sceneNode::bodyPart + 8) || *reinterpret_cast<uintptr_t*>(node + field::sceneNode::bodyPart) != part) throw std::runtime_error("kick node ownership");
+    if (!readable(node, field::sceneNode::bodyPart + 8) || *reinterpret_cast<uintptr_t*>(node + field::sceneNode::bodyPart) != part) {
+        kickNodeOwnershipFails.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     const auto sector = *reinterpret_cast<uintptr_t*>(node + field::sceneNode::sector);
-    if (!readable(sector, field::sector::origin + 12)) throw std::runtime_error("kick sector");
+    if (!readable(sector, field::sector::origin + 12)) {
+        kickSectorFails.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     for (unsigned i = 0; i < 3; ++i) pose[9 + i] += reinterpret_cast<float*>(sector + field::sector::origin)[i];
-    return fp::xr::nativePoseMetres(pose, kickUnitsPerMetre);
+    out = fp::xr::nativePoseMetres(pose, kickUnitsPerMetre);
+    return true;
 }
+// What the first part of the player's list is when the pelvis check refuses it (status): its bind role, whether it is
+// the player's, whether it is its own root part and parent, and its flags.
+static std::atomic<int> kickFirstPartRole{-1};
+static std::atomic<unsigned> kickFirstPartFlags{0}, kickFirstPartBits{0};
 // A support contact on the shin, as the VR leg planner counts them.
 static bool kickShinSupported(uintptr_t shin) {
     const int n = *reinterpret_cast<int*>(shin + field::bodyPart::contactCount);
@@ -68,7 +82,7 @@ static bool kickShinSupported(uintptr_t shin) {
 }
 // Which check of kickReadBody refused the body last (status kick_animated.refused_body_reasons, by check number in
 // the order they appear below; 14 is the hands' and hips' sides disagreeing).
-static constexpr unsigned kickBodyChecks = 15;
+static constexpr unsigned kickBodyChecks = 18;
 static std::atomic<unsigned> kickBodyRefusals[kickBodyChecks]{};
 static bool kickBodyFail(unsigned check) {
     if (check < kickBodyChecks) kickBodyRefusals[check].fetch_add(1, std::memory_order_relaxed);
@@ -81,13 +95,22 @@ static bool kickReadBody(uintptr_t root, KickBody& b) {
     auto take = [&](KickPart& p, uintptr_t part) {
         if (!kickOwned(part, root)) return kickBodyFail(1);
         p.part = part;
-        p.pose = kickPartPose(part);
-        return true;
+        return kickPartPose(part, p.pose);
     };
     auto plain = [](uintptr_t part) { return !(*reinterpret_cast<unsigned*>(part + field::bodyPart::flags) & 0x40); };
     const auto pelvis = *reinterpret_cast<uintptr_t*>(parts);
-    if (!take(b.pelvis, pelvis) || *reinterpret_cast<uintptr_t*>(pelvis + field::bodyPart::rootPart) != pelvis || kickParentOf(pelvis) != pelvis ||
-        plain(pelvis)) return kickBodyFail(2);
+    // The pelvis: owned (2), its own root part (15), its own parent (16), and flagged 0x40 (17).
+    if (readable(pelvis, 0x600)) {
+        kickFirstPartRole = *reinterpret_cast<int*>(pelvis + field::bodyPart::role);
+        kickFirstPartFlags = *reinterpret_cast<unsigned*>(pelvis + field::bodyPart::flags);
+        kickFirstPartBits = (*reinterpret_cast<uintptr_t*>(pelvis + field::bodyPart::character) == root ? 1u : 0u) |
+                            (*reinterpret_cast<uintptr_t*>(pelvis + field::bodyPart::rootPart) == pelvis ? 2u : 0u) |
+                            (kickParentOf(pelvis) == pelvis ? 4u : 0u);
+    }
+    if (!take(b.pelvis, pelvis)) return kickBodyFail(2);
+    if (*reinterpret_cast<uintptr_t*>(pelvis + field::bodyPart::rootPart) != pelvis) return kickBodyFail(15);
+    if (kickParentOf(pelvis) != pelvis) return kickBodyFail(16);
+    if (plain(pelvis)) return kickBodyFail(17);
     const auto chest = *reinterpret_cast<uintptr_t*>(root + field::character::chestPart), head = *reinterpret_cast<uintptr_t*>(root + field::character::headPart);
     if (!take(b.chest, chest) || !take(b.head, head) || kickParentOf(head) != chest || !take(b.belly, kickParentOf(chest)) || kickParentOf(b.belly.part) != pelvis ||
         !plain(chest) || !plain(head) || !plain(b.belly.part)) return kickBodyFail(3);

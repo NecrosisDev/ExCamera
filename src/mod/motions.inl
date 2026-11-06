@@ -212,10 +212,13 @@ static void kickStanceStep(uintptr_t root) {
         const float f = text[0] ? float(_wtof(text)) : 1.2f;
         kickStanceFactor = std::isfinite(f) && f > 1.f && f <= 3.f ? f : 0.f;
     }
+    // Only the player's own update decides: combatUpdate runs for every character, and another one's update must
+    // not put the player's leg back (it did, about 40 times a kick, so the leg was mostly stock).
+    if (root != *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot))) return;
     AcquireSRWLockExclusive(&kickStanceLock);
     __try {
         const unsigned state = *reinterpret_cast<const unsigned*>(root + field::character::stateFlags);
-        const bool kicking = kickStanceFactor > 0 && root == *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::playerRoot)) &&
+        const bool kicking = kickStanceFactor > 0 &&
                              *reinterpret_cast<const int*>(root + field::character::motion) == kickMotion && !fp::downState(state);
         if (!kicking || (kickStanceHeld.count && kickStanceHeld.root != root)) kickStanceRestoreLocked();
         if (kicking && !kickStanceHeld.count && *reinterpret_cast<const int*>(root + field::character::legCount) == 2)
