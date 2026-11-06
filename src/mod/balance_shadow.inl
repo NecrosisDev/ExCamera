@@ -274,6 +274,31 @@ static void balanceShadowObserve(uintptr_t root, double updateUs) {
     }
 }
 
+// For the mod's own balance code (the kick's upright assist): what the shadow measured for `root` at its last
+// physics step, i.e. after the previous native update, one step (12 ms) before the update now running.
+// false when the shadow is off, faulted, or has not seen `root` in the last 100 ms. Physics thread or any thread.
+struct ShadowBalance {
+    float margin = -INFINITY; // cm from the capture point to the edge of the feet on the ground, + inside; -inf: no foot down
+    float height = 0;         // centre of mass above the ground under the feet, cm (0 with no foot down)
+    unsigned state = 0;       // the game's state that step
+    uint64_t step = 0;        // the fighter's step count, to tell a fresh value from a repeated one
+};
+[[maybe_unused]] static bool balanceShadowLatest(uintptr_t root, ShadowBalance& out) {
+    if (!root || !balanceShadowEnabled.load(std::memory_order_relaxed) || balanceShadowFault.load(std::memory_order_relaxed))
+        return false;
+    const ULONGLONG now = GetTickCount64();
+    bool found = false;
+    AcquireSRWLockShared(&shadowLock);
+    for (const auto& f : shadowFighters)
+        if (f.root == root && now - f.lastSeen <= 100) {
+            out = {f.margin, f.height, f.state, f.steps};
+            found = true;
+            break;
+        }
+    ReleaseSRWLockShared(&shadowLock);
+    return found;
+}
+
 // ---- Worker side: files, messages, the game's own physics reports ----
 
 static wchar_t shadowFolder[MAX_PATH]{}, shadowStamp[32]{};
