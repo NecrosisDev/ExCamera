@@ -13,6 +13,7 @@ TOOLS_DIR = Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+import jump_bake
 import kick_bake
 import native_contracts as contracts
 import signatures
@@ -67,9 +68,10 @@ def check():
         expected_source_sha256=spec['source_sha256'],
     )
     kick_frames = kick_bake.check_header()
+    jump_clips = jump_bake.check_header()
     print(
         '%d targets / %d signatures; %d owners / %d runtime witnesses; %d field declarations; '
-        '%d XR contracts (%d bytes); %d kick clips: consistent' % (
+        '%d XR contracts (%d bytes); %d kick clips; %d jump clips: consistent' % (
             len(targets['target_order']),
             len(entries),
             len(owners),
@@ -78,6 +80,7 @@ def check():
             xr_stats['owners'],
             xr_stats['bytes'],
             kick_frames,
+            jump_clips,
         )
     )
 

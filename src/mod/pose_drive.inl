@@ -4,6 +4,7 @@
 // and legs only, by what the player holds (fp::kick::classRules). The targets go in where the VR body driver puts
 // its own: the pose builder's affine composition (xrCompose) at its three reviewed call sites, for one planned part
 // at a time; anything unexpected leaves the game's own composition untouched, so a refusal is the Classic kick.
+// The Animated jump (jumpPlan below) drives the same rows from a baked jump, without the hips' position.
 // Pose-builder thread only, apart from the status counters.
 #include "../kick_clip.h"
 #include "../xr/native_pose.h"
@@ -218,6 +219,62 @@ static void kickCaptureStance(uintptr_t root, const KickBody& body) {
                               across(fp::xr::sub(body.thigh[0].pose.position, body.thigh[1].pose.position))) * 57.2958f));
     s.seen = true;
 }
+// The rows of one step: every part's target from a frame of a clip in world axes (the kick's or the jump's), the whole
+// body or the hips and legs only. hip: where the mid-hip should be (the kick), or nullptr to leave the hips' position
+// to the game (the jump: physics alone lifts the body). heldArms counts the steps an arm with something in its hand
+// was driven (status only).
+static void kickPlanRows(uintptr_t root, const KickBody& body, const kk::Frame& f, kk::Mode mode, float weight, const XrVector3f* hip,
+                         std::atomic<unsigned>& heldArms) {
+    KickScope& scope = kickScope;
+    scope = {};
+    scope.root = root;
+    auto add = [&](const KickPart& p, uintptr_t parent, KickSite site, XrQuaternionf world, float w) {
+        if (scope.count < scope.rows.size()) scope.rows[scope.count++] = {p.part, parent, site, world, {}, false, w};
+    };
+    auto across = [](const KickPart* pair) { return fp::xr::sub(pair[0].pose.position, pair[1].pose.position); };
+    const XrVector3f midHip = fp::xr::scale(fp::xr::add(body.thigh[0].pose.position, body.thigh[1].pose.position), .5f);
+    const XrVector3f hipsAcross = across(body.thigh), shouldersAcross = across(body.upper);
+    const XrVector3f pelvisUp = fp::xr::sub(body.chest.pose.position, midHip), chestUp = fp::xr::sub(body.head.pose.position, body.chest.pose.position);
+    // The hips: turned like the clip's, and moved to `hip` (the mid-hip wanted) when there is one.
+    KickRow pelvisRow{body.pelvis.part, root, KickSite::pelvis,
+                      kk::frameTarget(body.pelvis.pose.orientation, pelvisUp, hipsAcross, f.v[kk::pelvisUp], f.v[kk::pelvisAcross]),
+                      hip ? fp::xr::add(body.pelvis.pose.position, fp::xr::sub(*hip, midHip)) : XrVector3f{}, hip != nullptr, weight};
+    scope.rows[scope.count++] = pelvisRow;
+    if (mode == kk::Mode::full) {
+        const auto bellyUp = fp::xr::add(kk::normalised(pelvisUp), kk::normalised(chestUp)), bellyAcross = fp::xr::add(kk::normalised(hipsAcross), kk::normalised(shouldersAcross));
+        add(body.belly, body.pelvis.part, KickSite::motor,
+            kk::frameTarget(body.belly.pose.orientation, bellyUp, bellyAcross, fp::xr::add(f.v[kk::pelvisUp], f.v[kk::chestUp]),
+                            fp::xr::add(f.v[kk::pelvisAcross], f.v[kk::chestAcross])), weight);
+        const auto chestQ = kk::frameTarget(body.chest.pose.orientation, chestUp, shouldersAcross, f.v[kk::chestUp], f.v[kk::chestAcross]);
+        add(body.chest, body.belly.part, KickSite::motor, chestQ, weight);
+        const auto chestTurn = fp::xr::multiply(chestQ, fp::xr::conjugate(body.chest.pose.orientation));
+        add(body.head, body.chest.part, KickSite::motor, fp::xr::multiply(chestTurn, body.head.pose.orientation), weight);
+        const unsigned shoulderSlot[2] = {kk::leftShoulder, kk::rightShoulder}, upperSlot[2] = {kk::leftUpperArm, kk::rightUpperArm},
+                       foreSlot[2] = {kk::leftForearm, kk::rightForearm};
+        const auto held = reinterpret_cast<const uintptr_t*>(root + field::character::heldItems);
+        for (unsigned side = 0; side < 2; ++side) {
+            if (held[1 - side]) heldArms.fetch_add(1, std::memory_order_relaxed); // played fully (Hunter): status only
+            const float w = weight;
+            add(body.shoulder[side], body.chest.part, KickSite::motor,
+                kk::boneTarget(body.shoulder[side].pose.orientation, fp::xr::sub(body.upper[side].pose.position, body.shoulder[side].pose.position), f.v[shoulderSlot[side]]), w);
+            add(body.upper[side], body.shoulder[side].part, KickSite::motor,
+                kk::boneTarget(body.upper[side].pose.orientation, fp::xr::sub(body.fore[side].pose.position, body.upper[side].pose.position), f.v[upperSlot[side]]), w);
+            const auto foreQ = kk::boneTarget(body.fore[side].pose.orientation, fp::xr::sub(body.hand[side].pose.position, body.fore[side].pose.position), f.v[foreSlot[side]]);
+            add(body.fore[side], body.upper[side].part, KickSite::motor, foreQ, w);
+            add(body.hand[side], body.fore[side].part, KickSite::motor,
+                fp::xr::multiply(fp::xr::multiply(foreQ, fp::xr::conjugate(body.fore[side].pose.orientation)), body.hand[side].pose.orientation), w);
+        }
+    }
+    const unsigned thighSlot[2] = {kk::leftThigh, kk::rightThigh}, shinSlot[2] = {kk::leftShin, kk::rightShin};
+    for (unsigned side = 0; side < 2; ++side) {
+        const auto thighQ = kk::boneTarget(body.thigh[side].pose.orientation, fp::xr::sub(body.shin[side].pose.position, body.thigh[side].pose.position), f.v[thighSlot[side]]);
+        const auto shinQ = kk::boneTarget(body.shin[side].pose.orientation, fp::xr::sub(body.foot[side].pose.position, body.shin[side].pose.position), f.v[shinSlot[side]]);
+        add(body.thigh[side], body.pelvis.part, KickSite::motor, thighQ, weight);
+        add(body.shin[side], body.thigh[side].part, KickSite::motor, shinQ, weight);
+        add(body.foot[side], body.shin[side].part, KickSite::foot,
+            fp::xr::multiply(fp::xr::multiply(shinQ, fp::xr::conjugate(body.shin[side].pose.orientation)), body.foot[side].pose.orientation), weight);
+    }
+}
 static bool kickPlan(uintptr_t root) {
     KickRun& run = kickRun;
     const uintptr_t scene = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene));
@@ -281,69 +338,74 @@ static bool kickPlan(uintptr_t root) {
     if (weight > .99f && !run.blendedIn) { run.blendedIn = true; kickBlendedIn.fetch_add(1, std::memory_order_relaxed); }
     const auto& clip = kk::clips[run.clip];
     const kk::Frame f = kk::worldFrame(clip, run.heading, progress, run.mirror);
-    KickScope& scope = kickScope;
-    scope = {};
-    scope.root = root;
-    auto add = [&](const KickPart& p, uintptr_t parent, KickSite site, XrQuaternionf world, float w) {
-        if (scope.count < scope.rows.size()) scope.rows[scope.count++] = {p.part, parent, site, world, {}, false, w};
-    };
-    auto across = [](const KickPart* pair) { return fp::xr::sub(pair[0].pose.position, pair[1].pose.position); };
+    // The hips: carried over the supporting foot by the clip's hip travel.
+    const unsigned support = run.mirror ? 1 : 0;
     const XrVector3f midHip = fp::xr::scale(fp::xr::add(body.thigh[0].pose.position, body.thigh[1].pose.position), .5f);
-    const XrVector3f hipsAcross = across(body.thigh), shouldersAcross = across(body.upper);
-    const XrVector3f pelvisUp = fp::xr::sub(body.chest.pose.position, midHip), chestUp = fp::xr::sub(body.head.pose.position, body.chest.pose.position);
-    // The hips: turned like the clip's and carried over the supporting foot by the clip's hip travel.
-    const unsigned support = run.mirror ? 1 : 0, kicking = 1 - support;
     const XrVector3f footPos = body.foot[support].pose.position;
     const float legMetres = fp::xr::length(fp::xr::sub(body.shin[support].pose.position, body.thigh[support].pose.position)) +
                             fp::xr::length(fp::xr::sub(footPos, body.shin[support].pose.position));
     const auto hip = kk::hipTarget(footPos, f.v[kk::hipOffset], clip.legLengthCm, legMetres, midHip);
-    KickRow pelvisRow{body.pelvis.part, root, KickSite::pelvis,
-                      kk::frameTarget(body.pelvis.pose.orientation, pelvisUp, hipsAcross, f.v[kk::pelvisUp], f.v[kk::pelvisAcross]),
-                      fp::xr::add(body.pelvis.pose.position, fp::xr::sub(hip, midHip)), true, weight};
-    scope.rows[scope.count++] = pelvisRow;
-    if (run.mode == kk::Mode::full) {
-        const auto bellyUp = fp::xr::add(kk::normalised(pelvisUp), kk::normalised(chestUp)), bellyAcross = fp::xr::add(kk::normalised(hipsAcross), kk::normalised(shouldersAcross));
-        add(body.belly, body.pelvis.part, KickSite::motor,
-            kk::frameTarget(body.belly.pose.orientation, bellyUp, bellyAcross, fp::xr::add(f.v[kk::pelvisUp], f.v[kk::chestUp]),
-                            fp::xr::add(f.v[kk::pelvisAcross], f.v[kk::chestAcross])), weight);
-        const auto chestQ = kk::frameTarget(body.chest.pose.orientation, chestUp, shouldersAcross, f.v[kk::chestUp], f.v[kk::chestAcross]);
-        add(body.chest, body.belly.part, KickSite::motor, chestQ, weight);
-        const auto chestTurn = fp::xr::multiply(chestQ, fp::xr::conjugate(body.chest.pose.orientation));
-        add(body.head, body.chest.part, KickSite::motor, fp::xr::multiply(chestTurn, body.head.pose.orientation), weight);
-        const unsigned shoulderSlot[2] = {kk::leftShoulder, kk::rightShoulder}, upperSlot[2] = {kk::leftUpperArm, kk::rightUpperArm},
-                       foreSlot[2] = {kk::leftForearm, kk::rightForearm};
-        const auto held = reinterpret_cast<const uintptr_t*>(root + field::character::heldItems);
-        for (unsigned side = 0; side < 2; ++side) {
-            if (held[1 - side]) kickHeldArms.fetch_add(1, std::memory_order_relaxed); // played fully (Hunter): status only
-            const float w = weight;
-            add(body.shoulder[side], body.chest.part, KickSite::motor,
-                kk::boneTarget(body.shoulder[side].pose.orientation, fp::xr::sub(body.upper[side].pose.position, body.shoulder[side].pose.position), f.v[shoulderSlot[side]]), w);
-            add(body.upper[side], body.shoulder[side].part, KickSite::motor,
-                kk::boneTarget(body.upper[side].pose.orientation, fp::xr::sub(body.fore[side].pose.position, body.upper[side].pose.position), f.v[upperSlot[side]]), w);
-            const auto foreQ = kk::boneTarget(body.fore[side].pose.orientation, fp::xr::sub(body.hand[side].pose.position, body.fore[side].pose.position), f.v[foreSlot[side]]);
-            add(body.fore[side], body.upper[side].part, KickSite::motor, foreQ, w);
-            add(body.hand[side], body.fore[side].part, KickSite::motor,
-                fp::xr::multiply(fp::xr::multiply(foreQ, fp::xr::conjugate(body.fore[side].pose.orientation)), body.hand[side].pose.orientation), w);
-        }
-    }
-    const unsigned thighSlot[2] = {kk::leftThigh, kk::rightThigh}, shinSlot[2] = {kk::leftShin, kk::rightShin};
-    for (unsigned side = 0; side < 2; ++side) {
-        const auto thighQ = kk::boneTarget(body.thigh[side].pose.orientation, fp::xr::sub(body.shin[side].pose.position, body.thigh[side].pose.position), f.v[thighSlot[side]]);
-        const auto shinQ = kk::boneTarget(body.shin[side].pose.orientation, fp::xr::sub(body.foot[side].pose.position, body.shin[side].pose.position), f.v[shinSlot[side]]);
-        add(body.thigh[side], body.pelvis.part, KickSite::motor, thighQ, weight);
-        add(body.shin[side], body.thigh[side].part, KickSite::motor, shinQ, weight);
-        add(body.foot[side], body.shin[side].part, KickSite::foot,
-            fp::xr::multiply(fp::xr::multiply(shinQ, fp::xr::conjugate(body.shin[side].pose.orientation)), body.foot[side].pose.orientation), weight);
-    }
-    (void)kicking;
+    kickPlanRows(root, body, f, run.mode, weight, &hip, kickHeldArms);
     kickSteps.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
+// The Animated jump (jump_warp.h), the same overlay on the same body read: motions.inl runs the warp on the game
+// thread and publishes the clip, frame, weight and tuck; here each step turns them into targets, never the hips'
+// position (physics alone lifts the body). The heading and the mirror are taken on the jump's first step. A body
+// refused on that step refuses the jump's clip, and motions.inl, told through jumpDriveRefusedSerial, starts the push
+// at once rather than waiting out a windup nobody sees.
+static bool jumpDriveAvailable() {
+    return kickStyle.load(std::memory_order_relaxed) == 1 && kickDriveReady.load(std::memory_order_relaxed) &&
+           !kickDriveFault.load(std::memory_order_relaxed);
+}
+struct JumpRun { unsigned serial = 0; bool planned = false, refused = false, mirror = false; kk::Mode mode = kk::Mode::full; kk::Heading heading{}; };
+static thread_local JumpRun jumpRun;
+static std::atomic<unsigned> jumpDriveSteps{0}, jumpRefusedBody{0}, jumpRefusedHeading{0}, jumpHeldArms{0};
+static std::atomic<int> jumpLastMirror{-1};
+static bool jumpPlan(uintptr_t root) {
+    if (!jumpAnimDrive.load() || !jumpDriveAvailable()) return false;
+    const unsigned serial = jumpAnimSerial.load();
+    const int clipIndex = jumpAnimClip.load();
+    if (!serial || clipIndex < 0 || clipIndex >= jw::clipCount) return false;
+    JumpRun& run = jumpRun;
+    if (run.serial != serial) {
+        run = {};
+        run.serial = serial;
+    }
+    if (run.refused) return false;
+    auto refuse = [&](std::atomic<unsigned>& counter) {
+        run.refused = true;
+        counter.fetch_add(1, std::memory_order_relaxed);
+        jumpDriveRefusedSerial.store(serial);
+        return false;
+    };
+    KickBody body{};
+    if (!kickReadBody(root, body)) return run.planned ? false : refuse(jumpRefusedBody);
+    const auto& clip = jw::clips[clipIndex];
+    if (!run.planned) {
+        const auto facing = reinterpret_cast<const float*>(root + field::character::facing);
+        run.heading = kk::headingFrom({facing[0], facing[1], facing[2]}, fp::xr::sub(body.thigh[0].pose.position, body.thigh[1].pose.position));
+        if (!run.heading.valid) return refuse(jumpRefusedHeading);
+        const bool leftLeads = fp::xr::dot(fp::xr::sub(body.foot[0].pose.position, body.foot[1].pose.position), run.heading.forward) > 0;
+        const int supported = body.supported[0] != body.supported[1] ? (body.supported[0] ? 0 : 1) : -1;
+        run.mirror = jw::mirrorFor(clip, leftLeads, clipIndex == jw::travellingClip ? supported : -1);
+        run.mode = kk::classRules[size_t(kickClassOf(root))].mode; // a polearm or carried object keeps the game's arms
+        run.planned = true;
+        jumpLastMirror = run.mirror ? 1 : 0;
+    }
+    const float weight = jumpAnimWeight.load();
+    if (!(weight > 0)) return false;
+    const kk::Frame f = jw::worldFrame(clip, run.heading, jumpAnimFrame.load(), jumpAnimTuck.load(), run.mirror);
+    kickPlanRows(root, body, f, run.mode, std::fmin(weight, 1.f), nullptr, jumpHeldArms);
+    jumpDriveSteps.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
 static bool kickPlanSafe(uintptr_t root) {
-    try { return kickPlan(root); }
+    try { return kickPlan(root) || jumpPlan(root); }
     catch (const std::exception&) { kickScope = {}; return false; }
 }
-// Before the game's pose builder, for the player only (input.inl poseBuilderOwned), when the VR drive did not plan.
+// Before the game's pose builder, for the player only (input.inl poseBuilderOwned), when the VR drive did not plan:
+// the kick's targets, else the jump's.
 static bool kickPoseBegin(uintptr_t root) {
     kickScopeOpen = false;
     __try {

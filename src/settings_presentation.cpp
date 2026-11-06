@@ -419,7 +419,7 @@ const wchar_t* settingTip(int id) {
     case setting::rotateHeldKey: return L"Hold and move the mouse to turn what you're holding. The view stays still meanwhile. Delete clears the key.";
     case setting::kickKey: return L"Plays the game's own kick when you are not mid-swing or reacting to a hit. Not a key the game uses (Alt is its thrust). Delete clears the key.";
     case setting::jumpKey: return L"Plays the game's own jump when you are not mid-swing or reacting to a hit. Not a key the game uses. Delete clears the key.";
-    case setting::kickStyle: return L"Classic: the game's own kick. Animated: the same kick, gates and hit, with your body moved like a motion-captured kick that suits what you hold. Experimental.";
+    case setting::kickStyle: return L"Classic: the game's own kick. Animated: the same kick, gates and hit, with your body moved like a motion-captured kick that suits what you hold, and a motion-captured jump. Experimental.";
     case setting::padKick: return L"In combat, an Xbox-style controller button for the game's own kick. A button your Steam layout also uses does both.";
     case setting::padJump: return L"Xbox-style controller button for the game's own jump. The right-stick click does nothing else in the game's Steam layout.";
     case setting::padGuard: return L"Needs Block on Hold RMB. Held, guards like right mouse; with a Parry direction, push the right stick to pick the parry. Pick a button you do not need in combat.";

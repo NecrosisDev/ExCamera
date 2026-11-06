@@ -1042,9 +1042,10 @@ inline bool gameUsesKey(unsigned key, const unsigned (&bindings)[N]) {
 }
 // Why a kick or jump key press played nothing (motions.inl): counted in the status file, and for the reasons a
 // player can act on, said in a short notice. The checks are motionPlayable's, in its order, then the kick's stance.
-enum class MotionRefusal { unavailable, fault, tooSoon, notPlayer, cursorFree, busy, dead, otherState, balance, gameKey, count };
+// standingOff: a jump while standing still with [Input] JumpStanding=0 (the jump only).
+enum class MotionRefusal { unavailable, fault, tooSoon, notPlayer, cursorFree, busy, dead, otherState, balance, gameKey, standingOff, count };
 inline constexpr const char* motionRefusalNames[] = {"unavailable", "fault", "too_soon", "not_player", "cursor_free",
-                                                     "busy",        "dead",  "state",    "balance",    "game_key"};
+                                                     "busy",        "dead",  "state",    "balance",    "game_key", "standing_off"};
 static_assert(sizeof motionRefusalNames / sizeof *motionRefusalNames == size_t(MotionRefusal::count));
 // The refusal for a player already found eligible as a character (the root readable, the controlled one); none
 // (count) when the clip may play.
@@ -1091,6 +1092,8 @@ inline const wchar_t* motionRefusalNotice(bool jump, MotionRefusal r) {
     case MotionRefusal::fault:
         return jump ? L"Jump turned off after an error. Restart the game to retry."
                     : L"Kick turned off after an error. Restart the game to retry.";
+    case MotionRefusal::standingOff:
+        return jump ? L"Jump: standing jumps are off (JumpStanding=0 in first-person.ini). Move, then jump." : nullptr;
     default: return nullptr;
     }
 }

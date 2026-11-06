@@ -1338,7 +1338,8 @@ inline const RowInfo& rowInfo(int row) {
          L"Input", L"KickStyle", iniKickStyle, iniKickStyleText,
          L"Classic plays the game's own kick. Animated plays the same kick (same gates and hit) but moves the "
          L"body like a motion-captured kick, chosen by what you hold: unarmed or one-handed kicks, or two-handed ones. "
-         L"Experimental; when this game build cannot be checked for it, the kick stays Classic."},
+         L"Animated also plays a motion-captured jump on the Jump key. Experimental; when this game build cannot be "
+         L"checked for it, the kick and jump stay Classic."},
         {setting::threatMarkers, L"Threat markers", RowInfo::choice, &ModSettings::threatMarkers, nullptr,
          L"View", L"ThreatMarkers", iniThreatMarkers, iniThreatMarkersText,
          L"Small soft arcs round the screen centre point toward anyone fighting you who is off screen or near its "

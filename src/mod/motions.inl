@@ -5,7 +5,10 @@
 // own rigid-body push (89240, a Verlet velocity change per physics step) up to one takeoff speed from the game's
 // gravity, for a peak under the game's in-air rule (fp::jumpPushStep), so the game's airborne and landing handling
 // takes over. Triggered by a key (unbound until the player picks one) on a
-// flat screen and by the controllers in VR (xr_drive.inl). Game thread only.
+// flat screen and by the controllers in VR (xr_drive.inl). Game thread only. With the Animated style the jump also
+// plays a baked Mixamo jump (jump_warp.h), its push held back until the clip's windup is done (see JumpAnim below).
+#include "../jump_clip.h"
+namespace jw = fp::jump;
 static std::atomic<unsigned> motionKicks{0}, motionJumps{0};
 static std::atomic<bool> motionKickFault{false}, motionJumpFault{false};
 static uint64_t motionKickLast = 0, motionJumpLast = 0;
@@ -24,11 +27,65 @@ static std::atomic<unsigned> motionRefusedState{0}; // status: character+DF4 at 
 // many jumps lost +12EA while still in the air.
 static std::atomic<unsigned> jumpLastTravelling{0}, jumpLastScaleMilli{0}, jumpLastPeakMm{0}, jumpTravelLost{0};
 static bool jumpStartedTravelling = false, jumpTravelLostCounted = false;
-// jump.csv (beside the balance logs): one row per input poll of a jump in flight, written by the worker.
-struct JumpRow { ULONGLONG at; unsigned step; float y, rise, speed, predicted, push, scale; bool travelling, footDown, pushing; };
+// jump.csv (beside the balance logs): one row per input poll of a jump from the press to the clip's end, written by
+// the worker: the push's numbers, then the clip driven (none when not driven), its fractional frame, the warp phase
+// and the clip's weight.
+struct JumpRow {
+    ULONGLONG at; unsigned step; float y, rise, speed, predicted, push, scale; bool travelling, footDown, pushing;
+    int clip; float frame; jw::Phase phase; float weight;
+};
 static JumpRow jumpRows[512];
 static unsigned jumpRowHead = 0, jumpRowCount = 0;
 static SRWLOCK jumpRowLock = SRWLOCK_INIT;
+// The Animated jump's warp (jump_warp.h), game thread. Every jump runs it, for jump.csv; it drives the body only when
+// `animated` (the Animated style with the overlay ready, pose_drive.inl jumpDriveAvailable). Standing (+12EA clear at
+// the press) plays 'jumping': its windup (frames 0 -> takeoff 10, 0.33 s at 30 fps) plays before the push starts, and
+// the press's gates are checked again every poll of it (a change cancels the jump, no push). Travelling plays
+// 'runningJump', whose takeoff is frame 0: the push starts at the press, as without a clip. Then the flight is warped
+// onto the push's measured rise and fall, the landing plays at the clip's rate and the clip fades out. Not animated,
+// the push starts at the press as before and the warp only logs.
+struct JumpAnim {
+    jw::Warp warp{};
+    int clip = -1;
+    bool animated = false;
+    uintptr_t root = 0, scene = 0;
+    unsigned pressStep = 0;
+    float peakCm = 0;
+};
+static JumpAnim jumpAnim;
+// Published to the pose builder (pose_drive.inl jumpPlan): the serial of the jump (new at each press), its clip,
+// fractional frame, weight and tuck, and whether to drive at all. The pose builder answers with the serial of a jump
+// whose body or heading it refused, and the windup then gives way to the push at once (a fallback).
+static std::atomic<unsigned> jumpAnimSerial{0}, jumpDriveRefusedSerial{0};
+static std::atomic<int> jumpAnimClip{-1};
+static std::atomic<float> jumpAnimFrame{0}, jumpAnimWeight{0}, jumpAnimTuck{1};
+static std::atomic<bool> jumpAnimDrive{false};
+// Status (jump_animated): presses per clip, entries into each phase, windups cancelled by the gates, jumps cancelled
+// later, fallbacks, standing presses refused by JumpStanding=0, jumps driven, the last clip and tuck.
+static std::atomic<unsigned> jumpAnimPlayed[jw::clipCount]{}, jumpAnimPhases[size_t(jw::Phase::count)]{}, jumpAnimWindupCancels{0},
+    jumpAnimCancels{0}, jumpAnimFallbacks{0}, jumpAnimStandingRefused{0}, jumpAnimDriven{0};
+static std::atomic<int> jumpAnimLastClip{-1};
+static std::atomic<float> jumpAnimLastTuck{-1};
+// [Input] JumpStanding (1 by default; 0: no jump while standing still) and StandingJumpTuck (how much of the leg
+// chords' deviation from the clip's frame 0 a standing jump keeps, 1 as authored; by default jw::standingTuckDefault,
+// the largest that keeps the lowest foot within supportHeight's 20 cm margin, 0x16F7FF, through the 15 cm hop:
+// tools/jump_bake.py, a geometric estimate). Read once, at the first press. The running jump is always as authored
+// (1.0): with +12EA set supportHeight does not zero uprightness (0x16F975).
+static int jumpStandingAllowed = -1;
+static float jumpStandingTuck = -1;
+static bool jumpDriveAvailable(); // pose_drive.inl
+static void jumpSettingsRead() {
+    if (jumpStandingAllowed >= 0) return;
+    jumpStandingAllowed = settingsPath[0] ? (GetPrivateProfileIntW(L"Input", L"JumpStanding", 1, settingsPath) != 0 ? 1 : 0) : 1;
+    wchar_t text[32]{};
+    if (settingsPath[0]) GetPrivateProfileStringW(L"Input", L"StandingJumpTuck", L"", text, 32, settingsPath);
+    const float t = text[0] ? float(_wtof(text)) : jw::standingTuckDefault;
+    jumpStandingTuck = std::isfinite(t) ? std::clamp(t, jw::tuckMin, jw::tuckMax) : jw::standingTuckDefault;
+}
+static void jumpAnimPublish(const JumpAnim& a) {
+    jumpAnimFrame.store(a.warp.frame, std::memory_order_relaxed);
+    jumpAnimWeight.store(a.animated ? a.warp.weight : 0.f, std::memory_order_relaxed);
+}
 // The shared gates (fp::motionGate): the player root, the pointer captured, the game's base state, alive, not already
 // in an attack, a kick or a jump. The refusal, or MotionRefusal::count when the clip may play.
 // jump: the jump plays no motion (a push only), so walking or running (DF4 1, written each step for motions 0 "Walk"
@@ -83,6 +140,19 @@ static bool motionKick(uintptr_t root, fp::MotionRefusal* why = nullptr) {
     motionKicks.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
+// The push's start: at the press, or at the end of a standing clip's windup.
+static bool motionJumpTakeoff(uintptr_t root) {
+    jumpPush = fp::JumpPush::start(root, *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene)), playerSteps.load(),
+                                   reinterpret_cast<const float*>(root + field::character::position)[1], jumpAnim.peakCm);
+    if (!motionJumpPush(root, bladeStepHz(), jumpPush.target)) {
+        jumpPush.active = jumpPush.tracking = false;
+        return false;
+    }
+    --jumpPush.left;
+    jumpPushApplied.fetch_add(1, std::memory_order_relaxed);
+    motionJumps.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
 static bool motionJump(uintptr_t root, fp::MotionRefusal* why = nullptr) {
     auto refuse = [&](fp::MotionRefusal r) { if (why) *why = r; return false; };
     if (motionJumpFault.load()) return refuse(fp::MotionRefusal::fault);
@@ -91,36 +161,102 @@ static bool motionJump(uintptr_t root, fp::MotionRefusal* why = nullptr) {
     const uint64_t now = GetTickCount64();
     if (now - motionJumpLast < jumpRepeatMs) return refuse(fp::MotionRefusal::tooSoon);
     if (const auto r = motionPlayable(root, true); r != fp::MotionRefusal::count) return refuse(r);
+    jumpSettingsRead();
+    const bool travelling = *reinterpret_cast<const uint8_t*>(root + field::character::travelling) != 0;
+    if (!travelling && !jumpStandingAllowed) {
+        jumpAnimStandingRefused.fetch_add(1, std::memory_order_relaxed);
+        return refuse(fp::MotionRefusal::standingOff);
+    }
     motionJumpLast = now;
     // Travelling, the game's own in-air margin is 30 x +410 (0x16F7E9): the hop is sized to it; standing, to 20 cm.
-    jumpStartedTravelling = *reinterpret_cast<const uint8_t*>(root + field::character::travelling) != 0;
+    jumpStartedTravelling = travelling;
     jumpTravelLostCounted = false;
     const float scale = *reinterpret_cast<const float*>(root + field::character::supportScale);
     const float peak = jumpStartedTravelling ? fp::jumpRunPeak(scale) : fp::jumpPeakCm;
     jumpLastTravelling = jumpStartedTravelling ? 1 : 0;
     jumpLastScaleMilli = std::isfinite(scale) && scale > 0 ? unsigned(scale * 1000.f) : 0;
     jumpLastPeakMm = unsigned(peak * 10.f);
-    jumpPush = fp::JumpPush::start(root, *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene)), playerSteps.load(),
-                                   reinterpret_cast<const float*>(root + field::character::position)[1], peak);
-    if (!motionJumpPush(root, bladeStepHz(), jumpPush.target)) {
-        jumpPush.active = jumpPush.tracking = false;
+    // The clip: its warp starts now; a standing one's push waits for the windup's end (motionJumpWarp).
+    JumpAnim a{};
+    a.clip = travelling ? jw::travellingClip : jw::standingClip;
+    a.animated = jumpDriveAvailable();
+    a.root = root;
+    a.scene = *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene));
+    a.pressStep = playerSteps.load();
+    a.peakCm = peak;
+    a.warp = jw::startWarp(jw::clips[a.clip], a.animated);
+    const float tuck = travelling ? 1.f : jumpStandingTuck;
+    jumpPush = {}; // the last jump's flight is over, for the status and the log
+    jumpAnim = a;
+    jumpAnimClip.store(a.clip);
+    jumpAnimTuck.store(tuck);
+    jumpAnimPublish(a);
+    jumpAnimDrive.store(a.animated);
+    jumpAnimSerial.fetch_add(1);
+    jumpAnimPlayed[a.clip].fetch_add(1, std::memory_order_relaxed);
+    jumpAnimPhases[size_t(a.warp.phase)].fetch_add(1, std::memory_order_relaxed);
+    if (a.animated) jumpAnimDriven.fetch_add(1, std::memory_order_relaxed);
+    jumpAnimLastClip = a.clip;
+    jumpAnimLastTuck = tuck;
+    if (a.warp.phase == jw::Phase::windup) return true;
+    if (!motionJumpTakeoff(root)) {
+        jumpAnim = {};
+        jumpAnimDrive.store(false);
+        jumpAnimPublish(jumpAnim);
         return refuse(fp::MotionRefusal::fault);
     }
-    --jumpPush.left;
-    jumpPushApplied.fetch_add(1, std::memory_order_relaxed);
-    motionJumps.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
-// Every input poll on the game thread: the jump's push for the physics steps since the last one.
+// The warp's poll (game thread): cancels, the windup's end (the push starts), the fallback, and what is published.
+static void motionJumpWarp(uintptr_t root, bool owned, bool readableRoot, float stepHz) {
+    JumpAnim& a = jumpAnim;
+    const float t = float(playerSteps.load() - a.pressStep) / stepHz;
+    const jw::Phase before = a.warp.phase;
+    const bool flying = before != jw::Phase::none && before != jw::Phase::blendOut;
+    bool cancel = !owned || !readableRoot || root != a.root || *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene)) != a.scene;
+    if (!cancel) {
+        const unsigned state = *reinterpret_cast<unsigned*>(root + field::character::stateFlags);
+        cancel = fp::deadState(state) || fp::reactionState(state);
+    }
+    if (!cancel && before == jw::Phase::windup) cancel = motionPlayable(root, true) != fp::MotionRefusal::count; // the press's gates
+    if (cancel && flying) {
+        (before == jw::Phase::windup ? jumpAnimWindupCancels : jumpAnimCancels).fetch_add(1, std::memory_order_relaxed);
+        jw::cancelWarp(a.warp, t);
+    }
+    const jw::Clip& clip = jw::clips[a.clip];
+    bool takeoff = false;
+    if (a.warp.phase == jw::Phase::windup && a.animated && jumpDriveRefusedSerial.load() == jumpAnimSerial.load()) {
+        // The pose builder refused this jump's body: no clip to wait for, so the push starts now.
+        jumpAnimFallbacks.fetch_add(1, std::memory_order_relaxed);
+        a.animated = false;
+        jumpAnimDrive.store(false);
+        a.warp.phase = jw::Phase::rise;
+        a.warp.phaseAt = t;
+        a.warp.frame = float(clip.takeoff);
+        takeoff = true;
+    }
+    const jw::Flight in{jumpPush.speed, jumpPush.risen, jumpPush.target, jumpPush.active, jumpPush.tracking || takeoff};
+    takeoff = jw::advanceWarp(a.warp, clip, t, in, fp::jumpGravity) || takeoff;
+    if (takeoff && !motionJumpTakeoff(root)) {
+        jumpAnimCancels.fetch_add(1, std::memory_order_relaxed);
+        jw::cancelWarp(a.warp, t);
+    }
+    if (a.warp.phase != before) jumpAnimPhases[size_t(a.warp.phase)].fetch_add(1, std::memory_order_relaxed);
+    jumpAnimPublish(a);
+    if (a.warp.phase == jw::Phase::none) jumpAnimDrive.store(false);
+}
+// Every input poll on the game thread: the jump's push for the physics steps since the last one, and its clip.
 static void motionJumpTick(uintptr_t root, bool owned) {
-    if (!jumpPush.tracking) return;
+    if (!jumpPush.tracking && jumpAnim.warp.phase == jw::Phase::none) return;
     const bool readableRoot = root && readable(root, 0x1300);
     const float stepHz = bladeStepHz();
-    const float speed = fp::jumpPushStep(
+    const float speed = !jumpPush.tracking ? 0.f : fp::jumpPushStep(
         jumpPush, owned && readableRoot, root, *reinterpret_cast<uintptr_t*>(gameAt(fp::sig::currentScene)), playerSteps.load(),
         readableRoot ? reinterpret_cast<const float*>(root + field::character::position)[1] : NAN,
         readableRoot ? *reinterpret_cast<unsigned*>(root + field::character::stateFlags) : 0,
         readableRoot && fp::deadState(*reinterpret_cast<unsigned*>(root + field::character::stateFlags)), stepHz);
+    const bool logged = jumpPush.tracking || speed > 0.f || jumpAnim.warp.phase != jw::Phase::none;
+    if (jumpAnim.warp.phase != jw::Phase::none) motionJumpWarp(root, owned, readableRoot, stepHz);
     jumpPushRiseMm.store(unsigned(std::fmax(0.f, jumpPush.peak) * 10.f), std::memory_order_relaxed);
     jumpPushActive.store(jumpPush.active, std::memory_order_relaxed);
     if (jumpStartedTravelling && !jumpTravelLostCounted && readableRoot && jumpPush.tracking &&
@@ -128,12 +264,14 @@ static void motionJumpTick(uintptr_t root, bool owned) {
         jumpTravelLostCounted = true; // +12EA went while still in the air: the 20 cm standing margin is back
         jumpTravelLost.fetch_add(1, std::memory_order_relaxed);
     }
-    if (readableRoot && (jumpPush.tracking || speed > 0.f)) {
+    if (readableRoot && logged) {
         JumpRow row{GetTickCount64(), playerSteps.load(), reinterpret_cast<const float*>(root + field::character::position)[1],
                     jumpPush.risen, jumpPush.speed, jumpPush.predicted, speed,
                     *reinterpret_cast<const float*>(root + field::character::supportScale),
                     *reinterpret_cast<const uint8_t*>(root + field::character::travelling) != 0,
-                    *reinterpret_cast<const float*>(root + field::character::footDown) > .5f, jumpPush.active};
+                    *reinterpret_cast<const float*>(root + field::character::footDown) > .5f, jumpPush.active,
+                    jumpAnim.animated ? jumpAnim.clip : -1, jumpAnim.warp.frame, jumpAnim.warp.phase,
+                    jumpAnim.animated ? jumpAnim.warp.weight : 0.f};
         AcquireSRWLockExclusive(&jumpRowLock);
         if (jumpRowCount < 512) jumpRows[(jumpRowHead + jumpRowCount++) % 512] = row;
         ReleaseSRWLockExclusive(&jumpRowLock);
@@ -287,16 +425,18 @@ static void jumpLogPulse() {
     static bool header = false;
     if (!header) {
         header = true;
-        shadowAppend(L"jump.csv", "ms,step,root_y,rise_cm,speed_cm_s,predicted_peak_cm,push_cm_s,support_scale,travelling,foot_down,pushing\r\n");
+        shadowAppend(L"jump.csv", "ms,step,root_y,rise_cm,speed_cm_s,predicted_peak_cm,push_cm_s,support_scale,travelling,foot_down,pushing,"
+                                  "clip,clip_frame,phase,weight\r\n");
     }
-    static char text[512 * 120];
+    static char text[512 * 160];
     int n = 0;
     for (unsigned i = 0; i < count && n >= 0 && size_t(n) < sizeof text; ++i) {
         const JumpRow& r = rows[i];
-        n += snprintf(text + n, sizeof text - size_t(n), "%llu,%u,%.1f,%.1f,%.1f,%.1f,%.1f,%.3f,%d,%d,%d\r\n",
+        n += snprintf(text + n, sizeof text - size_t(n), "%llu,%u,%.1f,%.1f,%.1f,%.1f,%.1f,%.3f,%d,%d,%d,%s,%.2f,%s,%.2f\r\n",
                       (unsigned long long)(r.at - shadowStarted), r.step, double(r.y), double(r.rise), double(r.speed),
                       double(r.predicted), double(r.push), double(r.scale), r.travelling ? 1 : 0, r.footDown ? 1 : 0,
-                      r.pushing ? 1 : 0);
+                      r.pushing ? 1 : 0, r.clip >= 0 && r.clip < jw::clipCount ? jw::clips[r.clip].name : "none", double(r.frame),
+                      jw::phaseNames[size_t(r.phase) < size_t(jw::Phase::count) ? size_t(r.phase) : 0], double(r.weight));
     }
     if (n > 0) {
         text[(std::min)(size_t(n), sizeof text - 1)] = 0;

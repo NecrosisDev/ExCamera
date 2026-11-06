@@ -502,6 +502,7 @@ Status, per jump:
 - With the hop kept under the 20 cm margin, the game never sees him leave the ground, so it has no landing moment
   and there is no ramp time to derive a brace from.
 - A brace would need our own timing, which stays off until decided.
+- The Animated jump's landing phase is that brace, on the clip's own timing (ours): see "The Animated jump" below.
 
 **The kick and jump gate (fp::motionGate).** It mirrors the game's own rule for a motion asked for on demand
 (+0xDC0, written for motions 0x1F/0x2C/0x2D at 0xB88AB, 0x12B30F, 0x12B4CF and 0x136E8F). combatUpdate plays that
@@ -566,3 +567,103 @@ target. Until then it adds only what the climb still needs, √(2g(target − ri
 - **Bones:** the arms swing up to 95°; the legs and pelvis move 5° or less.
 - **Conclusion:** no game code plays it and it carries no lift, so it can't give the jump a lift. As an arm-swing
   overlay it would need playing through motionPlay, and that clears +12EA (0x179F48) on the run. Not used.
+
+## The Animated jump (Mixamo Jumping and Running Jump)
+
+With the Animated style (the same `[Input] KickStyle=1` switch as the kick), the Jump key also plays one of Hunter's
+two Mixamo jumps on the whole body. The overlay is the kick's (pose_drive.inl): the same body read (kickReadBody),
+the same chords and the same three reviewed composition sites. It never drives the hips' position: no hipTarget, the
+pelvis row is orientation only. The push (fp::jumpPushStep) alone lifts and moves the body.
+
+**The clips** (`tools/jump_bake.py`, from `tools/clip_sources/*.json` to `tools/jump_clips.json` and the generated
+`src/jump_clip.h`, checked by `tools/check_generated.py`). The root's translation and the 420 cm forward travel of
+Running Jump are dropped; every slot is a direction between joints and hipOffset is zero. The phase frames are found
+from the data, not typed in:
+
+| Clip | Frames | Takeoff | Peak | Touchdown | End | Landing dip |
+|---|---|---|---|---|---|---|
+| `jumping` (standing) | 57 @ 30 fps | 10 (Hips 54.5 cm) | 23 (Hips 150.0) | 33 | 50 | 39 (Hips 60.0) |
+| `runningJump` (travelling) | 28 @ 30 fps | 0 (Hips 84.0) | 10 (Hips 128.95) | 18 | 26 | 26 |
+
+- Takeoff: the lowest Hips frame before the peak, the last frame before the hips rise (0 when they rise at once).
+- Peak: the highest Hips frame.
+- Touchdown: the first frame after the peak with as many feet down as at frame 0 (two standing, one running). A foot
+  is down when its lowest joint (ankle or toe) is within 1 cm of the clip's floor.
+- End: the first frame from touchdown on after which the Hips stay within 1 cm of frame 0's.
+- The 1 cm thresholds are ours. Each frame also stores its drop: the mid-hip's height above the lowest foot point.
+
+**The phases** (fp::jump::advanceWarp, jump_warp.h; game thread, motions.inl motionJumpWarp; time from the press is
+counted in the player's physics steps):
+
+1. **Windup** (standing only): frames 0 -> 10 at the clip's own rate, 0.33 s. The push is not started yet. The
+   press's gates (motionPlayable) are checked again every poll. If they change, or he dies, reacts, changes scene or
+   is no longer the controlled character, the jump is cancelled with no push (`windup_cancels`).
+2. **Rise**: the push starts (the old press code, moved to the windup's end). Frames takeoff -> peak are mapped onto
+   the time since takeoff against the time still to the peak, upward speed / g. While pushing, the speed used is at
+   least the takeoff speed. The measured peak is the first poll after the push stops where the measured vertical
+   speed is <= 0.
+3. **Fall**: frames peak -> touchdown, mapped onto the time since the peak against the time still to fall back to the
+   takeoff height, the root of rise + v t - g t^2/2 = 0. Touchdown is the root back at its takeoff height, or the
+   push no longer following the flight (its own landing rule, peak > 1 cm and rise <= 0).
+4. **Landing**: frames touchdown -> end at the clip's rate (the brace for impact: 0.57 s standing, 0.27 s running).
+5. **Blend out**: 0.2 s. The clip also fades in over its first 0.1 s from the press.
+
+Travelling (+12EA set at the press) plays `runningJump`: its takeoff is frame 0, so there is no windup and the push
+starts at the press, as before. With the Classic style the warp runs for jump.csv only and the push starts at the
+press as before. With the Animated style, if the pose builder refuses the body or heading on the jump's first step,
+the windup gives way and the push starts at once (`fallbacks`).
+
+On a ballistic 15 cm hop (v = 171.5 cm/s) the flight is 0.35 s, so the standing jump lasts about 0.33 + 0.35 +
+0.57 + 0.2 = 1.45 s from the press. The push starts 0.33 s after the press instead of at it.
+
+**The standing tuck (`[Input] StandingJumpTuck`, default 0.47).**
+- The authored clip lifts the hips 57 cm and its feet about 110 cm. With our 15 cm hop, the legs tuck relative to the
+  hips instead.
+- supportHeight zeroes uprightness (0x16F98D) when no leg contact is within its +94 tolerance + 20 cm of the ground
+  (0x16F7FF) and +12EA is clear.
+- StandingJumpTuck scales each thigh, shin and foot chord's deviation from frame 0 (nlerp: frame0 + s (frame -
+  frame0), renormalised). 1.0 is as authored and 0 keeps frame 0's legs. It applies to the whole standing clip, so the
+  legs never jump at takeoff or touchdown.
+- The default is the largest s, in 0.01 steps, for which the lowest foot stays within 20 cm of the ground at every
+  flight frame (10..33). The clearance there is r(f) + D(0) - D(f, s), where D is how far the lowest foot point hangs
+  below the mid-hip, rebuilt from the chords and the clip's bone lengths. r(f) is the 15 cm ballistic hop mapped onto
+  the flight frames as the warp maps them: h(1 - (1 - u)^2) rising, h(1 - u^2) falling.
+- Result: 0.47, worst clearance 19.8 cm at frame 24. As authored (1.0) the feet would be 53.8 cm up at frame 25.
+- This is a geometric estimate from the clip: the character's leg is taken as the clip's (83.5 cm, thigh + shin), the
+  game's standing pose as the clip's frame 0, and the +94 tolerance is left out, so it errs low.
+- jump_bake.py and fp::jump::maxTuck compute it the same way, and both the Python and C++ tests check it.
+- The running jump always plays as authored (1.0): with +12EA set, supportHeight does not zero uprightness
+  (0x16F975). Its tuck is still logged (`jump_animated.last_tuck`).
+
+**`[Input] JumpStanding`** (1 by default). 0 refuses a jump while standing still (+12EA clear), with the refusal
+`standing_off` and a notice.
+
+**Logs and status.**
+- jump.csv rows now run from the press to the clip's end. Each row adds `clip` (the clip driven, none when not driven),
+  `clip_frame` (fractional), `phase` and `weight`.
+- `jump_animated`: drive_available, jump_standing, standing_tuck (and its default), last_tuck, last_clip, driven,
+  steps, refused_standing, refused_body, refused_heading, fallbacks, windup_cancels, cancels, held_arm_steps,
+  last_mirrored, played (presses per clip) and phases (entries into each phase).
+- `motions.jumps` now counts pushes started, so a windup that is cancelled adds no jump.
+
+**Mirroring.** The standing clip's left foot leads; it is mirrored when the character's right foot leads. The running
+clip pushes off its right (trailing) foot; it is mirrored when the character has only its left foot down, and
+otherwise by the leading foot.
+
+**Ours vs the game's.**
+- The game's: g = 980.665 (0x2AE690), the 20 cm margin (0x16F7FF), uprightness zeroed at 0x16F98D only with +12EA
+  clear (0x16F975), the 30 x +410 travelling margin (0x16F7E9), the gates (fp::motionGate), +12EA (0xC2A22) and
+  motionPlay clearing it (0x179F48). The jump still never calls motionPlay.
+- Ours: the 15 cm hop, the 1 cm phase thresholds, the 0.1 s blend in and 0.2 s blend out, the windup at the clip's own
+  rate, the time-linear flight mapping, the tuck's form and range (0..1), and the leg-length assumption in its
+  default.
+
+**Unproven.**
+- The overlay itself has not driven a body in play yet. The kick logs refused_body with reason 2 on the pelvis
+  (parts[0]). The jump reads the body through the same kickReadBody, so it gets that fix when it lands (pending
+  Hunter's next log). Until then every Animated standing jump falls back: the push starts at once
+  (`jump_animated.fallbacks`, `refused_body`).
+- Whether a crouch driven on the legs during the windup sinks the hips (feet on the ground) or lifts the feet: the
+  hips' position is not driven.
+- Whether the legs tuck in flight as the chords ask, and whether the game's +94 tolerance leaves more room than 20 cm.
+- Whether the measured peak (speed <= 0) lands where the clip's peak looks right.

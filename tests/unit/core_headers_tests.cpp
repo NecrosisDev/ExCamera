@@ -186,6 +186,10 @@ bool input_motion_refusals() {
     for (R r : {R::tooSoon, R::dead, R::notPlayer, R::count})
         CHECK(fp::motionRefusalNotice(false, r) == nullptr && fp::motionRefusalNotice(true, r) == nullptr);
     CHECK(std::wcsstr(fp::motionRefusalNotice(false, R::gameKey), L"Alt") != nullptr);
+    // JumpStanding=0: only the jump can be refused for standing still, and it says how to turn it back on.
+    CHECK(fp::motionRefusalNotice(false, R::standingOff) == nullptr);
+    CHECK(std::wcsstr(fp::motionRefusalNotice(true, R::standingOff), L"JumpStanding") != nullptr);
+    CHECK(std::strcmp(fp::motionRefusalNames[size_t(R::standingOff)], "standing_off") == 0);
     CHECK(std::strcmp(fp::motionRefusalNames[size_t(R::otherState)], "state") == 0 && std::strcmp(fp::motionRefusalNames[size_t(R::balance)], "balance") == 0);
     return true;
 }

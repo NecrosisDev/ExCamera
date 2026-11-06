@@ -185,6 +185,9 @@ Plan, without changing VR behaviour:
 
 ### 4.1 Offline bake
 
+The Animated jump reuses this overlay and these chords for Hunter's Jumping and Running Jump clips (tools/jump_bake.py,
+src/jump_warp.h): see docs/GAME-BALANCE-PHYSICS.md, "The Animated jump".
+
 `tools/kick_bake.py bake <dir>` turns the five clip JSONs into `tools/kick_clips.json` (committed), and
 `kick_bake.py header` generates `src/kick_clip.h` (checked by `tools/check_generated.py`). Per frame, in the clip's
 heading frame, only chords between joints both skeletons have:

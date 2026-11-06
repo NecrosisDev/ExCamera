@@ -1269,6 +1269,32 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         }
         j.end().end();
     }
+    { // every build: the Animated jump (motions.inl warp, pose_drive.inl jumpPlan)
+        const int clip = jumpAnimLastClip.load();
+        j.object("jump_animated")
+            .boolean("drive_available", jumpDriveAvailable())
+            .num("jump_standing", jumpStandingAllowed)                  // [Input] JumpStanding: 1, 0, -1 not read yet
+            .fixed("standing_tuck", double(jumpStandingTuck < 0 ? jw::standingTuckDefault : jumpStandingTuck), 2) // StandingJumpTuck
+            .fixed("standing_tuck_default", double(jw::standingTuckDefault), 2)
+            .fixed("last_tuck", double(jumpAnimLastTuck.load()), 2)       // the tuck the last jump played with (running: 1.00)
+            .str("last_clip", clip >= 0 && clip < jw::clipCount ? jw::clips[clip].name : "none")
+            .unum("driven", jumpAnimDriven.load())                      // presses whose clip the overlay was to drive
+            .unum("steps", jumpDriveSteps.load())
+            .unum("refused_standing", jumpAnimStandingRefused.load())   // JumpStanding=0 presses
+            .unum("refused_body", jumpRefusedBody.load())               // the same kickReadBody as the kick (refused_body_reasons there)
+            .unum("refused_heading", jumpRefusedHeading.load())
+            .unum("fallbacks", jumpAnimFallbacks.load())                // windups cut short by a refusal: the push started at once
+            .unum("windup_cancels", jumpAnimWindupCancels.load())       // the press's gates changed during the windup: no push
+            .unum("cancels", jumpAnimCancels.load())                    // a death, a reaction, a new scene... after takeoff
+            .unum("held_arm_steps", jumpHeldArms.load())
+            .num("last_mirrored", jumpLastMirror.load());
+        j.object("played");
+        for (int c = 0; c < jw::clipCount; ++c) j.unum(jw::clips[c].name, jumpAnimPlayed[c].load());
+        j.end();
+        j.object("phases"); // entries into each warp phase
+        for (size_t ph = 1; ph < size_t(jw::Phase::count); ++ph) j.unum(jw::phaseNames[ph], jumpAnimPhases[ph].load());
+        j.end().end();
+    }
     j.object("blade") // every build: the drawn edge and the sinking thrust on the game's impact path
         .boolean("ready", bladeReady.load())
         .unum("drags", bladeDrags.load())
