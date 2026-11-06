@@ -42,7 +42,7 @@ duplicates what this handler already does.
 - **Weapon blood (in use).** Each frame, every TWeaponBlood record with an amount above 0.01 gets an entry of
   ours. The singleton is read through the reviewed signature weaponBloodList; group gameWeaponBlood is admitted
   only with AddBlood 0x1007C0 matching its bytes, which witnesses the 0x18-byte records with the amount at +8.
-  - **Drips:** the blade drips at amount × 3 a second, more when it is steep. Each drop lowers the game's own
+  - **Drips:** the blade drips at √amount × 3 a second (the stain pass shows a run that grows with √amount: bldpos.w = −e[+0xC] × (1 − √e[+8] × e[+0x10])), more when it is steep. Each drop lowers the game's own
     amount by [Wounds] BladeDrainPerDrop (default 0.01; 0 keeps the game's never-drying blood), and the game's
     stains fade with it.
   - **Cast-off:** a swing's cast-off takes the same per drop flung. It only happens in the holder's attack after
@@ -87,6 +87,16 @@ duplicates what this handler already does.
   difference is about the size of the 1e-5 nudge, so the depth test passes on some frames and fails on others.
   At the stock camera's distance it is far smaller. The arithmetic is an estimate; the nudge, the path and the
   missing offset are read from the code.
+- **Our own part in it (proven).** Under Supersample the stain's recompose goes through our hook on 0x18C70
+  (0x100972: output 0x49AF10 + i, view 0x49AE10 + i, projection 0x49AD10 + i, the sample tables
+  supersampleMatrixSlot accepts). correctSampleDepth (supersampling_depth.h) rescales any authored P[10] addition
+  by the near-plane ratio our camera's near makes, with a floor of 16 / 2^23. So the stain's 1e-5 nudge shrinks to
+  about 1.9e-6 NDC under our near plane. The weapon's own draw goes through the same corrected tables, so the two
+  matrices still agree, but the stain's margin is about 5× smaller than the game gives it.
+- **What else was checked.**
+  - Fade (node +0x238) is set once from the mesh definition's +0x94 (0x6D29D).
+  - The draw gate bit +0xE0 & 0x1000000 is assigned only at creation (0x58F32, 0xE3D23).
+  - Neither changes with the view.
 - **Fix** (headwear_render.inl gameBloodStainDraw). Around each stain draw only, a polygon offset toward the eye
   (factor −1, units −256, about 1.5e-5 of a 24-bit depth range), with the game's own polygon-offset state put
   back after. A dev audit line logs the depth func and the offsets in effect at the stain draw.
