@@ -1086,6 +1086,7 @@ static std::atomic<bool> padKickRequested{false}, padJumpRequested{false}, padGu
 static void padTick(uintptr_t root, uintptr_t bh, bool owned); // mod/gamepad.inl
 static void kickStanceStep(uintptr_t root); // mod/motions.inl: game thread, after the player's combat update
 static void kickStanceRestore();          // mod/motions.inl: any thread, at a stop
+static void jumpLogPulse();               // mod/motions.inl: worker, writes jump.csv
 // Refused key presses by fp::MotionRefusal (status file), and the newest refusal for the worker's notice:
 // 1 + reason, plus motionNoticeJump for the jump (0 none).
 static std::atomic<unsigned> kickRefusals[size_t(fp::MotionRefusal::count)]{}, jumpRefusals[size_t(fp::MotionRefusal::count)]{};

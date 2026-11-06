@@ -5228,6 +5228,48 @@
       "displacement_offset": 12,
       "displacement_bytes": 4,
       "optional_group": "kick"
+    },
+    {
+      "owner": "combatUpdate",
+      "width": 8,
+      "provenance": "float[3]: combatUpdate plays Rebalance (0x21) at 0x16B5F9 when |+C50|^2 > 0.3 (0x16B5AF-0x16B5E5), uprightness < 0.8 and +4C8 set.",
+      "name": "character::rebalanceLead",
+      "instruction": "0x169eb5",
+      "value": "0xc50",
+      "window_offset": 3245,
+      "pattern": "4C 0C 00 00 48 8B 45 F8 48 8D 88 50 0C 00 00 F3 0F 10 15 1C 25 1B 00",
+      "native_instruction": "lea rcx, [rax + 0xc50]",
+      "displacement_offset": 11,
+      "displacement_bytes": 4,
+      "optional_group": "kick"
+    },
+    {
+      "owner": "combatUpdate",
+      "width": 8,
+      "provenance": "float[3]: the fall logic tests |+C5C|^2 > 0.3 before Rebalance at 0x16A7FF (0x16A7B5-0x16A7EB).",
+      "name": "character::fallLead",
+      "instruction": "0x169ed1",
+      "value": "0xc5c",
+      "window_offset": 3273,
+      "pattern": "13 F6 EA FF 48 8B 45 F8 48 8D 88 5C 0C 00 00 F3 0F 10 15 B0 1F 1B 00",
+      "native_instruction": "lea rcx, [rax + 0xc5c]",
+      "displacement_offset": 11,
+      "displacement_bytes": 4,
+      "optional_group": "kick"
+    },
+    {
+      "owner": "combatUpdate",
+      "width": 1,
+      "provenance": "u8: the end-of-motion branch plays Rebalance only while it is set (0x16B57E).",
+      "name": "character::rebalanceArmed",
+      "instruction": "0x16b57e",
+      "value": "0x4c8",
+      "window_offset": 9078,
+      "pattern": "00 00 00 00 48 8B 45 F8 80 B8 C8 04 00 00 00 0F 84 F1 00 00 00 48 8B",
+      "native_instruction": "cmp byte ptr [rax + 0x4c8], 0",
+      "displacement_offset": 10,
+      "displacement_bytes": 4,
+      "optional_group": "kick"
     }
   ],
   "references": [

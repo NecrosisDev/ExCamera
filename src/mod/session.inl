@@ -1204,6 +1204,9 @@ static void writeRunningStatus(FILE* f, const Aim& a) {
         .fixed("kick_stance_factor", double(kickStanceFactor < 0 ? 0.f : kickStanceFactor), 2) // KickStanceStiffness
         .unum("kick_stance_applied", kickStanceApplied.load())   // kicks whose standing leg was stiffened
         .unum("kick_stance_kept_game", kickStanceKeptGame.load()) // parts the game rewrote meanwhile (left as the game set)
+        .num("kick_upright_assist", kickUprightAssist)                 // [Balance] KickUprightAssist: 1 on, 0 off, -1 not read
+        .unum("kick_upright_assist_steps", kickUprightAssistSteps.load())
+        .unum("kick_upright_assist_fallbacks", kickUprightAssistFallbacks.load())
         .unum("refused_state_last", motionRefusedState.load()); // character+DF4 at the last "state" refusal
     for (const bool jump : {false, true}) { // refused key presses by reason (fp::MotionRefusal)
         j.object(jump ? "jump_refused" : "kick_refused");
@@ -1568,6 +1571,7 @@ static DWORD runSession() {
             Sleep(100);
             profilePulse();
             balanceShadowPulse();
+            jumpLogPulse();
             devPulse();
             trackingReceiver.service(trackingEnabled.load());
             saveFov();

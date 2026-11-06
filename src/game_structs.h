@@ -90,6 +90,10 @@ inline constexpr size_t onFeet = 0x12FC;        // u8: some leg contact is withi
 // (0x16CB27-0x16CB4B); the kick sets motionRate = 2 x motionRateBase (0x16B0A6). motionPlay stores its blend at +A24.
 inline constexpr size_t motionRate = 0xDC8, motionRateBase = 0xDCC; // floats
 inline constexpr size_t travelling = 0x12EA;    // u8: TPlayerBehaviour's travel (0xC2A22); motionPlay clears it (0x179F48)
+// combatUpdate plays Rebalance (0x21, blend 20) at 0x16B5F9 when +4C8 is set, uprightness < 0.8 and |+C50|^2 > 0.3
+// (0x16B57E-0x16B5E5); the fall logic tests |+C5C|^2 > 0.3 at 0x16A7E1. Logged by the balance shadow's kick log.
+inline constexpr size_t rebalanceLead = 0xC50, fallLead = 0xC5C; // float[3]
+inline constexpr size_t rebalanceArmed = 0x4C8;  // u8
 inline constexpr size_t supportScale = 0x410;   // float: while travelling, supportHeight's in-air margin is 30 x this
 } // namespace character
 

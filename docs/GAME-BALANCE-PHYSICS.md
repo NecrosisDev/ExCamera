@@ -537,3 +537,32 @@ kickReadBody's checks refused the body, numbered in source order, so the next pl
 - The exact values read are restored when the kick ends, at a knockdown or death, and at F7, but only where the
   game has not written its own since.
 - Status: `kick_stance_factor`, `kick_stance_applied`, `kick_stance_kept_game`.
+
+## Round 3: the Rebalance cut, the upright assist (off), the jump cap, clip 18
+
+**What cuts a kick.** combatUpdate's end-of-motion branch plays Rebalance (0x21, blend 20) at 0x16B5F9 when three
+things hold: +4C8 is set (0x16B57E), uprightness is below 0.8 (0x16B58F), and |+C50|² is above 0.3. The balance
+thread proved this is the site; the spell-stun site (0x169B46) and the |+C5C|² site in the fall logic (0x16A7FF) are
+ruled out. kick.csv now logs lead_c50_sq, lead_c5c_sq and gate_4c8 to confirm.
+
+**Stiffening.** It is applied only from the player's own update. It holds through motion 13 and any Rebalance
+(motion 33) the game plays straight after (at most 3 s), and is restored as before.
+
+**Upright assist: built but OFF, `[Balance] KickUprightAssist=0`.**
+- When it is 1, inside that kick window and after the game's update, uprightness +12B0 is set to 1.0. The lean
+  counter +12B4 is never written.
+- It applies only while balanceShadowLatest reports the capture point inside the loaded feet or within 5 cm of them.
+- Otherwise the game's value stands (`kick_upright_assist_fallbacks`). A fault turns it off for the session.
+- Off until Hunter says go.
+
+**Jump overshoot.** The push now stops once the predicted ballistic peak, rise + v²/2g (g = 980.665), reaches the
+target. Until then it adds only what the climb still needs, √(2g(target − rise)) less the speed now. jump.csv
+(beside the balance logs) records, per poll: root y, rise, speed, predicted peak, push, +410, +12EA, footDown, pushing.
+
+**Clip 18 "Jump"** (decoded read-only from Resource.rpk, humanoid.rsq):
+- **Where:** the motion sets (chunk 0x3DAB, loader 0x259A70). Only the base set "Default" has slot 18.
+- **Keys:** 3, at times 6, 16 and 70, not looping.
+- **Root:** rises only 0.41 cm, and sits about 8.85 cm lower than Idle throughout.
+- **Bones:** the arms swing up to 95°; the legs and pelvis move 5° or less.
+- **Conclusion:** no game code plays it and it carries no lift, so it can't give the jump a lift. As an arm-swing
+  overlay it would need playing through motionPlay, and that clears +12EA (0x179F48) on the run. Not used.

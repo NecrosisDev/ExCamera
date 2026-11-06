@@ -68,6 +68,8 @@ struct ShadowKickRow {
     float progress = 0, rate = 0, rateBase = 0;
     unsigned gripFlags = 0;
     int weaponClass = -1;
+    float leadSq = 0, fallLeadSq = 0;
+    unsigned rebalanceArmed = 0;
 };
 constexpr unsigned shadowKickRing = 512;
 static ShadowKickRow shadowKickRows[shadowKickRing];
@@ -91,6 +93,9 @@ struct ShadowRead {
     float progress = 0, rate = 0, rateBase = 0;
     unsigned gripFlags = 0;
     int weaponClass = -1;
+    // The Rebalance cut's inputs (0x16B57E-0x16B5F9, 0x16A7E1): |+C50|^2, |+C5C|^2 and the +4C8 gate.
+    float leadSq = 0, fallLeadSq = 0;
+    unsigned rebalanceArmed = 0;
     bool legDown[2]{};
     unsigned legs = 0;
 };
@@ -118,6 +123,13 @@ static bool shadowRead(uintptr_t root, ShadowRead& r) {
         r.rate = *reinterpret_cast<const float*>(root + field::character::motionRate);
         r.rateBase = *reinterpret_cast<const float*>(root + field::character::motionRateBase);
         r.gripFlags = *reinterpret_cast<const unsigned*>(root + field::character::gripFlags);
+        {
+            const auto a = reinterpret_cast<const float*>(root + field::character::rebalanceLead);
+            const auto c = reinterpret_cast<const float*>(root + field::character::fallLead);
+            r.leadSq = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+            r.fallLeadSq = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
+            r.rebalanceArmed = *reinterpret_cast<const uint8_t*>(root + field::character::rebalanceArmed);
+        }
         r.weaponClass = int(fp::kick::classify(*reinterpret_cast<const int*>(root + field::character::weaponCount), r.gripFlags,
                                                *reinterpret_cast<const uintptr_t*>(root + field::character::shieldPart) != 0,
                                                *reinterpret_cast<const uintptr_t*>(root + field::character::specialHeldPart) != 0));
@@ -265,7 +277,7 @@ static void balanceShadowObserve(uintptr_t root, double updateUs) {
                 k = {now, read.game.state, read.game.motion, read.leanCounter, read.game.uprightness, read.balance,
                      m.margin, read.chest, m.com, {read.leg[0], read.leg[1]}, m.xcom,
                      {read.legDown[0], read.legDown[1]}, read.legs, read.progress, read.rate, read.rateBase, read.gripFlags,
-                     read.weaponClass};
+                     read.weaponClass, read.leadSq, read.fallLeadSq, read.rebalanceArmed};
             }
         }
         QueryPerformanceCounter(&t1);
@@ -453,7 +465,7 @@ static void balanceShadowStart(bool updateHooked) {
     shadowAppend(L"events.csv", "ms,event,fighter,player,state,margin_cm,height_cm,uprightness,cause\r\n");
     shadowAppend(L"kick.csv", "ms,state,motion,uprightness,lean_counter,balance,chest_x,chest_y,chest_z,com_x,com_y,com_z,"
                               "capture_x,capture_z,margin_cm,foot0_x,foot0_y,foot0_z,foot0_down,foot1_x,foot1_y,foot1_z,"
-                              "foot1_down,legs,progress,rate,rate_base,grip_flags,weapon_class\r\n");
+                              "foot1_down,legs,progress,rate,rate_base,grip_flags,weapon_class,lead_c50_sq,lead_c5c_sq,gate_4c8\r\n");
     shadowAppend(L"seconds.csv", "ms,fighter,player,steps_per_s,state,motion,uprightness,foot_down,margin_cm,height_cm,shake_cm_s2\r\n");
     balanceShadowEnabled = true;
 }
@@ -476,13 +488,13 @@ static void balanceShadowPulse() {
     }
     ReleaseSRWLockExclusive(&shadowLock);
     if (kickCount) { // the kick lean log: one row per physics step of the window
-        static char kickText[shadowKickRing * 360];
+        static char kickText[shadowKickRing * 420];
         int n = 0;
         for (unsigned i = 0; i < kickCount && n >= 0 && size_t(n) < sizeof kickText; ++i) {
             const ShadowKickRow& k = kicks[i];
             n += snprintf(kickText + n, sizeof kickText - size_t(n),
                           "%llu,0x%X,%d,%.4f,%d,%.3f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d,%.1f,%.1f,"
-                          "%.1f,%d,%u,%.4f,%.3f,%.3f,0x%X,%s\r\n",
+                          "%.1f,%d,%u,%.4f,%.3f,%.3f,0x%X,%s,%.4f,%.4f,%u\r\n",
                           (unsigned long long)(k.at - shadowStarted), k.state, k.motion, double(k.uprightness), k.leanCounter,
                           double(k.balance), double(k.chest.x), double(k.chest.y), double(k.chest.z), double(k.com.x),
                           double(k.com.y), double(k.com.z), double(k.capture.x), double(k.capture.z), double(k.margin),
@@ -490,7 +502,8 @@ static void balanceShadowPulse() {
                           double(k.foot[1].x), double(k.foot[1].y), double(k.foot[1].z), k.footDown[1] ? 1 : 0, k.feet,
                           double(k.progress), double(k.rate), double(k.rateBase), k.gripFlags,
                           k.weaponClass >= 0 && k.weaponClass < int(fp::kick::WeaponClass::count)
-                              ? fp::kick::classNames[k.weaponClass] : "unknown");
+                              ? fp::kick::classNames[k.weaponClass] : "unknown",
+                          double(k.leadSq), double(k.fallLeadSq), k.rebalanceArmed);
         }
         if (n > 0) {
             kickText[(std::min)(size_t(n), sizeof kickText - 1)] = 0;

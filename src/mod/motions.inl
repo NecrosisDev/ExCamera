@@ -24,6 +24,11 @@ static std::atomic<unsigned> motionRefusedState{0}; // status: character+DF4 at 
 // many jumps lost +12EA while still in the air.
 static std::atomic<unsigned> jumpLastTravelling{0}, jumpLastScaleMilli{0}, jumpLastPeakMm{0}, jumpTravelLost{0};
 static bool jumpStartedTravelling = false, jumpTravelLostCounted = false;
+// jump.csv (beside the balance logs): one row per input poll of a jump in flight, written by the worker.
+struct JumpRow { ULONGLONG at; unsigned step; float y, rise, speed, predicted, push, scale; bool travelling, footDown, pushing; };
+static JumpRow jumpRows[512];
+static unsigned jumpRowHead = 0, jumpRowCount = 0;
+static SRWLOCK jumpRowLock = SRWLOCK_INIT;
 // The shared gates (fp::motionGate): the player root, the pointer captured, the game's base state, alive, not already
 // in an attack, a kick or a jump. The refusal, or MotionRefusal::count when the clip may play.
 // jump: the jump plays no motion (a push only), so walking or running (DF4 1, written each step for motions 0 "Walk"
@@ -123,6 +128,16 @@ static void motionJumpTick(uintptr_t root, bool owned) {
         jumpTravelLostCounted = true; // +12EA went while still in the air: the 20 cm standing margin is back
         jumpTravelLost.fetch_add(1, std::memory_order_relaxed);
     }
+    if (readableRoot && (jumpPush.tracking || speed > 0.f)) {
+        JumpRow row{GetTickCount64(), playerSteps.load(), reinterpret_cast<const float*>(root + field::character::position)[1],
+                    jumpPush.risen, jumpPush.speed, jumpPush.predicted, speed,
+                    *reinterpret_cast<const float*>(root + field::character::supportScale),
+                    *reinterpret_cast<const uint8_t*>(root + field::character::travelling) != 0,
+                    *reinterpret_cast<const float*>(root + field::character::footDown) > .5f, jumpPush.active};
+        AcquireSRWLockExclusive(&jumpRowLock);
+        if (jumpRowCount < 512) jumpRows[(jumpRowHead + jumpRowCount++) % 512] = row;
+        ReleaseSRWLockExclusive(&jumpRowLock);
+    }
     if (speed > 0.f && motionJumpPush(root, stepHz, speed)) jumpPushApplied.fetch_add(1, std::memory_order_relaxed);
     else if (speed > 0.f) jumpPush.active = jumpPush.tracking = false;
 }
@@ -150,6 +165,17 @@ struct KickLegHold {
     unsigned count = 0;
 };
 static KickLegHold kickStanceHeld;
+// The kick window for the stance and the upright assist: motion 13, and the Rebalance (33) the game plays straight
+// after it (0x16B5F9), for at most kickStanceAfterMs.
+static constexpr int rebalanceMotion = 0x21;
+static constexpr ULONGLONG kickStanceAfterMs = 3000;
+static ULONGLONG kickStanceKickSeen = 0;
+// [Balance] KickUprightAssist (0 off, the default; 1 on): inside the kick window, after the game's update, uprightness
+// +12B0 is set to 1.0 (never its counter +12B4) while the balance shadow's capture point is inside the loaded feet or
+// within kickAssistSlackCm of them; otherwise the game's own value stands. Off until Hunter says go.
+static constexpr float kickAssistSlackCm = 5.f;
+static int kickUprightAssist = -1;
+static std::atomic<unsigned> kickUprightAssistSteps{0}, kickUprightAssistFallbacks{0};
 static SRWLOCK kickStanceLock = SRWLOCK_INIT;
 static float kickStanceFactor = -1.f;
 static std::atomic<unsigned> kickStanceApplied{0}, kickStanceKeptGame{0};
@@ -218,13 +244,62 @@ static void kickStanceStep(uintptr_t root) {
     AcquireSRWLockExclusive(&kickStanceLock);
     __try {
         const unsigned state = *reinterpret_cast<const unsigned*>(root + field::character::stateFlags);
-        const bool kicking = kickStanceFactor > 0 &&
-                             *reinterpret_cast<const int*>(root + field::character::motion) == kickMotion && !fp::downState(state);
+        const int motion = *reinterpret_cast<const int*>(root + field::character::motion);
+        const ULONGLONG now = GetTickCount64();
+        if (motion == kickMotion) kickStanceKickSeen = now;
+        const bool window = !fp::downState(state) &&
+                            (motion == kickMotion || (motion == rebalanceMotion && kickStanceKickSeen &&
+                                                      now - kickStanceKickSeen < kickStanceAfterMs));
+        if (!window) kickStanceKickSeen = motion == rebalanceMotion ? kickStanceKickSeen : 0;
+        const bool kicking = kickStanceFactor > 0 && window;
+        if (kickUprightAssist < 0)
+            kickUprightAssist = settingsPath[0] ? int(GetPrivateProfileIntW(L"Balance", L"KickUprightAssist", 0, settingsPath)) : 0;
+        if (kickUprightAssist == 1 && window) {
+            // The shadow's last measure (balanceShadowLatest: one step old; false when off, faulted or stale).
+            ShadowBalance b{};
+            if (balanceShadowLatest(root, b) && std::isfinite(b.margin) && b.margin >= -kickAssistSlackCm) {
+                *reinterpret_cast<float*>(root + field::character::uprightness) = 1.f;
+                kickUprightAssistSteps.fetch_add(1, std::memory_order_relaxed);
+            } else
+                kickUprightAssistFallbacks.fetch_add(1, std::memory_order_relaxed); // the game's own value stands
+        }
         if (!kicking || (kickStanceHeld.count && kickStanceHeld.root != root)) kickStanceRestoreLocked();
-        if (kicking && !kickStanceHeld.count && *reinterpret_cast<const int*>(root + field::character::legCount) == 2)
+        if (kicking && !kickStanceHeld.count && motion == kickMotion &&
+            *reinterpret_cast<const int*>(root + field::character::legCount) == 2)
             kickStanceApplyLocked(root);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         kickStanceHeld = {};
+        kickUprightAssist = 0; // a fault turns the assist off for the session
     }
     ReleaseSRWLockExclusive(&kickStanceLock);
+}
+// Worker: the jump rows so far, to jump.csv in the balance shadow's folder.
+static void jumpLogPulse() {
+    JumpRow rows[512];
+    unsigned count = 0;
+    AcquireSRWLockExclusive(&jumpRowLock);
+    while (jumpRowCount && count < 512) {
+        rows[count++] = jumpRows[jumpRowHead];
+        jumpRowHead = (jumpRowHead + 1) % 512, --jumpRowCount;
+    }
+    ReleaseSRWLockExclusive(&jumpRowLock);
+    if (!count || !balanceShadowEnabled.load()) return;
+    static bool header = false;
+    if (!header) {
+        header = true;
+        shadowAppend(L"jump.csv", "ms,step,root_y,rise_cm,speed_cm_s,predicted_peak_cm,push_cm_s,support_scale,travelling,foot_down,pushing\r\n");
+    }
+    static char text[512 * 120];
+    int n = 0;
+    for (unsigned i = 0; i < count && n >= 0 && size_t(n) < sizeof text; ++i) {
+        const JumpRow& r = rows[i];
+        n += snprintf(text + n, sizeof text - size_t(n), "%llu,%u,%.1f,%.1f,%.1f,%.1f,%.1f,%.3f,%d,%d,%d\r\n",
+                      (unsigned long long)(r.at - shadowStarted), r.step, double(r.y), double(r.rise), double(r.speed),
+                      double(r.predicted), double(r.push), double(r.scale), r.travelling ? 1 : 0, r.footDown ? 1 : 0,
+                      r.pushing ? 1 : 0);
+    }
+    if (n > 0) {
+        text[(std::min)(size_t(n), sizeof text - 1)] = 0;
+        shadowAppend(L"jump.csv", text);
+    }
 }

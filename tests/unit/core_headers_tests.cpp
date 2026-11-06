@@ -513,9 +513,11 @@ bool camera_motion_jump_push() {
     CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 100, 50.f, 0, false, hz) == 0.f); // no new step yet
     // Still at rest a step later (the motors took it): topped back up to v, never more.
     CHECK(near_equal(fp::jumpPushStep(p, true, 0x1000, 0x2000, 101, 50.f, 0, false, hz), v));
-    // Rising at half of v: only the other half.
+    // Rising at half of v: only what the rest of the climb still needs, sqrt(2 g (peak - rise)) less the speed now.
     const float half = v * .5f / hz;
-    CHECK(near_equal(fp::jumpPushStep(p, true, 0x1000, 0x2000, 102, 50.f + half, 0x10004, false, hz), v * .5f, .05f));
+    const float need = std::sqrt(2.f * 980.665f * (fp::jumpPeakCm - half));
+    CHECK(near_equal(fp::jumpPushStep(p, true, 0x1000, 0x2000, 102, 50.f + half, 0x10004, false, hz), need - v * .5f, .05f));
+    CHECK(p.predicted < fp::jumpPeakCm);
     // At v: nothing more, and the push is over; the peak is still followed.
     CHECK(fp::jumpPushStep(p, true, 0x1000, 0x2000, 103, 50.f + half + v / hz, 0, false, hz) == 0.f);
     CHECK(!p.active && p.tracking);

@@ -580,7 +580,7 @@ struct JumpPush {
     uintptr_t root = 0, scene = 0;
     unsigned lastStep = 0, firstStep = 0;
     int left = 0;
-    float startY = 0.f, lastY = 0.f, risen = 0.f, peak = 0.f, peakCm = jumpPeakCm, target = 0.f;
+    float startY = 0.f, lastY = 0.f, risen = 0.f, peak = 0.f, peakCm = jumpPeakCm, target = 0.f, predicted = 0.f, speed = 0.f;
     static JumpPush start(uintptr_t root, uintptr_t scene, unsigned step, float y, float peakCm = jumpPeakCm) {
         JumpPush p;
         p.peakCm = peakCm;
@@ -606,6 +606,7 @@ inline float jumpPushStep(JumpPush& p, bool owned, uintptr_t root, uintptr_t sce
     }
     if (!passed) return 0.f;
     const float speed = (y - p.lastY) * stepHz / float(passed);
+    p.speed = speed;
     p.lastStep = step;
     p.lastY = y;
     p.risen = y - p.startY;
@@ -614,9 +615,16 @@ inline float jumpPushStep(JumpPush& p, bool owned, uintptr_t root, uintptr_t sce
     if (!p.active) return 0.f;
     const int n = int(passed) < p.left ? int(passed) : p.left;
     p.left -= n;
-    const float target = p.target;
-    if (p.left <= 0 || speed >= target || p.risen >= p.peakCm) p.active = false;
-    return speed < target && p.risen < p.peakCm ? std::fmin(target - std::fmax(speed, 0.f), target) : 0.f;
+    // The peak this flight reaches from here without another push: rise + v^2 / 2g. Once it is at the target, stop;
+    // else top up only as far as the target needs (the measured speed lags the body, which overshot by 2x).
+    const float up = std::fmax(speed, 0.f), predicted = p.risen + up * up / (2.f * jumpGravity);
+    p.predicted = predicted;
+    if (p.left <= 0 || predicted >= p.peakCm || p.risen >= p.peakCm) {
+        p.active = false;
+        return 0.f;
+    }
+    const float need = std::sqrt(2.f * jumpGravity * std::fmax(p.peakCm - p.risen, 0.f));
+    return std::fmax(std::fmin(need - up, p.target), 0.f);
 }
 // The half-size of the box the camera is kept clear by (cm): bigger than the near plane's own rectangle, so
 // a wall beside the view never comes inside the near plane and shows through.
