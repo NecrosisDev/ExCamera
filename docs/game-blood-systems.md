@@ -120,6 +120,35 @@ duplicates what this handler already does.
 - **Not traced:** the per-frame update (which base method advances the records: gravity, life at +0x34) and
   whether a spray lands or only fades. Until those and the thread are known, ExCamera doesn't spawn sprays.
 
+**Sprays, traced further. Verdict: not safe to call from our thread.**
+- **What Spawn writes:** 0x1000E0 takes a free 0x70-byte record (or grows the array at +0x138 with 0xB8E0, which
+  may move it) and fills it:
+  - +0x34: the number of particles still to emit, int(amount × 0.3) (0x1001BA-0x1001C7).
+  - +0x24: the point, held in the victim's frame (+0x38 = victim + 0x2A0).
+  - +0xC: the direction, with a basis built from it at +0x18; +0x64 = direction × 2.
+  - +0x40 / +0x4C: the world point, cached.
+- **The emit step** (0xF5608-0xF577A, in the particle base class) walks the records. Each record whose +0x34 is
+  non-zero has its world point recomputed from the frame (0x18870), then emits one particle through the object's
+  virtual +0x178. The particle's velocity is the direction scaled by −(+0x30), and the count is decremented
+  (0xF56E3). The rate accumulator is +0x128 += +0x124 (0xF5788).
+- **So a spray** is an emitter riding the victim's body, putting out a short burst of the base system's particles.
+- **Not traced:** how those particles fall, land or die (the base particle simulation). This survey found no floor
+  decal from them.
+- **Why not from our thread:** Spawn can reallocate the array the emit step walks. The game calls Spawn only from
+  the hit handler, whose thread (hit_thread 5524 in the 4817283 run) is not ours (20640). Calling it from our
+  render thread would race the update. It would be safe only if queued onto the game's own thread, for instance
+  through the deferred-call queue (whose lock is proven), as a job of ours that calls Spawn. That needs the
+  particle update's thread confirmed to be the queue drain's (it is ours, 20640), which is not shown.
+
+**Camera pass lists after the stain callback (0x4F750), and which take the depth nudges.**
+- **Order:** list +0x18 (0x4F877: the weapon stain 0x100820, and 0x1B8760), glDepthMask(1) (0x4F89B), list +0x68
+  (0x4F8A1: 0x1B42A0, registered at 0x1B2B82), list +0x28 (0x4F8AD: the displacement shells 0x2555B0 / 0x255730,
+  "Displacement Shell null sub-object.", textures thmdsp_*).
+- **Then the nudges** (0x4F8CC-0x4F99D): +0.002 into the sample projections, +2e-5 into the cropped ones.
+- **Then** the node list +0xC8 (0x4F9A8, 0x4E8C0) and list +0x48 (0x4F9C5; no registration into it was found
+  among 0x18040's callers).
+- **Consequence:** the nudges apply to +0xC8 and +0x48, not to the shells. Earlier notes said otherwise.
+
 **Skin-blood queue (0x158D70 → 0x1A890 on .data 0x499990). Verdict: unknown for our threads, so not called.**
 - **Not a blood-only queue:** 0x499990 is the game's general deferred-call queue, used by dozens of producers
   (0xAA795, 0xB4B6D, 0x1348ED … 0x158D01).
